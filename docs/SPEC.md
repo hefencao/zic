@@ -1265,9 +1265,11 @@ pending creates MUST remain bounded and MUST NOT be replaced by an unbounded UI-
 首次布局 MAY 使用一次有界 6 屏组成以准备初始相邻 page host，并在首个 scroll end 后收回到 2 屏。
 该值只影响 Flutter sliver 组成，不得扩大 Reader 的 encoded/decode/upload/texture 需求窗口；
 不得在 idle post-frame 回调中逐步扩张 cache window。可见静态页的输出保留由 `UploadDemand.retainOutput` 明确表达，不得依赖页面 role 推断；
-native decoded/upload output 的实际驻留由 `FrameBudgeter` 保护，
-FileImage/ResizeImage/MemoryImage 等 external Flutter fallback raster 则由App composition显式配置的 `ImageCache`（当前100MiB/1000 entries LRU）拥有，
-二者不得互相冒充。
+native decoded/upload output 的实际驻留由 `FrameBudgeter` 保护。
+Reader external-static 的 FileImage/ResizeImage/MemoryImage raster residency MUST由 App composition 的 `PipelinePresentationRasterCache` 统一拥有；
+该 owner MUST复用同一个 `ImageStreamCompleter`/keepAlive handle，不得复制 RGBA，并 MUST通过 `ResourceCacheCoordinator.presentationRasters` 参加统一 inspect/trim/clear。
+Flutter generic `ImageCache` 仍可服务非 Reader 图片和 provider decode backend，但其可用 bytes/entries MUST扣除 managed Reader raster 的精确占用，
+两者共享当前100MiB/1000-entry presentation 总额度，MUST NOT成为两套独立 LRU authority。
 
 ## 3. Pipeline 与角色合同
 
@@ -1351,13 +1353,14 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
 而 MUST NOT以 `LocalImagePlayer`/widget 生命周期为键。
 Pipeline external presentation request MUST携带 typed presentation fit；`contain` MUST按 viewport physical width/height 双轴导出 raster key，
 纵向 stitched `fitWidth` MUST只按 physical width 约束，source aspect 派生的 long-page height MUST NOT被 viewport height 截断。
-mounted `MediaRasterImage` 与 detached prewarmer MUST共享同一 raster-key policy。
-DecodeDemand/UploadDemand 暂时离开 3/7 调度窗口 MUST仅视为 demand gap，而不是 presentation generation 边界：
-external first-frame satisfaction MAY在 demand 移除时清除并在重入时重新取得 staged grant，以重新验证真实 ImageCache residency，
-但 `externalPresentationCacheIdentity` MUST跨普通 demand gap 保持稳定，使重新验证命中同一个 Flutter ImageProvider key；
+mounted `MediaRasterImage` 与 detached prewarmer MUST共享同一 raster-key policy，并消费同一个 composition-owned `PipelinePresentationRasterCache` entry。
+Pipeline MUST只投影 residency claim：`far/detached` 为 speculative，`next2/next/previous/near/last` 为 deadline，真实 viewport/current/transition 为 protected。
+cache owner MUST只在预算压力下回收 speculative entry，并在真实回收时主动向 Pipeline 发 exact invalidation；Pipeline MUST NOT通过 `obtainCacheStatus`/`statusForKey` 轮询 Flutter residency，也 MUST NOT把角色提升实现成被动 revalidation。
+`externalPresentationSatisfied` MUST只代表统一 cache owner 当前仍持有该 raster；收到 owner eviction 后 MUST撤销该 proof，让既有 staged refill 在需求仍有效时补帧。
+cache eviction 与 DecodeDemand/UploadDemand demand gap 都 MUST只改变 residency/claim，不得旋转 `externalPresentationCacheIdentity`；
 source/recovery/force-reload 或 fit 变化才 MAY旋转该 identity。Reader route retention/reentry MUST NOT被视为 presentation generation 变化：
-retained `PipelineReaderSession` MAY释放 page host/PageOutput/native decode/upload working set，
-但 MUST保留 composition-owned Flutter ImageCache 对应的轻量 presentation cache identity；同 source/DecodeId target/fit 重入 MUST重新验证同一 key。
+retained `PipelineReaderSession` MAY释放 page host/PageOutput/native decode/upload working set并释放 presentation claim，
+但 MUST保留 composition-owned presentation cache identity；若 raster 仍resident，重入 MUST直接复用同一 completer/key。
 fit 变化 MUST只失效/旋转 presentation cache generation 与 external first-frame proof，
 并经既有 staged refill 重新授予，MUST NOT改变 DecodeId/source/download identity 或产生第二 scheduling authority；
 同一 mounted widget 与同一 PageOutput 在 DecodeId/source generation rebind 后收到不同 opaque identity 时 MUST重新取得一次 load 资格，
@@ -1859,7 +1862,7 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   但decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页 MAY在既有3/7 one-frame static intent envelope内提前UploadDemand/present并retain output，
   以保证进入transition前presentation-ready；
   该资格不得引入estimated static-output budget，native output residency继续由FrameBudgeter裁决，
-  Flutter fallback raster继续由App composition的ImageCache裁决；
+  Flutter fallback raster residency/LRU MUST由App composition的`PipelinePresentationRasterCache`统一裁决；generic Flutter `ImageCache`仅保留非Reader图片与provider decode backend职责；
   该例外 MUST NOT创建额外DecodeDemand、扩大3/7或应用于animated/unresolved页。
   directional decode previous1/next2 policy仍是唯一decode work窗口；
   但对已经存在的authoritative static surface，Presentation MAY在该directional policy两个可能方向的并集`current±2`内跨direction flip造成的decode-plan gap保留surface/PresentClaim。

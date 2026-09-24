@@ -232,6 +232,7 @@ ResourceCacheCoordinator createAppResourceCache({
   required String storageRoot,
   ResourceCacheManager? responses,
   ArtifactCacheMaintenance? artifacts,
+  PresentationRasterCacheMaintenance? presentationRasters,
   void Function(Object error, StackTrace stackTrace)? onPersistenceError,
 }) {
   return ResourceCacheCoordinator(
@@ -243,6 +244,7 @@ ResourceCacheCoordinator createAppResourceCache({
           onPersistenceError: onPersistenceError,
         ),
     artifacts: artifacts,
+    presentationRasters: presentationRasters,
   );
 }
 

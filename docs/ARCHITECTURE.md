@@ -716,13 +716,19 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   而不能绑定 widget 生命周期。presentation raster identity 还必须显式包含由 Reader 上报、Pipeline 转交的 typed fit fact：
   `contain` 受 viewport physical width/height 双轴约束；纵向 stitched `fitWidth` 只受 physical width 约束，
   page host 的高度由 source aspect 决定，绝不能把 viewport height 误当成 long-page raster height 上限。
-  mounted `MediaRasterImage` 与 detached external prewarmer 必须调用同一 raster-key policy；
-  DecodeDemand/UploadDemand 离开 3/7 调度窗口只是 demand gap，不是 presentation generation 边界：
-  external first-frame satisfaction MAY 随 demand 移除并在重入时重新取得 staged grant，以重新验证真实 ImageCache residency，
-  但 `externalPresentationCacheIdentity` MUST 跨普通 demand gap 保持稳定，让这次验证命中同一个 Flutter ImageProvider key；
+  mounted `MediaRasterImage` 与 detached external prewarmer 必须调用同一 raster-key policy，并共同进入 composition-owned `PipelinePresentationRasterCache`；
+  它以同一个 `ImageStreamCompleter.keepAlive()` 持有已解码 raster，不复制 RGBA，并作为 Reader external-static 的唯一 residency/LRU authority。
+  Flutter 全局 `ImageCache` 只是 provider decode/backend 与非 Reader 图片缓存：managed raster admission 后其 generic keepAlive key 必须移除，
+  且 manager 已占用的精确 raster bytes/entries 必须从全局 ImageCache 可用额度中扣除，二者共享同一个 100MiB/1000-entry presentation envelope，禁止形成两套独立预算。
+  Pipeline 只向该 owner 投影 cache claim：`far/detached` 为 `speculative`，`next2/next/previous/near/last` 为 `deadline`，
+  real viewport/current/transition 为 `protected`；cache owner 只可在压力下回收 speculative entry，并在真实回收时主动发送 exact invalidation。
+  Pipeline 不得通过 `ImageProvider.obtainCacheStatus()` / `ImageCache.statusForKey()` 轮询 residency，也不得用角色提升做被动 cache revalidation。
+  `externalPresentationSatisfied` 只是当前 manager residency proof；owner 的真实 eviction 会主动撤销它并让既有 staged refill 在需要时补帧。
+  cache eviction 只改变 residency，不是 presentation generation 边界，MUST 保留原 `externalPresentationCacheIdentity`；
+  DecodeDemand/UploadDemand 离开 3/7 调度窗口同样只是 demand gap：claim MAY 降级/释放，但 identity MUST 保持稳定。
   source/recovery/force-reload 或 fit 改变才可旋转该 identity。Reader route retention/reentry 同样不是 presentation generation 边界：
-  retained `PipelineReaderSession` 可以销毁 page host/PageOutput/native decode/upload 以释放 Reader-local working set，
-  但 MUST 保留 composition-owned Flutter ImageCache 对应的轻量 presentation cache identity；同 source/DecodeId target/fit 重入时重新验证同一 key，
+  retained `PipelineReaderSession` 可以销毁 page host/PageOutput/native decode/upload 并释放 presentation claim 以释放 Reader-local working set，
+  但 MUST 保留 composition-owned presentation cache identity；若同 raster 仍由 manager resident，重入直接复用同一 completer/key，
   fit 改变时才旋转 Flutter presentation cache identity / first-frame proof并经既有 staged policy 重授，
   不得借此改变 DecodeId、source/download identity 或建立新的 scheduling owner：
   同一 `LocalImagePlayer`/`PipelinePageOutputStream` 在 DecodeId/source generation rebind 后若 opaque cache identity 改变，
@@ -740,7 +746,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   禁止 stale grant 继续制造黑屏。
   这只修正 geometry observation→Pipeline staging，不给 Reader/UI 增加 decode/network/retry owner。
   native decoded/upload residency 由 `FrameBudgeter` 拥有；
-  FileImage/ResizeImage/MemoryImage fallback raster 由 App composition 显式配置的 Flutter `ImageCache`（100MiB/1000 entries LRU）拥有；
+  Reader external-static fallback raster residency 由 composition `PipelinePresentationRasterCache` 拥有，并通过 `ResourceCacheCoordinator.presentationRasters` 统一 inspect/trim/clear；
+  generic Flutter 图片缓存与该 managed raster plane 共享 100MiB/1000-entry presentation 总额度，但不参与 Reader role/claim 决策；
   encoded speculative I/O 继续由共享 `SpeculativeEncodedReadBudget` 拥有。
 - Reader navigation只提交 observation/用户命令并消费只读输出，不直接操作 transport/session/artifact/lane/frame/texture。
   强制重新加载完成physical reset后只通过per-asset presentation revision替换当前`_ReaderPageShell`内容；
@@ -776,9 +783,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `ContentKind.fallback`本身不是静态证明，HTML/source错误页不得进入该资格。
   external-static只放开staged first-frame，不得获得多帧deep-decode水位、
   扩大3/7、绕过`StagedDecodeRefillPolicy`或应用于animated/unresolved页；
-  该资格不得引入estimated static-output budget，native output由FrameBudgeter裁决，external Flutter raster只归既有ImageCache。
+  该资格不得引入estimated static-output budget，native output由FrameBudgeter裁决；external Flutter raster的residency/LRU唯一归composition `PipelinePresentationRasterCache`。
   Coordinator exact grant若落在尚无PageHost的offscreen external-static，
-  可由App composition注入的detached presentation executor消费既有generation-scoped file/bytes capability并提前把同一provider identity的一帧放入ImageCache；
+  可由App composition注入的detached presentation executor消费既有generation-scoped file/bytes capability，并把同一provider identity的一帧admit到统一presentation raster owner；
   executor不得选页、开网络、建立隐藏Reader/Page widget、拥有retry/cache authority或建立第二raster cache，完成后只回报同一grant一次。
   后续PageHost mount继续使用普通`LocalImagePlayer`与同一generation/cache identity；
   current/transition与真实viewport可见静态页继续允许直接presentation，idle后恢复普通stable-role warming。

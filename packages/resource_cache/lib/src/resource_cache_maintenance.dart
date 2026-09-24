@@ -1,10 +1,8 @@
 import 'resource_cache.dart';
 
 final class ArtifactCacheUsage {
-  const ArtifactCacheUsage({
-    required this.bytes,
-    required this.entries,
-  })  : assert(bytes >= 0),
+  const ArtifactCacheUsage({required this.bytes, required this.entries})
+    : assert(bytes >= 0),
         assert(entries >= 0);
 
   final int bytes;
@@ -41,6 +39,45 @@ abstract interface class ArtifactCacheMaintenance {
   Future<ArtifactCacheReport> clearArtifacts();
 }
 
+final class PresentationRasterCacheUsage {
+  const PresentationRasterCacheUsage({
+    required this.bytes,
+    required this.entries,
+  }) : assert(bytes >= 0),
+       assert(entries >= 0);
+
+  final int bytes;
+  final int entries;
+}
+
+final class PresentationRasterCacheReport {
+  const PresentationRasterCacheReport({
+    required this.beforeBytes,
+    required this.releasedBytes,
+    required this.remainingBytes,
+    required this.evictedEntries,
+  });
+
+  final int beforeBytes;
+  final int releasedBytes;
+  final int remainingBytes;
+  final int evictedEntries;
+}
+
+/// Volatile decoded-raster cache plane.
+///
+/// Implementations expose lifecycle/maintenance for presentation rasters. A
+/// composition cache may own the decoded completer lifetime directly, but this
+/// interface never returns raster payloads and must not create a second RGBA
+/// copy or a parallel presentation generation authority.
+abstract interface class PresentationRasterCacheMaintenance {
+  PresentationRasterCacheUsage inspectPresentationRasters();
+
+  PresentationRasterCacheReport trimPresentationRasters();
+
+  PresentationRasterCacheReport clearPresentationRasters();
+}
+
 final class ResourceCacheMaintenancePolicy {
   const ResourceCacheMaintenancePolicy({
     this.responseTargetWeight = 24 * 1024 * 1024,
@@ -70,6 +107,7 @@ final class ResourceCacheMaintenancePolicy {
   }
 
   final int responseTargetWeight;
+
   /// Target for transient durable response bytes only. Retained artwork is not
   /// capacity-trimmed and remains governed by explicit invalidation/clear.
   final int transientPersistentResponseTargetWeight;
@@ -82,11 +120,17 @@ final class ResourceCacheUsage {
     required this.responses,
     this.persistentResponses,
     this.artifacts,
+    this.presentationRasters,
   });
 
   final ResourceCacheStats responses;
   final ResourceCacheByteStoreUsage? persistentResponses;
   final ArtifactCacheUsage? artifacts;
+
+  /// Volatile presentation memory is reported separately from [totalBytes].
+  /// The existing total is the user-facing reusable/durable cache capacity and
+  /// must not silently become a process-memory figure.
+  final PresentationRasterCacheUsage? presentationRasters;
 
   int get totalBytes =>
       responses.weight +
@@ -96,6 +140,8 @@ final class ResourceCacheUsage {
       responses.entries +
       (persistentResponses?.entries ?? 0) +
       (artifacts?.entries ?? 0);
+  int get volatilePresentationBytes => presentationRasters?.bytes ?? 0;
+  int get volatilePresentationEntries => presentationRasters?.entries ?? 0;
 }
 
 final class ResourceCacheMaintenanceReport {
@@ -105,6 +151,7 @@ final class ResourceCacheMaintenanceReport {
     required this.responses,
     this.persistentResponses,
     this.artifacts,
+    this.presentationRasters,
   });
 
   final int responseReleasedBytes;
@@ -112,11 +159,14 @@ final class ResourceCacheMaintenanceReport {
   final ResourceCacheStats responses;
   final ResourceCacheByteStoreUsage? persistentResponses;
   final ArtifactCacheReport? artifacts;
+  final PresentationRasterCacheReport? presentationRasters;
 
   int get totalReleasedBytes =>
       responseReleasedBytes +
       persistentResponseReleasedBytes +
       (artifacts?.releasedBytes ?? 0);
+  int get volatilePresentationReleasedBytes =>
+      presentationRasters?.releasedBytes ?? 0;
 }
 
 /// One cache-policy coordination point spanning reusable source responses and
@@ -130,6 +180,7 @@ final class ResourceCacheCoordinator {
   ResourceCacheCoordinator({
     ResourceCacheManager? responses,
     this.artifacts,
+    this.presentationRasters,
     ResourceCacheMaintenancePolicy? maintenancePolicy,
   })  : responses = responses ?? ResourceCacheManager(),
         _maintenancePolicy =
@@ -137,6 +188,7 @@ final class ResourceCacheCoordinator {
 
   final ResourceCacheManager responses;
   final ArtifactCacheMaintenance? artifacts;
+  final PresentationRasterCacheMaintenance? presentationRasters;
   ResourceCacheMaintenancePolicy _maintenancePolicy;
 
   /// Current trim policy. Updates take effect on the next [trim] run; they do
@@ -157,8 +209,15 @@ final class ResourceCacheCoordinator {
       artifacts: artifactMaintenance == null
           ? null
           : await artifactMaintenance.inspectArtifacts(),
+      presentationRasters: presentationRasters?.inspectPresentationRasters(),
     );
   }
+
+  PresentationRasterCacheReport? trimPresentationRasters() =>
+      presentationRasters?.trimPresentationRasters();
+
+  PresentationRasterCacheReport? clearPresentationRasters() =>
+      presentationRasters?.clearPresentationRasters();
 
   Future<ResourceCacheMaintenanceReport> trim() async {
     final beforeResponses = responses.stats.weight;
@@ -176,12 +235,14 @@ final class ResourceCacheCoordinator {
     final persistentUsage = persistentReport == null
         ? null
         : await responses.inspectPersistentBytes();
+    final presentationReport = presentationRasters?.trimPresentationRasters();
     return ResourceCacheMaintenanceReport(
       responseReleasedBytes: beforeResponses - responses.stats.weight,
       persistentResponseReleasedBytes: persistentReport?.releasedBytes ?? 0,
       responses: responses.stats,
       persistentResponses: persistentUsage,
       artifacts: artifactReport,
+      presentationRasters: presentationReport,
     );
   }
 
@@ -194,6 +255,7 @@ final class ResourceCacheCoordinator {
     final artifactReport = artifactMaintenance == null
         ? null
         : await artifactMaintenance.clearArtifacts();
+    final presentationReport = presentationRasters?.clearPresentationRasters();
     return ResourceCacheMaintenanceReport(
       responseReleasedBytes: responseReleasedBytes,
       persistentResponseReleasedBytes: persistentBefore?.bytes ?? 0,
@@ -202,6 +264,7 @@ final class ResourceCacheCoordinator {
           ? null
           : const ResourceCacheByteStoreUsage(bytes: 0, entries: 0),
       artifacts: artifactReport,
+      presentationRasters: presentationReport,
     );
   }
 

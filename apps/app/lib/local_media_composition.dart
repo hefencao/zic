@@ -13,6 +13,7 @@ final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
       defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
   pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,
   externalPresentationPrewarmer: prewarmPipelineExternalStaticPresentation,
+  presentationCacheAuthority: pipelinePresentationRasterCache,
 );
 
 Future<void> prewarmDefaultLocalMediaPipeline() =>

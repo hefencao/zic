@@ -41,7 +41,8 @@ void main() {
     expect(values[0], same(values[1]));
   });
 
-  test('coalesces complete encoded image resolution before durable lookup',
+  test(
+    'coalesces complete encoded image resolution before durable lookup',
       () async {
     final cache = ResourceCacheManager();
     addTearDown(cache.close);
@@ -64,16 +65,16 @@ void main() {
     expect(loads, 1);
 
     gate.complete();
-    final values = await Future.wait<EncodedResourceSource>(<Future<EncodedResourceSource>>[
-      first,
-      second,
-    ]);
+      final values = await Future.wait<EncodedResourceSource>(
+        <Future<EncodedResourceSource>>[first, second],
+      );
     expect(
       (values.first as MemoryEncodedResourceSource).bytes,
       same((values.last as MemoryEncodedResourceSource).bytes),
     );
     expect(values.first.lengthInBytes, 3);
-  });
+    },
+  );
 
   test('coalesced loader failures stay owned by awaiting callers', () async {
     final cache = ResourceCacheManager();
@@ -196,7 +197,8 @@ void main() {
     expect(sourceLoads, 0);
   });
 
-  test('new encoded image persists bytes without lending its cache path',
+  test(
+    'new encoded image persists bytes without lending its cache path',
       () async {
     const key = ResourceCacheKey(
       kind: ResourceCacheKind.imageBytes,
@@ -214,7 +216,8 @@ void main() {
     expect(source, isA<MemoryEncodedResourceSource>());
     expect((source as MemoryEncodedResourceSource).bytes, <int>[8, 6, 4, 2]);
     expect(store.values[key]?.bytes, <int>[8, 6, 4, 2]);
-  });
+    },
+  );
 
   test('foreground encoded image returns before durable persistence', () async {
     final writeStarted = Completer<void>();
@@ -283,10 +286,7 @@ void main() {
     );
     await started.future;
     final closing = cache.close();
-    expect(
-      () => cache.peek<Uint8List>(key),
-      throwsA(isA<StateError>()),
-    );
+    expect(() => cache.peek<Uint8List>(key), throwsA(isA<StateError>()));
     expect(cache.clear, throwsA(isA<StateError>()));
     gate.complete();
     expect(await request, <int>[2, 4, 6]);
@@ -441,7 +441,8 @@ void main() {
     expect(cache.stats.forKind(ResourceCacheKind.searchResults).entries, 1);
   });
 
-  test('clear prevents an older in-flight response from repopulating cache',
+  test(
+    'clear prevents an older in-flight response from repopulating cache',
       () async {
     final cache = ResourceCacheManager();
     addTearDown(cache.close);
@@ -463,7 +464,8 @@ void main() {
     gate.complete();
     expect(await pending, 'stale');
     expect(cache.peek<String>(key), isNull);
-  });
+    },
+  );
 
   test('force refresh supersedes a slower previous response', () async {
     final cache = ResourceCacheManager();
@@ -524,7 +526,8 @@ void main() {
     expect(store.values, isEmpty);
   });
 
-  test('a user cache limit updates the trim policy without eager eviction',
+  test(
+    'a user cache limit updates the trim policy without eager eviction',
       () async {
     final artifacts = _FakeArtifactMaintenance();
     final coordinator = ResourceCacheCoordinator(
@@ -546,15 +549,13 @@ void main() {
 
     await coordinator.trim();
     expect(artifacts.trimCalls, 1);
-    expect(
-      artifacts.lastTrim?.maxBytes,
-      128 * 1024 * 1024,
-    );
+      expect(artifacts.lastTrim?.maxBytes, 128 * 1024 * 1024);
     expect(artifacts.lastTrim?.targetBytes, 96 * 1024 * 1024);
-  });
+    },
+  );
 
-
-  test('coordinator trim releases transient persistence but preserves retained artwork',
+  test(
+    'coordinator trim releases transient persistence but preserves retained artwork',
       () async {
     final store = _MemoryResourceByteStore();
     final responses = ResourceCacheManager(byteStore: store);
@@ -596,7 +597,8 @@ void main() {
     expect(usage.persistentResponses?.bytes, 4);
     expect(usage.persistentResponses?.retainedBytes, 4);
     expect(usage.persistentResponses?.transientBytes, 0);
-  });
+    },
+  );
 
   test(
     'coordinator reports response and artifact planes without taking ownership',
@@ -630,7 +632,41 @@ void main() {
     },
   );
 
-  test('retained image promotes the same durable key without a second namespace',
+  test(
+    'coordinator includes volatile presentation raster maintenance plane',
+    () async {
+      final rasters = _FakePresentationRasterMaintenance();
+      final coordinator = ResourceCacheCoordinator(
+        responses: ResourceCacheManager(),
+        presentationRasters: rasters,
+      );
+      addTearDown(coordinator.close);
+
+      final usage = await coordinator.inspect();
+      expect(usage.presentationRasters?.bytes, 40);
+      expect(usage.presentationRasters?.entries, 2);
+      expect(usage.volatilePresentationBytes, 40);
+      expect(usage.volatilePresentationEntries, 2);
+      expect(
+        usage.totalBytes,
+        0,
+        reason:
+            'volatile raster residency is coordinated but must not be misreported as the user durable-cache capacity',
+      );
+
+      final trim = await coordinator.trim();
+      expect(rasters.trimCalls, 1);
+      expect(trim.presentationRasters?.releasedBytes, 10);
+      expect(trim.volatilePresentationReleasedBytes, 10);
+
+      final clear = await coordinator.clear();
+      expect(rasters.clearCalls, 1);
+      expect(clear.presentationRasters?.releasedBytes, 30);
+    },
+  );
+
+  test(
+    'retained image promotes the same durable key without a second namespace',
       () async {
     final store = _MemoryResourceByteStore();
     const key = ResourceCacheKey(
@@ -652,7 +688,8 @@ void main() {
     final source = await cache.getOrLoadEncodedImage(
       key: key,
       retention: ResourceCacheRetention.retained,
-      loader: () async => throw StateError('memory hit must not reload source'),
+        loader: () async =>
+            throw StateError('memory hit must not reload source'),
     );
     expect(source, isNotNull);
     await cache.drainPersistence();
@@ -663,8 +700,8 @@ void main() {
     final trim = await store.trimTo(targetBytes: 0);
     expect(trim.releasedBytes, 0);
     expect(store.values[key]!.bytes, <int>[1, 2, 3]);
-  });
-
+    },
+  );
 }
 
 final class _MemoryResourceByteStore
@@ -700,7 +737,9 @@ final class _MemoryResourceByteStore
     retentions[key] = retention;
     values[key] = PersistedResourceBytes(
       bytes: Uint8List.fromList(bytes),
-      expiresAt: retention == ResourceCacheRetention.retained ? null : expiresAt,
+      expiresAt: retention == ResourceCacheRetention.retained
+          ? null
+          : expiresAt,
     );
   }
 
@@ -711,10 +750,7 @@ final class _MemoryResourceByteStore
       return;
     }
     retentions[key] = ResourceCacheRetention.retained;
-    values[key] = PersistedResourceBytes(
-      bytes: value.bytes,
-      expiresAt: null,
-    );
+    values[key] = PersistedResourceBytes(bytes: value.bytes, expiresAt: null);
   }
 
   @override
@@ -767,9 +803,7 @@ final class _MemoryResourceByteStore
     required int targetBytes,
   }) async {
     final transientKeys = values.keys
-        .where(
-          (key) => retentions[key] != ResourceCacheRetention.retained,
-        )
+        .where((key) => retentions[key] != ResourceCacheRetention.retained)
         .toList(growable: false);
     final before = transientKeys.fold<int>(
       0,
@@ -795,6 +829,48 @@ final class _MemoryResourceByteStore
 
   @override
   Future<void> close() async {}
+}
+
+final class _FakePresentationRasterMaintenance
+    implements PresentationRasterCacheMaintenance {
+  int trimCalls = 0;
+  int clearCalls = 0;
+  int bytes = 40;
+  int entries = 2;
+
+  @override
+  PresentationRasterCacheUsage inspectPresentationRasters() =>
+      PresentationRasterCacheUsage(bytes: bytes, entries: entries);
+
+  @override
+  PresentationRasterCacheReport trimPresentationRasters() {
+    trimCalls++;
+    final beforeBytes = bytes;
+    final beforeEntries = entries;
+    bytes = 30;
+    entries = 1;
+    return PresentationRasterCacheReport(
+      beforeBytes: beforeBytes,
+      releasedBytes: beforeBytes - bytes,
+      remainingBytes: bytes,
+      evictedEntries: beforeEntries - entries,
+    );
+  }
+
+  @override
+  PresentationRasterCacheReport clearPresentationRasters() {
+    clearCalls++;
+    final beforeBytes = bytes;
+    final beforeEntries = entries;
+    bytes = 0;
+    entries = 0;
+    return PresentationRasterCacheReport(
+      beforeBytes: beforeBytes,
+      releasedBytes: beforeBytes,
+      remainingBytes: 0,
+      evictedEntries: beforeEntries,
+    );
+  }
 }
 
 final class _FakeArtifactMaintenance implements ArtifactCacheMaintenance {

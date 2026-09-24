@@ -22,6 +22,13 @@ coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 output = read("packages/pipeline_runtime/lib/src/pipeline_page_output.dart")
 player = read("packages/local_media_ui/lib/src/local_image_player.dart")
 memory = read("apps/app/lib/presentation_memory_policy.dart")
+app_runtime = read("apps/app/lib/app_runtime.dart")
+cache_maintenance = read(
+    "packages/resource_cache/lib/src/resource_cache_maintenance.dart"
+)
+presentation_cache = read(
+    "packages/local_media_ui/lib/src/presentation_raster_cache.dart"
+)
 runtime = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 check = read("tool/check.sh")
 
@@ -81,10 +88,47 @@ require(
     "generation-scoped external presentation regression",
 )
 for token in (
-    "zicFlutterImageCacheMaximumBytes = 100 * 1024 * 1024",
-    "zicFlutterImageCacheMaximumEntries = 1000",
+    "pipelinePresentationRasterMaximumBytes",
+    "pipelinePresentationRasterMaximumEntries",
 ):
-    require(memory, token, "Flutter fallback raster memory owner")
+    require(memory, token, "shared presentation memory envelope")
+for token in (
+    "presentationRasters",
+    "clearPresentationRasters()",
+):
+    require(cache_maintenance, token, "unified cache coordinator presentation plane")
+require(
+    app_runtime,
+    "(_services?.cacheCoordinator ?? _bootstrapCache)",
+    "memory-pressure cache maintenance routing",
+)
+if "pipelinePresentationRasterCache.clearPresentationRasters()" in app_runtime:
+    raise SystemExit(
+        "App memory-pressure handling must route presentation-raster maintenance "
+        "through ResourceCacheCoordinator"
+    )
+for token in (
+    "completer.keepAlive()",
+    "PipelinePresentationCacheClaim.speculative",
+    "_syncGlobalImageCacheBudget()",
+    "PresentationRasterCacheMaintenance",
+):
+    require(presentation_cache, token, "unified presentation raster cache owner")
+for owner, text in (
+    ("LocalImagePlayer", player),
+    ("PipelinePresentationRasterCache", presentation_cache),
+    ("PipelineReaderSession", runtime),
+):
+    if "obtainCacheStatus(" in text or "statusForKey(" in text:
+        raise SystemExit(
+            f"{owner} must not poll Flutter ImageCache residency; "
+            "PipelinePresentationRasterCache owns Reader raster residency"
+        )
+if "external-presentation-deadline-revalidate" in coordinator:
+    raise SystemExit(
+        "deadline role promotion must update the unified raster-cache claim, "
+        "not trigger passive external-presentation revalidation"
+    )
 for token in (
     "_media is PipelineOutputPrewarmer",
     "_media as PipelineOutputPrewarmer",

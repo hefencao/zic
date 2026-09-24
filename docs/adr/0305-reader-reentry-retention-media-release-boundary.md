@@ -22,7 +22,7 @@
 
 快速重进仍复用同一个 retained `PipelineReaderSession` 与 transfer runtime，但 decode/upload media layer 从 retained encoded authority 重新建立。
 
-2026-09-24 补充边界：这里的“只保留 transfer/encoded authority”约束的是 Reader-owned media working set，禁止保留 `DecodeSession`、`UploadSession`、native cursor/canvas、decoded frame 或 texture claim。它不要求 Reader route 去失效更长生命周期的 composition cache generation。external static fallback 可在 retained `PipelineReaderSession` 中保留每个 exact `DecodeId` 的轻量 `externalPresentationCacheIdentity`；该 object 本身不持有 encoded body、decoded raster、frame 或 texture，实际 raster residency 仍完全由 App composition 的 Flutter `ImageCache` LRU 拥有。重入后仍必须经过 staged external first-frame grant 重新验证真实 residency；只有 source/recovery/force-reload、decode raster target 或 presentation fit 等真实 generation 变化才可旋转这个 key。普通 route retention/reentry 不是 presentation generation 边界。
+2026-09-24 补充边界：这里的“只保留 transfer/encoded authority”约束的是 Reader-owned native media working set，禁止保留 `DecodeSession`、`UploadSession`、native cursor/canvas、decoded frame 或 texture claim。它不要求 Reader route 去失效更长生命周期的 composition presentation generation。external static fallback 可在 retained `PipelineReaderSession` 中保留每个 exact `DecodeId` 的轻量 `externalPresentationCacheIdentity`；该 object 本身不持有 encoded body、decoded raster、frame 或 texture。后续 ADR 0322 将 external-static raster residency 收口到 composition `PipelinePresentationRasterCache`：Reader retention 释放 residency claim，但不旋转 generation identity；若同 raster 仍resident可直接复用，若已被统一 owner 回收则由 owner 的主动 invalidation + 既有 staged refill 补帧。只有 source/recovery/force-reload、decode raster target 或 presentation fit 等真实 generation 变化才可旋转这个 key。普通 route retention/reentry 不是 presentation generation 边界。
 
 ## Consequences
 

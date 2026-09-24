@@ -1,0 +1,377 @@
+part of '../local_media_ui.dart';
+
+const int pipelinePresentationRasterMaximumBytes = 100 * 1024 * 1024;
+const int pipelinePresentationRasterMaximumEntries = 1000;
+
+/// Process-wide presentation-raster authority for Reader static pages.
+///
+/// Flutter's [ImageCache] still owns the actual completer/raster objects. This
+/// authority owns only the reusable residency lease, exact provider key,
+/// weight/LRU metadata and presentation-generation invalidation. A keepAlive
+/// handle keeps an admitted raster usable even if Flutter's unrelated global
+/// ImageCache LRU drops its own keepAlive entry; no raster bytes are copied.
+final class PipelinePresentationRasterCache
+    implements
+        PresentationRasterCacheMaintenance,
+        PipelinePresentationCacheAuthority {
+  PipelinePresentationRasterCache({
+    this.maximumBytes = pipelinePresentationRasterMaximumBytes,
+    this.maximumEntries = pipelinePresentationRasterMaximumEntries,
+    ImageCache? imageCache,
+  }) : assert(maximumBytes > 0),
+       assert(maximumEntries > 0),
+       _imageCacheOverride = imageCache;
+
+  final int maximumBytes;
+  final int maximumEntries;
+  final ImageCache? _imageCacheOverride;
+  ImageCache? _resolvedImageCache;
+
+  ImageCache get _imageCache =>
+      _imageCacheOverride ??
+      (_resolvedImageCache ??= PaintingBinding.instance.imageCache);
+
+  ImageCache? get _existingImageCache =>
+      _imageCacheOverride ?? _resolvedImageCache;
+  final LinkedHashMap<PresentationRasterCacheKey, _PresentationRasterEntry>
+  _entries =
+      LinkedHashMap<PresentationRasterCacheKey, _PresentationRasterEntry>();
+  final Map<Object, PresentationRasterCacheKey> _keysByIdentity =
+      <Object, PresentationRasterCacheKey>{};
+  final Map<Object, PipelinePresentationCacheClaim> _claimsByIdentity =
+      <Object, PipelinePresentationCacheClaim>{};
+  final Set<PipelinePresentationCacheInvalidationListener> _listeners =
+      <PipelinePresentationCacheInvalidationListener>{};
+  int _bytes = 0;
+
+  ImageProvider<Object> providerFor({
+    required ImageProvider<Object> provider,
+    required Object presentationIdentity,
+  }) => _ManagedPresentationImageProvider(
+    owner: this,
+    provider: provider,
+    presentationIdentity: presentationIdentity,
+  );
+
+  @override
+  void addInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  ) {
+    _listeners.add(listener);
+  }
+
+  @override
+  void removeInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  ) {
+    _listeners.remove(listener);
+  }
+
+  @override
+  void updatePresentationClaim(
+    Object presentationIdentity,
+    PipelinePresentationCacheClaim claim,
+  ) {
+    final previous = _claimsByIdentity[presentationIdentity];
+    if (previous == claim) return;
+    _claimsByIdentity[presentationIdentity] = claim;
+    final key = _keysByIdentity[presentationIdentity];
+    final entry = key == null ? null : _entries.remove(key);
+    if (entry != null) {
+      entry.claim = claim;
+      _entries[key!] = entry;
+    }
+    _trimToBudget();
+  }
+
+  @override
+  void releasePresentationClaim(Object presentationIdentity) {
+    if (_claimsByIdentity.remove(presentationIdentity) == null) return;
+    final key = _keysByIdentity[presentationIdentity];
+    final entry = key == null ? null : _entries[key];
+    if (entry != null) {
+      entry.claim = PipelinePresentationCacheClaim.speculative;
+    }
+    _trimToBudget();
+  }
+
+  @override
+  void invalidatePresentationIdentity(Object presentationIdentity) {
+    _claimsByIdentity.remove(presentationIdentity);
+    final key = _keysByIdentity[presentationIdentity];
+    if (key == null) return;
+    _evict(key, notify: true);
+  }
+
+  void _resolveStreamForKey({
+    required ImageConfiguration configuration,
+    required ImageStream stream,
+    required PresentationRasterCacheKey key,
+    required ImageProvider<Object> provider,
+    required ImageErrorListener handleError,
+  }) {
+    final existing = _entries.remove(key);
+    if (existing != null) {
+      _entries[key] = existing;
+      stream.setCompleter(existing.completer);
+      return;
+    }
+
+    final previous = _keysByIdentity[key.presentationIdentity];
+    if (previous != null && previous != key) {
+      _evict(previous, notify: false);
+    }
+
+    final inner = provider.resolve(configuration);
+    final immediate = inner.completer;
+    if (immediate != null) {
+      _admit(key: key, completer: immediate, providerKey: key.providerKey);
+      stream.setCompleter(immediate);
+      return;
+    }
+
+    late final ImageStreamListener bootstrap;
+    bootstrap = ImageStreamListener(
+      (info, _) {
+        info.dispose();
+        inner.removeListener(bootstrap);
+        final completer = inner.completer;
+        if (completer == null) {
+          handleError(
+            StateError(
+              'presentation raster stream completed without completer',
+            ),
+            StackTrace.current,
+          );
+          return;
+        }
+        _admit(key: key, completer: completer, providerKey: key.providerKey);
+        if (stream.completer == null) {
+          stream.setCompleter(completer);
+        }
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        inner.removeListener(bootstrap);
+        handleError(error, stackTrace);
+      },
+    );
+    inner.addListener(bootstrap);
+  }
+
+  void _admit({
+    required PresentationRasterCacheKey key,
+    required ImageStreamCompleter completer,
+    required Object providerKey,
+  }) {
+    final existing = _entries[key];
+    if (existing != null) {
+      _entries.remove(key);
+      _entries[key] = existing;
+      return;
+    }
+    final handle = completer.keepAlive();
+    final entry = _PresentationRasterEntry(
+      key: key,
+      providerKey: providerKey,
+      completer: completer,
+      handle: handle,
+      claim:
+          _claimsByIdentity[key.presentationIdentity] ??
+          PipelinePresentationCacheClaim.speculative,
+    );
+    _entries[key] = entry;
+    _keysByIdentity[key.presentationIdentity] = key;
+
+    late final ImageStreamListener firstFrame;
+    firstFrame = ImageStreamListener(
+      (info, _) {
+        final sizeBytes = info.sizeBytes;
+        info.dispose();
+        completer.removeListener(firstFrame);
+        final current = _entries[key];
+        if (!identical(current, entry)) return;
+        _bytes -= entry.sizeBytes;
+        entry.sizeBytes = sizeBytes;
+        _bytes += sizeBytes;
+        // From this point the managed keepAlive handle is the sole reusable
+        // residency owner for this Reader raster. Remove the generic Flutter
+        // ImageCache keepAlive entry so the same raster is not governed by two
+        // unrelated LRUs; mounted listeners remain live and the handle keeps
+        // the completer/raster resident until this authority evicts it.
+        _imageCache.evict(entry.providerKey, includeLive: false);
+        _trimToBudget();
+        _syncGlobalImageCacheBudget();
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        completer.removeListener(firstFrame);
+        if (identical(_entries[key], entry)) {
+          _evict(key, notify: true);
+        }
+      },
+    );
+    completer.addListener(firstFrame);
+  }
+
+  void _syncGlobalImageCacheBudget() {
+    // The process-level cache authority may exist before Flutter bindings are
+    // initialized. Merely inspecting/clearing an empty presentation plane must
+    // therefore stay renderer-free. Once a raster has actually resolved, the
+    // backend is known and can share the remaining process presentation budget.
+    final imageCache = _existingImageCache;
+    if (imageCache == null) return;
+    final remainingBytes = math.max(0, maximumBytes - _bytes);
+    final remainingEntries = math.max(0, maximumEntries - _entries.length);
+    if (imageCache.maximumSizeBytes != remainingBytes) {
+      imageCache.maximumSizeBytes = remainingBytes;
+    }
+    if (imageCache.maximumSize != remainingEntries) {
+      imageCache.maximumSize = remainingEntries;
+    }
+  }
+
+  void _trimToBudget() {
+    while ((_bytes > maximumBytes || _entries.length > maximumEntries) &&
+        _entries.isNotEmpty) {
+      PresentationRasterCacheKey? victim;
+      for (final entry in _entries.entries) {
+        // The presentation authority owns liveness explicitly. Only
+        // speculative/unclaimed entries are reusable cache slack; deadline and
+        // protected entries remain pinned even if Flutter's unrelated global
+        // ImageCache has already dropped its own keepAlive key.
+        if (entry.value.claim == PipelinePresentationCacheClaim.speculative) {
+          victim = entry.key;
+          break;
+        }
+      }
+      if (victim == null) break;
+      _evict(victim, notify: true);
+    }
+  }
+
+  void _evict(PresentationRasterCacheKey key, {required bool notify}) {
+    final entry = _entries.remove(key);
+    if (entry == null) return;
+    if (_keysByIdentity[key.presentationIdentity] == key) {
+      _keysByIdentity.remove(key.presentationIdentity);
+    }
+    _claimsByIdentity.remove(key.presentationIdentity);
+    _bytes -= entry.sizeBytes;
+    entry.handle.dispose();
+    _imageCache.evict(entry.providerKey, includeLive: false);
+    _syncGlobalImageCacheBudget();
+    if (notify) {
+      final listeners = _listeners.toList(growable: false);
+      for (final listener in listeners) {
+        listener(key.presentationIdentity);
+      }
+    }
+  }
+
+  @override
+  PresentationRasterCacheUsage inspectPresentationRasters() =>
+      PresentationRasterCacheUsage(bytes: _bytes, entries: _entries.length);
+
+  @override
+  PresentationRasterCacheReport trimPresentationRasters() {
+    final beforeBytes = _bytes;
+    final beforeEntries = _entries.length;
+    _trimToBudget();
+    return PresentationRasterCacheReport(
+      beforeBytes: beforeBytes,
+      releasedBytes: beforeBytes - _bytes,
+      remainingBytes: _bytes,
+      evictedEntries: beforeEntries - _entries.length,
+    );
+  }
+
+  @override
+  PresentationRasterCacheReport clearPresentationRasters() {
+    final beforeBytes = _bytes;
+    final beforeEntries = _entries.length;
+    final identities = _entries.keys
+        .map((key) => key.presentationIdentity)
+        .toList(growable: false);
+    for (final entry in _entries.values) {
+      entry.handle.dispose();
+      _imageCache.evict(entry.providerKey, includeLive: false);
+    }
+    _entries.clear();
+    _keysByIdentity.clear();
+    _bytes = 0;
+    _syncGlobalImageCacheBudget();
+    final listeners = _listeners.toList(growable: false);
+    for (final identity in identities) {
+      for (final listener in listeners) {
+        listener(identity);
+      }
+    }
+    return PresentationRasterCacheReport(
+      beforeBytes: beforeBytes,
+      releasedBytes: beforeBytes,
+      remainingBytes: 0,
+      evictedEntries: beforeEntries,
+    );
+  }
+}
+
+final class _PresentationRasterEntry {
+  _PresentationRasterEntry({
+    required this.key,
+    required this.providerKey,
+    required this.completer,
+    required this.handle,
+    required this.claim,
+  });
+
+  final PresentationRasterCacheKey key;
+  final Object providerKey;
+  final ImageStreamCompleter completer;
+  final ImageStreamCompleterHandle handle;
+  PipelinePresentationCacheClaim claim;
+  int sizeBytes = 0;
+}
+
+final class _ManagedPresentationImageProvider
+    extends ImageProvider<PresentationRasterCacheKey> {
+  const _ManagedPresentationImageProvider({
+    required this.owner,
+    required this.provider,
+    required this.presentationIdentity,
+  });
+
+  final PipelinePresentationRasterCache owner;
+  final ImageProvider<Object> provider;
+  final Object presentationIdentity;
+
+  @override
+  Future<PresentationRasterCacheKey> obtainKey(
+    ImageConfiguration configuration,
+  ) => provider
+      .obtainKey(configuration)
+      .then(
+        (providerKey) => PresentationRasterCacheKey(
+          presentationIdentity: presentationIdentity,
+          providerKey: providerKey,
+        ),
+      );
+
+  @override
+  void resolveStreamForKey(
+    ImageConfiguration configuration,
+    ImageStream stream,
+    PresentationRasterCacheKey key,
+    ImageErrorListener handleError,
+  ) {
+    owner._resolveStreamForKey(
+      configuration: configuration,
+      stream: stream,
+      key: key,
+      provider: provider,
+      handleError: handleError,
+    );
+  }
+}
+
+/// One process-wide cache authority shared by mounted Reader pages, detached
+/// Pipeline prewarm, settings maintenance and memory-pressure handling.
+final pipelinePresentationRasterCache = PipelinePresentationRasterCache();

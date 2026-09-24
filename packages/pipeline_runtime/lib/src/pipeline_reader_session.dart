@@ -21,10 +21,8 @@ import 'reader_pipeline_profile.dart';
 part 'pipeline_page_dimensions.dart';
 part 'pipeline_page_output.dart';
 
-typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
-  PageAsset asset,
-  MediaLoadToken token,
-);
+typedef PipelineArtifactBytesLoader =
+    Future<Uint8List> Function(PageAsset asset, MediaLoadToken token);
 
 /// Immutable encoded-body file/descriptor lease for presentation codecs that
 /// can consume a path directly. The lease is physical-generation scoped and
@@ -76,6 +74,7 @@ final class PipelineExternalPresentationWarmRequest {
 
   final PageAsset asset;
   final DecodeId identity;
+
   /// Opaque identity for this immutable external-presentation generation.
   ///
   /// Presentation adapters must use it independently from whether the bytes
@@ -84,16 +83,43 @@ final class PipelineExternalPresentationWarmRequest {
   final MediaLoadToken token;
   final Future<PipelineEncodedPresentationFileLease?> Function(
     MediaLoadToken token,
-  ) openEncodedPresentationFile;
+  )
+  openEncodedPresentationFile;
   final Future<Uint8List> Function(MediaLoadToken token) loadBytes;
   final int maxPhysicalWidth;
   final int maxPhysicalHeight;
   final PipelineExternalPresentationFit fit;
 }
 
-typedef PipelineExternalPresentationPrewarmer = Future<void> Function(
-  PipelineExternalPresentationWarmRequest request,
-);
+typedef PipelineExternalPresentationPrewarmer =
+    Future<void> Function(PipelineExternalPresentationWarmRequest request);
+
+typedef PipelinePresentationCacheInvalidationListener =
+    void Function(Object presentationIdentity);
+
+enum PipelinePresentationCacheClaim { speculative, deadline, protected }
+
+/// Composition-owned residency authority for volatile Reader presentation
+/// rasters. Pipeline owns demand/generation state; this cache authority owns
+/// reusable raster lifetime and emits exact invalidation when residency ends.
+abstract interface class PipelinePresentationCacheAuthority {
+  void addInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  );
+
+  void removeInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  );
+
+  void updatePresentationClaim(
+    Object presentationIdentity,
+    PipelinePresentationCacheClaim claim,
+  );
+
+  void releasePresentationClaim(Object presentationIdentity);
+
+  void invalidatePresentationIdentity(Object presentationIdentity);
+}
 
 final class _PresentationArtifactAuthority {
   const _PresentationArtifactAuthority({
@@ -147,11 +173,7 @@ Map<String, int> _indexChapterPages(ChapterManifest chapter) {
   return Map<String, int>.unmodifiable(result);
 }
 
-
-bool _sameRetainedReaderChapter(
-  ChapterManifest left,
-  ChapterManifest right,
-) {
+bool _sameRetainedReaderChapter(ChapterManifest left, ChapterManifest right) {
   if (left.sourceId != right.sourceId ||
       left.comicId != right.comicId ||
       left.chapter.chapterId != right.chapter.chapterId ||
@@ -213,8 +235,7 @@ final class _PipelineReaderSessionRetentionPool {
       if (!session.isDisposed && canReuse(session)) {
         _leased[session] = key;
         session.resumeRetainedReaderSession(
-          retainedMicros:
-              session.clock.nowMicros() - retained.retainedAtMicros,
+          retainedMicros: session.clock.nowMicros() - retained.retainedAtMicros,
         );
         return session;
       }
@@ -282,7 +303,6 @@ final class _PipelineReaderSessionRetentionPool {
   }
 }
 
-
 final class PipelineReaderSessionFactory {
   PipelineReaderSessionFactory({
     required this.mediaRuntimeFactory,
@@ -296,18 +316,18 @@ final class PipelineReaderSessionFactory {
     this.bytesLoader,
     this.userAgentProvider,
     this.externalPresentationPrewarmer,
+    this.presentationCacheAuthority,
     _PipelineReaderSessionRetentionPool? retentionPool,
     CompositionDownloadTransferRuntimePool? transferRuntimePool,
     this.transferRuntime,
-  })  : _retentionPool =
-            retentionPool ?? _PipelineReaderSessionRetentionPool(),
-        _transferRuntimePool = transferRuntimePool ??
-            CompositionDownloadTransferRuntimePool(),
-        artifactReadScheduler =
-            artifactReadScheduler ?? ArtifactCacheReadScheduler(),
-        speculativeEncodedReadBudget =
-            speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
-        decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
+  }) : _retentionPool = retentionPool ?? _PipelineReaderSessionRetentionPool(),
+       _transferRuntimePool =
+           transferRuntimePool ?? CompositionDownloadTransferRuntimePool(),
+       artifactReadScheduler =
+           artifactReadScheduler ?? ArtifactCacheReadScheduler(),
+       speculativeEncodedReadBudget =
+           speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
+       decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheManager? artifactCacheManager;
@@ -323,137 +343,137 @@ final class PipelineReaderSessionFactory {
   final PipelineArtifactBytesLoader? bytesLoader;
   final String Function()? userAgentProvider;
   final PipelineExternalPresentationPrewarmer? externalPresentationPrewarmer;
+  final PipelinePresentationCacheAuthority? presentationCacheAuthority;
 
   /// Returns a factory that keeps composition-owned cache/byte loaders while
   /// adding page-local transport sources.
   PipelineReaderSessionFactory withLoaderSources(
     Map<Uri, LoaderTransportSource> sources,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: <Uri, LoaderTransportSource>{
-          ...loaderSources,
-          ...sources,
-        },
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: artifactCacheManager,
+    partialDownloadStore: partialDownloadStore,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
+    pageDownloadLane: pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: <Uri, LoaderTransportSource>{...loaderSources, ...sources},
+    bytesLoader: bytesLoader,
+    userAgentProvider: userAgentProvider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: transferRuntime,
+  );
 
   PipelineReaderSessionFactory withArtifactCacheManager(
     ArtifactCacheManager? manager,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: manager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: manager,
+    partialDownloadStore: partialDownloadStore,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
+    pageDownloadLane: pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: loaderSources,
+    bytesLoader: bytesLoader,
+    userAgentProvider: userAgentProvider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: transferRuntime,
+  );
 
   PipelineReaderSessionFactory withPartialDownloadStore(
     PartialDownloadStore? store,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: store,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: artifactCacheManager,
+    partialDownloadStore: store,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
+    pageDownloadLane: pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: loaderSources,
+    bytesLoader: bytesLoader,
+    userAgentProvider: userAgentProvider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: transferRuntime,
+  );
 
   PipelineReaderSessionFactory withUserAgentProvider(
     String Function()? provider,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: provider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: artifactCacheManager,
+    partialDownloadStore: partialDownloadStore,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
+    pageDownloadLane: pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: loaderSources,
+    bytesLoader: bytesLoader,
+    userAgentProvider: provider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: transferRuntime,
+  );
 
   PipelineReaderSessionFactory withBytesLoader(
     PipelineArtifactBytesLoader? loader,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: loader,
-        userAgentProvider: userAgentProvider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: artifactCacheManager,
+    partialDownloadStore: partialDownloadStore,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
+    pageDownloadLane: pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: loaderSources,
+    bytesLoader: loader,
+    userAgentProvider: userAgentProvider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: transferRuntime,
+  );
 
   /// Returns a factory whose Reader consumers attach to the supplied
   /// composition-level physical transfer runtime. The runtime is owned by the
   /// application composition, not by any Reader session.
   PipelineReaderSessionFactory withTransferRuntime(
     CompositionDownloadTransferRuntime? runtime,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager:
-            runtime == null ? artifactCacheManager : runtime.artifactCacheManager,
-        partialDownloadStore:
-            runtime == null ? partialDownloadStore : runtime.partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        speculativeEncodedReadBudget:
-            runtime?.speculativeEncodedReadBudget ?? speculativeEncodedReadBudget,
-        pageDownloadLane: runtime?.net ?? pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        externalPresentationPrewarmer: externalPresentationPrewarmer,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: runtime,
-      );
+  ) => PipelineReaderSessionFactory(
+    mediaRuntimeFactory: mediaRuntimeFactory,
+    artifactCacheManager: runtime == null
+        ? artifactCacheManager
+        : runtime.artifactCacheManager,
+    partialDownloadStore: runtime == null
+        ? partialDownloadStore
+        : runtime.partialDownloadStore,
+    artifactReadScheduler: artifactReadScheduler,
+    speculativeEncodedReadBudget:
+        runtime?.speculativeEncodedReadBudget ?? speculativeEncodedReadBudget,
+    pageDownloadLane: runtime?.net ?? pageDownloadLane,
+    decodePrefixHints: decodePrefixHints,
+    loaderSources: loaderSources,
+    bytesLoader: bytesLoader,
+    userAgentProvider: userAgentProvider,
+    externalPresentationPrewarmer: externalPresentationPrewarmer,
+    presentationCacheAuthority: presentationCacheAuthority,
+    retentionPool: _retentionPool,
+    transferRuntimePool: _transferRuntimePool,
+    transferRuntime: runtime,
+  );
 
   PipelineReaderSession create({
     required ChapterManifest chapter,
@@ -481,7 +501,8 @@ final class PipelineReaderSessionFactory {
         );
       }
     }
-    final transferRuntime = externalTransferRuntime ??
+    final transferRuntime =
+        externalTransferRuntime ??
         _transferRuntimePool.get(
           artifactCacheManager: artifactCacheManager,
           partialDownloadStore: partialDownloadStore,
@@ -502,6 +523,7 @@ final class PipelineReaderSessionFactory {
       bytesLoader: bytesLoader,
       userAgentProvider: userAgentProvider,
       externalPresentationPrewarmer: externalPresentationPrewarmer,
+      presentationCacheAuthority: presentationCacheAuthority,
       traceSink: traceSink,
       transferRuntime: transferRuntime,
     );
@@ -511,17 +533,12 @@ final class PipelineReaderSessionFactory {
     required ChapterManifest chapter,
     required String sessionId,
     TraceSink? traceSink,
-  }) =>
-      _retentionPool.acquire(
-        key: _retentionKey(chapter, traceSink),
-        canReuse: (session) =>
-            _sameRetainedReaderChapter(session.chapter, chapter),
-        create: () => create(
-          chapter: chapter,
-          sessionId: sessionId,
-          traceSink: traceSink,
-        ),
-      );
+  }) => _retentionPool.acquire(
+    key: _retentionKey(chapter, traceSink),
+    canReuse: (session) => _sameRetainedReaderChapter(session.chapter, chapter),
+    create: () =>
+        create(chapter: chapter, sessionId: sessionId, traceSink: traceSink),
+  );
 
   void release(PipelineReaderSession session) {
     _retentionPool.release(session);
@@ -546,8 +563,7 @@ final class PipelineReaderSessionFactory {
   String _retentionKey(ChapterManifest chapter, TraceSink? traceSink) {
     final orderedSources = loaderSources.entries.toList(growable: false)
       ..sort(
-        (left, right) =>
-            left.key.toString().compareTo(right.key.toString()),
+        (left, right) => left.key.toString().compareTo(right.key.toString()),
       );
     final loaderFingerprint = Object.hashAll(
       orderedSources.map(
@@ -569,6 +585,7 @@ final class PipelineReaderSessionFactory {
       identityHashCode(decodePrefixHints),
       identityHashCode(bytesLoader),
       identityHashCode(externalPresentationPrewarmer),
+      identityHashCode(presentationCacheAuthority),
       identityHashCode(traceSink),
       identityHashCode(transferRuntime),
       loaderFingerprint,
@@ -600,25 +617,25 @@ final class PipelineReaderSession {
     PipelineArtifactBytesLoader? bytesLoader,
     String Function()? userAgentProvider,
     PipelineExternalPresentationPrewarmer? externalPresentationPrewarmer,
+    PipelinePresentationCacheAuthority? presentationCacheAuthority,
     TraceSink? traceSink,
     required CompositionDownloadTransferRuntime transferRuntime,
-  })  : artifactReadScheduler = artifactReadScheduler,
-        _artifactCacheManager = artifactCacheManager,
-        _transferRuntime = transferRuntime,
-        _sharedTraceSink = traceSink,
-        _bytesLoader = bytesLoader,
-        _externalPresentationPrewarmer = externalPresentationPrewarmer,
-        clock = SystemClock(),
-        _profile = readerPipelineProfileFor(
-          chapter,
-          ),
-        _assetTransport = AssetBundleTransport.root(),
-        _ioTransport = IoTransport(
-          http: HttpTransport(userAgentProvider: userAgentProvider),
-        ),
-        _loaderTransport = LoaderTransport(loaderSources),
-        _pageDimensions = _PipelinePageDimensionsPublisher(),
-        _pageIndexByPageId = _indexChapterPages(chapter) {
+  }) : artifactReadScheduler = artifactReadScheduler,
+       _artifactCacheManager = artifactCacheManager,
+       _transferRuntime = transferRuntime,
+       _sharedTraceSink = traceSink,
+       _bytesLoader = bytesLoader,
+       _externalPresentationPrewarmer = externalPresentationPrewarmer,
+       _presentationCacheAuthority = presentationCacheAuthority,
+       clock = SystemClock(),
+       _profile = readerPipelineProfileFor(chapter),
+       _assetTransport = AssetBundleTransport.root(),
+       _ioTransport = IoTransport(
+         http: HttpTransport(userAgentProvider: userAgentProvider),
+       ),
+       _loaderTransport = LoaderTransport(loaderSources),
+       _pageDimensions = _PipelinePageDimensionsPublisher(),
+       _pageIndexByPageId = _indexChapterPages(chapter) {
     trace = traceSink ?? const NoopTraceSink();
     _media = mediaRuntimeFactory.create(
       sessionId: sessionId,
@@ -663,21 +680,19 @@ final class PipelineReaderSession {
     _residentReplaySource = _transferRuntime.residentReplaySource(
       priorityFor: _artifactReadPriority,
     );
-    _residentReplaySourceWithControl =
-        _transferRuntime.residentReplaySourceWithControl(
-      priorityFor: _artifactReadPriority,
-    );
+    _residentReplaySourceWithControl = _transferRuntime
+        .residentReplaySourceWithControl(priorityFor: _artifactReadPriority);
     _residentReplayRangeSource = _transferRuntime.residentReplayRangeSource(
       priorityFor: _artifactReadPriority,
     );
-    _residentReplayRangeSourceWithControl =
-        _transferRuntime.residentReplayRangeSourceWithControl(
-      priorityFor: _artifactReadPriority,
-    );
-    _artifactReplayRangeSourceWithControl =
-        _transferRuntime.artifactReplayRangeSourceWithControl(
-      priorityFor: _artifactReadPriority,
-    );
+    _residentReplayRangeSourceWithControl = _transferRuntime
+        .residentReplayRangeSourceWithControl(
+          priorityFor: _artifactReadPriority,
+        );
+    _artifactReplayRangeSourceWithControl = _transferRuntime
+        .artifactReplayRangeSourceWithControl(
+          priorityFor: _artifactReadPriority,
+        );
     _ingresses = DownloadIngressProjectionRegistry(
       sources: _streamingSources,
       scopePrefix: 'reader:$sessionId',
@@ -769,6 +784,9 @@ final class PipelineReaderSession {
         preemptionThreshold: 40,
       ),
     );
+    _presentationCacheAuthority?.addInvalidationListener(
+      _handlePresentationCacheInvalidated,
+    );
     trace.record(
       traceEvent(
         clock: clock,
@@ -791,6 +809,7 @@ final class PipelineReaderSession {
   late final PipelineMediaRuntime _media;
   final PipelineArtifactBytesLoader? _bytesLoader;
   final PipelineExternalPresentationPrewarmer? _externalPresentationPrewarmer;
+  final PipelinePresentationCacheAuthority? _presentationCacheAuthority;
   final AssetBundleTransport _assetTransport;
   final IoTransport _ioTransport;
   final LoaderTransport _loaderTransport;
@@ -803,12 +822,12 @@ final class PipelineReaderSession {
   late final DownloadTransferConsumer _downloadTransfer;
   late final DownloadResidentReplaySource _residentReplaySource;
   late final DownloadResidentReplaySourceWithControl
-      _residentReplaySourceWithControl;
+  _residentReplaySourceWithControl;
   late final DownloadResidentReplayRangeSource _residentReplayRangeSource;
   late final DownloadResidentReplayRangeSourceWithControl
-      _residentReplayRangeSourceWithControl;
+  _residentReplayRangeSourceWithControl;
   late final DownloadArtifactReplayRangeSourceWithControl
-      _artifactReplayRangeSourceWithControl;
+  _artifactReplayRangeSourceWithControl;
   late final DecodeRegistry _decodes;
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;
@@ -822,13 +841,14 @@ final class PipelineReaderSession {
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
   final Map<DownloadId, _PresentationArtifactAuthority>
-      _artifactCachePresentationAuthorities =
+  _artifactCachePresentationAuthorities =
       <DownloadId, _PresentationArtifactAuthority>{};
   final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
   final Set<DecodeId> _externalPresentationRequests = <DecodeId>{};
   final Set<DecodeId> _externalPresentationReady = <DecodeId>{};
   final Set<DecodeId> _externalPresentationPrewarmFailures = <DecodeId>{};
+  final Set<DecodeId> _externalPresentationEvictedWhileFar = <DecodeId>{};
   final Map<DecodeId, MediaLoadToken> _externalPresentationPrewarmTokens =
       <DecodeId, MediaLoadToken>{};
   final Map<DecodeId, Object> _externalPresentationCacheIdentities =
@@ -841,7 +861,7 @@ final class PipelineReaderSession {
   // retaining a Reader keeps it because the physical session may continue to
   // receive bytes while the route is temporarily detached.
   final Map<DownloadSession, DownloadSnapshotListener>
-      _outputPrewarmSnapshotListeners =
+  _outputPrewarmSnapshotListeners =
       <DownloadSession, DownloadSnapshotListener>{};
   // Platform texture leases are dimension-specific. Keep the exact raster
   // size requested for each decode identity so a viewport-sized prewarm is
@@ -889,8 +909,14 @@ final class PipelineReaderSession {
     if (_externalPresentationFit != externalPresentationFit) {
       // A retained Reader may reuse the same DecodeId dimensions while its
       // presentation mode changes (for example contain -> stitched fitWidth).
-      // Existing Flutter ImageCache keys are fit-specific, so only that real
-      // presentation-generation change retires retained cache identities.
+      // Presentation-fit changes are a real raster-generation boundary.
+      // Retire the managed raster generation itself before forgetting the
+      // Pipeline identity map so cache and scheduling state cannot diverge.
+      for (final identity in _externalPresentationCacheIdentities.values.toList(
+        growable: false,
+      )) {
+        _presentationCacheAuthority?.invalidatePresentationIdentity(identity);
+      }
       _externalPresentationCacheIdentities.clear();
     }
     _externalPresentationFit = externalPresentationFit;
@@ -965,7 +991,7 @@ final class PipelineReaderSession {
         continue;
       }
       _externalPresentationPrewarmTokens.remove(identity)?.cancel();
-      _externalPresentationCacheIdentities[identity] = Object();
+      _rotateExternalPresentationCacheIdentityFor(identity);
       _externalPresentationRequests.remove(identity);
       _externalPresentationReady.remove(identity);
       _externalPresentationPrewarmFailures.remove(identity);
@@ -1099,7 +1125,9 @@ final class PipelineReaderSession {
     // updates do not rerun Pipeline policy while preserving the exact role
     // boundary that can change demand.
     if (observation.direction == ReadingDirection.vertical) return 1;
-    return target.fraction >= _profile.windowResolver.transitionThreshold ? 2 : 1;
+    return target.fraction >= _profile.windowResolver.transitionThreshold
+        ? 2
+        : 1;
   }
 
   int _playbackPhaseBucket(ReaderObs observation) {
@@ -1141,9 +1169,7 @@ final class PipelineReaderSession {
       Interaction.idle => 2,
       Interaction.scrubbing => 3,
       Interaction.jumping => 4,
-      Interaction.dragging ||
-      Interaction.scrolling ||
-      Interaction.settling =>
+      Interaction.dragging || Interaction.scrolling || Interaction.settling =>
         throw StateError('presentation-motion interaction escaped grouping'),
     };
   }
@@ -1238,12 +1264,10 @@ final class PipelineReaderSession {
     // Once a frame has already decoded, its aligned raster is an exact output
     // size fallback; omitting it leaves a narrow race where the first upload
     // creates a SurfaceProducer before the detached prewarm can start.
-    final sourceWidth = asset.width ??
-        download?.sourceCanvasWidth ??
-        decoded?.decodedWidth;
-    final sourceHeight = asset.height ??
-        download?.sourceCanvasHeight ??
-        decoded?.decodedHeight;
+    final sourceWidth =
+        asset.width ?? download?.sourceCanvasWidth ?? decoded?.decodedWidth;
+    final sourceHeight =
+        asset.height ?? download?.sourceCanvasHeight ?? decoded?.decodedHeight;
     if (sourceWidth == null ||
         sourceHeight == null ||
         sourceWidth <= 0 ||
@@ -1304,7 +1328,8 @@ final class PipelineReaderSession {
 
     final role = _pagedOutputPrewarmRole(id);
     final output = _pageOutputs[id.download.key];
-    final detached = output == null ||
+    final detached =
+        output == null ||
         output._listeners.isEmpty ||
         !output.snapshot.hasSurface;
 
@@ -1474,6 +1499,9 @@ final class PipelineReaderSession {
     _externalPresentationReady.clear();
     _externalPresentationPrewarmFailures.clear();
     _externalPresentationVisibleFrames.clear();
+    for (final identity in _externalPresentationCacheIdentities.values) {
+      _presentationCacheAuthority?.releasePresentationClaim(identity);
+    }
     final binding = _binding;
     final readerSessionId = _readerSessionId;
     _binding = null;
@@ -1563,10 +1591,7 @@ final class PipelineReaderSession {
   PipelinePageOutputStream pageOutput(PageAsset asset) {
     _requireOpen();
     final id = readerPageDownloadId(chapter, asset);
-    final output = _pageOutputs.putIfAbsent(
-      id.key,
-      () => _newPageOutput(id),
-    );
+    final output = _pageOutputs.putIfAbsent(id.key, () => _newPageOutput(id));
     final outputIdentity = _activePagedOutputIdentity(id);
     output._bind(
       outputIdentity,
@@ -1585,7 +1610,8 @@ final class PipelineReaderSession {
           _coordinator.externalPresentationPendingFor(outputIdentity),
     );
     output._setExternalPresentationReady(
-      outputIdentity != null && _externalPresentationReadyForOutput(outputIdentity),
+      outputIdentity != null &&
+          _externalPresentationReadyForOutput(outputIdentity),
     );
     return output;
   }
@@ -1611,7 +1637,8 @@ final class PipelineReaderSession {
       _syncTransferProgressPresentationSatisfaction(download);
       _transferRuntime.notifyPresentationSatisfied(download);
     }
-    final pending = _externalPresentationRequests.contains(identity) &&
+    final pending =
+        _externalPresentationRequests.contains(identity) &&
         _coordinator.externalPresentationPendingFor(identity);
     if (pending) {
       _externalPresentationRequests.remove(identity);
@@ -1683,10 +1710,7 @@ final class PipelineReaderSession {
     return decodeRole == PageRole.next ? PageRole.next : null;
   }
 
-  void _maybePrewarmPagedOutput(
-    DecodeId id, {
-    ReaderObs? observation,
-  }) {
+  void _maybePrewarmPagedOutput(DecodeId id, {ReaderObs? observation}) {
     final acceptedObservation = observation ?? _lastAcceptedControlObservation;
     if (acceptedObservation == null ||
         acceptedObservation.direction == ReadingDirection.vertical ||
@@ -1764,7 +1788,8 @@ final class PipelineReaderSession {
       return;
     }
     final created = existing == null;
-    final shouldTrace = existing == null ||
+    final shouldTrace =
+        existing == null ||
         existing._identity != id ||
         !existing._detachedPrewarmEnabled;
     final output = _pageOutputs.putIfAbsent(
@@ -1897,10 +1922,7 @@ final class PipelineReaderSession {
               id,
               control: control,
             )
-          : await cache.openPresentationFile(
-              id,
-              control: control,
-            );
+          : await cache.openPresentationFile(id, control: control);
       if (token.isCancelled) {
         await read?.release();
         token.throwIfCancelled();
@@ -1918,10 +1940,11 @@ final class PipelineReaderSession {
         );
         return null;
       }
-      _artifactCachePresentationAuthorities[id] = _PresentationArtifactAuthority(
-        storageId: read.storageId,
-        generation: read.generation,
-      );
+      _artifactCachePresentationAuthorities[id] =
+          _PresentationArtifactAuthority(
+            storageId: read.storageId,
+            generation: read.generation,
+          );
       _publishPageSourceDimensions(
         id: id,
         asset: asset,
@@ -1973,10 +1996,7 @@ final class PipelineReaderSession {
     }
   }
 
-  Future<Uint8List> loadBytes(
-    PageAsset asset,
-    MediaLoadToken token,
-  ) async {
+  Future<Uint8List> loadBytes(PageAsset asset, MediaLoadToken token) async {
     final override = _bytesLoader;
     final id = readerPageDownloadId(chapter, asset);
     if (override != null) {
@@ -1995,9 +2015,9 @@ final class PipelineReaderSession {
       if (retained != null) {
         _artifactCachePresentationAuthorities[id] =
             _PresentationArtifactAuthority(
-          storageId: retained.storageId,
-          generation: retained.generation,
-        );
+              storageId: retained.storageId,
+              generation: retained.generation,
+            );
         _recordPresentationCacheRead(
           asset: asset,
           id: id,
@@ -2015,10 +2035,11 @@ final class PipelineReaderSession {
     final hotRead = cache?.lookupMemoryWithAuthority(id);
     if (hotRead != null) {
       final hotBytes = hotRead.bytes;
-      _artifactCachePresentationAuthorities[id] = _PresentationArtifactAuthority(
-        storageId: hotRead.storageId,
-        generation: hotRead.generation,
-      );
+      _artifactCachePresentationAuthorities[id] =
+          _PresentationArtifactAuthority(
+            storageId: hotRead.storageId,
+            generation: hotRead.generation,
+          );
       _recordPresentationCacheRead(
         asset: asset,
         id: id,
@@ -2048,22 +2069,20 @@ final class PipelineReaderSession {
         if (cached != null) {
           _artifactCachePresentationAuthorities[id] =
               _PresentationArtifactAuthority(
-            storageId: cached.storageId,
-            generation: cached.generation,
-          );
+                storageId: cached.storageId,
+                generation: cached.generation,
+              );
           final readMicros = clock.nowMicros() - readStarted;
           _recordPresentationCacheRead(
             asset: asset,
             id: id,
             bytes: cached.bytes,
-            source: cached.memoryHit
-                ? 'artifact-byte-cache'
-                : 'artifact-cache',
+            source: cached.memoryHit ? 'artifact-byte-cache' : 'artifact-cache',
             readMode: cached.memoryHit
                 ? 'memory-hit'
                 : cached.joined
-                    ? 'joined-read-all'
-                    : 'read-all',
+                ? 'joined-read-all'
+                : 'read-all',
             readMicros: readMicros,
             memoryHit: cached.memoryHit,
             joined: cached.joined,
@@ -2111,8 +2130,7 @@ final class PipelineReaderSession {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
-    if (session.residentBodyBacked &&
-        _isDirectImmutableLocalUri(asset.uri)) {
+    if (session.residentBodyBacked && _isDirectImmutableLocalUri(asset.uri)) {
       _artifactCachePresentationAuthorities.remove(id);
       return _readDirectImmutableSource(asset, id, session, token);
     }
@@ -2155,14 +2173,15 @@ final class PipelineReaderSession {
       readMode: cacheRead == null
           ? 'session-read-all'
           : cacheRead.memoryHit
-              ? 'memory-hit'
-              : cacheRead.joined
-                  ? 'joined-session-read-all'
-                  : 'session-read-all',
+          ? 'memory-hit'
+          : cacheRead.joined
+          ? 'joined-session-read-all'
+          : 'session-read-all',
       readMicros: artifactReadMicros,
       memoryHit: cacheRead?.memoryHit ?? false,
       joined: cacheRead?.joined ?? false,
-      integrityBasis: cacheRead?.integrityBasis.name ??
+      integrityBasis:
+          cacheRead?.integrityBasis.name ??
           ArtifactReadIntegrityBasis.sessionArtifact.name,
     );
     return bytes;
@@ -2197,7 +2216,8 @@ final class PipelineReaderSession {
       if (received > expectedLength) {
         throw Failure(
           code: ErrorCode.artifactCorruption,
-          message: 'resident presentation replay exceeded '
+          message:
+              'resident presentation replay exceeded '
               '$expectedLength for ${id.key}',
         );
       }
@@ -2208,7 +2228,8 @@ final class PipelineReaderSession {
     if (bytes.lengthInBytes != expectedLength) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'resident presentation replay was short: '
+        message:
+            'resident presentation replay was short: '
             '${bytes.lengthInBytes}/$expectedLength for ${id.key}',
       );
     }
@@ -2337,7 +2358,8 @@ final class PipelineReaderSession {
     if (expected != null && bytes.lengthInBytes != expected) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'direct immutable image source length changed: '
+        message:
+            'direct immutable image source length changed: '
             '${bytes.lengthInBytes}/$expected',
       );
     }
@@ -2349,11 +2371,7 @@ final class PipelineReaderSession {
     // tier after that invalidation, and a cancelled presentation must not
     // retain bytes after its consumer has withdrawn.
     control.throwIfCancelled();
-    cache?.remember(
-      id: id,
-      bytes: bytes,
-      generation: cacheGeneration,
-    );
+    cache?.remember(id: id, bytes: bytes, generation: cacheGeneration);
     final presentationBytes = cache?.lookupMemory(id) ?? bytes;
     _recordPresentationCacheRead(
       asset: asset,
@@ -2422,9 +2440,9 @@ final class PipelineReaderSession {
   ) async {
     control.throwIfCancelled();
     final result = await Future.any<Object>(<Future<Object>>[
-      _moveNextDirectImmutableSourceWithWatchdog(iterator).then<Object>(
-            _DirectNextChunk.new,
-          ),
+      _moveNextDirectImmutableSourceWithWatchdog(
+        iterator,
+      ).then<Object>(_DirectNextChunk.new),
       control.whenCancelled.then<Object>((_) => const _DirectCancelled()),
     ]);
     if (result is _DirectCancelled) {
@@ -2442,26 +2460,31 @@ final class PipelineReaderSession {
     final watchdog = Completer<Never>();
     final timer = Timer(timeout, () {
       if (!watchdog.isCompleted) {
-        watchdog.completeError(const Failure(
-          code: ErrorCode.network,
-          message:
-              'direct immutable source body read stalled: no bytes within the read stall window',
-        ));
+        watchdog.completeError(
+          const Failure(
+            code: ErrorCode.network,
+            message:
+                'direct immutable source body read stalled: no bytes within the read stall window',
+          ),
+        );
       }
     });
     return Future.any<bool>(<Future<bool>>[
       Future<bool>.sync(iterator.moveNext),
       watchdog.future,
-    ]).then<bool>((available) {
-      timer.cancel();
-      return available;
-    }, onError: (Object error, StackTrace stackTrace) async {
-      timer.cancel();
-      if (watchdog.isCompleted) {
-        await iterator.cancel();
-      }
-      throw Error.throwWithStackTrace(error, stackTrace);
-    });
+    ]).then<bool>(
+      (available) {
+        timer.cancel();
+        return available;
+      },
+      onError: (Object error, StackTrace stackTrace) async {
+        timer.cancel();
+        if (watchdog.isCompleted) {
+          await iterator.cancel();
+        }
+        throw Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
   }
 
   bool _isDirectImmutableLocalUri(Uri uri) {
@@ -2560,8 +2583,8 @@ final class PipelineReaderSession {
         revision: revision,
         payload: <String, Object?>{
           'source': source,
-          'sourceClass': source == 'session-artifact' ||
-                  source == 'direct-source'
+          'sourceClass':
+              source == 'session-artifact' || source == 'direct-source'
               ? _readerSourceClass(asset.uri)
               : 'persistent-artifact',
           'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,
@@ -2622,6 +2645,7 @@ final class PipelineReaderSession {
           break;
       }
     }
+
     acceptSnapshot(session.snapshot);
     if (ready.isCompleted) return ready.future;
     session.addSnapshotListener(acceptSnapshot, fireImmediately: false);
@@ -2683,7 +2707,8 @@ final class PipelineReaderSession {
     }
     if (_media.renderer != RendererKind.androidTexture) return;
     final observation = _lastAcceptedControlObservation;
-    if (observation == null || observation.direction == ReadingDirection.vertical) {
+    if (observation == null ||
+        observation.direction == ReadingDirection.vertical) {
       return;
     }
     final id = _activeDecodeIdentity(snapshot.id);
@@ -2730,7 +2755,7 @@ final class PipelineReaderSession {
           final asset = chapter.pages[pageIndex];
           final localPresentationReady =
               _isDirectImmutableLocalUri(asset.uri) ||
-                  download.residentBodyBacked;
+              download.residentBodyBacked;
           staticClassificationChanged = binding.classifyPage(
             pageIndex: pageIndex,
             animated: false,
@@ -2789,16 +2814,15 @@ final class PipelineReaderSession {
   }
 
   bool _isStaticFallbackImageKind(EncodedImageKind? kind) => switch (kind) {
-        EncodedImageKind.jpeg ||
-        EncodedImageKind.png ||
-        EncodedImageKind.bmp ||
-        EncodedImageKind.tiff ||
-        EncodedImageKind.ico ||
-        EncodedImageKind.avif ||
-        EncodedImageKind.heif =>
-          true,
-        EncodedImageKind.webp || EncodedImageKind.gif || null => false,
-      };
+    EncodedImageKind.jpeg ||
+    EncodedImageKind.png ||
+    EncodedImageKind.bmp ||
+    EncodedImageKind.tiff ||
+    EncodedImageKind.ico ||
+    EncodedImageKind.avif ||
+    EncodedImageKind.heif => true,
+    EncodedImageKind.webp || EncodedImageKind.gif || null => false,
+  };
 
   bool _hasMountedExternalPresentationConsumer(DecodeId id) {
     final output = _pageOutputs[id.download.key];
@@ -2812,6 +2836,13 @@ final class PipelineReaderSession {
         _externalPresentationPrewarmFailures.contains(id)) {
       return false;
     }
+    if (_externalPresentationEvictedWhileFar.contains(id)) {
+      final role = _coordinator.decodeDemands[id]?.role;
+      if (role == null || role == PageRole.far) {
+        return false;
+      }
+      _externalPresentationEvictedWhileFar.remove(id);
+    }
     final pageIndex = _pageIndexByPageId[id.download.content.pageId];
     final binding = _binding;
     return pageIndex != null &&
@@ -2823,19 +2854,153 @@ final class PipelineReaderSession {
       _hasMountedExternalPresentationConsumer(id) ||
       _canDetachedExternalPresentationPrewarm(id);
 
-  Object _externalPresentationCacheIdentityFor(DecodeId id) =>
-      _externalPresentationCacheIdentities.putIfAbsent(id, () => Object());
+  Object _externalPresentationCacheIdentityFor(DecodeId id) {
+    final existing = _externalPresentationCacheIdentities[id];
+    if (existing != null) return existing;
+    final identity = Object();
+    _externalPresentationCacheIdentities[id] = identity;
+    _syncExternalPresentationCacheClaimFor(id, identity);
+    return identity;
+  }
+
+  PipelinePresentationCacheClaim? _externalPresentationCacheClaimFor(
+    DecodeId id,
+  ) {
+    final demand = _coordinator.decodeDemands[id];
+    if (demand == null) return null;
+    final upload = _coordinator.uploadDemands[id];
+    if (upload?.viewportVisible == true ||
+        demand.role == PageRole.current ||
+        demand.role == PageRole.transition) {
+      return PipelinePresentationCacheClaim.protected;
+    }
+    return switch (demand.role) {
+      PageRole.next ||
+      PageRole.next2 ||
+      PageRole.previous ||
+      PageRole.near ||
+      PageRole.last => PipelinePresentationCacheClaim.deadline,
+      PageRole.far ||
+      PageRole.detached => PipelinePresentationCacheClaim.speculative,
+      PageRole.current ||
+      PageRole.transition => PipelinePresentationCacheClaim.protected,
+    };
+  }
+
+  void _syncExternalPresentationCacheClaimFor(
+    DecodeId id,
+    Object presentationIdentity,
+  ) {
+    final authority = _presentationCacheAuthority;
+    if (authority == null) return;
+    final claim = _externalPresentationCacheClaimFor(id);
+    if (claim == null) {
+      authority.releasePresentationClaim(presentationIdentity);
+      return;
+    }
+    authority.updatePresentationClaim(presentationIdentity, claim);
+  }
+
+  void _syncExternalPresentationCacheClaims() {
+    for (final entry in _externalPresentationCacheIdentities.entries) {
+      _syncExternalPresentationCacheClaimFor(entry.key, entry.value);
+    }
+  }
+
+  void _rotateExternalPresentationCacheIdentityFor(DecodeId id) {
+    final previous = _externalPresentationCacheIdentities[id];
+    if (previous != null) {
+      _presentationCacheAuthority?.invalidatePresentationIdentity(previous);
+    }
+    if (previous == null ||
+        identical(_externalPresentationCacheIdentities[id], previous)) {
+      final next = Object();
+      _externalPresentationCacheIdentities[id] = next;
+      _syncExternalPresentationCacheClaimFor(id, next);
+    }
+  }
+
+  void _handlePresentationCacheInvalidated(Object presentationIdentity) {
+    if (_disposed) return;
+    DecodeId? invalidated;
+    for (final entry in _externalPresentationCacheIdentities.entries) {
+      if (identical(entry.value, presentationIdentity)) {
+        invalidated = entry.key;
+        break;
+      }
+    }
+    if (invalidated == null) return;
+    final currentIdentity = _externalPresentationCacheIdentities[invalidated];
+    if (!identical(currentIdentity, presentationIdentity)) return;
+
+    _externalPresentationPrewarmTokens.remove(invalidated)?.cancel();
+    _externalPresentationRequests.remove(invalidated);
+    _externalPresentationReady.remove(invalidated);
+    _externalPresentationPrewarmFailures.remove(invalidated);
+    _externalPresentationVisibleFrames.remove(invalidated);
+    // Residency loss is not a presentation-generation change. Keep the
+    // exact source/DecodeId/fit identity stable so a later staged warm can
+    // refill the same managed cache entry without manufacturing a new raster
+    // key. Only source/recovery/fit changes rotate the identity.
+
+    final demand = _coordinator.decodeDemands[invalidated];
+    final farEviction = demand?.role == PageRole.far;
+    if (farEviction) {
+      // Do not immediately warm the same far page again after the unified
+      // presentation-raster owner reclaimed it. That would turn the 3/7
+      // envelope into an endless eviction/redecode ring when its speculative
+      // decoded working set exceeds the presentation-memory budget. A later
+      // role promotion re-enables the original staged warm for the same
+      // immutable presentation generation.
+      _externalPresentationEvictedWhileFar.add(invalidated);
+    } else {
+      _externalPresentationEvictedWhileFar.remove(invalidated);
+    }
+    _coordinator.invalidateExternalPresentation(
+      sessionId,
+      invalidated,
+      wakeIdentity: !farEviction,
+    );
+
+    final output = _pageOutputs[invalidated.download.key];
+    if (output != null && output._identity == invalidated) {
+      output._setExternalPresentationCacheIdentity(
+        _externalPresentationCacheIdentityFor(invalidated),
+      );
+      output._setExternalPresentationRequested(false);
+      output._setExternalPresentationReady(false);
+    }
+    if (_lastControlCurrentDownload == invalidated.download) {
+      _syncTransferProgressPresentationSatisfaction(invalidated.download);
+    }
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.policyDecision,
+        identityHash: invalidated.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'stage': 'presentation-raster-cache-invalidated',
+          'role': demand?.role.name,
+          'farWarmSuppressed': farEviction,
+        },
+      ),
+    );
+  }
 
   void _rotateExternalPresentationCacheIdentity(DownloadId download) {
     final identities = <DecodeId>{
-      ..._externalPresentationCacheIdentities.keys
-          .where((identity) => identity.download == download),
-      ..._coordinator.decodeDemands.keys
-          .where((identity) => identity.download == download),
+      ..._externalPresentationCacheIdentities.keys.where(
+        (identity) => identity.download == download,
+      ),
+      ..._coordinator.decodeDemands.keys.where(
+        (identity) => identity.download == download,
+      ),
     };
     for (final identity in identities) {
       _externalPresentationPrewarmTokens.remove(identity)?.cancel();
-      _externalPresentationCacheIdentities[identity] = Object();
+      _rotateExternalPresentationCacheIdentityFor(identity);
       _externalPresentationReady.remove(identity);
       _externalPresentationPrewarmFailures.remove(identity);
       _externalPresentationVisibleFrames.remove(identity);
@@ -2890,7 +3055,8 @@ final class PipelineReaderSession {
         available: true,
       );
       final output = _pageOutputs[id.download.key];
-      final pending = _externalPresentationRequests.contains(id) &&
+      final pending =
+          _externalPresentationRequests.contains(id) &&
           _coordinator.externalPresentationPendingFor(id);
       final preferDetached = pending && _preferDetachedExternalPresentation(id);
       if (pending && !preferDetached && output?._listeners.isNotEmpty == true) {
@@ -2927,10 +3093,7 @@ final class PipelineReaderSession {
     );
   }
 
-  void _handleExternalPresentationRequested(
-    DecodeId id,
-    int demandRevision,
-  ) {
+  void _handleExternalPresentationRequested(DecodeId id, int demandRevision) {
     scheduleMicrotask(() {
       if (_disposed ||
           !_coordinator.externalPresentationPendingFor(id) ||
@@ -2942,8 +3105,9 @@ final class PipelineReaderSession {
       final detached = _canDetachedExternalPresentationPrewarm(id);
       final preferDetached = detached && !_externalPresentationIsForeground(id);
       final mountedOwnsRequest = mounted && !preferDetached;
-      _pageOutputs[id.download.key]
-          ?._setExternalPresentationRequested(mountedOwnsRequest);
+      _pageOutputs[id.download.key]?._setExternalPresentationRequested(
+        mountedOwnsRequest,
+      );
       trace.record(
         traceEvent(
           clock: clock,
@@ -2956,8 +3120,8 @@ final class PipelineReaderSession {
             'consumer': preferDetached || (!mounted && detached)
                 ? 'detached-image-cache'
                 : mountedOwnsRequest
-                    ? 'mounted-presentation'
-                    : 'none',
+                ? 'mounted-presentation'
+                : 'none',
           },
         ),
       );
@@ -2967,10 +3131,7 @@ final class PipelineReaderSession {
     });
   }
 
-  void _startExternalPresentationPrewarm(
-    DecodeId id,
-    int demandRevision,
-  ) {
+  void _startExternalPresentationPrewarm(DecodeId id, int demandRevision) {
     final prewarmer = _externalPresentationPrewarmer;
     final binding = _binding;
     if (prewarmer == null ||
@@ -3064,7 +3225,9 @@ final class PipelineReaderSession {
           );
         } else {
           _externalPresentationRequests.remove(id);
-          _pageOutputs[id.download.key]?._setExternalPresentationRequested(false);
+          _pageOutputs[id.download.key]?._setExternalPresentationRequested(
+            false,
+          );
           _coordinator.updateExternalPresentationAvailability(
             sessionId,
             id,
@@ -3285,7 +3448,8 @@ final class PipelineReaderSession {
       final localPresentationReady = !animated &&
           (_isDirectImmutableLocalUri(asset.uri) ||
               download?.residentBodyBacked == true);
-      final changed = _binding?.classifyPage(
+      final changed =
+          _binding?.classifyPage(
             pageIndex: pageIndex,
             animated: animated,
             localPresentationReady: localPresentationReady,
@@ -3400,12 +3564,13 @@ final class PipelineReaderSession {
     }
     final identity = _activeDecodeIdentity(currentDownload);
     final visibleExactIdentity =
-        identity != null && _externalPresentationVisibleFrames.contains(identity);
+        identity != null &&
+        _externalPresentationVisibleFrames.contains(identity);
     final retainedStalePresentation =
         _artifactCacheManager?.hasRetainedHistoricalPresentation(
-              currentDownload,
-            ) ??
-            false;
+          currentDownload,
+        ) ??
+        false;
     transferProgress.setPresentationSatisfied(
       visibleExactIdentity || retainedStalePresentation,
     );
@@ -3479,16 +3644,21 @@ final class PipelineReaderSession {
     _externalPresentationVisibleFrames.removeWhere(
       (id) => !_coordinator.decodeDemands.containsKey(id),
     );
+    // Demand-role changes update only cache residency strength. The cache
+    // authority owns whether a raster is reclaimable; Pipeline never polls the
+    // Flutter ImageCache to infer this fact.
+    _syncExternalPresentationCacheClaims();
     // Keep the Flutter presentation cache identity across ordinary demand
     // gaps. Decode/upload demand is only a scheduling window; it is not a
     // presentation-generation boundary. Retaining this tiny per-DecodeId key
-    // lets a later staged prewarm revalidate the same ImageCache entry instead
-    // of manufacturing a new provider key and decoding an unchanged page
-    // again. Source/presentation recovery and fit changes rotate the identity
+    // lets the managed presentation cache keep/refill the same exact entry
+    // instead of manufacturing a new provider generation. Source/presentation
+    // recovery and fit changes rotate the identity
     // explicitly at their real generation boundaries; session dispose owns
     // final map retirement.
-    for (final entry in
-        _externalPresentationPrewarmTokens.entries.toList(growable: false)) {
+    for (final entry in _externalPresentationPrewarmTokens.entries.toList(
+      growable: false,
+    )) {
       if (!_coordinator.decodeDemands.containsKey(entry.key) ||
           !_coordinator.externalPresentationPendingFor(entry.key)) {
         entry.value.cancel();
@@ -3510,10 +3680,12 @@ final class PipelineReaderSession {
             ? null
             : _externalPresentationCacheIdentityFor(outputIdentity),
       );
-      final externalPending = outputIdentity != null &&
+      final externalPending =
+          outputIdentity != null &&
           _externalPresentationRequests.contains(outputIdentity) &&
           _coordinator.externalPresentationPendingFor(outputIdentity);
-      final preferDetached = outputIdentity != null &&
+      final preferDetached =
+          outputIdentity != null &&
           externalPending &&
           _preferDetachedExternalPresentation(outputIdentity);
       if (outputIdentity != null &&
@@ -3526,7 +3698,8 @@ final class PipelineReaderSession {
         externalPending && output._listeners.isNotEmpty && !preferDetached,
       );
       output._setExternalPresentationReady(
-        outputIdentity != null && _externalPresentationReadyForOutput(outputIdentity),
+        outputIdentity != null &&
+            _externalPresentationReadyForOutput(outputIdentity),
       );
       if (outputIdentity != null && preferDetached) {
         _startExternalPresentationPrewarm(outputIdentity, revision);

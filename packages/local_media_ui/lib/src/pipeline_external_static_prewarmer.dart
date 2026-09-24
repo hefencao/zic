@@ -31,7 +31,10 @@ Future<void> prewarmPipelineExternalStaticPresentation(
     } else {
       final bytes = await request.loadBytes(request.token);
       request.token.throwIfCancelled();
-      final format = detectLocalImageFormat(bytes, fileLength: bytes.lengthInBytes);
+      final format = detectLocalImageFormat(
+        bytes,
+        fileLength: bytes.lengthInBytes,
+      );
       if (format == null || format.isWebp || format == LocalImageFormat.gif) {
         throw StateError(
           'external static prewarm received non-static encoded content',
@@ -68,6 +71,10 @@ Future<void> prewarmPipelineExternalStaticPresentation(
       maxPhysicalWidth: request.maxPhysicalWidth,
       maxPhysicalHeight: request.maxPhysicalHeight,
       fit: request.fit,
+    );
+    provider = pipelinePresentationRasterCache.providerFor(
+      provider: provider,
+      presentationIdentity: request.cacheIdentity,
     );
 
     await _resolveFirstStaticImageFrame(provider, request.token);

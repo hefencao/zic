@@ -10,6 +10,12 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
 void main() {
+  setUp(() {
+    pipelinePresentationRasterCache.clearPresentationRasters();
+  });
+  tearDown(() {
+    pipelinePresentationRasterCache.clearPresentationRasters();
+  });
   testWidgets(
     'static raster that already fits physical bounds keeps the prewarmed provider key',
     (tester) async {
@@ -46,7 +52,8 @@ void main() {
     },
   );
 
-  test('generation-stable file capability keeps one ImageProvider cache key',
+  test(
+    'generation-stable file capability keeps one ImageProvider cache key',
       () async {
     const cacheIdentity = ('external-static-test', 1);
     final first = encodedResourceImageProvider(
@@ -66,10 +73,12 @@ void main() {
     final firstKey = await first.obtainKey(ImageConfiguration.empty);
     final secondKey = await second.obtainKey(ImageConfiguration.empty);
     expect(firstKey, secondKey);
-  });
+    },
+  );
 
-  testWidgets('prewarmed file identity resolves synchronously for mounted image',
-      (tester) async {
+  testWidgets('prewarmed file identity resolves synchronously for mounted image', (
+    tester,
+  ) async {
     PaintingBinding.instance.imageCache
       ..clear()
       ..clearLiveImages();
@@ -119,8 +128,7 @@ void main() {
     );
     Future<PipelineEncodedPresentationFileLease?> open(
       MediaLoadToken _,
-    ) async =>
-        PipelineEncodedPresentationFileLease(
+    ) async => PipelineEncodedPresentationFileLease(
           path: file.path,
           length: bytes.length,
           cacheIdentity: cacheIdentity,
@@ -129,7 +137,8 @@ void main() {
           release: () async {},
         );
 
-    await tester.runAsync(() => prewarmPipelineExternalStaticPresentation(
+    await tester.runAsync(
+      () => prewarmPipelineExternalStaticPresentation(
           PipelineExternalPresentationWarmRequest(
             asset: asset,
             identity: identity,
@@ -141,7 +150,8 @@ void main() {
             maxPhysicalHeight: 100,
             fit: PipelineExternalPresentationFit.contain,
           ),
-        ));
+      ),
+    );
 
     final provider = encodedResourceImageProvider(
       FileEncodedResourceSource(
@@ -151,7 +161,11 @@ void main() {
         origin: EncodedResourceOrigin.durableCacheFile,
       ),
     );
-    final stream = provider.resolve(ImageConfiguration.empty);
+    final managed = pipelinePresentationRasterCache.providerFor(
+      provider: provider,
+      presentationIdentity: cacheIdentity,
+    );
+    final stream = managed.resolve(ImageConfiguration.empty);
     final frame = Completer<bool>();
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
@@ -169,9 +183,9 @@ void main() {
     expect(await frame.future, isTrue);
   });
 
-  testWidgets(
-      'memory prewarm remains synchronous after backing switches to file',
-      (tester) async {
+  testWidgets('memory prewarm remains synchronous after backing switches to file', (
+    tester,
+  ) async {
     PaintingBinding.instance.imageCache
       ..clear()
       ..clearLiveImages();
@@ -219,7 +233,8 @@ void main() {
       renderer: RendererKind.flutterImage,
     );
 
-    await tester.runAsync(() => prewarmPipelineExternalStaticPresentation(
+    await tester.runAsync(
+      () => prewarmPipelineExternalStaticPresentation(
           PipelineExternalPresentationWarmRequest(
             asset: asset,
             identity: identity,
@@ -231,7 +246,8 @@ void main() {
             maxPhysicalHeight: 100,
             fit: PipelineExternalPresentationFit.contain,
           ),
-        ));
+      ),
+    );
 
     final provider = encodedResourceImageProvider(
       FileEncodedResourceSource(
@@ -241,7 +257,11 @@ void main() {
         origin: EncodedResourceOrigin.durableCacheFile,
       ),
     );
-    final stream = provider.resolve(ImageConfiguration.empty);
+    final managed = pipelinePresentationRasterCache.providerFor(
+      provider: provider,
+      presentationIdentity: cacheIdentity,
+    );
+    final stream = managed.resolve(ImageConfiguration.empty);
     final frame = Completer<bool>();
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
@@ -311,7 +331,8 @@ void main() {
     );
     var releases = 0;
 
-    await tester.runAsync(() => prewarmPipelineExternalStaticPresentation(
+      await tester.runAsync(
+        () => prewarmPipelineExternalStaticPresentation(
           PipelineExternalPresentationWarmRequest(
             asset: asset,
             identity: identity,
@@ -331,7 +352,8 @@ void main() {
             maxPhysicalHeight: 2336,
             fit: PipelineExternalPresentationFit.fitWidth,
           ),
-        ));
+        ),
+      );
 
     final provider = encodedResourceImageProvider(
       FileEncodedResourceSource(
@@ -353,6 +375,7 @@ void main() {
               image: provider,
               dimensions: const Size(1080, 3600),
               fit: BoxFit.fitWidth,
+                presentationIdentity: cacheIdentity,
             ),
           ),
         ),
@@ -360,13 +383,17 @@ void main() {
     );
 
     final image = tester.widget<Image>(find.byType(Image));
+      final managed = pipelinePresentationRasterCache.providerFor(
+        provider: provider,
+        presentationIdentity: cacheIdentity,
+      );
     expect(
-      identical(image.image, provider),
-      isTrue,
+        await image.image.obtainKey(ImageConfiguration.empty),
+        await managed.obtainKey(ImageConfiguration.empty),
       reason:
-          'fit-width presentation is width-bound; viewport height must not invent a second ResizeImage identity',
+            'fit-width presentation is width-bound; mounted and detached paths must resolve the same managed raster key',
     );
-    final stream = provider.resolve(ImageConfiguration.empty);
+      final stream = managed.resolve(ImageConfiguration.empty);
     final frame = Completer<bool>();
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
@@ -383,5 +410,6 @@ void main() {
     stream.addListener(listener);
     expect(await frame.future, isTrue);
     expect(releases, 1);
-  });
+    },
+  );
 }

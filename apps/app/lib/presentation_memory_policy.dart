@@ -1,14 +1,19 @@
 import 'package:flutter/painting.dart';
+import 'package:local_media_ui/local_media_ui.dart';
 
-/// Actual decoded-raster cache owned by Flutter presentation paths such as
-/// FileImage/ResizeImage/MemoryImage.
+/// Process presentation-memory envelope shared by managed Reader rasters and
+/// Flutter's generic ImageCache entries.
 ///
-/// This is deliberately separate from Pipeline FrameBudgeter: FrameBudgeter
-/// owns native decoded/upload residency, while ImageCache owns Flutter image
-/// completers and their decoded rasters. It is also not a page-eligibility
-/// estimate; staged Pipeline demand decides which fallback page may decode.
-const int zicFlutterImageCacheMaximumBytes = 100 * 1024 * 1024;
-const int zicFlutterImageCacheMaximumEntries = 1000;
+/// Reader static rasters are admitted into [pipelinePresentationRasterCache],
+/// which owns their keepAlive/LRU metadata and shrinks the generic ImageCache
+/// remainder by the exact admitted weight. Raster bytes are never duplicated:
+/// the same ImageStreamCompleter moves from generic keepAlive ownership to the
+/// managed raster plane. Pipeline FrameBudgeter remains the independent native
+/// decode/upload budget.
+const int zicFlutterImageCacheMaximumBytes =
+    pipelinePresentationRasterMaximumBytes;
+const int zicFlutterImageCacheMaximumEntries =
+    pipelinePresentationRasterMaximumEntries;
 
 void applyZicFlutterImageCachePolicy(ImageCache cache) {
   cache.maximumSize = zicFlutterImageCacheMaximumEntries;

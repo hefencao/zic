@@ -24,16 +24,10 @@ import 'upload_registry.dart';
 import 'upload_session.dart';
 
 typedef TransportPick = Transport Function(Uri uri);
-typedef DecodeWork = Future<void> Function(
-  DecodeId id,
-  DecodeDemand demand,
-  CancelToken token,
-);
-typedef UploadWork = Future<void> Function(
-  DecodeId id,
-  UploadDemand demand,
-  CancelToken token,
-);
+typedef DecodeWork =
+    Future<void> Function(DecodeId id, DecodeDemand demand, CancelToken token);
+typedef UploadWork =
+    Future<void> Function(DecodeId id, UploadDemand demand, CancelToken token);
 typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
 typedef DownloadPrepareWithControl = TransferPrepareWithControl;
@@ -41,14 +35,11 @@ typedef DownloadObserve = void Function(DownloadSession session);
 typedef DownloadSessionAcquire = DownloadSession Function(DownloadId id);
 typedef DownloadSessionLookup = DownloadSession? Function(DownloadId id);
 typedef SourceKindObserve = void Function(DownloadId id, ContentKind kind);
-typedef ExternalPresentationRequest = void Function(
-  DecodeId id,
-  int demandRevision,
-);
+typedef ExternalPresentationRequest =
+    void Function(DecodeId id, int demandRevision);
 typedef ExternalPresentationAvailability = bool Function(DecodeId id);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
-
 
 final class _SourceWatchBinding {
   _SourceWatchBinding({
@@ -297,8 +288,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         kind: TraceEventKind.pipelineReconcileTiming,
         revision: _revision,
         payload: <String, Object?>{
-          'reconcileMicros':
-              (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+          'reconcileMicros': (clock.nowMicros() - startedAtMicros)
+              .clamp(0, 1 << 62)
+              .toInt(),
           'downloadsMicros': downloadsMicros.clamp(0, 1 << 62).toInt(),
           'decodesMicros': decodesMicros.clamp(0, 1 << 62).toInt(),
           'uploadsMicros': uploadsMicros.clamp(0, 1 << 62).toInt(),
@@ -365,10 +357,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   bool resumePlayback(DecodeId id) => uploads?.resumePlayback(id) ?? false;
 
-  void syncPlayback(
-    ViewportState viewport,
-    Map<int, DecodeId> ids,
-  ) {
+  void syncPlayback(ViewportState viewport, Map<int, DecodeId> ids) {
     _playbackGate.apply(
       viewport: viewport,
       ids: ids,
@@ -397,11 +386,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     return advanceFrame(sessionId, id, frameIndex);
   }
 
-  bool advanceFrame(
-    String sessionId,
-    DecodeId id,
-    int frameIndex,
-  ) {
+  bool advanceFrame(String sessionId, DecodeId id, int frameIndex) {
     final registry = uploads;
     if (registry == null) {
       return false;
@@ -455,10 +440,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _externalPresentationSatisfied.clear();
     _uploads.clear();
     _uploadDemandRevisions.clear();
-    await Future.wait<void>(<Future<void>>[
-      decode.idle(),
-      upload.idle(),
-    ]);
+    await Future.wait<void>(<Future<void>>[decode.idle(), upload.idle()]);
   }
 
   void _reconcileDownloads(
@@ -487,8 +469,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             reason: entry.value.reason,
             flowTargetFrames: entry.value.flowTargetFrames,
           ),
-      },
-    );
+        });
     // Source/ingress observation is physical-identity lifecycle work, not a
     // scheduling-priority side effect. Newly demanded identities must attach;
     // an existing logical id only re-enters this path if the physical session
@@ -568,7 +549,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _clearExternalPresentationForDownload(id);
     if (binding == null) return;
     binding.projection.removeSourceListener(binding.listener);
-    for (final decodeId in _decodeSourceRevisions.keys
+    for (final decodeId
+        in _decodeSourceRevisions.keys
         .where((candidate) => candidate.download == id)
         .toList(growable: false)) {
       _decodeSourceRevisions.remove(decodeId);
@@ -583,11 +565,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     ingresses?.release(binding.session);
   }
 
-  void _watchSource(
-    String sessionId,
-    DownloadId id,
-    DownloadSession session,
-  ) {
+  void _watchSource(String sessionId, DownloadId id, DownloadSession session) {
     final projection = ingresses?.get(session);
     if (projection == null) {
       return;
@@ -624,7 +602,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _sourceWakeLengths.remove(id);
       _clearSourceKind(id);
       _clearExternalPresentationForDownload(id);
-      for (final decodeId in _decodeSourceRevisions.keys
+      for (final decodeId
+          in _decodeSourceRevisions.keys
           .where((decodeId) => decodeId.download == id)
           .toList(growable: false)) {
         _decodeSourceRevisions.remove(decodeId);
@@ -737,7 +716,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       binding.sourceReady = snapshot.sourceReady;
       _sourceRevisions[id] = snapshot.revision;
       final priorLength = _sourceWakeLengths[id];
-      final shouldWake = snapshot.failure != null ||
+      final shouldWake =
+          snapshot.failure != null ||
           snapshot.sealed ||
           (kindChanged && snapshot.kind != ContentKind.unknown) ||
           (snapshot.sourceReady &&
@@ -797,7 +777,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
-      final downloadSession = _observedDownloadSessions[entry.key.download] ??
+      final downloadSession =
+          _observedDownloadSessions[entry.key.download] ??
           _findDownloadSession(entry.key.download);
       if (downloadSession != null) {
         _watchSource(sessionId, entry.key.download, downloadSession);
@@ -871,12 +852,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
-  void _promoteDecodeToCurrent(
-    String sessionId,
-    DecodeId id,
-    int revision,
-  ) {
-    final promotion = decodes?.promotePendingDecodeToCurrent(id) ??
+  void _promoteDecodeToCurrent(String sessionId, DecodeId id, int revision) {
+    final promotion =
+        decodes?.promotePendingDecodeToCurrent(id) ??
         DecodePriorityPromotion.none;
     if (promotion == DecodePriorityPromotion.none) {
       return;
@@ -922,8 +900,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       );
     }
     final submittedAtMicros = clock.nowMicros();
-    final effectiveSourceWake =
-        sourceWake || _hasPendingSourceRevision(id);
+    final effectiveSourceWake = sourceWake || _hasPendingSourceRevision(id);
     decode.follow(
       key: id.key,
       priority: demand.priority,
@@ -1021,8 +998,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
         return;
       }
-      final decodeLaneQueueMicros =
-          (clock.nowMicros() - submittedAtMicros).clamp(0, 1 << 62).toInt();
+    final decodeLaneQueueMicros = (clock.nowMicros() - submittedAtMicros)
+        .clamp(0, 1 << 62)
+        .toInt();
       if (refill != null) {
         traceSink.record(
           traceEvent(
@@ -1152,19 +1130,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               'role': current.role.name,
               'sourceLength': failedSnapshot?.sourceLength ?? 0,
               'sourceSealed': failedSnapshot?.sourceSealed ?? false,
-              'requiredSourceLength':
-                  failedSnapshot?.requiredSourceLength ?? 0,
+            'requiredSourceLength': failedSnapshot?.requiredSourceLength ?? 0,
               'failureClass': failedSnapshot?.sourceSealed == true
                   ? 'sealed-source'
                   : 'partial-source',
               'laneQueueMicros': decodeLaneQueueMicros,
               'executionMicros':
-                  (failedAtMicros - submittedAtMicros -
-                          decodeLaneQueueMicros)
+                (failedAtMicros - submittedAtMicros - decodeLaneQueueMicros)
                       .clamp(0, 1 << 62)
                       .toInt(),
-              'taskElapsedMicros':
-                  (failedAtMicros - submittedAtMicros)
+            'taskElapsedMicros': (failedAtMicros - submittedAtMicros)
                       .clamp(0, 1 << 62)
                       .toInt(),
             },
@@ -1282,6 +1257,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return speculativePendingExternal <
           maxSpeculativeExternalPresentationPending;
     }
+
     return refillPolicy.next(
       demands: _decodes,
       depthOf: (id) => registry.find(id)?.snapshot.depth ?? 0,
@@ -1301,8 +1277,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           // handshake without manufacturing background UI work.
           return true;
         }
-        return snapshot.animation.complete &&
-            snapshot.animation.frameCount > 1;
+        return snapshot.animation.complete && snapshot.animation.frameCount > 1;
       },
       satisfiedOf: (id) {
         if (_externalPresentationSatisfied.contains(id)) {
@@ -1371,14 +1346,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   /// identity. Presentation geometry (for example contain vs fit-width) is not
   /// part of [DecodeId], so a layout change must retire only the external
   /// first-frame proof and let the existing staged policy re-grant it.
-  void invalidateExternalPresentation(String sessionId, DecodeId id) {
+  void invalidateExternalPresentation(
+    String sessionId,
+    DecodeId id, {
+    bool wakeIdentity = true,
+  }) {
     if (!_decodes.containsKey(id)) return;
     final releasedPending = _externalPresentationPending.remove(id);
     final releasedSatisfied = _externalPresentationSatisfied.remove(id);
     if (releasedPending || releasedSatisfied) {
       _wakeNextDecodeRefill(sessionId, except: id);
     }
+    if (wakeIdentity) {
     refreshDecodeScheduling(sessionId, only: id);
+  }
   }
 
   /// Updates the presentation-side ability to fulfill one external first
@@ -1479,10 +1460,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     return true;
   }
 
-  bool _decodeChangeNeedsUpload(
-    DecodeSnapshot? before,
-    DecodeSnapshot? after,
-  ) {
+  bool _decodeChangeNeedsUpload(DecodeSnapshot? before, DecodeSnapshot? after) {
     if (after == null) {
       return false;
     }
@@ -1514,10 +1492,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final uploadRegistry = uploads;
       final retainStaticOutput =
           uploadRegistry?.find(id)?.hasRetainableStaticOutput ?? false;
-      final decodeRestarted = uploadRegistry?.detach(
-            id,
-            retainStaticOutput: retainStaticOutput,
-          ) ??
+      final decodeRestarted =
+          uploadRegistry?.detach(id, retainStaticOutput: retainStaticOutput) ??
           false;
       if (decodeDemanded && decodeRestarted) {
         _wakeDecode(sessionId, id, force: true);
@@ -1528,7 +1504,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.changed.entries,
     ]) {
       final priorUploadDemand = _uploads[entry.key];
-      final downloadSession = _observedDownloadSessions[entry.key.download] ??
+      final downloadSession =
+          _observedDownloadSessions[entry.key.download] ??
           _findDownloadSession(entry.key.download);
       if (downloadSession != null) {
         _watchSource(sessionId, entry.key.download, downloadSession);
@@ -1618,8 +1595,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       if (uploadRegistry != null && entry.value.role == PageRole.next) {
         final decodeHolder = decodes?.find(entry.key)?.holder;
-        final residentOutput =
-            uploadRegistry.find(entry.key)?.snapshot.frameIndex;
+        final residentOutput = uploadRegistry
+            .find(entry.key)
+            ?.snapshot
+            .frameIndex;
         if (residentOutput == null &&
             (decodeHolder == null || decodeHolder.isEmpty)) {
           // Hidden paged-next preupload is producer-driven. Its UploadDemand
@@ -1700,8 +1679,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (current == null || current.expirationRevision < _revision) {
           return;
         }
-        final uploadLaneQueueMicros =
-            (clock.nowMicros() - submittedAtMicros)
+        final uploadLaneQueueMicros = (clock.nowMicros() - submittedAtMicros)
                 .clamp(0, 1 << 62)
                 .toInt();
         _resourceTrace(
@@ -1726,7 +1704,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 revision: demandRevision,
                 laneQueueMicros: uploadLaneQueueMicros,
               );
-              final producedFrame = after.state == UploadState.ready &&
+              final producedFrame =
+                  after.state == UploadState.ready &&
                   (before?.state != UploadState.ready ||
                       before?.epoch != after.epoch ||
                       before?.frameIndex != after.frameIndex);
@@ -1742,8 +1721,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         } on Object catch (error) {
           if (error is! Failure || error.code != ErrorCode.cancelled) {
             final failedAtMicros = clock.nowMicros();
-            final taskElapsedMicros =
-                (failedAtMicros - submittedAtMicros)
+            final taskElapsedMicros = (failedAtMicros - submittedAtMicros)
                     .clamp(0, 1 << 62)
                     .toInt();
             _error(
@@ -1754,8 +1732,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               details: <String, Object?>{
                 'role': current.role.name,
                 'laneQueueMicros': uploadLaneQueueMicros,
-                'executionMicros':
-                    (taskElapsedMicros - uploadLaneQueueMicros)
+                'executionMicros': (taskElapsedMicros - uploadLaneQueueMicros)
                         .clamp(0, 1 << 62)
                         .toInt(),
                 'taskElapsedMicros': taskElapsedMicros,

@@ -58,12 +58,10 @@ final class ResourceCacheKey {
 /// Only immutable encoded response bytes belong here. Reader page artifacts,
 /// decoded frames and textures keep their existing owners.
 final class PersistedResourceBytes {
-  const PersistedResourceBytes({
-    required this.bytes,
-    required this.expiresAt,
-  });
+  const PersistedResourceBytes({required this.bytes, required this.expiresAt});
 
   final Uint8List bytes;
+
   /// Expiry owned by the durable byte store.
   ///
   /// `null` means the record is retained until explicit invalidation/clear.
@@ -83,17 +81,10 @@ final class PersistedResourceBytes {
 /// A durable artifact may use this source only through an explicit file/
 /// descriptor lease whose lifetime outlives the provider; [cacheIdentity]
 /// then separates process-local descriptor-path reuse from ImageCache identity.
-enum EncodedResourceOrigin {
-  memory,
-  localFile,
-  durableCacheFile,
-}
+enum EncodedResourceOrigin { memory, localFile, durableCacheFile }
 
 sealed class EncodedResourceSource {
-  const EncodedResourceSource({
-    required this.origin,
-    this.lengthInBytes,
-  });
+  const EncodedResourceSource({required this.origin, this.lengthInBytes});
 
   final EncodedResourceOrigin origin;
   final int? lengthInBytes;
@@ -104,10 +95,7 @@ final class MemoryEncodedResourceSource extends EncodedResourceSource {
     this.bytes, {
     this.cacheIdentity,
     EncodedResourceOrigin origin = EncodedResourceOrigin.memory,
-  }) : super(
-          origin: origin,
-          lengthInBytes: bytes.lengthInBytes,
-        );
+  }) : super(origin: origin, lengthInBytes: bytes.lengthInBytes);
 
   final Uint8List bytes;
 
@@ -119,6 +107,32 @@ final class MemoryEncodedResourceSource extends EncodedResourceSource {
   /// sources lets the presentation bridge keep one ImageCache key across that
   /// backing handoff. The identity grants no byte/storage authority.
   final Object? cacheIdentity;
+}
+
+/// Public Flutter-image cache key envelope for one presentation raster.
+///
+/// The opaque [presentationIdentity] is owned by Pipeline presentation
+/// generation state. [providerKey] is the exact engine-facing key produced by
+/// the backing ImageProvider (including resize geometry when present). Keeping
+/// both values lets the App-owned ImageCache observe raster residency/eviction
+/// without taking ownership of the encoded bytes or decoded raster itself.
+final class PresentationRasterCacheKey {
+  const PresentationRasterCacheKey({
+    required this.presentationIdentity,
+    required this.providerKey,
+  });
+
+  final Object presentationIdentity;
+  final Object providerKey;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PresentationRasterCacheKey &&
+      other.presentationIdentity == presentationIdentity &&
+      other.providerKey == providerKey;
+
+  @override
+  int get hashCode => Object.hash(presentationIdentity, providerKey);
 }
 
 final class FileEncodedResourceSource extends EncodedResourceSource {
@@ -194,9 +208,7 @@ final class ResourceCacheByteStoreTrimReport {
 abstract interface class ResourceCacheByteStoreMaintenance {
   Future<ResourceCacheByteStoreUsage> inspect();
 
-  Future<ResourceCacheByteStoreTrimReport> trimTo({
-    required int targetBytes,
-  });
+  Future<ResourceCacheByteStoreTrimReport> trimTo({required int targetBytes});
 }
 
 /// Optional durable backing for byte-valued resource-cache entries.
@@ -374,10 +386,7 @@ final class ResourceCacheManager {
     }
     return ResourceCacheStats(
       entries: _entries.length,
-      inFlight: _activeLoads.values.fold<int>(
-        0,
-        (sum, count) => sum + count,
-      ),
+      inFlight: _activeLoads.values.fold<int>(0, (sum, count) => sum + count),
       weight: _weight,
       hits: _hits,
       misses: _misses,
@@ -394,8 +403,7 @@ final class ResourceCacheManager {
     required Future<T> Function() loader,
     required ResourceCacheWeight<T> weightOf,
     bool forceRefresh = false,
-  }) =>
-      _getOrLoad<T>(
+  }) => _getOrLoad<T>(
         key: key,
         loader: loader,
         weightOf: weightOf,
@@ -481,12 +489,7 @@ final class ResourceCacheManager {
     final memoryExpiresAt = persisted.expiresAt ?? _now().add(policy.ttl);
     if (bytes.lengthInBytes <= policy.maxWeight &&
         bytes.lengthInBytes <= globalMaxWeight) {
-      _storeWithExpiry(
-        key,
-        bytes,
-        bytes.lengthInBytes,
-        memoryExpiresAt,
-      );
+      _storeWithExpiry(key, bytes, bytes.lengthInBytes, memoryExpiresAt);
     }
     _hits++;
     _persistentHits++;
@@ -572,8 +575,7 @@ final class ResourceCacheManager {
           final value = bytes as T;
           final weight = weightOf(value);
           final policy = _policies[key.kind]!;
-          final memoryExpiresAt =
-              persisted.expiresAt ?? _now().add(policy.ttl);
+          final memoryExpiresAt = persisted.expiresAt ?? _now().add(policy.ttl);
           if (weight >= 0 &&
               weight <= policy.maxWeight &&
               weight <= globalMaxWeight) {
@@ -747,9 +749,7 @@ final class ResourceCacheManager {
   Future<void> _performClose() async {
     // Stop accepting new work, but let already-owned requests reach their
     // normal cache/store commit point before closing the durable store.
-    final pending = <Future<Object>>[
-      ..._inFlight.values,
-    ];
+    final pending = <Future<Object>>[..._inFlight.values];
     if (pending.isNotEmpty) {
       await Future.wait<void>(
         pending.map((future) async {
@@ -814,9 +814,7 @@ final class ResourceCacheManager {
     _enforceBudgets(key.kind, protectedKey: key);
   }
 
-  Future<PersistedResourceBytes?> _readPersistent(
-    ResourceCacheKey key,
-  ) async {
+  Future<PersistedResourceBytes?> _readPersistent(ResourceCacheKey key) async {
     final store = byteStore;
     if (store == null) {
       return null;
@@ -844,9 +842,7 @@ final class ResourceCacheManager {
     ResourceCacheKey key,
     Uint8List bytes,
     DateTime expiresAt,
-  ) =>
-      _queuePersistenceMutation(
-        () async {
+  ) => _queuePersistenceMutation(() async {
           final retention = _persistenceRetentionFor(key);
           await byteStore?.write(
             key: key,
@@ -856,8 +852,7 @@ final class ResourceCacheManager {
                 : expiresAt,
             retention: retention,
           );
-        },
-      );
+  });
 
   ResourceCacheRetention _persistenceRetentionFor(ResourceCacheKey key) =>
       _retainedPersistence.contains(key)
@@ -877,9 +872,7 @@ final class ResourceCacheManager {
     });
   }
 
-  Future<void> _queuePersistenceMutation(
-    Future<void> Function() mutation,
-  ) {
+  Future<void> _queuePersistenceMutation(Future<void> Function() mutation) {
     if (byteStore == null) {
       return Future<void>.value();
     }

@@ -1,4 +1,5 @@
 import 'package:downloads/downloads.dart';
+import 'package:local_media_ui/local_media_ui.dart';
 import 'package:resource_cache/resource_cache.dart';
 
 /// Immutable cache-side binding for one Home service generation.
@@ -18,19 +19,23 @@ final class HomeServiceCacheBinding {
     required ChapterDownloadTransferRuntimeProvider? downloadComposition,
     ResourceCacheCoordinator? suppliedCoordinator,
   }) {
-    final readerArtifactCache = downloadComposition?.artifactCacheManager ??
+    final readerArtifactCache =
+        downloadComposition?.artifactCacheManager ??
         (chapterDownloads is ArtifactCacheBackend
             ? ArtifactCacheManager(
                 backend: chapterDownloads as ArtifactCacheBackend,
               )
             : null);
     final ownsCoordinator = suppliedCoordinator == null;
-    final coordinator = suppliedCoordinator ??
+    final coordinator =
+        suppliedCoordinator ??
         ResourceCacheCoordinator(
-          artifacts: downloadComposition?.artifactStore ??
+          artifacts:
+              downloadComposition?.artifactStore ??
               (chapterDownloads is ArtifactCacheMaintenance
                   ? chapterDownloads as ArtifactCacheMaintenance
                   : null),
+          presentationRasters: pipelinePresentationRasterCache,
         );
     return HomeServiceCacheBinding._(
       coordinator: coordinator,

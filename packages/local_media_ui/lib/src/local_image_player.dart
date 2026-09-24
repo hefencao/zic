@@ -220,8 +220,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         return;
       }
       if (kind == PipelinePageContentKind.fallback) {
-        final detected =
-            _fallbackFormatFromPipelinePrefix(stream.readMetadataPrefix());
+        final detected = _fallbackFormatFromPipelinePrefix(
+          stream.readMetadataPrefix(),
+        );
         if (detected != null && _detectedFormat != detected) {
           setState(() => _detectedFormat = detected);
         }
@@ -232,6 +233,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       // Transfer readiness is not presentation permission; fallback/GIF waits
       // for the PipelinePageOutput staged one-frame request below.
     }
+
     _pageStreamingListener = listener;
     stream.addListener(listener);
   }
@@ -254,9 +256,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     unawaited(_drainStreamingWebpPrefix(stream));
   }
 
-  Future<void> _drainStreamingWebpPrefix(
-    PipelinePageStream stream,
-  ) async {
+  Future<void> _drainStreamingWebpPrefix(PipelinePageStream stream) async {
     if (_streamingPrefixSyncing) {
       return;
     }
@@ -288,8 +288,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _streamingPrefixSyncing = false;
       if (mounted &&
           widget.pageStream == stream &&
-          _streamingPrefixRequestedRevision >
-              _streamingPrefixReadRevision) {
+          _streamingPrefixRequestedRevision > _streamingPrefixReadRevision) {
         unawaited(_drainStreamingWebpPrefix(stream));
       }
     }
@@ -313,7 +312,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           : nextSurface == null ||
               priorSurface.width != nextSurface.width ||
               priorSurface.height != nextSurface.height;
-      final visualChanged = prior == null ||
+      final visualChanged =
+          prior == null ||
           prior.state != snapshot.state ||
           presentationChanged ||
           dimensionsChanged ||
@@ -361,6 +361,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         );
       }
     }
+
     _pageOutputListener = listener;
     output.addListener(listener);
   }
@@ -373,10 +374,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     final presentationIdentity = output.externalPresentationCacheIdentity;
     if (presentationIdentity == null ||
-        identical(
-          _externalPresentationLoadIdentity,
-          presentationIdentity,
-        )) {
+        identical(_externalPresentationLoadIdentity, presentationIdentity)) {
       return;
     }
     // The Pipeline grant is generation-scoped. A PageOutput can stay attached
@@ -398,7 +396,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       final loader = widget.bytesLoader;
       final presentationFileLoader = widget.presentationFileLoader;
       final presentationFormat = _detectedFormat;
-      final mayUsePresentationFile = presentationFileLoader != null &&
+      final mayUsePresentationFile =
+          presentationFileLoader != null &&
           widget.decodeProbe == null &&
           !presentationFormat.isWebp &&
           !(widget.playback != null &&
@@ -434,7 +433,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             retained = true;
             _reportPlaybackCapability(false);
             _reportDimensions(width, height);
-            unawaited(_recordExternalStaticImageCacheStatus(provider));
             setState(() {
               _detectedFormat = presentationFormat;
               _bytes = null;
@@ -446,7 +444,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           }
         }
       }
-      final directPath = tokenLoader == null &&
+      final directPath =
+          tokenLoader == null &&
               loader == null &&
               widget.decodeProbe == null &&
               !presentationFormat.isWebp &&
@@ -540,10 +539,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     Object error,
   ) async {
     final generation = _generation;
-    final recovered = await _tryAutomaticRecovery(
-      error,
-      restartLoad: false,
-    );
+    final recovered = await _tryAutomaticRecovery(error, restartLoad: false);
     if (recovered ||
         !mounted ||
         generation != _generation ||
@@ -662,11 +658,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
-  void _reportDimensions(
-    int width,
-    int height, {
-    bool authoritative = true,
-  }) {
+  void _reportDimensions(int width, int height, {bool authoritative = true}) {
     if (width <= 0 || height <= 0) {
       return;
     }
@@ -685,6 +677,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _reportedDimensionsAuthoritative =
           _reportedDimensionsAuthoritative || authoritative;
     }
+
     if (mounted) {
       if (_reportedDimensions == null) {
         commit();
@@ -709,36 +702,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
-  Future<void> _recordExternalStaticImageCacheStatus(
-    ImageProvider<Object> provider,
-  ) async {
-    final clock = widget.traceClock;
-    if (clock == null || widget.pageOutput == null) return;
-    final status = await provider.obtainCacheStatus(
-      configuration: ImageConfiguration.empty,
-    );
-    if (!mounted) return;
-    final cache = PaintingBinding.instance.imageCache;
-    widget.traceSink.record(
-      traceEvent(
-        clock: clock,
-        sessionId: widget.traceSessionId,
-        kind: TraceEventKind.readerObservation,
-        identityHash: widget.downloadIdentity?.key ?? widget.image.sourceId,
-        revision: widget.demandRevision?.call(),
-        payload: <String, Object?>{
-          'stage': 'external-static-mounted-provider-cache-status',
-          'pending': status?.pending ?? false,
-          'keepAlive': status?.keepAlive ?? false,
-          'live': status?.live ?? false,
-          'tracked': status?.tracked ?? false,
-          'cacheEntries': cache.currentSize,
-          'cacheBytes': cache.currentSizeBytes,
-        },
-      ),
-    );
-  }
-
   void _scheduleStaticFramePresented(
     int generation,
     LocalImageFormat format, {
@@ -750,7 +713,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     final clock = widget.traceClock;
     if (clock != null && widget.pageOutput != null) {
-      final cache = PaintingBinding.instance.imageCache;
+      final usage = pipelinePresentationRasterCache
+          .inspectPresentationRasters();
       widget.traceSink.record(
         traceEvent(
           clock: clock,
@@ -761,8 +725,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           payload: <String, Object?>{
             'stage': 'external-static-mounted-image-frame',
             'synchronouslyLoaded': synchronouslyLoaded,
-            'cacheEntries': cache.currentSize,
-            'cacheBytes': cache.currentSizeBytes,
+            'presentationCacheEntries': usage.entries,
+            'presentationCacheBytes': usage.bytes,
           },
         ),
       );
@@ -943,9 +907,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   Widget _loadingIndicator() => const Center(
-        child: CircularProgressIndicator(
-          key: imagePageLoadingIndicatorKey,
-        ),
+    child: CircularProgressIndicator(key: imagePageLoadingIndicatorKey),
       );
 
   @override
@@ -974,7 +936,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               icon: const Icon(Icons.copy),
               label: const Text('复制错误'),
             ),
-            if (widget.onRetry != null || widget.onRetryWithError != null) ...<Widget>[
+            if (widget.onRetry != null ||
+                widget.onRetryWithError != null) ...<Widget>[
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 key: imageFolderPreviewRetryKey,
@@ -1064,6 +1027,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         image: imageProvider,
         dimensions: _reportedDimensions,
         fit: widget.fit,
+        presentationIdentity:
+            widget.pageOutput?.externalPresentationCacheIdentity,
         imageKey: imageFolderFlutterPreviewKey,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (frame != null || wasSynchronouslyLoaded) {
@@ -1105,6 +1070,7 @@ final class MediaRasterImage extends StatelessWidget {
     required this.image,
     required this.dimensions,
     required this.fit,
+    this.presentationIdentity,
     this.imageKey,
     this.frameBuilder,
     this.errorBuilder,
@@ -1114,6 +1080,7 @@ final class MediaRasterImage extends StatelessWidget {
   final ImageProvider<Object> image;
   final Size? dimensions;
   final BoxFit fit;
+  final Object? presentationIdentity;
   final Key? imageKey;
   final ImageFrameBuilder? frameBuilder;
   final ImageErrorWidgetBuilder? errorBuilder;
@@ -1134,10 +1101,14 @@ final class MediaRasterImage extends StatelessWidget {
           final ratio = MediaQuery.devicePixelRatioOf(context);
           final sourceWidth = source.width.round();
           final sourceHeight = source.height.round();
-          final maxPhysicalWidth =
-              math.max(8, (constraints.maxWidth * ratio).floor());
-          final maxPhysicalHeight =
-              math.max(8, (constraints.maxHeight * ratio).floor());
+          final maxPhysicalWidth = math.max(
+            8,
+            (constraints.maxWidth * ratio).floor(),
+          );
+          final maxPhysicalHeight = math.max(
+            8,
+            (constraints.maxHeight * ratio).floor(),
+          );
           provider = _mediaRasterProviderForPresentation(
             image: image,
             sourceWidth: sourceWidth,
@@ -1147,6 +1118,13 @@ final class MediaRasterImage extends StatelessWidget {
             fit: fit == BoxFit.fitWidth
                 ? PipelineExternalPresentationFit.fitWidth
                 : PipelineExternalPresentationFit.contain,
+          );
+        }
+        final managedIdentity = presentationIdentity;
+        if (managedIdentity != null) {
+          provider = pipelinePresentationRasterCache.providerFor(
+            provider: provider,
+            presentationIdentity: managedIdentity,
           );
         }
         return MediaAspectViewport(
@@ -1262,7 +1240,8 @@ final class MediaAspectViewport extends StatelessWidget {
           if (offset + 2 > bytes.length) break;
           final segmentLength = data.getUint16(offset, Endian.big);
           if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
-          final isStartOfFrame = marker >= 0xc0 &&
+          final isStartOfFrame =
+              marker >= 0xc0 &&
               marker <= 0xcf &&
               marker != 0xc4 &&
               marker != 0xc8 &&
@@ -1308,7 +1287,8 @@ ImportedChapterRecord imageFolderChapterRecord(
     displayName: folder.displayName,
     coverSourceId: cover.sourceId,
     coverMediaFormat: cover.format.name,
-    coverAnimatedHint: cover.format == LocalImageFormat.gif ||
+    coverAnimatedHint:
+        cover.format == LocalImageFormat.gif ||
         cover.format == LocalImageFormat.webp,
     readingDirection: readingDirection,
     importedAt: importedAt,

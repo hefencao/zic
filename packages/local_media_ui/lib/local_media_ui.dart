@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -35,7 +36,7 @@ part 'src/models_and_preview.dart';
 part 'src/catalog_and_codec.dart';
 part 'src/local_image_player.dart';
 part 'src/controlled_animated_image.dart';
+part 'src/presentation_raster_cache.dart';
 part 'src/pipeline_external_static_prewarmer.dart';
 part 'src/local_media_screens.dart';
 part 'src/native_webp_player.dart';
-

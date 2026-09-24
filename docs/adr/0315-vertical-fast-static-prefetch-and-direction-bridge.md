@@ -7,12 +7,12 @@ Accepted。
 external-static 恢复3/7 one-frame intent后，普通速度可在进入viewport前约2秒完成首帧，但快速连续滑动会追上单路 speculative external presentation。另一方面，完整3/7都出现Decode/Upload intent后，active download bridge把“所有decode/upload都有source需求”解释为全部mandatory，方向确认时一次替换5个DownloadDemand，重新制造单turn working-set翻转。
 
 ## 决策
-1. `LiveCoordinator`通用缺省仍只允许1个offscreen speculative external-presentation pending；Reader stable profile显式允许最多3个。真实`viewportVisible`、current、transition不计入该speculative cap并继续拥有抢占资格。该cap不改变3/7 DownloadDemand、2/1近邻语义、NetLane、50MiB encoded actual-read budget或Flutter ImageCache owner。
+1. `LiveCoordinator`通用缺省仍只允许1个offscreen speculative external-presentation pending；Reader stable profile显式允许最多3个。真实`viewportVisible`、current、transition不计入该speculative cap并继续拥有抢占资格。该cap不改变3/7 DownloadDemand、2/1近邻语义、NetLane或50MiB encoded actual-read budget；Reader raster residency owner 后续由 ADR 0322 收口为 composition `PipelinePresentationRasterCache`。
 2. active vertical download bridge的mandatory source只包括current、transition、真实viewport以及current/next/next2/previous既有近邻media角色。far static one-frame Decode/Upload intent不能把其DownloadId升级成mandatory；只有其source identity被bridge纳入后，对应Decode/Upload才保留在accepted plan。
 3. bridge保留的是physical/source identity，不保留旧semantic role；shared identity必须采用当前desired DownloadDemand role，禁止旧current在下一observation中残留成第二current。
 4. direction flip时far encoded/static working set继续按每个committed current最多推进一个desired identity；idle/scrub/jump仍完全收敛canonical 3/7。
 5. `DownloadTransferOwner`把consumer的logical→physical/version/canonical resolution视为acquire-time state。仍在同一consumer demand set中的logical `DownloadId`只做role/priority metadata迁移，不重复resolve；只有新进入的logical identity重新解析。identity/proof/completion intent变化仍走完整authority path。
-6. offscreen exact external-static不再要求PageHost先挂载才具备presentation consumer。Coordinator仍选择exact grant和3路Reader cap；App composition只注入detached presentation executor，消费既有generation-scoped presentation file/bytes capability，把第一帧写入现有Flutter ImageCache并回报同一grant。它不得建立隐藏Reader/Page widget、网络/重试/cache authority或第二raster cache；挂载后的`LocalImagePlayer`用同一generation/cache identity命中该帧。当前实现仅在source raster无需layout-specific `ResizeImage`时执行detached warm，超出physical viewport的页面保守回退mounted path，避免预热错误cache key。
+6. offscreen exact external-static不再要求PageHost先挂载才具备presentation consumer。Coordinator仍选择exact grant和3路Reader cap；App composition只注入detached presentation executor，消费既有generation-scoped presentation file/bytes capability，并把第一帧提交给后续 ADR 0322 定义的统一 presentation-raster owner 后回报同一grant。它不得建立隐藏Reader/Page widget、网络/重试 authority或第二raster cache；挂载后的`LocalImagePlayer`用同一generation/cache identity取得同一 managed completer。当前实现仅在source raster无需layout-specific `ResizeImage`时执行detached warm，超出physical viewport的页面保守回退mounted path，避免预热错误cache key。
 
 ## 设备判据
 `zic-debug-trace-2026-09-16T01-32-51.jsonl`：方向确认发生5加5删，reconcile 8.158ms（120Hz整帧预算8.333ms），bridge未介入；external request→first-frame p95 520ms、max1.218s。

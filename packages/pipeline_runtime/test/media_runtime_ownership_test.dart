@@ -50,11 +50,16 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
     await factory.disposeRetainedSessions();
-  });
+    },
+  );
 
-  test('factory clones retain composition-owned cache and presentation executor', () {
+  test(
+    'factory clones retain composition-owned cache and presentation executor',
+    () {
     final manager = ArtifactCacheManager(backend: _Backend());
-    Future<void> prewarmer(PipelineExternalPresentationWarmRequest request) async {}
+      Future<void> prewarmer(
+        PipelineExternalPresentationWarmRequest request,
+      ) async {}
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
@@ -100,7 +105,8 @@ void main() {
     expect(
       identical(
         factory.externalPresentationPrewarmer,
-        factory.withLoaderSources(factory.loaderSources)
+          factory
+              .withLoaderSources(factory.loaderSources)
             .externalPresentationPrewarmer,
       ),
       isTrue,
@@ -112,11 +118,15 @@ void main() {
       ),
       isTrue,
     );
-  });
+    },
+  );
 
-  test('Reader current does not pre-arm composition local-read pressure', () async {
+  test(
+    'Reader current does not pre-arm composition local-read pressure',
+    () async {
     final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       artifactCacheManager: ArtifactCacheManager(backend: _Backend()),
@@ -133,25 +143,38 @@ void main() {
     expect(
       scheduler.foregroundPressure,
       isFalse,
-      reason: 'current/output lifecycle must not manufacture local-read pressure; '
+        reason:
+            'current/output lifecycle must not manufacture local-read pressure; '
           'only an actual foreground read may do so',
     );
-  });
+    },
+  );
 
-  test('local source bucket remains the stable profile limit before first output',
+  test(
+    'local source bucket remains the stable profile limit before first output',
       () async {
     final trace = MemoryTraceSink();
     final uri = Uri.parse('asset:///local-startup.webp');
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       loaderSources: <Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'local-startup-r1',
           loadBytes: () async => Uint8List.fromList(<int>[
-            0x52, 0x49, 0x46, 0x46,
-            0x04, 0x00, 0x00, 0x00,
-            0x57, 0x45, 0x42, 0x50,
+                  0x52,
+                  0x49,
+                  0x46,
+                  0x46,
+                  0x04,
+                  0x00,
+                  0x00,
+                  0x00,
+                  0x57,
+                  0x45,
+                  0x42,
+                  0x50,
           ]),
         ),
       },
@@ -178,9 +201,11 @@ void main() {
     expect(
       started!.payload['bucketLimit'],
       ReaderPipelineProfile.stable.localSourceConcurrency,
-      reason: 'presentation readiness must not rewrite NetLane source capacity',
+        reason:
+            'presentation readiness must not rewrite NetLane source capacity',
+      );
+    },
     );
-  });
 
   test('Reader reentry reuses the authoritative resource session', () async {
     final runtime = _Runtime();
@@ -191,14 +216,12 @@ void main() {
     );
     final uri = Uri.parse('content://local/page-0.webp');
     final chapter = _chapter(uri: uri);
-    final firstFactory = base.withLoaderSources(
-      <Uri, LoaderTransportSource>{
+    final firstFactory = base.withLoaderSources(<Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'local-r1',
           loadBytes: () async => Uint8List.fromList(<int>[1, 2, 3]),
         ),
-      },
-    );
+    });
     final first = firstFactory.acquire(
       chapter: chapter,
       sessionId: 'retained-reader-1',
@@ -234,14 +257,12 @@ void main() {
     expect(retainedEvent.payload['ingressProjections'], 0);
     expect(retainedEvent.payload['streamingSources'], 0);
 
-    final secondFactory = base.withLoaderSources(
-      <Uri, LoaderTransportSource>{
+    final secondFactory = base.withLoaderSources(<Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'local-r1',
           loadBytes: () async => Uint8List.fromList(<int>[1, 2, 3]),
         ),
-      },
-    );
+    });
     final second = secondFactory.acquire(
       chapter: chapter,
       sessionId: 'retained-reader-2',
@@ -273,7 +294,8 @@ void main() {
     expect(runtime.closed, isTrue);
   });
 
-  test('retained-session drain releases idle consumers but not active Readers',
+  test(
+    'retained-session drain releases idle consumers but not active Readers',
       () async {
     final cache = ArtifactCacheManager(backend: _Backend());
     final net = NetLane(maxActive: 2);
@@ -309,7 +331,8 @@ void main() {
     );
 
     await transferRuntime.dispose();
-  });
+    },
+  );
 
   test('changed page carrier cannot reuse a retained Reader session', () async {
     final base = PipelineReaderSessionFactory(
@@ -318,28 +341,24 @@ void main() {
     );
     final oldUri = Uri.parse('https://old.example/page.webp');
     final newUri = Uri.parse('https://new.example/page.webp');
-    final firstFactory = base.withLoaderSources(
-      <Uri, LoaderTransportSource>{
+    final firstFactory = base.withLoaderSources(<Uri, LoaderTransportSource>{
         oldUri: LoaderTransportSource(
           revision: 'r1:0',
           loadBytes: () async => Uint8List(0),
         ),
-      },
-    );
+    });
     final first = firstFactory.acquire(
       chapter: _chapter(uri: oldUri),
       sessionId: 'old-carrier',
     );
     firstFactory.release(first);
 
-    final secondFactory = base.withLoaderSources(
-      <Uri, LoaderTransportSource>{
+    final secondFactory = base.withLoaderSources(<Uri, LoaderTransportSource>{
         newUri: LoaderTransportSource(
           revision: 'r1:0',
           loadBytes: () async => Uint8List(0),
         ),
-      },
-    );
+    });
     final second = secondFactory.acquire(
       chapter: _chapter(uri: newUri),
       sessionId: 'new-carrier',
@@ -352,7 +371,9 @@ void main() {
     await base.disposeRetainedSessions();
   });
 
-  test('changed page metadata cannot reuse a retained Reader session', () async {
+  test(
+    'changed page metadata cannot reuse a retained Reader session',
+    () async {
     final uri = Uri.parse('https://stable.example/page.webp');
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
@@ -380,9 +401,12 @@ void main() {
 
     factory.release(second);
     await factory.disposeRetainedSessions();
-  });
+    },
+  );
 
-  test('retention keeps the two most recent media-empty Reader sessions', () async {
+  test(
+    'retention keeps the two most recent media-empty Reader sessions',
+    () async {
     final base = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
       pageDownloadLane: NetLane(maxActive: 5),
@@ -423,7 +447,8 @@ void main() {
     base.release(secondB);
 
     await base.disposeRetainedSessions();
-  });
+    },
+  );
 
   test('a third retained Reader evicts only the oldest idle session', () async {
     final base = PipelineReaderSessionFactory(
@@ -483,25 +508,29 @@ void main() {
     await physical.append(writer, 0, List<int>.filled(4096, 1));
     await physical.pause(writer);
 
-    final factory = PipelineReaderSessionFactory(
+      final factory =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
       pageDownloadLane: NetLane(maxActive: 5),
-    ).withTransferRuntime(transferRuntime).withLoaderSources(
-      <Uri, LoaderTransportSource>{
+              )
+              .withTransferRuntime(transferRuntime)
+              .withLoaderSources(<Uri, LoaderTransportSource>{
         newUri: LoaderTransportSource(
           revision: 'new-r1',
           loadBytes: () async => Uint8List(128 * 1024),
         ),
-      },
-    );
+              });
     final reader = factory.create(
       chapter: chapter,
       sessionId: 'late-bound-page-stream',
     );
 
     final stream = reader.pageStream(chapter.pages.single);
-    expect(transferRuntime.registry.findExact(newId), isNull,
-        reason: 'presentation projection must not acquire physical ownership');
+      expect(
+        transferRuntime.registry.findExact(newId),
+        isNull,
+        reason: 'presentation projection must not acquire physical ownership',
+      );
     expect(stream.identity, newId);
     expect(stream.committedLength, 0);
 
@@ -528,15 +557,21 @@ void main() {
     expect(transferRuntime.registry.resolvePhysicalId(newId), oldId);
     expect(transferRuntime.registry.find(newId), same(physical));
     expect(transferRuntime.registry.findExact(newId), isNull);
-    expect(stream.committedLength, 4096,
-        reason: 'logical stream must project the resolved physical partial');
+      expect(
+        stream.committedLength,
+        4096,
+        reason: 'logical stream must project the resolved physical partial',
+      );
     expect(transferRuntime.registry.sessions, hasLength(1));
 
     await reader.dispose();
     await transferRuntime.dispose();
-  });
+    },
+  );
 
-  test('shared physical trace sink emits each demand once across Readers', () async {
+  test(
+    'shared physical trace sink emits each demand once across Readers',
+    () async {
     final sharedTrace = MemoryTraceSink();
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
@@ -578,7 +613,8 @@ void main() {
     second.accept(observation('trace-reader-b'));
     await Future<void>.delayed(Duration.zero);
 
-    int physicalDemandCount(String scopeId) => sharedTrace.events.where((event) {
+      int physicalDemandCount(String scopeId) =>
+          sharedTrace.events.where((event) {
           if (event.kind != TraceEventKind.demandApplied) return false;
           return event.payload['lane'] == 'download' &&
               event.payload['scopeId'] == scopeId;
@@ -590,21 +626,20 @@ void main() {
     await first.dispose();
     await second.dispose();
     await factory.disposeTransferRuntimes();
-  });
+    },
+  );
 
   test('current output prewarms the exact aligned decoded raster', () async {
     final runtime = _Runtime();
-    final session = PipelineReaderSessionFactory(
+    final session =
+        PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _chapter(width: 4096, height: 3072),
       sessionId: 'exact-output-prewarm-test',
     );
-    final target = DecodeTarget(
-      physicalWidth: 1075,
-      physicalHeight: 803,
-    );
+    final target = DecodeTarget(physicalWidth: 1075, physicalHeight: 803);
     session.attach(target);
     final page = session.chapter.pages.single;
     session.accept(
@@ -626,10 +661,7 @@ void main() {
       ),
     );
 
-    expect(
-      await runtime.firstPrewarm.future,
-      <int>[1056, 792],
-    );
+    expect(await runtime.firstPrewarm.future, <int>[1056, 792]);
     expect(runtime.prewarmCalls, 1);
 
     await session.dispose();
@@ -638,7 +670,8 @@ void main() {
   test('animated paged next prewarms output without idle upload', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
-    final session = PipelineReaderSessionFactory(
+    final session =
+        PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
@@ -728,13 +761,16 @@ void main() {
     await session.dispose();
   });
 
-  test('current detached prewarm bypasses an already queued Flutter frame', () async {
+  test(
+    'current detached prewarm bypasses an already queued Flutter frame',
+    () async {
     final scheduler = _ControlledFrameScheduler(scheduled: true);
     final runtime = _Runtime(
       renderer: RendererKind.androidTexture,
       scheduler: scheduler,
     );
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
@@ -772,7 +808,8 @@ void main() {
     expect(scheduler.pendingCallbackCount, 0);
 
     await session.dispose();
-  });
+    },
+  );
 
   test('transition gallery prewarm waits for one idle handoff', () async {
     final scheduler = _ControlledFrameScheduler(scheduled: true);
@@ -780,7 +817,8 @@ void main() {
       renderer: RendererKind.androidTexture,
       scheduler: scheduler,
     );
-    final session = PipelineReaderSessionFactory(
+    final session =
+        PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
@@ -816,16 +854,8 @@ void main() {
           fraction: 0.5,
         ),
         visibleCoverages: <Coverage>[
-          Coverage(
-            pageIndex: 0,
-            assetKey: current.assetKey,
-            fraction: 0.5,
-          ),
-          Coverage(
-            pageIndex: 2,
-            assetKey: transition.assetKey,
-            fraction: 0.5,
-          ),
+          Coverage(pageIndex: 0, assetKey: current.assetKey, fraction: 0.5),
+          Coverage(pageIndex: 2, assetKey: transition.assetKey, fraction: 0.5),
         ],
         direction: ReadingDirection.ltr,
         timestamp: DateTime.utc(2026),
@@ -859,7 +889,8 @@ void main() {
   test('horizontal role window prewarms an unknown page kind', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
-    final session = PipelineReaderSessionFactory(
+    final session =
+        PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
@@ -914,26 +945,43 @@ void main() {
   test('exact fallback image prefix becomes runtime static evidence', () async {
     final trace = MemoryTraceSink();
     final uri = Uri.parse('asset:///opaque-static-page');
-    final session = PipelineReaderSessionFactory(
+    final session =
+        PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       loaderSources: <Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'opaque-static-r1',
           loadBytes: () async => Uint8List.fromList(const <int>[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-            0x00, 0x00, 0x00, 0x0d,
-            0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x02, 0xd0,
-            0x00, 0x00, 0x02, 0xbc,
+                0x89,
+                0x50,
+                0x4e,
+                0x47,
+                0x0d,
+                0x0a,
+                0x1a,
+                0x0a,
+                0x00,
+                0x00,
+                0x00,
+                0x0d,
+                0x49,
+                0x48,
+                0x44,
+                0x52,
+                0x00,
+                0x00,
+                0x02,
+                0xd0,
+                0x00,
+                0x00,
+                0x02,
+                0xbc,
           ]),
         ),
       },
     ).create(
-      chapter: _chapter(
-        uri: uri,
-        contentKindHint: ContentKindHint.unknown,
-      ),
+          chapter: _chapter(uri: uri, contentKindHint: ContentKindHint.unknown),
       sessionId: 'fallback-static-classification-test',
       traceSink: trace,
     );
@@ -944,9 +992,11 @@ void main() {
     session.accept(_currentObservation(session.chapter));
 
     TraceEvent? classified;
-    for (var attempt = 0;
+    for (
+      var attempt = 0;
         attempt < 100 && (classified == null || dimensions.isEmpty);
-        attempt++) {
+      attempt++
+    ) {
       await Future<void>.delayed(const Duration(milliseconds: 2));
       for (final event in trace.events) {
         if (event.kind == TraceEventKind.mediaClassified &&
@@ -990,12 +1040,14 @@ void main() {
     );
   });
 
-  test('external static prewarmer satisfies first frame without a page host',
+  test(
+    'external static prewarmer satisfies first frame without a page host',
       () async {
     final trace = MemoryTraceSink();
     final uri = Uri.parse('asset:///opaque-detached-static-page');
     final warmed = <PipelineExternalPresentationWarmRequest>[];
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       externalPresentationPrewarmer: (request) async {
@@ -1006,9 +1058,18 @@ void main() {
         uri: LoaderTransportSource(
           revision: 'opaque-detached-static-r1',
           loadBytes: () async => Uint8List.fromList(const <int>[
-            0xff, 0xd8, 0xff, 0xe0,
-            0x00, 0x10, 0x4a, 0x46,
-            0x49, 0x46, 0x00, 0x01,
+                  0xff,
+                  0xd8,
+                  0xff,
+                  0xe0,
+                  0x00,
+                  0x10,
+                  0x4a,
+                  0x46,
+                  0x49,
+                  0x46,
+                  0x00,
+                  0x01,
           ]),
         ),
       },
@@ -1079,9 +1140,11 @@ void main() {
       reason:
           'presentation geometry is part of the Flutter raster generation even when DecodeId/source identity is unchanged',
     );
-  });
+    },
+  );
 
-  test('external static cache identity survives an ordinary demand gap',
+  test(
+    'external static cache identity survives an ordinary demand gap',
       () async {
     final pages = List<PageAsset>.generate(
       12,
@@ -1122,16 +1185,22 @@ void main() {
           page.uri: LoaderTransportSource(
             revision: 'static-demand-gap-r1',
             loadBytes: () async => Uint8List.fromList(const <int>[
-              0xff, 0xd8, 0xff, 0xe0,
-              0x00, 0x10, 0x4a, 0x46,
-              0x49, 0x46, 0x00, 0x01,
+                0xff,
+                0xd8,
+                0xff,
+                0xe0,
+                0x00,
+                0x10,
+                0x4a,
+                0x46,
+                0x49,
+                0x46,
+                0x00,
+                0x01,
             ]),
           ),
       },
-    ).create(
-      chapter: chapter,
-      sessionId: 'external-static-demand-gap-test',
-    );
+      ).create(chapter: chapter, sessionId: 'external-static-demand-gap-test');
     addTearDown(session.dispose);
     session.attach(
       DecodeTarget(physicalWidth: 1080, physicalHeight: 2336),
@@ -1179,8 +1248,9 @@ void main() {
       }
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
-    final pageZeroWarms =
-        warmed.where((request) => request.asset.index == 0).toList();
+      final pageZeroWarms = warmed
+          .where((request) => request.asset.index == 0)
+          .toList();
     expect(pageZeroWarms, hasLength(2));
     expect(
       identical(first.cacheIdentity, pageZeroWarms.last.cacheIdentity),
@@ -1188,13 +1258,167 @@ void main() {
       reason:
           'ordinary demand-window churn must revalidate the same Flutter ImageCache generation instead of forcing a second raster key',
     );
-  });
+    },
+  );
 
-  test('retained Reader reentry keeps external static cache generation',
+  test(
+    'raster eviction actively invalidates far warm before deadline promotion',
+    () async {
+      final pages = List<PageAsset>.generate(
+        12,
+        (index) => PageAsset(
+          pageId: 'managed-static-$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('asset:///managed-static-$index.jpg'),
+          width: 1080,
+          height: 3600,
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      );
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapter: const Chapter(
+          chapterId: 'chapter',
+          comicId: 'comic',
+          title: 'chapter',
+          sequence: 1,
+          pageCount: 12,
+          sourceRevision: 'r1',
+        ),
+        pages: pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final trace = MemoryTraceSink();
+      final warmed = <PipelineExternalPresentationWarmRequest>[];
+      final cacheAuthority = _FakePresentationCacheAuthority();
+      final session =
+          PipelineReaderSessionFactory(
+            mediaRuntimeFactory: _Factory(_Runtime()),
+            pageDownloadLane: NetLane(maxActive: 5),
+            externalPresentationPrewarmer: (request) async {
+              request.token.throwIfCancelled();
+              warmed.add(request);
+            },
+            presentationCacheAuthority: cacheAuthority,
+            loaderSources: <Uri, LoaderTransportSource>{
+              for (final page in pages)
+                page.uri: LoaderTransportSource(
+                  revision: 'managed-static-r1',
+                  loadBytes: () async => Uint8List.fromList(const <int>[
+                    0xff,
+                    0xd8,
+                    0xff,
+                    0xe0,
+                    0x00,
+                    0x10,
+                    0x4a,
+                    0x46,
+                    0x49,
+                    0x46,
+                    0x00,
+                    0x01,
+                  ]),
+                ),
+            },
+          ).create(
+            chapter: chapter,
+            sessionId: 'managed-raster-eviction-test',
+            traceSink: trace,
+          );
+      addTearDown(session.dispose);
+      session.attach(
+        DecodeTarget(physicalWidth: 1080, physicalHeight: 2336),
+        externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+      );
+
+      ReaderObs observationAt(int index, int micros) => ReaderObs(
+        sessionId: 'reader',
+        currentIndex: index,
+        stableIndex: index,
+        interaction: Interaction.idle,
+        logicalPosition: index.toDouble(),
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: index,
+          assetKey: pages[index].assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: micros,
+      );
+
+      session.accept(observationAt(0, 1));
+      final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (warmed.where((request) => request.asset.index == 7).isEmpty) {
+        if (DateTime.now().isAfter(firstDeadline)) {
+          fail('outer far page never reached managed presentation warm');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      final first = warmed.firstWhere((request) => request.asset.index == 7);
+      expect(
+        cacheAuthority.claims[first.cacheIdentity],
+        PipelinePresentationCacheClaim.speculative,
+        reason: 'the outer far warm must be reclaimable cache slack',
+      );
+
+      cacheAuthority.invalidatePresentationIdentity(first.cacheIdentity);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        warmed.where((request) => request.asset.index == 7),
+        hasLength(1),
+        reason:
+            'active far eviction must revoke residency without immediately recreating the same far raster',
+      );
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.policyDecision &&
+              event.payload['stage'] ==
+                  'presentation-raster-cache-invalidated' &&
+              event.payload['role'] == 'far' &&
+              event.payload['farWarmSuppressed'] == true,
+        ),
+        isTrue,
+      );
+
+      session.accept(observationAt(5, 2));
+      final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (warmed.where((request) => request.asset.index == 7).length < 2) {
+        if (DateTime.now().isAfter(secondDeadline)) {
+          fail('near-deadline role did not refill actively-invalidated raster');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      final pageSeven = warmed
+          .where((request) => request.asset.index == 7)
+          .toList();
+      expect(pageSeven, hasLength(2));
+      expect(
+        identical(first.cacheIdentity, pageSeven.last.cacheIdentity),
+        isTrue,
+        reason:
+            'raster eviction changes residency, not presentation generation; deadline refill must reuse the exact source/fit key',
+      );
+      expect(
+        cacheAuthority.claims[first.cacheIdentity],
+        PipelinePresentationCacheClaim.deadline,
+        reason:
+            'role promotion must proactively upgrade the managed residency claim instead of polling Flutter ImageCache',
+      );
+    },
+  );
+
+  test(
+    'retained Reader reentry keeps external static cache generation',
       () async {
     final uri = Uri.parse('asset:///retained-external-static.jpg');
     final warmed = <PipelineExternalPresentationWarmRequest>[];
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       externalPresentationPrewarmer: (request) async {
@@ -1205,17 +1429,23 @@ void main() {
         uri: LoaderTransportSource(
           revision: 'retained-static-r1',
           loadBytes: () async => Uint8List.fromList(const <int>[
-            0xff, 0xd8, 0xff, 0xe0,
-            0x00, 0x10, 0x4a, 0x46,
-            0x49, 0x46, 0x00, 0x01,
+                  0xff,
+                  0xd8,
+                  0xff,
+                  0xe0,
+                  0x00,
+                  0x10,
+                  0x4a,
+                  0x46,
+                  0x49,
+                  0x46,
+                  0x00,
+                  0x01,
           ]),
         ),
       },
     ).create(
-      chapter: _chapter(
-        uri: uri,
-        contentKindHint: ContentKindHint.jpeg,
-      ),
+            chapter: _chapter(uri: uri, contentKindHint: ContentKindHint.jpeg),
       sessionId: 'retained-external-static-test',
     );
     addTearDown(session.dispose);
@@ -1246,7 +1476,9 @@ void main() {
     final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
     while (warmed.length < 2) {
       if (DateTime.now().isAfter(secondDeadline)) {
-        fail('retained Reader reentry did not revalidate external static warm');
+          fail(
+            'retained Reader reentry did not revalidate external static warm',
+          );
       }
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
@@ -1274,11 +1506,14 @@ void main() {
     expect(
       identical(warmed[1].cacheIdentity, warmed[2].cacheIdentity),
       isFalse,
-      reason: 'a real presentation-fit change must rotate the cache generation',
+        reason:
+            'a real presentation-fit change must rotate the cache generation',
+      );
+    },
     );
-  });
 
-  test('offscreen mounted static host still uses detached presentation warm',
+  test(
+    'offscreen mounted static host still uses detached presentation warm',
       () async {
     final firstUri = Uri.parse('asset:///mounted-static-current');
     final secondUri = Uri.parse('asset:///mounted-static-next');
@@ -1324,16 +1559,22 @@ void main() {
           uri: LoaderTransportSource(
             revision: 'mounted-static-r1',
             loadBytes: () async => Uint8List.fromList(const <int>[
-              0xff, 0xd8, 0xff, 0xe0,
-              0x00, 0x10, 0x4a, 0x46,
-              0x49, 0x46, 0x00, 0x01,
+                0xff,
+                0xd8,
+                0xff,
+                0xe0,
+                0x00,
+                0x10,
+                0x4a,
+                0x46,
+                0x49,
+                0x46,
+                0x00,
+                0x01,
             ]),
           ),
       },
-    ).create(
-      chapter: chapter,
-      sessionId: 'mounted-offscreen-static-test',
-    );
+      ).create(chapter: chapter, sessionId: 'mounted-offscreen-static-test');
     addTearDown(session.dispose);
     session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
 
@@ -1369,14 +1610,17 @@ void main() {
       reason:
           'completed detached work must be consumable before the page enters the viewport',
     );
-  });
+    },
+  );
 
-  test('detached prewarm failure cannot revoke a newly mounted consumer',
+  test(
+    'detached prewarm failure cannot revoke a newly mounted consumer',
       () async {
     final uri = Uri.parse('asset:///opaque-prewarm-handoff-page');
     final releasePrewarm = Completer<void>();
     final prewarmStarted = Completer<void>();
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       externalPresentationPrewarmer: (request) async {
@@ -1388,9 +1632,18 @@ void main() {
         uri: LoaderTransportSource(
           revision: 'opaque-prewarm-handoff-r1',
           loadBytes: () async => Uint8List.fromList(const <int>[
-            0xff, 0xd8, 0xff, 0xe0,
-            0x00, 0x10, 0x4a, 0x46,
-            0x49, 0x46, 0x00, 0x01,
+                  0xff,
+                  0xd8,
+                  0xff,
+                  0xe0,
+                  0x00,
+                  0x10,
+                  0x4a,
+                  0x46,
+                  0x49,
+                  0x46,
+                  0x00,
+                  0x01,
           ]),
         ),
       },
@@ -1425,20 +1678,23 @@ void main() {
     session.reportPresentationFrameReady(page);
     expect(output.externalPresentationRequested, isFalse);
     expect(output.externalPresentationReady, isTrue);
-  });
+    },
+  );
 
-  test('non-media fallback prefix never becomes runtime static evidence', () async {
+  test(
+    'non-media fallback prefix never becomes runtime static evidence',
+    () async {
     final trace = MemoryTraceSink();
     final uri = Uri.parse('asset:///opaque-non-media-page');
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       loaderSources: <Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'opaque-non-media-r1',
-          loadBytes: () async => Uint8List.fromList(
-            'Could not connect to mysql!'.codeUnits,
-          ),
+                loadBytes: () async =>
+                    Uint8List.fromList('Could not connect to mysql!'.codeUnits),
         ),
       },
     ).create(
@@ -1454,7 +1710,11 @@ void main() {
     session.accept(_currentObservation(session.chapter));
 
     TraceEvent? fallbackCommit;
-    for (var attempt = 0; attempt < 100 && fallbackCommit == null; attempt++) {
+      for (
+        var attempt = 0;
+        attempt < 100 && fallbackCommit == null;
+        attempt++
+      ) {
       await Future<void>.delayed(const Duration(milliseconds: 2));
       for (final event in trace.events) {
         if (event.kind == TraceEventKind.bytesCommitted &&
@@ -1476,12 +1736,16 @@ void main() {
       reason:
           'fallback is a transport category, not proof that arbitrary HTML/error bytes are a static image',
     );
-  });
+    },
+  );
 
-  test('known non-WebP pages do not allocate detached native outputs', () async {
+  test(
+    'known non-WebP pages do not allocate detached native outputs',
+    () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
-    final session = PipelineReaderSessionFactory(
+      final session =
+          PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
       pageDownloadLane: NetLane(maxActive: 5),
     ).create(
@@ -1527,14 +1791,17 @@ void main() {
     );
 
     await session.dispose();
-  });
+    },
+  );
 
-  test('static non-WebP suffixes reject unresolved native WebP prewarm',
+  test(
+    'static non-WebP suffixes reject unresolved native WebP prewarm',
       () async {
     for (final suffix in <String>['jpe', 'heic']) {
       final trace = MemoryTraceSink();
       final runtime = _Runtime(renderer: RendererKind.androidTexture);
-      final session = PipelineReaderSessionFactory(
+        final session =
+            PipelineReaderSessionFactory(
         mediaRuntimeFactory: _Factory(runtime),
         pageDownloadLane: NetLane(maxActive: 5),
       ).create(
@@ -1581,7 +1848,8 @@ void main() {
       );
       await session.dispose();
     }
-  });
+    },
+  );
 
   test('Reader session owns and closes one atomic media runtime', () async {
     final runtime = _Runtime();
@@ -1589,10 +1857,7 @@ void main() {
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: factory,
       pageDownloadLane: NetLane(maxActive: 5),
-    ).create(
-      chapter: _chapter(),
-      sessionId: 'atomic-media-test',
-    );
+    ).create(chapter: _chapter(), sessionId: 'atomic-media-test');
 
     expect(factory.created, 1);
     expect(session.renderer, RendererKind.flutterImage);
@@ -1716,8 +1981,50 @@ final class _FreshFactory implements PipelineMediaRuntimeFactory {
     required String sessionId,
     required MonoClock clock,
     required TraceSink traceSink,
-  }) =>
-      _Runtime();
+  }) => _Runtime();
+}
+
+final class _FakePresentationCacheAuthority
+    implements PipelinePresentationCacheAuthority {
+  final Set<PipelinePresentationCacheInvalidationListener> _listeners =
+      <PipelinePresentationCacheInvalidationListener>{};
+  final Map<Object, PipelinePresentationCacheClaim> claims =
+      <Object, PipelinePresentationCacheClaim>{};
+
+  @override
+  void addInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  ) {
+    _listeners.add(listener);
+  }
+
+  @override
+  void removeInvalidationListener(
+    PipelinePresentationCacheInvalidationListener listener,
+  ) {
+    _listeners.remove(listener);
+  }
+
+  @override
+  void updatePresentationClaim(
+    Object presentationIdentity,
+    PipelinePresentationCacheClaim claim,
+  ) {
+    claims[presentationIdentity] = claim;
+  }
+
+  @override
+  void releasePresentationClaim(Object presentationIdentity) {
+    claims.remove(presentationIdentity);
+  }
+
+  @override
+  void invalidatePresentationIdentity(Object presentationIdentity) {
+    claims.remove(presentationIdentity);
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(presentationIdentity);
+    }
+  }
 }
 
 final class _Factory implements PipelineMediaRuntimeFactory {
@@ -1804,8 +2111,7 @@ final class _ControlledFrameScheduler implements PipelineFrameScheduler {
   }
 }
 
-final class _Runtime
-    implements PipelineMediaRuntime, PipelineOutputPrewarmer {
+final class _Runtime implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   _Runtime({
     RendererKind renderer = RendererKind.flutterImage,
     PipelineFrameScheduler? scheduler,
@@ -1904,18 +2210,14 @@ final class _CursorFactory implements CursorFactory {
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) =>
-      throw UnsupportedError('not used');
+  }) => throw UnsupportedError('not used');
 }
 
 final class _Uploader implements FrameUploader {
   const _Uploader();
 
   @override
-  Future<OutputFrame> upload({
-    required DecodeId id,
-    required FrameRef frame,
-  }) =>
+  Future<OutputFrame> upload({required DecodeId id, required FrameRef frame}) =>
       throw UnsupportedError('not used');
 
   @override
@@ -1946,15 +2248,13 @@ final class _Surface implements PipelinePageSurface {
     Key? key,
     BoxFit fit = BoxFit.contain,
     FilterQuality filterQuality = FilterQuality.low,
-  }) =>
-      SizedBox(key: key, width: 1, height: 1);
+  }) => SizedBox(key: key, width: 1, height: 1);
 }
 
 final class _Backend implements ArtifactCacheBackend {
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
       null;
-
 
   @override
   Future<void> storePromotedArtifact({

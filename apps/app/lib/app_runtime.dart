@@ -36,8 +36,7 @@ Widget createStartupApp({
   Future<String?>? startupApplicationSupportPath,
   String? startupApplicationSupportPathValue,
   bool startupStorageMetadataWarmed = false,
-}) =>
-    _BootstrapApp(
+}) => _BootstrapApp(
       firstFrameAlreadyRasterized: firstFrameAlreadyRasterized,
       startupApplicationSupportPath: startupApplicationSupportPath,
       startupApplicationSupportPathValue: startupApplicationSupportPathValue,
@@ -50,10 +49,8 @@ Widget createStartupApp({
 /// absolute paths.
 CacheLayout? Function(DownloadId id) sourceDownloadLayoutResolver(
   AppPreferencesController preferences,
-) =>
-    (id) {
-      final directory =
-          preferences.sourceDownloadDirectoryFor(id.content.sourceId);
+) => (id) {
+  final directory = preferences.sourceDownloadDirectoryFor(id.content.sourceId);
       if (directory == null || directory.startsWith('saf://')) {
         return null;
       }
@@ -80,7 +77,8 @@ void _persistStorageRootAccessAliasProof(_AppServices services) {
   final proofFuture = services.storageRootAccessAliasProof;
   final store = services.downloadComposition?.artifactStore;
   if (proofFuture == null || store == null) return;
-  unawaited(Future<void>(() async {
+  unawaited(
+    Future<void>(() async {
     try {
       final proof = await proofFuture;
       if (proof == null) return;
@@ -91,7 +89,8 @@ void _persistStorageRootAccessAliasProof(_AppServices services) {
       // service rebuild must never make the already-open SAF data path fail.
       debugPrint('storage-root alias persistence failed: $error');
     }
-  }));
+    }),
+  );
 }
 
 final class _BootstrapApp extends StatefulWidget {
@@ -135,8 +134,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     // bootstrap turn. The first Android startup-channel call can otherwise
     // take hundreds of milliseconds and block the snapshot before Home can
     // project its previous state.
-    final startupApplicationSupportPath =
-        widget.startupApplicationSupportPath;
+    final startupApplicationSupportPath = widget.startupApplicationSupportPath;
     final startupApplicationSupportPathValue =
         widget.startupApplicationSupportPathValue;
     if (startupApplicationSupportPathValue != null) {
@@ -152,7 +150,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       // The bootstrap Home must probe the same durable response cache that
       // the later service composition adopts. Otherwise warm covers requested
       // before handoff are forced to wait for external plugin activation.
-      _bootstrapCache = createAppResourceCache(storageRoot: storageRoot);
+      _bootstrapCache = createAppResourceCache(
+        storageRoot: storageRoot,
+        presentationRasters: pipelinePresentationRasterCache,
+      );
     } else {
       _storageRoot = startupApplicationSupportPath == null
           ? getDefaultZicStorageRoot(
@@ -164,7 +165,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       _homeProjectionSnapshotStore = createHomeProjectionSnapshotStore(
         storageRoot: () => _storageRoot,
       );
-      _bootstrapCache = ResourceCacheCoordinator();
+      _bootstrapCache = ResourceCacheCoordinator(
+        presentationRasters: pipelinePresentationRasterCache,
+      );
     }
     _debugTrace = DebugTraceLog();
     WidgetsBinding.instance.addObserver(this);
@@ -214,6 +217,12 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   late final Future<void> _preferencesReady;
 
   @override
+  void didHaveMemoryPressure() {
+    if (_disposed) return;
+    (_services?.cacheCoordinator ?? _bootstrapCache).clearPresentationRasters();
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_disposed) return;
     final clock = SystemClock();
@@ -222,10 +231,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         clock: clock,
         sessionId: 'app-lifecycle',
         kind: TraceEventKind.appLifecycle,
-        payload: <String, Object?>{
-          'stage': 'dart',
-          'state': state.name,
-        },
+        payload: <String, Object?>{'stage': 'dart', 'state': state.name},
       ),
     );
     unawaited(_recordLifecycleSchedulingSnapshot(state));
@@ -346,11 +352,13 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       return;
     }
     late final Future<void> opening;
-    opening = _openDurableServicesOnce(forceDurable: forceDurable).whenComplete(() {
+    opening = _openDurableServicesOnce(forceDurable: forceDurable).whenComplete(
+      () {
       if (identical(_servicesOpening, opening)) {
         _servicesOpening = null;
       }
-    });
+      },
+    );
     _servicesOpening = opening;
     await opening;
   }
@@ -421,12 +429,14 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
   void _publishExternalPluginsWhenReady(_AppServices services) {
     final ready = services.externalPluginsReady;
-    unawaited(ready.then<void>((_) {
+    unawaited(
+      ready.then<void>((_) {
       if (_disposed || !identical(_services, services)) {
         return;
       }
       _serviceHandoff.updateExternalPlugins(services.externalPlugins);
-    }));
+      }),
+    );
   }
 
   Future<ExternalPluginController?> _ensureExternalPlugins(
@@ -486,8 +496,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       migrateFiles = false;
     }
     final previousOverride = _preferences.chapterDownloadDirectoryOverride;
-    final current = previousOverride ??
-        defaultChapterDownloadDirectory(root);
+    final current = previousOverride ?? defaultChapterDownloadDirectory(root);
     if (_isSamePath(target, current)) {
       _preferences.setChapterDownloadDirectoryOverride(
         directory == null ? null : target,
@@ -509,8 +518,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     }
 
     final queue = services.wholeComicDownloads;
-    final busyJobs =
-        queue?.snapshot.jobs.any((job) => job.isActive) ?? false;
+    final busyJobs = queue?.snapshot.jobs.any((job) => job.isActive) ?? false;
     if (busyJobs) {
       return '有正在进行的整本下载任务，请先暂停或等待完成';
     }
@@ -565,8 +573,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       closeFailure = error;
     }
     if (closeFailure != null) {
-      debugPrint('download service close for directory change failed: '
-          '$closeFailure');
+      debugPrint(
+        'download service close for directory change failed: '
+        '$closeFailure',
+      );
       _preferences.setChapterDownloadDirectoryOverride(previousOverride);
       _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
       final rebuilt = await _rebuildDownloadServices(
@@ -646,8 +656,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         layoutResolver: sourceDownloadLayoutResolver(_preferences),
         userAgentProvider: () => _preferences.networkUserAgent,
         transferNet: defaultDownloadResourceCoordinator.networkLane,
-        localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
-        storageWriteScheduler: defaultDownloadResourceCoordinator.storageWriteScheduler,
+        localReadScheduler:
+            defaultDownloadResourceCoordinator.localReadScheduler,
+        storageWriteScheduler:
+            defaultDownloadResourceCoordinator.storageWriteScheduler,
         speculativeEncodedReadBudget:
             defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
         safTreeIo: safOverride == null
@@ -658,9 +670,11 @@ final class _BootstrapAppState extends State<_BootstrapApp>
             const _AndroidArtifactPresentationFileLeaseFactory(),
         traceSink: _debugTrace,
       );
-      final cacheCoordinator = createAppResourceCache(
+      final cacheCoordinator =
+          createAppResourceCache(
         storageRoot: storageRoot,
         artifacts: composition.artifactStore,
+            presentationRasters: pipelinePresentationRasterCache,
         onPersistenceError: (error, stackTrace) {
           debugPrint('durable response cache failed: $error');
         },
@@ -710,8 +724,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       _startupLog('download-services-rebuilt-at $downloadDirectory');
       return null;
     } on Object catch (error, stackTrace) {
-      _startupLog('download-services-rebuild-failed-at $downloadDirectory '
-          'error=$error');
+      _startupLog(
+        'download-services-rebuild-failed-at $downloadDirectory '
+        'error=$error',
+      );
       debugPrint('download service rebuild failed: $error $stackTrace');
       return error;
     }
@@ -738,8 +754,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
   bool _isSamePath(String a, String b) => isSameDirectoryPath(a, b);
 
-  bool _isSameOrNested(String a, String b) =>
-      isSameOrNestedDirectoryPath(a, b);
+  bool _isSameOrNested(String a, String b) => isSameOrNestedDirectoryPath(a, b);
 
   void _syncDebugTrace() {
     _debugTrace.enabled =
@@ -814,8 +829,7 @@ final class _AppServices {
   ExternalPluginController? externalPlugins;
   Future<void> externalPluginsReady = Future<void>.value();
   final ResettableSingleFlight<ExternalPluginController?>
-      _externalPluginOpening =
-      ResettableSingleFlight<ExternalPluginController?>();
+  _externalPluginOpening = ResettableSingleFlight<ExternalPluginController?>();
   Future<void>? _platformEnvironmentOpening;
   _AppServices? _externalPluginSuccessor;
   bool _closed = false;
@@ -932,9 +946,10 @@ final class _AppServices {
     if (identical(current, inherited)) {
       return;
     }
-    externalPluginsReady = Future.wait<void>(
-      <Future<void>>[current, inherited],
-    ).then<void>((_) {});
+    externalPluginsReady = Future.wait<void>(<Future<void>>[
+      current,
+      inherited,
+    ]).then<void>((_) {});
   }
 
   Future<bool> _acceptExternalPluginController(
@@ -1273,7 +1288,8 @@ Future<_AppServices> _openServices(
     var stageStarted = telemetry.nowMicros();
     final storageRootClock = Stopwatch()..start();
     _startupLog('storage-root-resolve-start');
-    final root = await (storageRoot ??
+    final root =
+        await (storageRoot ??
         getDefaultZicStorageRoot(
           applicationSupportPath: getStartupApplicationSupportPath,
         ));
@@ -1312,7 +1328,9 @@ Future<_AppServices> _openServices(
         preferences.chapterDownloadDirectoryOverride ??
         defaultChapterDownloadDirectory(root);
     final chapterMetadataPath = defaultChapterDownloadMetadataPath(root);
-    final chapterMetadataPreexisting = await chapterDownloadMetadataExists(root);
+    final chapterMetadataPreexisting = await chapterDownloadMetadataExists(
+      root,
+    );
     late final String chapterDownloadDirectory;
     var chapterDownloadMoveSettled = true;
     try {
@@ -1327,14 +1345,15 @@ Future<_AppServices> _openServices(
       // still usable for startup, while the next launch gets another chance
       // to complete the source-to-target move.
       chapterDownloadMoveSettled = false;
-      final pendingSource =
-          preferences.chapterDownloadDirectoryPendingMoveFrom;
+      final pendingSource = preferences.chapterDownloadDirectoryPendingMoveFrom;
       // A preflight failure leaves the source store authoritative. Reopen it
       // when its index is still present; otherwise the destination already
       // owns the moved index and is the only usable recovery side.
-      final sourceStillOwnsBytes = pendingSource != null &&
+      final sourceStillOwnsBytes =
+          pendingSource != null &&
           chapterDownloadStoreHasContent(pendingSource);
-      final sourceHasLegacyIndex = pendingSource != null &&
+      final sourceHasLegacyIndex =
+          pendingSource != null &&
           await chapterDownloadIndexExists(pendingSource);
       chapterDownloadDirectory = sourceStillOwnsBytes || sourceHasLegacyIndex
           ? pendingSource
@@ -1370,8 +1389,8 @@ Future<_AppServices> _openServices(
     // both SQLite stores here would create their WAL files and run their first
     // schema transactions solely because Home was shown. Keep the Home
     // projection in memory until an actual durable state exists.
-    final hasDurableState = await durableStateFuture ||
-        await chapterDownloadMetadataExists(root);
+    final hasDurableState =
+        await durableStateFuture || await chapterDownloadMetadataExists(root);
     _startupLog(
       'durable-state-check-complete '
       'durationMs=${durableStateClock.elapsedMilliseconds} '
@@ -1411,7 +1430,8 @@ Future<_AppServices> _openServices(
       userAgentProvider: () => preferences.networkUserAgent,
       transferNet: defaultDownloadResourceCoordinator.networkLane,
       localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
-      storageWriteScheduler: defaultDownloadResourceCoordinator.storageWriteScheduler,
+      storageWriteScheduler:
+          defaultDownloadResourceCoordinator.storageWriteScheduler,
       speculativeEncodedReadBudget:
           defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
       safTreeIo: safOverride == null
@@ -1430,6 +1450,7 @@ Future<_AppServices> _openServices(
       storageRoot: root,
       responses: responseCache,
       artifacts: downloadComposition.artifactStore,
+      presentationRasters: pipelinePresentationRasterCache,
       onPersistenceError: (error, stackTrace) {
         debugPrint('durable response cache failed: $error');
       },
@@ -1534,8 +1555,7 @@ Future<void> _attachExternalPlugins(
       // source-management page still requests the complete projection.
       deferRuntimeActivation: true,
     );
-    final accepted =
-        await services._acceptExternalPluginController(controller);
+    final accepted = await services._acceptExternalPluginController(controller);
     if (accepted) {
       telemetry.serviceReady(
         'external-plugin-host',
@@ -1610,8 +1630,7 @@ final class App extends StatefulWidget {
 final class _AppState extends State<App> {
   late final AppPreferencesController _preferences =
       widget.preferences ?? AppPreferencesController();
-  late final DebugTraceLog _debugTrace =
-      widget.debugTrace ?? DebugTraceLog();
+  late final DebugTraceLog _debugTrace = widget.debugTrace ?? DebugTraceLog();
 
   @override
   void initState() {
@@ -1640,9 +1659,7 @@ final class _AppState extends State<App> {
       builder: (context, _) => MaterialApp(
         title: 'zic',
         debugShowCheckedModeBanner: false,
-        theme: _zicTheme(
-          ColorScheme.fromSeed(seedColor: Colors.indigo),
-        ),
+        theme: _zicTheme(ColorScheme.fromSeed(seedColor: Colors.indigo)),
         darkTheme: _zicTheme(
           _darkColorScheme(amoled: _preferences.amoledDarkTheme),
           amoled: _preferences.amoledDarkTheme,
@@ -1709,10 +1726,7 @@ final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('再按一次返回到后台'),
-          duration: _confirmWindow,
-        ),
+        const SnackBar(content: Text('再按一次返回到后台'), duration: _confirmWindow),
       );
   }
 
@@ -1745,7 +1759,8 @@ final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
   }
 }
 
-ThemeData _zicTheme(ColorScheme colorScheme, {bool amoled = false}) => ThemeData(
+ThemeData _zicTheme(ColorScheme colorScheme, {bool amoled = false}) =>
+    ThemeData(
       colorScheme: colorScheme,
       scaffoldBackgroundColor: amoled ? Colors.black : null,
       canvasColor: amoled ? Colors.black : null,
@@ -1827,8 +1842,7 @@ Widget createApp({
     externalPlugins: externalPlugins as ExternalPluginController?,
     externalPluginLoader: externalPluginLoader == null
         ? null
-        : externalPluginLoader
-            as Future<ExternalPluginController?> Function(),
+        : externalPluginLoader as Future<ExternalPluginController?> Function(),
     platformEnvironmentLoader: platformEnvironmentLoader == null
         ? null
         : platformEnvironmentLoader as Future<void> Function(),
