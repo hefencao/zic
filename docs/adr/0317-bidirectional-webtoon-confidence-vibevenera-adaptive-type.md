@@ -1,7 +1,7 @@
 # ADR 0317：来源条漫置信与 VibeVenera adaptive type 投影
 
 ## 状态
-Accepted。取代 ADR 0316 第 4–7 条的单向来源 weight；ADR 0316 的 model v6 几何规则继续有效。
+Accepted。取代 ADR 0316 第 4–7 条的单向来源 weight；页面几何由 ADR 0321 / model v8 的一次性小样本判定负责。
 
 ## 问题
 ADR 0316 的来源先验使用 0–1 单向 weight：0 表示没有来源证据，1 表示强条漫，无法表达“该来源几乎全部是页漫”。

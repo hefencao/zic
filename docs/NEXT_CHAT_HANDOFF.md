@@ -30,7 +30,10 @@
 - 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint，
   以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，
   0/0.5/1 分别表示强页漫/中性/强条漫。Venera `comic.adaptiveType` 经 typed descriptor 投影，Mihon 无声明时保持 unknown。
-  model v6 中近1:1切片不得成为高置信分页证据。漫画级显式方向只覆盖方向，不能阻止 profile 继续驱动其它行为；
+  model v8 的页面几何最多采样 3 张并包含第一页；达到目标样本数后只判一次，后续页面不得重算 profile。
+  `0.65 < h/w < 1.20` 的异常/transport-slice 比例不得形成页漫票，因此 720×700、720×500 不能仅凭尺寸被判成页漫。
+  真机肉漫屋《要成為男子漢》已验证：50% 来源置信 + `韓國` + 异常切片得到 vertical 70.83%、samples=3、modelVersion=8，持续停留后 samples 不增长。
+  漫画级显式方向只覆盖方向，不能阻止 profile 继续驱动其它行为；
   当前长按放大按“漫画显式覆盖 > adaptive 类型建议 > 模式默认”解析，条漫默认关、页漫/动图默认开。
   全局/漫画级 adaptive 开关独立于手动 override master；Reader 不得复制来源设置 authority，也不得借 adaptive 接管 Pipeline 调度。
 - 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。

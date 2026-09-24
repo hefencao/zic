@@ -56,7 +56,8 @@ App build：0.31.0+328
   不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
 
 ### 渲染与几何 (Pipeline & Reader View)
-- 自适应阅读：`reader_runtime` model v6 将近方形切片降为低信息，以距 1:1 的比例距离增强普通分页证据，并保留极长纵幅条漫证据。
+- 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
+  `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
   经 `ReaderSessionSettings` 只读投影给分类器，非中性值参与 profile fingerprint；旧单向 weight 按 `0.5 + weight/2` 兼容迁移。
   Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影。
@@ -85,7 +86,7 @@ App build：0.31.0+328
 |---|---|---|
 | repository / documentation / Dart 静态门禁 | Verified-static | 门禁与目录结构核对通过 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
-| 自适应阅读来源先验 | Verified-toolchain | model v6 比例回归、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；具体线上来源尚未标记真机验证 |
+| 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
 | 跨平台桥接与平台编译 | Verified-toolchain | Kotlin 与 Android 依赖通过 |
 | 设备性能与真机回归 | Verified-device | 基础链路真机采样验证通过 |

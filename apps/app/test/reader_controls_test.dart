@@ -667,6 +667,52 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
+  testWidgets('stale adaptive profile is cleared before new geometry',
+      (tester) async {
+    final writes = <ReaderSessionSettings>[];
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              globalAdaptiveEnabled: true,
+              adaptiveProfile: AdaptiveReaderProfile(
+                direction: ReadingDirection.ltr,
+                confidence: 0.9,
+                basis: 'stale-test',
+                modelVersion: 6,
+              ),
+            ),
+            onSettingsChanged: writes.add,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>(
+                'reader-stale-profile:' + asset.index.toString(),
+              ),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(writes, isNotEmpty);
+    expect(writes.first.adaptiveProfile, isNull);
+    await _disposePipelineReader(tester);
+  });
+
   testWidgets('clearing manual comic overrides preserves adaptive policy',
       (tester) async {
     ReaderSessionSettings? saved;

@@ -192,11 +192,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       metadata: widget.adaptiveMetadata,
       sourceWebtoonConfidence: _settings.sourceWebtoonConfidence,
     );
+    final storedAdaptiveProfile = _settings.adaptiveProfile;
     _adaptiveProfile = _initialAdaptiveProfile(_settings);
     _pipeline.pageDimensions.addListener(_handlePipelinePageDimensions);
     final initialProfile = _adaptiveProfile;
-    if (initialProfile != null &&
-        initialProfile != _settings.adaptiveProfile) {
+    if (_settings.effectiveAdaptiveEnabled &&
+        initialProfile != storedAdaptiveProfile) {
       _settings = _settings.copyWith(adaptiveProfile: initialProfile);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _persistSettings();

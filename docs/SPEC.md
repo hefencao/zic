@@ -159,8 +159,10 @@
   Mihon 或其它未声明来源 MUST 保持 unknown，不得由插件名推断。
   漫画自身明确 tag/动画证据 MUST 高于来源先验；足够达到 apply threshold 的用户来源置信 MUST 高于
   provider source adaptive hint 与来源 identity heuristic，使用户可修正来源默认声明。
-  近 1:1 页面 MUST 被视为低信息切片，不能仅因宽高接近而形成高置信分页；
-  普通页面比例的分页证据 SHOULD 随其偏离 1:1 增强，极长纵幅 MAY 形成条漫正证据，二者之间必须保留低置信过渡区。
+  页面几何 MUST 使用一次性小样本判定，不得随着 Reader 持续解码页面反复重算布局 profile；实现最多采样 3 张并包含第一页，少于 3 页时使用全部页面，至少需要 2 张才允许几何分类。
+  `0.65 < height/width < 1.20` MUST 视为异常/transport-slice 不确定区，自身不得形成页漫几何票；因此类似 `720×700`、`720×500` 的尺寸不能仅凭比例被判成页漫。
+  明显普通横页与竖页 MAY 形成页漫证据，极长纵幅 MAY 形成条漫正证据，二者之间必须保留低置信过渡区。
+  达到 geometry sample target 后，后续页面尺寸 MUST 不再改变布局 profile；漫画/来源级元数据与来源先验 MUST 独立于已解码页面数。
   地域/语言相关标签 MAY 作为弱证据，但不得仅凭“韩国/韓國”等地域词硬切阅读模式。
   来源先验或 typed source metadata 变化 MUST 使与旧证据绑定的持久 adaptive profile 失效；
   实现不得为插件、来源页和 Reader 各建一份互相覆盖的设置 authority。

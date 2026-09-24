@@ -72,12 +72,13 @@ void main() {
     expect(classifyAdaptiveReaderLayout(chapter), isNull);
   });
 
-  test('cover is excluded and two content-page geometry samples decide', () {
+  test('geometry includes the first page and decides once from a small sample', () {
     final chapter = manifest(
       pages: const [
-        (width: 600, height: 3000, animated: false),
-        (width: 1600, height: 1000, animated: false),
-        (width: 1600, height: 1000, animated: false),
+        (width: 1920, height: 1080, animated: false),
+        (width: 1920, height: 1080, animated: false),
+        (width: 1920, height: 1080, animated: false),
+        (width: 1920, height: 1080, animated: false),
       ],
       sourceDirection: ReadingDirection.rtl,
     );
@@ -85,7 +86,7 @@ void main() {
     final profile = classifyAdaptiveReaderLayout(chapter);
     expect(profile?.direction, ReadingDirection.rtl);
     expect(profile?.basis, 'page-geometry');
-    expect(profile?.samples, 2);
+    expect(profile?.samples, 3);
   });
 
   test('near-square segmented pages stay low-confidence', () {
@@ -155,6 +156,65 @@ void main() {
     expect(profile?.basis, 'page-geometry');
     expect(profile!.confidence, greaterThanOrEqualTo(0.60));
     expect(profile.confidence, lessThan(AdaptiveReaderProfile.stopConfidence));
+  });
+
+  test('Korean transport slices are classified once and do not drift paged', () {
+    final chapter = manifest(
+      pages: List<({int? width, int? height, bool animated})>.generate(
+        20,
+        (_) => (width: null, height: null, animated: false),
+      ),
+      sourceDirection: ReadingDirection.vertical,
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'mihon:fixture',
+      comicId: 'comic',
+      title: 'sample',
+      tags: const <String>['韓國'],
+    );
+    final classifier = AdaptiveReaderClassifier(
+      chapter,
+      metadata: metadata,
+      sourceWebtoonConfidence: 0.5,
+    );
+    final profiles = <AdaptiveReaderProfile>[];
+    for (var index = 0; index < 20; index++) {
+      final profile = classifier.observeDimensions(
+        chapter.pages[index],
+        720,
+        index < 3 ? 500 : 700,
+      );
+      if (profile != null) profiles.add(profile);
+    }
+
+    expect(profiles, hasLength(1));
+    expect(profiles.first.direction, ReadingDirection.vertical);
+    expect(profiles.first.basis, 'page-geometry');
+    expect(profiles.first.samples, 3);
+    expect(profiles.first.confidence,
+        greaterThanOrEqualTo(AdaptiveReaderProfile.applyConfidence));
+  });
+
+  test('near-square transport geometry is neutral rather than weakly paged', () {
+    final chapter = manifest(
+      pages: List<({int? width, int? height, bool animated})>.generate(
+        6,
+        (_) => (width: 720, height: 700, animated: false),
+      ),
+    );
+
+    expect(classifyAdaptiveReaderLayout(chapter), isNull);
+  });
+
+  test('720x500 transport geometry is ambiguous rather than paged', () {
+    final chapter = manifest(
+      pages: List<({int? width, int? height, bool animated})>.generate(
+        6,
+        (_) => (width: 720, height: 500, animated: false),
+      ),
+    );
+
+    expect(classifyAdaptiveReaderLayout(chapter), isNull);
   });
 
   test('paged source confidence can counter square Korean source evidence', () {
@@ -356,5 +416,22 @@ void main() {
     final restored = AdaptiveReaderProfile.fromJson(profile.toJson());
     expect(restored, profile);
     expect(restored.modelVersion, AdaptiveReaderProfile.currentModelVersion);
+  });
+
+  test('pre-v8 persisted geometry profile is stale under model v8', () {
+    final restored = AdaptiveReaderProfile.fromJson(
+      const <String, Object?>{
+        'direction': 'ltr',
+        'confidence': 0.666114844046882,
+        'basis': 'page-geometry',
+        'animated': false,
+        'samples': 20,
+        'metadataFingerprint': 112157161,
+        'modelVersion': 6,
+      },
+    );
+
+    expect(restored.isCurrent, isFalse);
+    expect(AdaptiveReaderProfile.currentModelVersion, 8);
   });
 }

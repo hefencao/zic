@@ -355,7 +355,7 @@ final class AdaptiveReaderProfile {
     this.modelVersion = currentModelVersion,
   });
 
-  static const int currentModelVersion = 6;
+  static const int currentModelVersion = 8;
   static const double applyConfidence = 0.60;
   static const double stopConfidence = 0.80;
 
@@ -455,6 +455,7 @@ final class AdaptiveReaderClassifier {
   final Map<String, ({int width, int height})> _samples =
       <String, ({int width, int height})>{};
   final Set<String> _animatedSamples = <String>{};
+  bool _geometryDecisionComplete = false;
 
   int get metadataFingerprint => _metadataFingerprint;
 
@@ -678,7 +679,7 @@ final class AdaptiveReaderClassifier {
     final metadataProfile = classifyMetadata();
     if (metadataProfile != null) return metadataProfile;
     final animated = _classifyAnimated('animated-pages');
-    return animated ?? _classifyGeometry();
+    return animated ?? _takeGeometryDecision();
   }
 
   AdaptiveReaderProfile? observeDimensions(
@@ -686,11 +687,11 @@ final class AdaptiveReaderClassifier {
     int width,
     int height,
   ) {
-    if (width <= 0 || height <= 0 || _isCover(page)) return null;
+    if (width <= 0 || height <= 0 || _geometryDecisionComplete) return null;
     final previous = _samples[page.assetKey];
     if (previous?.width == width && previous?.height == height) return null;
     _recordDimensions(page, width, height);
-    return _classifyGeometry();
+    return _takeGeometryDecision();
   }
 
   AdaptiveReaderProfile? observeAnimated(PageAsset page) {
@@ -700,16 +701,27 @@ final class AdaptiveReaderClassifier {
   }
 
   void _recordDimensions(PageAsset page, int width, int height) {
-    if (width <= 0 || height <= 0 || _isCover(page)) return;
+    if (width <= 0 || height <= 0) return;
+    if (!_samples.containsKey(page.assetKey) &&
+        _samples.length >= _geometrySampleTarget) {
+      return;
+    }
     _samples[page.assetKey] = (width: width, height: height);
   }
 
   bool _isCover(PageAsset page) => chapter.pages.length > 2 && page.index == 0;
 
-  static const int _requiredSamples = 2;
+  static const int _requiredAnimationSamples = 2;
+  static const int _minimumGeometrySamples = 2;
+  static const int _geometrySampleLimit = 3;
+  static const double _ambiguousLandscapeRatio = 0.65;
+  static const double _pagedPortraitRatio = 1.20;
+
+  int get _geometrySampleTarget =>
+      math.min(_geometrySampleLimit, chapter.pages.length).toInt();
 
   AdaptiveReaderProfile? _classifyAnimated(String basis) {
-    if (_animatedSamples.length < _requiredSamples) return null;
+    if (_animatedSamples.length < _requiredAnimationSamples) return null;
     return AdaptiveReaderProfile(
       direction: chapter.readingDirection == ReadingDirection.rtl
           ? ReadingDirection.rtl
@@ -722,8 +734,18 @@ final class AdaptiveReaderClassifier {
     );
   }
 
+  AdaptiveReaderProfile? _takeGeometryDecision() {
+    final target = _geometrySampleTarget;
+    if (_geometryDecisionComplete ||
+        target < _minimumGeometrySamples ||
+        _samples.length < target) {
+      return null;
+    }
+    _geometryDecisionComplete = true;
+    return _classifyGeometry();
+  }
+
   AdaptiveReaderProfile? _classifyGeometry() {
-    if (_samples.length < _requiredSamples) return null;
     var vertical = 0.0;
     var paged = 0.0;
     for (final sample in _samples.values) {
@@ -735,19 +757,37 @@ final class AdaptiveReaderClassifier {
       } else if (ratio >= 1.9) {
         vertical += 0.8;
         paged += 0.7;
-      } else {
-        // A near-square page is weak evidence: long-strip sources commonly
-        // slice one canvas into square-ish transport pages. Paged confidence
-        // grows only as the shape moves away from 1:1 toward ordinary page
-        // or landscape proportions. log2 keeps portrait/landscape distance
-        // symmetric (16:9 and 9:16 carry equal paged shape evidence).
-        final squareDistance =
+      } else if (ratio >= _pagedPortraitRatio) {
+        final start = math.log(_pagedPortraitRatio) / math.ln2;
+        final end = math.log(1.9) / math.ln2;
+        final distance = math.log(ratio) / math.ln2;
+        final pagedDistance =
+            ((distance - start) / (end - start)).clamp(0.0, 1.0).toDouble();
+        paged += 1.5 * pagedDistance;
+      } else if (ratio <= _ambiguousLandscapeRatio) {
+        final start =
+            (math.log(_ambiguousLandscapeRatio).abs() / math.ln2);
+        final distance =
             (math.log(ratio).abs() / math.ln2).clamp(0.0, 1.0).toDouble();
-        paged += 1.5 * squareDistance;
+        final pagedDistance =
+            ((distance - start) / (1 - start)).clamp(0.0, 1.0).toDouble();
+        paged += 1.5 * pagedDistance;
+      } else {
+        // Ratios between a clearly wide page and an ordinary portrait page
+        // are intentionally neutral. Webtoon sources often cut one strip
+        // into 720x500/720x700-like transport slices, and treating every
+        // non-square shape as a page recreates the original false positive.
       }
     }
+    // Geometry is a one-shot sample, not an online vote counter. Cap its
+    // aggregate strength at three representative pages even when six samples
+    // are used to estimate the shape distribution.
+    final geometryBudget = math.min(3, _samples.length).toDouble();
+    final geometryScale = geometryBudget / _samples.length;
+    vertical *= geometryScale;
+    paged *= geometryScale;
     final tags = metadata?.tags ?? const <String>[];
-    vertical += _tagWeight(
+    final verticalMetadata = _tagWeight(
       tags,
       const <String>[
         'webtoon',
@@ -773,6 +813,7 @@ final class AdaptiveReaderClassifier {
       ],
       1.8,
     );
+    vertical += verticalMetadata;
     paged += _tagWeight(
       tags,
       const <String>[

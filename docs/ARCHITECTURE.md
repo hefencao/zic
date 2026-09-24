@@ -869,8 +869,10 @@ host attach 后立即同步最新帧，vertical Reader 不启用该 detached pre
 Venera source 可声明 `comic.adaptiveType=paged|vertical|animated`；该声明经 plugin runtime 的 typed `SourceAdaptiveReaderType`、
 App composition 与 `AdaptiveReaderMetadata.sourceType` 进入已有高置信 metadata 路径。
 来源名和官网也由 composition 投影给 classifier；Mihon 未声明等价能力时保持 null，不做猜测。
-model v6 继续将近 1:1 页面视为低信息切片，普通横/竖页面比例按其偏离 1:1 的程度形成分页证据，
-极长纵幅形成条漫证据；`韩国/韓國` 等地域标签只参与弱证据合成。
+model v8 将页面几何改为一次性小样本判定：最多取 3 张，包含第一页；达到目标样本数后停止 geometry sampling，
+后续解码页面不得再次改变布局 profile。`0.65 < height/width < 1.20` 视为异常/transport-slice 不确定区，
+因此 `720×700`、`720×500` 自身不再形成页漫票；明显 16:9/9:16 等普通页面才形成页漫几何证据，极长纵幅形成条漫证据。
+`韩国/韓國` 等地域标签仍只参与弱证据合成，不升级为硬方向规则。
 adaptive profile 是共享的 Reader 行为输入，不是“布局模式”本身。当前消费者至少包括阅读方向与长按放大：
 没有漫画级显式方向时，高置信 profile 可以选择分页/纵向方向；漫画级显式方向只覆盖方向这一项，
 不得阻止 profile 继续更新或供其它消费者使用。长按放大的优先级为漫画级显式覆盖 >
