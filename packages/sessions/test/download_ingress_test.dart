@@ -219,6 +219,54 @@ void main() {
     expect(factory.created.single.bytes, bytes);
     expect(factory.created.single.sealed, isTrue);
   });
+
+  test(
+      'detached Reader ingress cannot turn promoted restore into network fallback',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('restore_detached_ingress_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final bytes = 'RIFF....WEBPrestored-detach-race'.codeUnits;
+    final finalPath = '${temp.path}/cache/page.webp';
+    await File(finalPath).create(recursive: true);
+    await File(finalPath).writeAsBytes(bytes);
+
+    final factory = _Factory();
+    final ingress = Ingress(factory: factory, maxBytes: 1024);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'restored-detach-race',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.file(finalPath),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/cache/page.part',
+        finalPath: finalPath,
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-detach-race:${session.id.key}',
+      ingress: ingress,
+    );
+    session.attachIngressProjection(projection);
+    factory.onAppend = () {
+      expect(session.detachIngressProjection(projection.scopeId), isTrue);
+      projection.detach();
+      ingress.dispose();
+    };
+
+    final restored = await session.restore();
+
+    expect(restored.state, DownloadState.promoted);
+    expect(restored.committedLength, bytes.length);
+    expect(session.snapshot.ingressProjectionCount, 0);
+  });
 }
 
 
@@ -273,21 +321,31 @@ final class _Clock implements MonoClock {
 
 final class _Factory implements SourceFactory {
   final List<_Source> created = <_Source>[];
+  void Function()? onAppend;
 
   @override
   EncodedSource create({required int epoch, required int maxBytes}) {
-    final source = _Source(epoch: epoch, maxBytes: maxBytes);
+    final source = _Source(
+      epoch: epoch,
+      maxBytes: maxBytes,
+      onAppend: onAppend,
+    );
     created.add(source);
     return source;
   }
 }
 
 final class _Source implements EncodedSource {
-  _Source({required this.epoch, required this.maxBytes});
+  _Source({
+    required this.epoch,
+    required this.maxBytes,
+    this.onAppend,
+  });
 
   @override
   int epoch;
   final int maxBytes;
+  void Function()? onAppend;
   final List<int> bytes = <int>[];
 
   @override
@@ -305,6 +363,9 @@ final class _Source implements EncodedSource {
     required int offset,
     required List<int> bytes,
   }) {
+    final callback = onAppend;
+    onAppend = null;
+    callback?.call();
     if (epoch != this.epoch) {
       return SourceStatus.staleEpoch;
     }

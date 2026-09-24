@@ -3133,6 +3133,9 @@ final class DownloadSession {
     for (final projection in List<DownloadIngressProjection>.of(
       _ingressProjections.values,
     )) {
+      if (!identical(_ingressProjections[projection.scopeId], projection)) {
+        continue;
+      }
       final current = projection.snapshot;
       final expectedLength = artifact.committedLength;
       final alreadyAuthoritative =
@@ -3142,10 +3145,22 @@ final class DownloadSession {
           current.sealed == sealed &&
           current.failure == null;
       if (alreadyAuthoritative) continue;
-      await _rebuildIngressProjection(
-        projection,
-        sealed: sealed,
-      );
+      try {
+        await _rebuildIngressProjection(
+          projection,
+          sealed: sealed,
+        );
+      } on Object {
+        // Reader-local ingress lifetime is strictly weaker than physical
+        // artifact lifetime. A projection may leave the decode window and be
+        // disposed while a durable restore is replaying into it. That detached
+        // consumer must not turn a complete local artifact into a network
+        // fallback. Failures from a still-attached projection remain real.
+        if (!identical(_ingressProjections[projection.scopeId], projection)) {
+          continue;
+        }
+        rethrow;
+      }
     }
   }
 
