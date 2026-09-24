@@ -1994,10 +1994,10 @@ vertical Reader MAY另以约1秒有界`scrollCadenceSummary`聚合所有非零�
 `platformWindowFrameMetricsOutlier/Summary`不得请求frame或驱动Reader/Pipeline。
 listener第三参数 MUST命名/解释为`droppedReports`（metrics report loss），不得冒充display dropped frames；
 Window metrics不得无证据视为Flutter SurfaceView内容帧的连续代理。
-vertical Reader MAY在active scroll期间递归注册不调度新frame的post-frame callback，
+仅显式`ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`的诊断构建中，vertical Reader MAY在active scroll期间递归注册不调度新frame的post-frame callback，
 读取同一frame完成后的live scroll pixels与current page RenderBox，
 聚合`globalTop + pixels - expectedStart`残差连续性为`verticalSceneMotionSummary/Outlier`；
-该probe MUST不调用scheduleFrame、setState、jump/animateTo或成为policy输入。
+该probe MUST不调用scheduleFrame、setState、jump/animateTo或成为policy输入；普通构建 MUST不注册该scene-motion probe。
 vertical active motion中canonical desired encoded window MUST继续是forward7/backward3；
 为避免confirmed direction flip把far speculative membership一次性5/5翻面，accepted physical download plan MAY使用有界bridge：
 所有desired DecodeDemand/UploadDemand以及current/transition所依赖DownloadId MUST立即存在，

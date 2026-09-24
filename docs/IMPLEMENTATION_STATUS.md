@@ -78,8 +78,14 @@ App build：0.31.0+328
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
 
 ## 2. 当前开放问题
-- 静态竖排功耗偏高：HeuristicPolicy 静态全量并发上传与逐页异步尺寸重绘引发整树颠簸。
-- 纵排初始化 cacheExtent 保持 6 屏与 15 页 KeepAlive 常驻未收敛。
+- 静态竖排功耗报告已于 2026-09-24 重新按当前 owner 链复核：idle 恢复 3/7 static warm 是既定资源平滑策略，不作为功耗缺陷移除。
+  Plan 会同时声明 one-frame intents，但真正 decode 仍由 `StagedDecodeRefillPolicy` 每次选一个 refill；Reader profile 的 bounded lanes 不等于整窗同时执行。
+- ratio“逐页整树颠簸”报告部分过时：`reader_runtime` 已按 Flutter frame 合并 source-canvas ratio 发布，decoded raster 不能覆盖已知 source-canvas geometry。
+  未取得 fresh trace 证明仍有跨多 frame 的 source-canvas storm 前，不再增加 debounce/Reader-local 几何旁路。
+- 初始 6-screen `cacheExtent` 到首个 ScrollEnd、nominal `current±7` KeepAlive 与每 frame 最多 3 页的 idle recenter 均保留为 composition 策略；
+  它们不扩大 Pipeline 资源窗口，offscreen subtree 由 `TickerMode` 静音，暂不按泄漏/功耗 bug 处理。
+- 已确认并修复的额外成本：Dart `verticalSceneMotion` RenderBox/global-matrix probe 现在与 platform cadence probe 共用
+  `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS` opt-in；普通构建不再运行该纯诊断逐帧采样。fresh Profile/Release 功耗复核仍可继续。
 
 ## 3. 验证矩阵
 | 检查项 | 状态 | 说明 |

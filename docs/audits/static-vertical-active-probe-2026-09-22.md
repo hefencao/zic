@@ -1,5 +1,14 @@
 # Static vertical Reader: active diagnostic wakeups
 
+## 2026-09-24 follow-up
+
+A later external review attributed static-vertical power to five additional mechanisms. Re-reading the current production path changed that classification:
+
+- idle static warming is intentional. The policy restores the existing 3/7 one-frame static intent window after active presentation motion so necessary work is shifted away from scrolling. Although the plan contains multiple intents, `StagedDecodeRefillPolicy` elects one actual refill at a time before decode work; removing idle warm would be a preload regression, not a power fix.
+- the reported per-image geometry cascade is partly stale. `reader_runtime` already coalesces pending source-canvas ratios into one post-frame publication, and decoded presentation raster dimensions cannot overwrite an established source-canvas basis. No new debounce or Reader-local geometry bypass is accepted without a fresh trace proving repeated source-canvas updates remain material.
+- the initial six-screen cache pass, nominal `current±7` keepAlive, and bounded three-pages-per-frame idle recenter are composition behavior, not decoded/upload/texture residency owners. They remain unchanged pending device evidence.
+- one genuine diagnostic residue remained: the Dart `verticalSceneMotion` probe still recursively sampled `RenderBox.localToGlobal` during active vertical frames even when the Android cadence diagnostics were disabled. It now uses the same `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS` opt-in. This changes diagnostics only; warm windows, decode/upload lanes, geometry, keepAlive and presentation policy are unchanged.
+
 ## Scope and status
 
 The user reports elevated power consumption, especially while reading static images vertically. This change removes one confirmed source of unnecessary activity; it does **not** yet establish that all elevated power consumption is explained or fixed. Final repository verification and the targeted static-vertical device run passed. Device evidence shows reduced Android-main idle CPU; offline trace analysis completed after a same-protocol recovery from a stream disconnect. No watts/battery-life claim is made.

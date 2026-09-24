@@ -4,7 +4,8 @@
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`。
 - 历史阶段基线验证覆盖：dev.196, dev.197, dev.198, dev.199, dev.203 bounded 抢占基准。
 - 当前主任务：Home 生产组合已由 `DemoHome` 收口为 `HomeShell`，并把 durable service adoption/cache-generation commit 抽到非 UI `HomeServiceAdoptionCoordinator`；后续 Home 改动继续沿现有 owner 边界拆分，禁止把 service/Reader/source authority 收回 Widget State。
-- 功耗审计基准：静态竖排阅读高功耗根因已定位，详见 `docs/audits/static-vertical-active-probe-2026-09-22.md`。
+- 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；
+  2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；
@@ -18,7 +19,8 @@
   selected version-view preparation 也已归并到 `HomeVersionReuseLifecycle`，`HomeShell` 不再持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
   后续若继续瘦身，应从明确重复状态或 route builder adapter 入手；禁止新增跨 owner facade，也禁止把 service generation / route admission / version preparation / shelf selection 镜像回 `HomeShell`。
-- 静态竖排浏览功耗偏高（HeuristicPolicy 静态爆发上传、逐页尺寸异步重绘颠簸、首屏 6 屏大 cacheExtent、KeepAlive 15 页常驻与 scheduleFrame 调度）。
+- 静态竖排功耗下一步只接受 fresh Profile/Release 证据再改行为：idle 3/7 static warm 是刻意的平滑资源分配，staged refill不会整窗同时decode；
+  6-screen bootstrap、`current±7` KeepAlive和有界recenter目前也保留。若仍高功耗，先量化实际warm task cadence、source-canvas ratio发布次数和UI rebuild，而不是缩窗口/禁warm。
 - 文档超长单行整理，严格保持 handoff/status 责任预算上限，杜绝单行堆砌历史。
 
 ## 4. 下一步命令

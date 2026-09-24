@@ -999,9 +999,9 @@ API24+由独立`zic-reader-window-metrics` HandlerThread采集total/unknown dela
 API26+另采intended/actual vsync；
 同一vsync callback必须去重，summary记录first/last vsync以显化覆盖范围，`droppedReports`仅表示metrics report loss。
 它不得被假定为Flutter `SurfaceView`内容帧的连续代理。
-vertical active scroll另允许每个实际Flutter post-frame读取live `ScrollPosition.pixels`与current page RenderBox globalTop，
+仅显式`ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`的诊断构建允许vertical active scroll在每个实际Flutter post-frame读取live `ScrollPosition.pixels`与current page RenderBox globalTop，
 并用`globalTop + pixels - expectedStart`形成跨页不变量；
-只聚合`verticalSceneMotionSummary`与有界outlier，不调用scheduleFrame/setState/position mutation。
+只聚合`verticalSceneMotionSummary`与有界outlier，不调用scheduleFrame/setState/position mutation；普通构建不得注册该scene-motion矩阵采样probe。
 cacheExtent/`current±7` keepAlive 只拥有 composition residency，不等于 UI animation admission：
 `ReaderView` 必须用同一 vertical geometry 的 `visibleCoverages` 投影 `visibleMin..visibleMax`，
 对仍挂载但实际 viewport 外的 page subtree 关闭 `TickerMode`；

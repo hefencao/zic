@@ -1,3 +1,8 @@
+## Unreleased — vertical scene-motion diagnostic gating
+
+- Keep vertical idle static warming, the 3/7 one-frame intent envelope, initial six-screen composition pass, nominal `current±7` keepAlive and bounded recenter unchanged after re-auditing a power report; these are intentional staged preload/composition behavior rather than evidence of an 11-way media-work burst.
+- Gate the Dart `verticalSceneMotion` RenderBox/global-transform sampler behind the existing `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS` build flag, matching the already opt-in Android Choreographer/WindowMetrics diagnostics. Ordinary builds no longer run that pure diagnostic per-frame matrix probe.
+
 ## Unreleased — Reader settings model and Android system bars
 
 - Replace the double-tap level-1/level-2 preset chips with 0.25x-step sliders while preserving the existing `defaultZoomStage1/defaultZoomStage2` persisted values and stage ordering.

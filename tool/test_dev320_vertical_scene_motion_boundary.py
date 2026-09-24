@@ -43,6 +43,8 @@ if re.search(r'final provider\s*=\s*detected\.isWebp\s*\?\s*null\s*:\s*encodedRe
 
 # The scene probe observes one final post-frame position without requesting frames.
 for token in (
+    "const bool _readerFrameCadenceDiagnosticsEnabled = bool.fromEnvironment(",
+    "'ZIC_READER_FRAME_CADENCE_DIAGNOSTICS',",
     '_startVerticalSceneMotionProbe()',
     '_scheduleVerticalSceneMotionSample()',
     'WidgetsBinding.instance.addPostFrameCallback((frameTimeStamp)',
@@ -55,6 +57,11 @@ for token in (
 ):
     require(reader, token, 'per-frame scene-motion observation')
 probe = reader[reader.index('void _startVerticalSceneMotionProbe()'):reader.index('void _resetVerticalScrollCadenceSummary')]
+require(
+    probe,
+    'if (!_readerFrameCadenceDiagnosticsEnabled) return;',
+    'scene-motion diagnostics opt-in',
+)
 for token in ('scheduleFrame(', 'setState(', '.jumpTo(', '.animateTo('):
     forbid(probe, token, 'probe-driven Reader behavior')
 

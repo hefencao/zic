@@ -728,6 +728,87 @@ void main() {
   );
 
   testWidgets(
+    'vertical scene-motion diagnostics follow cadence opt-in',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'scene-probe-comic',
+        chapter: const Chapter(
+          chapterId: 'scene-probe-chapter',
+          comicId: 'scene-probe-comic',
+          title: 'scene probe',
+          sequence: 0,
+          pageCount: 12,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          12,
+          (index) => PageAsset(
+            pageId: 'scene-probe-$index',
+            chapterId: 'scene-probe-chapter',
+            index: index,
+            uri: Uri.parse('asset:///scene-probe-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final trace = MemoryTraceSink();
+      final controller = ReaderController(
+        sessionId: 'reader-scene-probe-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            traceSink: trace,
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.drag(
+        find.byKey(const ValueKey<String>('reader-vertical-list')),
+        const Offset(0, -240),
+      );
+      await tester.pumpAndSettle();
+
+      const diagnosticsEnabled = bool.fromEnvironment(
+        'ZIC_READER_FRAME_CADENCE_DIAGNOSTICS',
+      );
+      final sceneMotionEvents = trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.verticalSceneMotionSummary ||
+            event.kind == TraceEventKind.verticalSceneMotionOutlier,
+      );
+      if (diagnosticsEnabled) {
+        expect(
+          sceneMotionEvents,
+          isNotEmpty,
+          reason:
+              'the explicit cadence diagnostics build must retain scene-motion sampling for investigations',
+        );
+      } else {
+        expect(
+          sceneMotionEvents,
+          isEmpty,
+          reason:
+              'scene-motion matrix sampling is diagnostic-only and must stay disabled in normal builds',
+        );
+      }
+    },
+  );
+
+  testWidgets(
     'vertical idle keepAlive recenter does not release the whole old window in one frame',
     (tester) async {
       final chapter = ChapterManifest(

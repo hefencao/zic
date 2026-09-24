@@ -13,6 +13,10 @@ import 'vertical_reader_geometry.dart';
 
 part 'reader_page_host.dart';
 
+const bool _readerFrameCadenceDiagnosticsEnabled = bool.fromEnvironment(
+  'ZIC_READER_FRAME_CADENCE_DIAGNOSTICS',
+);
+
 typedef ReaderPageBuilder = Widget? Function(
   BuildContext context,
   PageAsset asset,
@@ -2160,6 +2164,7 @@ final class _ReaderViewState extends State<ReaderView>
   }
 
   void _startVerticalSceneMotionProbe() {
+    if (!_readerFrameCadenceDiagnosticsEnabled) return;
     _verticalSceneMotionStopPending = false;
     if (_verticalSceneMotionProbeActive) return;
     _verticalSceneMotionProbeActive = true;
