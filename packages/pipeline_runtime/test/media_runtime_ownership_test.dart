@@ -667,6 +667,57 @@ void main() {
     await session.dispose();
   });
 
+  test('vertical native current prebinds detached output before host mount', () async {
+    final trace = MemoryTraceSink();
+    final runtime = _Runtime(renderer: RendererKind.androidTexture);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
+    ).create(
+      chapter: _galleryChapter(pageCount: 3),
+      sessionId: 'vertical-detached-output-prebind-test',
+      traceSink: trace,
+    );
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+      externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+    );
+    final current = session.chapter.pages[0];
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.scrolling,
+        logicalPosition: 0,
+        velocity: 1,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: current.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    final prewarms = trace.events
+        .where((event) => event.kind == TraceEventKind.pageOutputPrewarmed)
+        .toList(growable: false);
+    expect(prewarms, isNotEmpty);
+    expect(prewarms.first.payload['pageIndex'], 0);
+    expect(prewarms.first.payload['role'], 'current');
+    expect(prewarms.first.payload['created'], isTrue);
+    expect(runtime.prewarmCalls, 1);
+
+    await session.dispose();
+  });
+
   test('animated paged next prewarms output without idle upload', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);

@@ -776,8 +776,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   真实visible页ratio仍冻结到idle。
   idle采用其余新ratio时top-pixel offset仍必须通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
   不得先换extent再以`jumpTo`制造可观察中间页。
-  Pipeline在vertical active presentation期间必须defer generic/unresolved以及仍走native texture的non-visible speculative static upload（包括immediate next/next2/previous等stable decode role），
-  但这些页的decode仍按既有window保持warm；两个有证据的例外可在既有3/7 one-frame static intent envelope内提前UploadDemand/present：
+  Pipeline在vertical active presentation期间只defer generic/unresolved以及仍走native texture的non-visible `far/near` speculative static upload；
+  既有2/1 decode deadline窗口中的`next/next2/previous`在静态一帧已经decode-ready后必须允许提前进入UploadLane/present，并以`retainOutput`交给FrameBudgeter保留到viewport消费，避免把RGBA→SurfaceProducer首拷贝推迟到visible/transition seam。
+  该deadline preupload不扩大2/1 decode或3/7 encoded窗口，仍受UploadLane并发/优先级/抢占与FrameBudgeter约束；更远页仍只在idle阶段恢复普通speculative upload。两个有更强证据的例外仍可在既有3/7 one-frame static intent envelope内提前UploadDemand/present：
   其一是decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页；
   其二是当前generation的metadata prefix经`sniffEncodedImageKind`精确确认JPEG/PNG/BMP/TIFF/ICO/AVIF/HEIF等non-WebP/non-GIF image并由Pipeline记录为external-static presentation path的页。
   `ContentKind.fallback`本身不是静态证明，HTML/source错误页不得进入该资格。
@@ -878,7 +879,7 @@ idle `previous` 不得因此获得 UploadDemand，vertical Reader仍禁止hidden
 manifest、已知 physical content kind 和明显非-WebP URI 后缀已确认的页面不建立无用 native output；
 current 且无 listener 或尚无 resident surface 时仍立即预热，next/transition 在 Flutter frame 已提交或排队时延后到 scheduler idle task，
 动画/触摸回调未清空前不得启动 platform create，仍继续解码且不改变 playback/freeze 语义，
-host attach 后立即同步最新帧，vertical Reader 不启用该 detached prewarm。
+host attach 后立即同步最新帧。vertical Reader 不启用横排特有的 decode-only animated-next lease prewarm，但既有 real UploadDemand 的 static `current/transition/next/next2/previous` 必须预绑定 detached output consumer，使已经 ready 的 native output 不再等待 PageHost mount 才 `claimPresent/present`；`far/near` 仍不建立该 active detached output。
 自适应阅读 profile 的分类 owner 保持在 `reader_runtime`。它消费漫画元数据、非封面页面几何、实测动画证据，
 以及 App preferences 按 `sourceId` 投影进 `ReaderSessionSettings.sourceWebtoonConfidence` 的来源级条漫置信。
 条漫置信的唯一持久 authority 是 `AppPreferencesController.sourceAdaptiveWebtoonConfidences`：
@@ -1279,7 +1280,7 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   physical session只声明transfer/residency：普通hot/partial从session artifact重放；
   `residentBodyBacked`表示正文由外部immutable authority重放而非session artifact副本，绝不等价于durable cache ownership。
   physical generation另保留最多64-byte的generation-local source-metadata prefix并投影`sourceCanvasWidth/sourceCanvasHeight`；
-  该prefix只属于encoded ingress metadata，不是正文副本。
+  该prefix只属于encoded ingress metadata，不是正文副本。对JPEG等SOF可能位于APP/EXIF之后的格式，physical owner可在尺寸尚未知时另外保留最多64KiB的一次性dimension probe；它只用于尽早解析source canvas，尺寸成功后立即释放，不扩大64-byte metadata ABI、不得投影为正文缓存或第二份body authority。
   对已由persistent owner完成sealed/exact-length/provider preflight的immutable generation，composition还可持有两种纯加速事实：
   `ArtifactCacheManager`按opaque sealed physical-generation key保留bounded decoder bootstrap prefix；
   `ResidentReplayReaderPool`按同一key保留最多16个idle、已验证bound range-reader/descriptor作为hot-session之外的一层second-chance。

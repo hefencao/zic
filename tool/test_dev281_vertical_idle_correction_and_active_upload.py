@@ -83,11 +83,16 @@ if int(m.group(1)) >= 327:
     policy_markers = (
         'final externalStatic =',
         'runtimeExternalStaticPages.contains(entry.key)',
+        'final deadlineStaticPreupload =',
+        'role == PageRole.next ||',
+        'role == PageRole.next2 ||',
+        'role == PageRole.previous;',
         'final deferHiddenVerticalNativeStaticUpload =',
         'observation.direction == ReadingDirection.vertical',
         'staticWarm &&',
         '!primaryUpload',
         '!visibleStatic',
+        '!deadlineStaticPreupload &&',
         '!localStaticReady',
         '!externalStatic',
         'isPresentationMotionInteraction(observation.interaction)',
@@ -151,11 +156,12 @@ require(
 if int(m.group(1)) >= 327:
     require(
         'packages/pipeline/test/pipeline_test.dart',
-        'vertical active scroll stages hidden external static but defers native static',
+        'vertical active scroll preuploads native static deadline roles but defers far',
         'active vertical scrolling must keep next2 decode warm',
-        'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
+        'the existing next2 decode deadline must also own one prepared static output during active scroll',
+        'active vertical motion still defers far speculative native static upload',
         'an exact external-static next page must retain staged first-frame work while the viewport is moving',
-        'next2 texture warming resumes once the vertical viewport is idle',
+        'far speculative texture warming expands only after the vertical viewport is idle',
     )
 else:
     require(
@@ -176,15 +182,17 @@ if int(m.group(1)) >= 327:
     require(
         'docs/ARCHITECTURE.md',
         'layout-time scroll correction',
-        '仍走native texture',
-        'non-visible speculative static upload',
+        'non-visible `far/near` speculative static upload',
+        '`next/next2/previous`',
+        'UploadLane',
         'external-static',
     )
     require(
         'docs/SPEC.md',
         'layout-time correction',
-        'hidden native/provisional static texture',
-        'external static',
+        '`far/near` speculative role defer native texture upload',
+        '`next/next2/previous`',
+        'FrameBudgeter',
     )
 elif int(m.group(1)) == 315:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'compressed bytes')
@@ -195,7 +203,14 @@ elif int(m.group(1)) >= 295:
 else:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible next2')
     require('docs/SPEC.md', 'layout-time correction', 'next2 texture upload')
-require('docs/IMPLEMENTATION_STATUS.md', 'vertical hidden-upload规则不变', 'anchor/geometry rebuild')
+if int(m.group(1)) >= 327:
+    require(
+        'docs/IMPLEMENTATION_STATUS.md',
+        'native static只继续defer `far/near` speculative upload',
+        '`next/next2/previous`',
+    )
+else:
+    require('docs/IMPLEMENTATION_STATUS.md', 'vertical hidden-upload规则不变', 'anchor/geometry rebuild')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
 require('CHANGELOG.md', '0.31.0-dev.281', 'layout-time correction')
 

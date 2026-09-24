@@ -47,7 +47,7 @@ require(
 require(
     "packages/pipeline/lib/src/heuristic_policy.dart",
     "runtimeLocalStaticPages.contains(entry.key)",
-    "retainOutput: visibleStatic || localStaticReady",
+    "visibleStatic || localStaticReady || deadlineStaticPreupload",
     "targetWatermark: decodeWatermark",
 )
 

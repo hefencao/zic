@@ -31,7 +31,12 @@ if android_match is None or int(android_match.group(1)) < 295:
 current_dev = int(dev_match.group(1))
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',
+    'final deadlineStaticPreupload =',
+    'role == PageRole.next ||',
+    'role == PageRole.next2 ||',
+    'role == PageRole.previous;',
     'final deferHiddenVerticalNativeStaticUpload =',
+    '!deadlineStaticPreupload &&',
     'runtimeExternalStaticPages.contains(entry.key)',
     '!externalStatic',
     'isPresentationMotionInteraction(observation.interaction)',
@@ -62,8 +67,9 @@ require(
 )
 require(
     'packages/pipeline/test/pipeline_test.dart',
-    "'vertical active scroll stages hidden external static but defers native static'",
-    "'hidden static without external-presentation proof must not reintroduce native texture work during active scroll'",
+    "'vertical active scroll preuploads native static deadline roles but defers far'",
+    "'the existing next2 decode deadline must also own one prepared static output during active scroll'",
+    "'active vertical motion still defers far speculative native static upload'",
     "'an exact external-static next page must retain staged first-frame work while the viewport is moving'",
 )
 require(
@@ -97,6 +103,14 @@ require(
     'runtimeExternalStaticPages',
     '17/17 READY、0 BLACK',
     'localPresentationReady=false',
+)
+require(
+    'docs/adr/0323-vertical-active-deadline-static-prepresentation.md',
+    'Accepted。',
+    '`next`、`next2`、`previous`',
+    '`far/near`',
+    'UploadLane',
+    'FrameBudgeter',
 )
 require(
     'docs/audits/dev295-hidden-static-upload-jitter-audit.md',

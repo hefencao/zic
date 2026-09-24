@@ -22,6 +22,11 @@ bool _isStaleSessionLifecycleFailure(Object error) =>
         error.code == ErrorCode.staleRun);
 
 const int _sourceMetadataPrefixLength = 64;
+// JPEG SOF may sit behind one or more APP/EXIF segments, well beyond the
+// 64-byte generation-local metadata ABI above. Keep a separate, bounded,
+// one-shot dimension probe so layout can learn source canvas before full decode
+// without turning the metadata projection into an encoded-body cache.
+const int _sourceDimensionProbeLength = 64 * 1024;
 
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 typedef DownloadCommittedProgressListener = void Function(int committedLength);
@@ -400,6 +405,7 @@ final class DownloadSession {
   int _networkFlowProofLength = 0;
 
   List<int> _prefix = <int>[];
+  List<int> _sourceDimensionProbe = <int>[];
   int? _sourceCanvasWidth;
   int? _sourceCanvasHeight;
   int _pendingCommitTraceBytes = 0;
@@ -710,8 +716,11 @@ final class DownloadSession {
       );
       _requireEpoch(epoch);
       control?.throwIfCancelled();
-      final restoredPrefix =
-          await artifact.readPrefix(_sourceMetadataPrefixLength);
+      final restoredProbe =
+          await artifact.readPrefix(_sourceDimensionProbeLength);
+      final restoredPrefix = restoredProbe.length <= _sourceMetadataPrefixLength
+          ? restoredProbe
+          : restoredProbe.sublist(0, _sourceMetadataPrefixLength);
       _requireEpoch(epoch);
       control?.throwIfCancelled();
 
@@ -750,6 +759,7 @@ final class DownloadSession {
       _networkCursorLength = 0;
       _networkCursorPublishedLength = 0;
       _prefix = List<int>.of(restoredPrefix, growable: true);
+      _sourceDimensionProbe = List<int>.of(restoredProbe, growable: true);
       _contentKind = sniffContent(_prefix, finalChunk: false);
       _refreshSourceCanvasFromPrefix();
       _failure = null;
@@ -902,6 +912,9 @@ final class DownloadSession {
         ownedRecovery != null &&
         !ownedRecovery.requiresGenericRestore) {
       _prefix.clear();
+      _sourceDimensionProbe = <int>[];
+      _sourceCanvasWidth = null;
+      _sourceCanvasHeight = null;
       _contentKind = ContentKind.unknown;
       _validators = const Validators();
       _validatorRequestUri = null;
@@ -969,13 +982,17 @@ final class DownloadSession {
     }
     _requireEpoch(epoch);
     control?.throwIfCancelled();
-    final restoredPrefix = await artifact.readPrefix(_sourceMetadataPrefixLength);
+    final restoredProbe = await artifact.readPrefix(_sourceDimensionProbeLength);
+    final restoredPrefix = restoredProbe.length <= _sourceMetadataPrefixLength
+        ? restoredProbe
+        : restoredProbe.sublist(0, _sourceMetadataPrefixLength);
     _requireEpoch(epoch);
     control?.throwIfCancelled();
     _prefix = List<int>.of(
       restoredPrefix,
       growable: true,
     );
+    _sourceDimensionProbe = List<int>.of(restoredProbe, growable: true);
     _contentKind = sniffContent(
       _prefix,
       finalChunk: restored.state == ArtifactState.promoted,
@@ -1351,6 +1368,7 @@ final class DownloadSession {
     _networkCursorLength = 0;
     _networkCursorPublishedLength = 0;
     _prefix = <int>[];
+    _sourceDimensionProbe = <int>[];
     _sourceCanvasWidth = null;
     _sourceCanvasHeight = null;
     _appendSourceMetadataPrefix(
@@ -1451,6 +1469,7 @@ final class DownloadSession {
     _totalLength = totalLength;
     _networkStartLength = 0;
     _prefix = <int>[];
+    _sourceDimensionProbe = <int>[];
     _sourceCanvasWidth = null;
     _sourceCanvasHeight = null;
     _contentKind = ContentKind.unknown;
@@ -2295,6 +2314,7 @@ final class DownloadSession {
     await _residentReplayCloseTail;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
+    _sourceDimensionProbe = <int>[];
     _sourceCanvasWidth = null;
     _sourceCanvasHeight = null;
     _failure = null;
@@ -2382,6 +2402,7 @@ final class DownloadSession {
       await _residentReplayCloseTail;
       _contentKind = ContentKind.unknown;
       _prefix = <int>[];
+      _sourceDimensionProbe = <int>[];
       _sourceCanvasWidth = null;
       _sourceCanvasHeight = null;
       _resetPlayablePrefixEvidence();
@@ -2630,19 +2651,25 @@ final class DownloadSession {
   }
 
   void _appendSourceMetadataPrefix(int offset, Uint8List chunk) {
-    if (chunk.isEmpty || _prefix.length >= _sourceMetadataPrefixLength) {
-      return;
+    if (chunk.isEmpty) return;
+
+    void appendContiguous(List<int> target, int limit) {
+      if (target.length >= limit || offset > target.length) return;
+      final skip = target.length - offset;
+      if (skip >= chunk.length) return;
+      final remaining = limit - target.length;
+      final available = chunk.length - skip;
+      final take = remaining < available ? remaining : available;
+      target.addAll(chunk.sublist(skip, skip + take));
     }
-    // Prefix facts are only valid when bytes are contiguous from offset zero.
-    // Restored partials pre-populate [_prefix]; resumed suffix writes therefore
-    // do not need to reconstruct source metadata from a non-zero offset.
-    if (offset > _prefix.length) return;
-    final skip = _prefix.length - offset;
-    if (skip >= chunk.length) return;
-    final remaining = _sourceMetadataPrefixLength - _prefix.length;
-    final available = chunk.length - skip;
-    final take = remaining < available ? remaining : available;
-    _prefix.addAll(chunk.sublist(skip, skip + take));
+
+    // Keep the historical 64-byte metadata projection stable for
+    // PipelinePageStream/content sniffing. Source dimensions use an independent
+    // one-shot probe because JPEG SOF commonly follows APP/EXIF segments.
+    appendContiguous(_prefix, _sourceMetadataPrefixLength);
+    if (_sourceCanvasWidth == null || _sourceCanvasHeight == null) {
+      appendContiguous(_sourceDimensionProbe, _sourceDimensionProbeLength);
+    }
     _contentKind = sniffContent(_prefix);
     _refreshSourceCanvasFromPrefix();
   }
@@ -2679,23 +2706,27 @@ final class DownloadSession {
 
   void _refreshSourceCanvasFromPrefix() {
     if (_sourceCanvasWidth != null || _sourceCanvasHeight != null) return;
-    if (_prefix.length < 8) return;
+    final probe =
+        _sourceDimensionProbe.isNotEmpty ? _sourceDimensionProbe : _prefix;
+    if (probe.length < 8) return;
     try {
-      final encodedKind = sniffEncodedImageKind(_prefix);
+      final encodedKind = sniffEncodedImageKind(probe);
       if (encodedKind == EncodedImageKind.webp) {
-        final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));
+        final info = parseWebpPrefixInfo(Uint8List.fromList(probe));
         if (info == null) return;
         _sourceCanvasWidth = info.width;
         _sourceCanvasHeight = info.height;
+        _sourceDimensionProbe = <int>[];
         return;
       }
       final dimensions = parseEncodedImageDimensions(
-        _prefix,
+        probe,
         kind: encodedKind,
       );
       if (dimensions == null) return;
       _sourceCanvasWidth = dimensions.width;
       _sourceCanvasHeight = dimensions.height;
+      _sourceDimensionProbe = <int>[];
     } on FormatException {
       // Content sniffing remains the authority for type classification. A bad
       // or incomplete metadata header must not fail the transfer generation.

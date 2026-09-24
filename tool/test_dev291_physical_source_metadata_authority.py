@@ -26,7 +26,10 @@ require(
     "Uint8List readIngressPrefix(int maxBytes)",
     "Uint8List readSourceMetadataPrefix()",
     "void _appendSourceMetadataPrefix(int offset, Uint8List chunk)",
-    "final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));",
+    "const int _sourceDimensionProbeLength = 64 * 1024;",
+    "appendContiguous(_prefix, _sourceMetadataPrefixLength);",
+    "appendContiguous(_sourceDimensionProbe, _sourceDimensionProbeLength);",
+    "final info = parseWebpPrefixInfo(Uint8List.fromList(probe));",
 )
 require(
     "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",

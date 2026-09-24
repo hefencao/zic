@@ -20,6 +20,10 @@
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
   后续若继续瘦身，应从明确重复状态或 route builder adapter 入手；禁止新增跨 owner facade，也禁止把 service generation / route admission / version preparation / shelf selection 镜像回 `HomeShell`。
 - 静态竖排功耗下一步只接受 fresh Profile/Release 证据再改行为：idle 3/7 static warm 是刻意的平滑资源分配，staged refill不会整窗同时decode；
+  2026-09-24 最新可见空白Trace证明“active期间把所有hidden native-static upload都推迟到visible seam”会制造0.3–0.8s首帧债务；更深一层确认vertical曾硬禁detached output binding，导致native output已ready后仍可等PageHost约1.95–2.34s才present。
+  因此active只继续defer `far/near`；既有2/1 deadline窗口的`next/next2/previous`可提前pre-present并retain，vertical real UploadDemand同时预绑定detached output consumer，仍由UploadLane/FrameBudgeter限流，不得写成扩大预加载窗口。
+  首次JPEG布局另保留64B metadata ABI，并用最多64KiB的一次性dimension probe尽早发布source-canvas size。
+  fresh Profile `08-55-17` 已验证16次跨页0次在正coverage后补首帧；native `outputReadyToPresent` 为53/53/88µs，page27–30 detached prewarm约提前310–510ms，详见ADR 0323。
   6-screen bootstrap、`current±7` KeepAlive和有界recenter目前也保留。若仍高功耗，先量化实际warm task cadence、source-canvas ratio发布次数和UI rebuild，而不是缩窗口/禁warm。
 - 文档超长单行整理，严格保持 handoff/status 责任预算上限，杜绝单行堆砌历史。
 

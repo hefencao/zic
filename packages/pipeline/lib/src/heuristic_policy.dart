@@ -127,11 +127,16 @@ final class HeuristicPolicy {
       final externalStatic =
           runtimeExternalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
+      final deadlineStaticPreupload =
+          role == PageRole.next ||
+          role == PageRole.next2 ||
+          role == PageRole.previous;
       final deferHiddenVerticalNativeStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
+              !deadlineStaticPreupload &&
               !localStaticReady &&
               !externalStatic &&
               isPresentationMotionInteraction(observation.interaction);
@@ -165,13 +170,14 @@ final class HeuristicPolicy {
                       : 'heuristic:static-warm:${role.name}'
                   : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
-          // A decoded static page backed by immutable local/durable bytes may
-          // prepare its external texture before it reaches the viewport. Keep
-          // that already-prepared output under its real residency owner so a
-          // fast transition cannot fall back to a black/loading surface while
-          // presentation catches up. No estimated static-output admission
-          // budget is created here.
-          retainOutput: visibleStatic || localStaticReady,
+          // A decoded static page in the existing next/next2/previous
+          // deadline window may prepare its one output before viewport entry.
+          // Keep that already-prepared output under FrameBudgeter so continuous
+          // vertical motion cannot turn decode-ahead into visible upload-ahead
+          // debt. Local/durable static keeps the same retention proof. No new
+          // page-count or estimated-output-byte admission budget is created.
+          retainOutput:
+              visibleStatic || localStaticReady || deadlineStaticPreupload,
           viewportVisible: primaryUpload || visibleStatic,
         );
       }
@@ -249,7 +255,8 @@ final class HeuristicPolicy {
     // envelope, StagedDecodeRefillPolicy releases one-frame work in priority
     // order, and SpeculativeEncodedReadBudget owns actual speculative encoded
     // I/O. Native decoded/output residency remains FrameBudgeter-owned; external
-    // Flutter fallback rasters remain ImageCache-owned by App composition. No
+    // Flutter fallback rasters remain PipelinePresentationRasterCache-owned by
+    // App composition. No
     // estimated static-output admission budget is duplicated in Pipeline.
     return window.roles.entries
         .where(isStaticCandidate)

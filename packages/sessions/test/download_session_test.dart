@@ -2574,6 +2574,38 @@ void main() {
     expect(session.snapshot.sourceCanvasHeight, 700);
   });
 
+  test('JPEG dimension probe extends past the 64-byte metadata ABI', () {
+    final jpeg = <int>[
+      0xff, 0xd8,
+      // APP1 pushes the SOF marker beyond the public 64-byte metadata prefix.
+      0xff, 0xe1, 0x00, 0x82,
+      ...List<int>.filled(128, 0),
+      0xff, 0xc0, 0x00, 0x11, 0x08,
+      0x0e, 0x10, // height = 3600
+      0x04, 0x38, // width = 1080
+      0x03,
+      0x01, 0x11, 0x00,
+      0x02, 0x11, 0x00,
+      0x03, 0x11, 0x00,
+    ];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: jpeg.length,
+    );
+    session.appendResidentImmutableIngress(0, jpeg.sublist(0, 64));
+
+    expect(session.sourceMetadataPrefixLength, 64);
+    expect(session.snapshot.sourceCanvasWidth, isNull);
+    expect(session.snapshot.sourceCanvasHeight, isNull);
+
+    session.appendResidentImmutableIngress(64, jpeg.sublist(64));
+
+    expect(session.sourceMetadataPrefixLength, 64,
+        reason: 'layout probing must not widen the public metadata prefix ABI');
+    expect(session.snapshot.sourceCanvasWidth, 1080);
+    expect(session.snapshot.sourceCanvasHeight, 3600);
+  });
+
   test('source metadata prefix stays in-memory while receiving body grows',
       () async {
     final bytes = <int>[

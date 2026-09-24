@@ -673,7 +673,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `residentBodyBacked` MUST只表示正文由外部immutable authority可重放，不得推断durable cache已拥有正文；
   `ByteResponseDisposition.durableImmutable`与`ByteResponseBodyAuthority` MUST正交，
   只有artifact-cache authority才可证明durable body ownership。
-  physical session的generation-local source-metadata prefix MUST继续限制为最多64B并只承载encoded metadata。
+  physical session的generation-local source-metadata prefix MUST继续限制为最多64B并只承载encoded metadata。JPEG等尺寸marker可能晚于64B时，physical session MAY在source canvas尚未知期间维护独立、最多64KiB的一次性dimension probe；该probe MUST只用于解析width/height，成功后立即释放，MUST NOT扩大metadata ABI、正文缓存或body authority。
   对已经由persistent owner完成sealed/exact-length/provider preflight的immutable generation，
   composition MAY以`physical media id + exact length + checksum algorithm + checksum`等价形成opaque acceleration key：
   中央`ArtifactCacheManager` MAY保存bounded decoder bootstrap prefix，
@@ -1251,7 +1251,7 @@ Android texture lease prewarm MUST 使用 source canvas 按 DecodeTarget 等比 
 DownloadSession 解析出 WebP 固定前缀 source canvas 后 Pipeline MUST 尽早为 current/next/transition 请求该精确尺寸；
 同一 raster 尺寸的 deferred request MUST 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量 MUST 受全局有界池限制；decoded frame 到达后的尺寸仅作兜底，失败请求 MUST 可重试；
-该边界不得改变 playback/freeze 语义，vertical Reader MUST 不启用。
+该边界不得改变 playback/freeze 语义。vertical Reader MUST不启用横排特有的decode-only animated-next lease prewarm；但对已经拥有real UploadDemand的static `current/transition/next/next2/previous`，MUST在host mount前预绑定detached output consumer，使ready output可立即claim/present；`far/near`在active期间仍不得因此建立detached native presentation。
 SurfaceProducer exact-size prewarm MUST materialize `SurfaceProducer.getSurface()` on the serialized blit lane before the lease enters the idle pool，
 并 MAY 通过 acceleration-only native prepare 预配置 exact decoded raster 的 RGBA geometry；
 prepare 失败只能使该 speculative prewarm 失败，MUST NOT 成为真实 upload/present 的 correctness authority。
@@ -1858,8 +1858,9 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   dev.297的`<=0.5 physical pixel` bounded fill与external-texture paint snap已被设备幅度证据否证并MUST保持回滚；
   Presentation MUST继续aspect-preserving fit。
   UploadDemand MUST只表示新的upload/present调度资格，MUST NOT清空一个已成功authoritative static UI projection。
-  generic/network/unresolved hidden static在vertical active期间 MUST继续defer speculative upload；
-  但decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页 MAY在既有3/7 one-frame static intent envelope内提前UploadDemand/present并retain output，
+  generic/network/unresolved hidden static在vertical active期间 MUST只对`far/near` speculative role defer native texture upload；
+  既有2/1 decode deadline窗口中的`next/next2/previous`静态一帧 MUST可在进入viewport前提前UploadDemand/present并retain output，且 MUST继续受UploadLane并发/优先级/抢占与FrameBudgeter约束，不得因此扩大2/1或3/7窗口；
+  decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页 MAY在既有3/7 one-frame static intent envelope内提前UploadDemand/present并retain output，
   以保证进入transition前presentation-ready；
   该资格不得引入estimated static-output budget，native output residency继续由FrameBudgeter裁决，
   Flutter fallback raster residency/LRU MUST由App composition的`PipelinePresentationRasterCache`统一裁决；generic Flutter `ImageCache`仅保留非Reader图片与provider decode backend职责；

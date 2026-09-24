@@ -24,7 +24,7 @@ for token in (
     'final localStaticReady =',
     'runtimeLocalStaticPages.contains(entry.key)',
     'runtimeAnimatedPages[entry.key] == false',
-    'retainOutput: visibleStatic || localStaticReady',
+    'visibleStatic || localStaticReady || deadlineStaticPreupload',
 ):
     require(policy, token, 'bounded local static presentation')
 
@@ -37,12 +37,18 @@ else:
     if '!localStaticReady &&' in policy:
         raise SystemExit('dev.314-dev.315 must keep the fixed-position hidden local-static suppression experiment')
 
-# Generic hidden static must remain deferred; the local exception may only
-# remove that deferral after authoritative static/local facts exist.
+# Generic/native far/near static remains deferred during active motion, but
+# the existing next/next2/previous decode deadline window may pre-present one
+# static frame. Local/external proof can still admit broader one-frame warming.
 for token in (
+    'final deadlineStaticPreupload =',
+    'role == PageRole.next ||',
+    'role == PageRole.next2 ||',
+    'role == PageRole.previous;',
     'final deferHiddenVerticalNativeStaticUpload =',
     '!primaryUpload',
     '!visibleStatic',
+    '!deadlineStaticPreupload &&',
     'isPresentationMotionInteraction(observation.interaction)',
     '!externalStatic',
 ):
@@ -84,7 +90,9 @@ if 'jumpTo(correction)' in view or 'presentationExtentAt(' in view:
 for token in (
     'runtimeLocalStaticPages: const <int>{6, 7}',
     'localPresentationReady: true',
-    'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
+    'vertical active scroll preuploads native static deadline roles but defers far',
+    'active vertical motion still defers far speculative native static upload',
+    'reverse vertical motion must not wait for the 3/7 direction classifier to flip before previous is ready',
 ):
     require(pipeline_test, token, 'local/static policy regression')
 if 314 <= version < 316:

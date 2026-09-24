@@ -667,7 +667,7 @@ void main() {
   });
 
   test(
-    'vertical active scroll stages hidden external static but defers native static',
+    'vertical active scroll preuploads native static deadline roles but defers far',
     () {
       final staticChapter = ChapterManifest(
         sourceId: 'local',
@@ -750,9 +750,15 @@ void main() {
       );
       expect(
         activePlan.uploads.values.where((demand) => demand.role == PageRole.next2),
+        isNotEmpty,
+        reason:
+            'the existing next2 decode deadline must also own one prepared static output during active scroll',
+      );
+      expect(
+        activePlan.uploads.values.where((demand) => demand.role == PageRole.far),
         isEmpty,
         reason:
-            'a hidden static page without external-presentation proof keeps the native upload deferral during active scroll',
+            'active vertical motion still defers far speculative native static upload',
       );
       expect(
         activePlan.uploads.values.where((demand) => demand.role == PageRole.next),
@@ -795,11 +801,32 @@ void main() {
         isNotEmpty,
         reason: 'hidden immediate next keeps its decoded warm frame',
       );
+      final hiddenDeadlineUploads = hiddenNextPlan.uploads.values.where(
+        (demand) =>
+            demand.role == PageRole.next ||
+            demand.role == PageRole.next2 ||
+            demand.role == PageRole.previous,
+      );
       expect(
         hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.next),
-        isEmpty,
+        isNotEmpty,
         reason:
-            'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
+            'hidden immediate next must pre-present its decoded static frame before viewport entry',
+      );
+      expect(
+        hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.next2),
+        isNotEmpty,
+      );
+      expect(
+        hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.previous),
+        isNotEmpty,
+        reason:
+            'reverse vertical motion must not wait for the 3/7 direction classifier to flip before previous is ready',
+      );
+      expect(hiddenDeadlineUploads.every((demand) => demand.retainOutput), isTrue);
+      expect(
+        hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.far),
+        isEmpty,
       );
 
       final externalStaticPlan = policy.createPlan(
@@ -856,9 +883,10 @@ void main() {
         decodeTarget: target,
       );
       expect(
-        idlePlan.uploads.values.where((demand) => demand.role == PageRole.next2),
+        idlePlan.uploads.values.where((demand) => demand.role == PageRole.far),
         isNotEmpty,
-        reason: 'next2 texture warming resumes once the vertical viewport is idle',
+        reason:
+            'far speculative texture warming expands only after the vertical viewport is idle',
       );
     },
   );
