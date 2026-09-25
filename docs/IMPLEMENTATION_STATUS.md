@@ -72,7 +72,10 @@ App build：0.31.0+328
   阅读设置已按布局、界面、双击操作、长按操作、缩放质量拆分；双击一级/二级倍率均使用 slider，长按倍率独立于双击倍率，默认 2.0x。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
-- 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。
+- 纵向模式：vertical模式只有extent真实变化 才能触发 ListView-local anchor/geometry rebuild；pending-only ratio live feed 不再 dirty 整个 ReaderView，vertical模式 保持布局稳定。
+- 纵向drag输入：ADR 0325以healthy ~8.3ms frame下的逐帧位移而非cadence gap重新归因。
+  无resampling的匀速drag相邻速度变化均值约9.9%–18.3%、单窗13–15次>20%、max 255%；Flutter built-in resampling对照降为0次>20%、max<=0.0171%。
+  `reader_runtime`因此恢复vertical生命周期ref-counted lease，最终release恢复进入前全局值；ballistic cadence结论不变，`samplingOffset`/自定义插值/forced frame/ScrollPhysics仍冻结。真机最终验收还需确认视觉改善与直接操控延迟均可接受。
 - 视口与上传：vertical active期间native static只继续defer `far/near` speculative upload；既有2/1 deadline窗口的`next/next2/previous`一帧允许提前UploadLane/present并retain。
   vertical real UploadDemand会在host mount前预绑定detached output consumer，避免ready output形成秒级`outputReadyToPresent`等待。source-canvas 与 decoded raster 职责仍严格分离；
   64B metadata ABI保持，JPEG另以最多64KiB的一次性dimension probe提前解析SOF用于纵排extent。

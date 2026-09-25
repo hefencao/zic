@@ -165,7 +165,8 @@ final class ReaderView extends StatefulWidget {
 
   /// Live runtime ratio updates. Paged presentation consumes these lazily for
   /// zoom bounds and must not rebuild the whole PageView for one page header.
-  /// Continuous vertical presentation still rebuilds when extents can change.
+  /// Continuous vertical presentation invalidates only its ListView geometry
+  /// subtree when extents actually change.
   final ValueListenable<Map<String, double>>? pageAspectRatiosListenable;
 
   /// Double-tap zoom stages, ascending and > 1. The cycle is
@@ -244,6 +245,7 @@ final class _ReaderViewState extends State<ReaderView>
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
   late List<Widget> _pageSlots;
+  late final ValueNotifier<int> _verticalLayoutRevision;
   late Map<String, double> _runtimePageAspectRatios;
   late Map<String, double> _verticalLayoutRatios;
   Map<String, double>? _pendingVerticalLayoutRatios;
@@ -293,10 +295,20 @@ final class _ReaderViewState extends State<ReaderView>
   int _verticalSceneMotionGap25To35ms = 0;
   int _verticalSceneMotionGapGe35ms = 0;
   double _verticalSceneMotionMaxAbsResidualDeltaPx = 0;
+  int _verticalSceneMotionBallisticVelocityStepCount = 0;
+  int _verticalSceneMotionBallisticVelocityStepOutlierCount = 0;
+  double _verticalSceneMotionBallisticVelocityStepRatioSum = 0;
+  double _verticalSceneMotionMaxBallisticVelocityStepRatio = 0;
+  int _verticalSceneMotionDragVelocityStepCount = 0;
+  int _verticalSceneMotionDragVelocityStepOutlierCount = 0;
+  double _verticalSceneMotionDragVelocityStepRatioSum = 0;
+  double _verticalSceneMotionMaxDragVelocityStepRatio = 0;
   int? _verticalSceneMotionLastFrameStampMicros;
   int? _verticalSceneMotionLastCallbackMicros;
   double? _verticalSceneMotionLastPixels;
   double? _verticalSceneMotionLastResidualPx;
+  double? _verticalSceneMotionLastBallisticMeasuredVelocity;
+  double? _verticalSceneMotionLastDragMeasuredVelocity;
   late final ValueNotifier<int> _verticalKeepAliveCenter;
   bool _verticalKeepAliveRecenterScheduled = false;
   static const int _verticalKeepAliveRecenterStepPages = 3;
@@ -371,6 +383,7 @@ final class _ReaderViewState extends State<ReaderView>
     ));
     _verticalKeepAliveCenter = ValueNotifier<int>(widget.controller.currentIndex);
     _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
+    _verticalLayoutRevision = ValueNotifier<int>(0);
     _runtimePageAspectRatios =
         widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
     widget.pageAspectRatiosListenable?.addListener(_handlePageAspectRatiosChanged);
@@ -505,6 +518,7 @@ final class _ReaderViewState extends State<ReaderView>
     _stripTransform.dispose();
     _pageController.dispose();
     _verticalController.dispose();
+    _verticalLayoutRevision.dispose();
     _verticalVisibleTickerRange.dispose();
     _verticalKeepAliveCenter.dispose();
     super.dispose();
@@ -556,7 +570,6 @@ final class _ReaderViewState extends State<ReaderView>
           final direction = widget.controller.direction;
           if (direction == ReadingDirection.vertical) {
             final stitched = widget.verticalStitch;
-            final geometry = _verticalGeometry();
             final pageCount = chapter.pages.length;
             final itemCount = stitched
                 ? pageCount
@@ -568,64 +581,70 @@ final class _ReaderViewState extends State<ReaderView>
             final cacheExtent = _viewport.height > 0
                 ? _viewport.height * _verticalCacheScreens
                 : null;
-            final list = ListView.builder(
-              key: const ValueKey<String>('reader-vertical-list'),
-              controller: _verticalController,
-              itemCount: itemCount,
-              cacheExtent: cacheExtent,
-              // While a held-double-tap / long-press pans horizontally it
-              // must own the pointer exclusively: vertical page flipping is
-              // suspended for the duration and resumes on release.
-              physics: _stripLensActive
-                  ? const NeverScrollableScrollPhysics()
-                  : _verticalScrollPhysics,
-              // In stitched mode adjacent pages share one paint layer. A
-              // RepaintBoundary per page lets external texture edges round
-              // independently while scrolling and can expose a transient
-              // one-pixel background line.
-              addRepaintBoundaries: !stitched,
-              addSemanticIndexes: false,
-              itemExtentBuilder: (itemIndex, _) {
-                if (!stitched && itemIndex.isOdd) {
-                  return readerVerticalPageGap;
-                }
-                final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
-                return geometry.extentAt(pageIndex);
-              },
-              itemBuilder: (context, itemIndex) {
-                if (!stitched && itemIndex.isOdd) {
-                  final gapIndex = itemIndex ~/ 2;
-                  return SizedBox(
-                    key: ValueKey<String>('reader-vertical-gap:$gapIndex'),
-                    height: readerVerticalPageGap,
-                  );
-                }
-                final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
-                final page = _buildPage(pageIndex);
-                final presentedPage =
-                    (stitched || !_stripZoomed) && _zoomedPage == null
-                        ? page
-                        : ClipRect(child: page);
-                return SizedBox(
-                  key: ValueKey<String>('reader-vertical-page:$pageIndex'),
-                  height: geometry.extentAt(pageIndex),
-                  child: SizedBox.expand(
-                    key: _verticalPageLayoutKeys[pageIndex],
-                    // cacheExtent/keepAlive own composition residency only.
-                    // A composed page outside the actual viewport may keep
-                    // loading/preparing, but its progress/animation widgets
-                    // must not keep the whole Reader on a perpetual frame
-                    // ticker. Only geometry-proven visible pages may tick.
-                    child: ValueListenableBuilder<({int min, int max})>(
-                      valueListenable: _verticalVisibleTickerRange,
-                      child: presentedPage,
-                      builder: (context, visibleRange, child) => TickerMode(
-                        enabled: pageIndex >= visibleRange.min &&
-                            pageIndex <= visibleRange.max,
-                        child: child!,
+            final list = ValueListenableBuilder<int>(
+              valueListenable: _verticalLayoutRevision,
+              builder: (_, _, _) {
+                final geometry = _verticalGeometry();
+                return ListView.builder(
+                  key: const ValueKey<String>('reader-vertical-list'),
+                  controller: _verticalController,
+                  itemCount: itemCount,
+                  cacheExtent: cacheExtent,
+                  // While a held-double-tap / long-press pans horizontally it
+                  // must own the pointer exclusively: vertical page flipping
+                  // is suspended for the duration and resumes on release.
+                  physics: _stripLensActive
+                      ? const NeverScrollableScrollPhysics()
+                      : _verticalScrollPhysics,
+                  // In stitched mode adjacent pages share one paint layer. A
+                  // RepaintBoundary per page lets external texture edges round
+                  // independently while scrolling and can expose a transient
+                  // one-pixel background line.
+                  addRepaintBoundaries: !stitched,
+                  addSemanticIndexes: false,
+                  itemExtentBuilder: (itemIndex, _) {
+                    if (!stitched && itemIndex.isOdd) {
+                      return readerVerticalPageGap;
+                    }
+                    final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
+                    return geometry.extentAt(pageIndex);
+                  },
+                  itemBuilder: (context, itemIndex) {
+                    if (!stitched && itemIndex.isOdd) {
+                      final gapIndex = itemIndex ~/ 2;
+                      return SizedBox(
+                        key: ValueKey<String>('reader-vertical-gap:$gapIndex'),
+                        height: readerVerticalPageGap,
+                      );
+                    }
+                    final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
+                    final page = _buildPage(pageIndex);
+                    final presentedPage =
+                        (stitched || !_stripZoomed) && _zoomedPage == null
+                            ? page
+                            : ClipRect(child: page);
+                    return SizedBox(
+                      key: ValueKey<String>('reader-vertical-page:$pageIndex'),
+                      height: geometry.extentAt(pageIndex),
+                      child: SizedBox.expand(
+                        key: _verticalPageLayoutKeys[pageIndex],
+                        // cacheExtent/keepAlive own composition residency only.
+                        // A composed page outside the actual viewport may keep
+                        // loading/preparing, but its progress/animation widgets
+                        // must not keep the whole Reader on a perpetual frame
+                        // ticker. Only geometry-proven visible pages may tick.
+                        child: ValueListenableBuilder<({int min, int max})>(
+                          valueListenable: _verticalVisibleTickerRange,
+                          child: presentedPage,
+                          builder: (context, visibleRange, child) => TickerMode(
+                            enabled: pageIndex >= visibleRange.min &&
+                                pageIndex <= visibleRange.max,
+                            child: child!,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             );
@@ -781,36 +800,40 @@ final class _ReaderViewState extends State<ReaderView>
       _invalidateVerticalGeometryCache();
       return;
     }
+    var layoutChanged = false;
     if (_verticalScrollActive || _stripZoomed || _stripLensActive) {
       // Ratios for pages strictly beyond the current viewport cannot change
       // the prefix or extents of anything being painted now. Adopt those
       // decode-ahead facts immediately so they are stable before the page
       // enters the viewport. Changes at/before the visible tail remain
       // pending until idle, preserving the dev.280 scroll-stable prefix.
-      _adoptFutureVerticalRatios(latest);
+      layoutChanged = _adoptFutureVerticalRatios(latest);
       _pendingVerticalLayoutRatios =
           _sameVerticalRatios(_verticalLayoutRatios, latest) ? null : latest;
     } else {
-      if (!stitchChanged) {
-        _preserveVerticalAnchor(
-          oldRatios: _verticalLayoutRatios,
-          oldStitch: widget.verticalStitch,
-          nextRatios: latest,
-        );
+      layoutChanged = !_sameVerticalRatios(_verticalLayoutRatios, latest);
+      if (layoutChanged) {
+        if (!stitchChanged) {
+          _preserveVerticalAnchor(
+            oldRatios: _verticalLayoutRatios,
+            oldStitch: widget.verticalStitch,
+            nextRatios: latest,
+          );
+        }
+        _verticalLayoutRatios = latest;
+        _invalidateVerticalGeometryCache();
+        _scheduleVerticalObservationRefreshAfterLayout();
       }
-      _verticalLayoutRatios = latest;
       _pendingVerticalLayoutRatios = null;
-      _invalidateVerticalGeometryCache();
-      _scheduleVerticalObservationRefreshAfterLayout();
     }
-    if (rebuild && mounted) {
-      setState(() {});
+    if (rebuild && mounted && layoutChanged) {
+      _verticalLayoutRevision.value++;
     }
   }
 
-  void _adoptFutureVerticalRatios(Map<String, double> latest) {
+  bool _adoptFutureVerticalRatios(Map<String, double> latest) {
     final pages = widget.controller.chapter.pages;
-    if (pages.isEmpty || _lastVerticalTravelDirection == 0) return;
+    if (pages.isEmpty || _lastVerticalTravelDirection == 0) return false;
     final visibleMin = (_lastVerticalVisibleMinIndex ??
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
@@ -856,7 +879,7 @@ final class _ReaderViewState extends State<ReaderView>
         adopt(index);
       }
     }
-    if (merged == null) return;
+    if (merged == null) return false;
     final nextRatios = Map<String, double>.unmodifiable(merged!);
     double? correction;
     if (_lastVerticalTravelDirection < 0 &&
@@ -888,6 +911,7 @@ final class _ReaderViewState extends State<ReaderView>
         },
       ),
     );
+    return true;
   }
 
   void _scheduleFutureVerticalRatioAdoption() {
@@ -907,12 +931,11 @@ final class _ReaderViewState extends State<ReaderView>
       }
       final pending = _pendingVerticalLayoutRatios;
       if (pending == null) return;
-      final prior = _verticalLayoutRatios;
-      _adoptFutureVerticalRatios(pending);
+      final layoutChanged = _adoptFutureVerticalRatios(pending);
       _pendingVerticalLayoutRatios =
           _sameVerticalRatios(_verticalLayoutRatios, pending) ? null : pending;
-      if (identical(prior, _verticalLayoutRatios)) return;
-      setState(() {});
+      if (!layoutChanged) return;
+      _verticalLayoutRevision.value++;
       _scheduleVerticalObservationRefreshAfterLayout();
     });
   }
@@ -974,11 +997,10 @@ final class _ReaderViewState extends State<ReaderView>
         oldStitch: widget.verticalStitch,
         nextRatios: pending,
       );
-      setState(() {
-        _verticalLayoutRatios = pending;
-        _pendingVerticalLayoutRatios = null;
-        _invalidateVerticalGeometryCache();
-      });
+      _verticalLayoutRatios = pending;
+      _pendingVerticalLayoutRatios = null;
+      _invalidateVerticalGeometryCache();
+      _verticalLayoutRevision.value++;
       _scheduleVerticalObservationRefreshAfterLayout();
     });
   }
@@ -2223,6 +2245,16 @@ final class _ReaderViewState extends State<ReaderView>
     _verticalSceneMotionGap25To35ms = 0;
     _verticalSceneMotionGapGe35ms = 0;
     _verticalSceneMotionMaxAbsResidualDeltaPx = 0;
+    _verticalSceneMotionBallisticVelocityStepCount = 0;
+    _verticalSceneMotionBallisticVelocityStepOutlierCount = 0;
+    _verticalSceneMotionBallisticVelocityStepRatioSum = 0;
+    _verticalSceneMotionMaxBallisticVelocityStepRatio = 0;
+    _verticalSceneMotionDragVelocityStepCount = 0;
+    _verticalSceneMotionDragVelocityStepOutlierCount = 0;
+    _verticalSceneMotionDragVelocityStepRatioSum = 0;
+    _verticalSceneMotionMaxDragVelocityStepRatio = 0;
+    _verticalSceneMotionLastBallisticMeasuredVelocity = null;
+    _verticalSceneMotionLastDragMeasuredVelocity = null;
   }
 
   void _sampleVerticalSceneMotion(Duration frameTimeStamp) {
@@ -2294,6 +2326,67 @@ final class _ReaderViewState extends State<ReaderView>
         _verticalSceneMotionStationaryBallisticCount++;
       }
     }
+    double? measuredVelocity;
+    double? measuredVelocityStepRatio;
+    double? previousMeasuredVelocity;
+    if ((_interaction == Interaction.scrolling ||
+            _interaction == Interaction.dragging) &&
+        pixelDelta != null &&
+        frameGapMicros != null &&
+        frameGapMicros > 0) {
+      measuredVelocity = pixelDelta * 1000000 / frameGapMicros;
+      if (_interaction == Interaction.scrolling) {
+        previousMeasuredVelocity =
+            _verticalSceneMotionLastBallisticMeasuredVelocity;
+        if (previousMeasuredVelocity != null &&
+            measuredVelocity.abs() >= 300 &&
+            previousMeasuredVelocity.abs() >= 300 &&
+            previousMeasuredVelocity.sign == measuredVelocity.sign) {
+          measuredVelocityStepRatio =
+              (measuredVelocity - previousMeasuredVelocity).abs() /
+                  previousMeasuredVelocity.abs();
+          _verticalSceneMotionBallisticVelocityStepCount++;
+          _verticalSceneMotionBallisticVelocityStepRatioSum +=
+              measuredVelocityStepRatio;
+          if (measuredVelocityStepRatio >
+              _verticalSceneMotionMaxBallisticVelocityStepRatio) {
+            _verticalSceneMotionMaxBallisticVelocityStepRatio =
+                measuredVelocityStepRatio;
+          }
+          if (measuredVelocityStepRatio > 0.20) {
+            _verticalSceneMotionBallisticVelocityStepOutlierCount++;
+          }
+        }
+        _verticalSceneMotionLastBallisticMeasuredVelocity = measuredVelocity;
+        _verticalSceneMotionLastDragMeasuredVelocity = null;
+      } else {
+        previousMeasuredVelocity = _verticalSceneMotionLastDragMeasuredVelocity;
+        if (previousMeasuredVelocity != null &&
+            measuredVelocity.abs() >= 300 &&
+            previousMeasuredVelocity.abs() >= 300 &&
+            previousMeasuredVelocity.sign == measuredVelocity.sign) {
+          measuredVelocityStepRatio =
+              (measuredVelocity - previousMeasuredVelocity).abs() /
+                  previousMeasuredVelocity.abs();
+          _verticalSceneMotionDragVelocityStepCount++;
+          _verticalSceneMotionDragVelocityStepRatioSum +=
+              measuredVelocityStepRatio;
+          if (measuredVelocityStepRatio >
+              _verticalSceneMotionMaxDragVelocityStepRatio) {
+            _verticalSceneMotionMaxDragVelocityStepRatio =
+                measuredVelocityStepRatio;
+          }
+          if (measuredVelocityStepRatio > 0.20) {
+            _verticalSceneMotionDragVelocityStepOutlierCount++;
+          }
+        }
+        _verticalSceneMotionLastDragMeasuredVelocity = measuredVelocity;
+        _verticalSceneMotionLastBallisticMeasuredVelocity = null;
+      }
+    } else {
+      _verticalSceneMotionLastBallisticMeasuredVelocity = null;
+      _verticalSceneMotionLastDragMeasuredVelocity = null;
+    }
     if (previousResidual != null) {
       residualDelta = residual - previousResidual;
       final absolute = residualDelta.abs();
@@ -2310,7 +2403,11 @@ final class _ReaderViewState extends State<ReaderView>
         : nowMicros - previousCallbackMicros;
     final sceneMismatch = residualDelta != null && residualDelta.abs() > 0.25;
     final longFrame = frameGapMicros != null && frameGapMicros >= 20000;
-    if (sceneMismatch || longFrame) {
+    final motionMismatch = measuredVelocityStepRatio != null &&
+        measuredVelocityStepRatio > 0.35 &&
+        frameGapMicros != null &&
+        frameGapMicros < 12000;
+    if (sceneMismatch || longFrame || motionMismatch) {
       widget.traceSink.record(
         traceEvent(
           clock: widget.clock,
@@ -2325,6 +2422,13 @@ final class _ReaderViewState extends State<ReaderView>
             'pageIndex': pageIndex,
             'scrollPixels': position.pixels,
             if (pixelDelta != null) 'pixelDelta': pixelDelta,
+            if (measuredVelocity != null)
+              'measuredVelocityPxPerSecond': measuredVelocity,
+            if (previousMeasuredVelocity != null)
+              'previousMeasuredVelocityPxPerSecond':
+                  previousMeasuredVelocity,
+            if (measuredVelocityStepRatio != null)
+              'measuredVelocityStepRatio': measuredVelocityStepRatio,
             'globalTop': globalTop,
             'expectedStart': expectedStart,
             'layoutResidualPx': residual,
@@ -2412,6 +2516,25 @@ final class _ReaderViewState extends State<ReaderView>
           'residualOutlierCount': _verticalSceneMotionResidualOutlierCount,
           'maxAbsLayoutResidualDeltaPx':
               _verticalSceneMotionMaxAbsResidualDeltaPx,
+          'ballisticVelocityStepCount':
+              _verticalSceneMotionBallisticVelocityStepCount,
+          'ballisticVelocityStepOutlierCount':
+              _verticalSceneMotionBallisticVelocityStepOutlierCount,
+          if (_verticalSceneMotionBallisticVelocityStepCount > 0)
+            'ballisticVelocityStepMeanRatio':
+                _verticalSceneMotionBallisticVelocityStepRatioSum /
+                    _verticalSceneMotionBallisticVelocityStepCount,
+          'maxBallisticVelocityStepRatio':
+              _verticalSceneMotionMaxBallisticVelocityStepRatio,
+          'dragVelocityStepCount': _verticalSceneMotionDragVelocityStepCount,
+          'dragVelocityStepOutlierCount':
+              _verticalSceneMotionDragVelocityStepOutlierCount,
+          if (_verticalSceneMotionDragVelocityStepCount > 0)
+            'dragVelocityStepMeanRatio':
+                _verticalSceneMotionDragVelocityStepRatioSum /
+                    _verticalSceneMotionDragVelocityStepCount,
+          'maxDragVelocityStepRatio':
+              _verticalSceneMotionMaxDragVelocityStepRatio,
           'interaction': _interaction.name,
           'stitched': widget.verticalStitch,
         },

@@ -1008,8 +1008,9 @@ Reader 的 `readerFrameTiming` 诊断在源头只按约1秒聚合真正普通帧
 原始vertical ScrollUpdate若非零位移且相邻通知间隔>20ms MAY记录`scrollCadenceOutlier`；
 该事件只用于区分ScrollActivity/input cadence与render missed-vsync，不得请求debug frame或成为滚动/pipeline输入。
 `ScrollUpdateNotification.dragDetails`存在时Reader MUST保留`Interaction.dragging`并在`scrollCadenceOutlier`记录`dragDriven=true`。
-dev.309 touch-resampling行为已被ballistic证据否证并撤销：Reader/reader_runtime均不得以`GestureBinding.resamplingEnabled`、
-`samplingOffset`、合成位置、Ticker/forced frame或ScrollPhysics调参掩盖cadence。
+dev.310的ballistic证据继续否证“touch sampling解释post-lift cadence hole”这一宽泛假设；ADR 0325只以healthy-cadence逐帧位移重新打开finger-down drag边界。
+`reader_runtime`在vertical continuous Reader生命周期持ref-counted `GestureBinding.resamplingEnabled` lease并最终恢复原值；`reader`不得拥有该framework state。
+`samplingOffset`、合成位置、自定义Ticker/forced frame与ScrollPhysics调参仍禁止，ballistic cadence仍独立归因。
 Android platform cadence归因由`reader_runtime`的`android.view.Choreographer` observer拥有：
 仅显式`ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`诊断构建的vertical Reader生命周期启用；
 默认不订阅逐vsync callback、Window metrics listener或2s drain，避免静态页被观测本身持续唤醒，被动Flutter timing/任务Trace不受影响。

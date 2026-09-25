@@ -2,7 +2,13 @@
 
 ## Status
 
-Superseded by dev.310. The dev.309 experiment remains historical evidence, but the 08:20 device Trace shows 20/22 cadence outliers are `dragDriven=false` ballistic updates after finger lift, so touch resampling is not the main owner and its production lease is removed.
+Superseded
+
+Dev.310 superseded the original cadence claim; ADR 0325 later re-opened only a
+narrow, independently measured finger-down displacement boundary. The
+dev.309/dev.310 evidence remains valid for cadence holes: 20/22 cadence
+outliers in the 08:20 device Trace are `dragDriven=false` ballistic updates
+after finger lift, so touch resampling does not own those post-lift holes.
 
 ## Evidence
 

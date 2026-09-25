@@ -34,8 +34,9 @@ for marker in (
     'Map<String, double>? _pendingVerticalLayoutRatios;',
     'bool get _verticalScrollActive',
     '_pendingVerticalLayoutRatios =',
-    '_adoptFutureVerticalRatios(latest);',
+    'layoutChanged = _adoptFutureVerticalRatios(latest);',
     'void _adoptPageAspectRatios(',
+    'bool _adoptFutureVerticalRatios(',
     'final effectiveRatios = ratios ?? _verticalLayoutRatios;',
     'void _schedulePendingVerticalRatioCommit()',
     '_preserveVerticalAnchor(\n        oldRatios: _verticalLayoutRatios,',
@@ -50,11 +51,11 @@ for marker in (
 # stay pending; only future-page-safe facts may be adopted immediately.
 ratio_branch = reader[
     reader.index('void _adoptPageAspectRatios('):
-    reader.index('void _adoptFutureVerticalRatios(', reader.index('void _adoptPageAspectRatios('))
+    reader.index('bool _adoptFutureVerticalRatios(', reader.index('void _adoptPageAspectRatios('))
 ]
 for marker in (
     '_pendingVerticalLayoutRatios =',
-    '_adoptFutureVerticalRatios(latest);',
+    'layoutChanged = _adoptFutureVerticalRatios(latest);',
     '_verticalLayoutRatios = latest;',
     '_preserveVerticalAnchor(',
 ):
@@ -73,6 +74,7 @@ require(
     'vertical measured ratios stay frozen until active scrolling is idle',
     'async measured geometry must not mutate sliver extents mid-scroll',
     'the latest measured geometry must commit once scrolling is idle',
+    'live vertical ratios rebuild only when ListView geometry changes',
 )
 
 for path in (

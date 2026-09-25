@@ -1074,6 +1074,126 @@ void main() {
     },
   );
 
+  testWidgets(
+    'live vertical ratios rebuild only when ListView geometry changes',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-local-layout-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-local-layout-chapter',
+          comicId: 'vertical-local-layout-comic',
+          title: 'vertical local layout',
+          sequence: 0,
+          pageCount: 6,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          6,
+          (index) => PageAsset(
+            pageId: 'vertical-local-layout-$index',
+            chapterId: 'vertical-local-layout-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-local-layout-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-local-layout-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+        initialPage: 2,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-local-layout:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final reader = find.byType(ReaderView);
+      final outerLayout = find.descendant(
+        of: reader,
+        matching: find.byType(LayoutBuilder),
+      );
+      final list = find.byKey(
+        const ValueKey<String>('reader-vertical-list'),
+      );
+      expect(outerLayout, findsOneWidget);
+      expect(list, findsOneWidget);
+
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -18));
+      await tester.pump();
+
+      final outerBefore = tester.widget<LayoutBuilder>(outerLayout);
+      final listBefore = tester.widget<ListView>(list);
+
+      ratios.value = <String, double>{
+        chapter.pages.first.assetKey: 3.0,
+      };
+      await tester.pump();
+
+      expect(
+        identical(tester.widget<LayoutBuilder>(outerLayout), outerBefore),
+        isTrue,
+        reason:
+            'a pending-only ratio fact must not dirty the whole ReaderView',
+      );
+      expect(
+        identical(tester.widget<ListView>(list), listBefore),
+        isTrue,
+        reason:
+            'a pending-only ratio fact must not rebuild vertical layout',
+      );
+
+      final listAfterPending = tester.widget<ListView>(list);
+      ratios.value = <String, double>{
+        chapter.pages.first.assetKey: 3.0,
+        chapter.pages.last.assetKey: 3.0,
+      };
+      await tester.pump();
+
+      expect(
+        identical(tester.widget<LayoutBuilder>(outerLayout), outerBefore),
+        isTrue,
+        reason:
+            'decode-ahead geometry must not dirty the ReaderView root',
+      );
+      expect(
+        identical(tester.widget<ListView>(list), listAfterPending),
+        isFalse,
+        reason:
+            'a real future extent change must rebuild the vertical layout subtree',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets(
     'reverse vertical scroll prepares incoming measured prefix without visible reflow',

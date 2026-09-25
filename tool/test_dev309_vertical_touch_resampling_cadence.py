@@ -79,19 +79,39 @@ if version < 310:
     if 'samplingOffset' in adapter:
         raise SystemExit('dev.309 must not tune GestureBinding.samplingOffset')
 else:
-    if adapter_path.exists() or test_path.exists():
-        raise SystemExit('dev.310+ must remove the falsified touch-resampling implementation/test')
-    runtime_product = ''.join(
-        path.read_text(encoding='utf-8')
-        for path in (ROOT / 'packages/reader_runtime/lib').rglob('*.dart')
-    )
-    for forbidden in ('GestureBinding', 'resamplingEnabled', 'samplingOffset'):
-        if forbidden in runtime_product:
-            raise SystemExit(f'dev.310+ retained falsified touch-resampling product behavior: {forbidden}')
+    if not adapter_path.exists() or not test_path.exists():
+        raise SystemExit('ADR 0325 scoped touch-resampling owner missing')
+    adapter = adapter_path.read_text(encoding='utf-8')
+    test = test_path.read_text(encoding='utf-8')
+    for token in (
+        "import 'package:flutter/gestures.dart';",
+        'final class FlutterReaderTouchResamplingLease',
+        'static int _leases = 0;',
+        'static bool? _restoreEnabled;',
+        'binding.resamplingEnabled = true;',
+        'GestureBinding.instance.resamplingEnabled = restoreEnabled;',
+    ):
+        require(adapter, token, 'ADR 0325 scoped Flutter touch-resampling owner')
+    for token in (
+        'FlutterReaderTouchResamplingLease? _touchResamplingLease;',
+        'void _syncTouchResampling()',
+        '_touchResamplingLease ??= FlutterReaderTouchResampling.acquire();',
+        '_touchResamplingLease?.release();',
+    ):
+        require(runtime, token, 'ADR 0325 ReaderRuntime lease lifecycle')
+    for token in (
+        'vertical Reader lease enables and restores touch resampling',
+        'nested Reader leases restore only after final release',
+        'pre-existing resampling state is preserved after release',
+    ):
+        require(test, token, 'ADR 0325 touch-resampling regression')
+    if 'samplingOffset' in adapter:
+        raise SystemExit('ADR 0325 must not tune GestureBinding.samplingOffset')
     adr = read('docs/adr/0288-vertical-reader-touch-resampling-boundary.md')
-    require(adr, 'Superseded by dev.310', 'dev.309 ADR supersession')
-    for token in ('20/22', '`dragDriven=false`', 'touch resampling is not the main owner'):
-        require(adr, token, 'dev.310 falsification record')
+    require(adr, '## Status\n\nSuperseded', 'canonical ADR status')
+    require(adr, 'ADR 0325', 'dev.309/310 scoped supersession')
+    for token in ('20/22', '`dragDriven=false`', 'post-lift holes'):
+        require(adr, token, 'retained dev.310 ballistic falsification record')
 
 all_docs = ''.join(read(path) for path in (
     'CHANGELOG.md',

@@ -107,9 +107,11 @@ runtime_product = ''.join(
     path.read_text(encoding='utf-8')
     for path in (ROOT / 'packages/reader_runtime/lib').rglob('*.dart')
 )
-for forbidden in ('GestureBinding', 'resamplingEnabled', 'samplingOffset'):
-    if forbidden in runtime_product:
-        raise SystemExit(f'dev.312 restored falsified touch resampling: {forbidden}')
+touch_adapter = read('packages/reader_runtime/lib/src/flutter_reader_touch_resampling.dart')
+if 'samplingOffset' in touch_adapter:
+    raise SystemExit('ADR 0325 touch resampling must retain Flutter default samplingOffset')
+if 'GestureBinding' in read('packages/reader/lib/src/reader_view.dart'):
+    raise SystemExit('ADR 0325 leaked framework input ownership into reader')
 
 for path in (
     'packages/reader_runtime/test/flutter_reader_platform_frame_rate_policy_test.dart',

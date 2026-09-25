@@ -1993,8 +1993,9 @@ physical claim若仅reason/priority/flow target变化 MAY原位更新scheduler s
 vertical Reader MAY记录非零位移且相邻原始ScrollUpdate间隔>20ms的`scrollCadenceOutlier`；
 该诊断 MUST NOT schedule Flutter debug frame、改变ScrollPosition或驱动任何policy。
 `dragDetails!=null`的ScrollUpdate MUST保留drag-driven语义并在outlier记录`dragDriven=true`。
-Ballistic证据否证touch sampling后，生产Reader/reader_runtime MUST NOT继续修改`GestureBinding.resamplingEnabled`或`samplingOffset`，
-也不得自定义插值位置、强制frame或更改ScrollPhysics。vertical Reader 的Android主动cadence诊断 MUST默认关闭；
+dev.310 ballistic证据仍要求touch sampling不得被用来解释post-lift cadence hole；ADR 0325的独立healthy-cadence displacement A/B只重新打开finger-down drag。
+仅`reader_runtime` MAY在vertical continuous Reader生命周期通过ref-counted lease启用`GestureBinding.resamplingEnabled`并在最终release恢复旧值；`reader` MUST NOT持该framework state。
+生产代码 MUST NOT调整`samplingOffset`、自定义插值位置、强制frame或更改ScrollPhysics。vertical Reader 的Android主动cadence诊断 MUST默认关闭；
 只有显式诊断构建 `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true` MAY由`reader_runtime`启用Android `android.view.Choreographer` observation-only probe。
 该probe逐vsync自续订并非零成本被动观测，常规静态阅读 MUST NOT为它维持callback、Window metrics listener或2s drain；
 关闭不影响被动Flutter timing、加载/任务Trace或资源调度。启用时：

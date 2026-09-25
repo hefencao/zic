@@ -13,6 +13,7 @@ import 'package:telemetry/telemetry.dart';
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
 import 'flutter_reader_system_ui.dart';
+import 'flutter_reader_touch_resampling.dart';
 import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
 import 'reader_route_transition_gate.dart';
@@ -172,6 +173,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
+  FlutterReaderTouchResamplingLease? _touchResamplingLease;
   DecodeTarget? _appliedZoomDecodeTarget;
   late final FlutterReaderSystemUi _readerSystemUi;
   late final ReaderRouteTransitionGate _systemUiTransitionGate;
@@ -314,6 +316,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     created.currentIndexListenable.addListener(_handleReaderProgress);
     _target = target;
     _reader = created;
+    _syncTouchResampling();
     _syncPlatformFrameCadenceProbe();
     _lastProgressPage = created.currentIndex;
     _lastProgressMode = _readerMode(created.direction);
@@ -388,6 +391,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (adaptsDirection) {
       _reader?.setDirection(candidate.direction);
       _syncExternalPresentationFit();
+      _syncTouchResampling();
       _syncPlatformFrameCadenceProbe();
     }
     _persistSettings();
@@ -698,6 +702,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     });
   }
 
+  void _syncTouchResampling() {
+    final vertical = _reader?.direction == ReadingDirection.vertical;
+    if (vertical) {
+      _touchResamplingLease ??= FlutterReaderTouchResampling.acquire();
+      return;
+    }
+    _touchResamplingLease?.release();
+    _touchResamplingLease = null;
+  }
+
   void _syncPlatformFrameCadenceProbe() {
     final reader = _reader;
     final vertical = reader?.direction == ReadingDirection.vertical;
@@ -758,6 +772,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   @override
   void dispose() {
     _systemUiTransitionGate.dispose();
+    _touchResamplingLease?.release();
+    _touchResamplingLease = null;
     final platformFrameCadenceProbe = _platformFrameCadenceProbe;
     _platformFrameCadenceProbe = null;
     if (platformFrameCadenceProbe != null) {
@@ -903,6 +919,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     });
     _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
     _syncExternalPresentationFit();
+    _syncTouchResampling();
     _syncPlatformFrameCadenceProbe();
     final writer = widget.onSettingsChanged;
     if (writer != null) {

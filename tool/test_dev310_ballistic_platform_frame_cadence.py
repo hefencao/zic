@@ -32,20 +32,18 @@ manifest = read('packages/reader_runtime/android/src/main/AndroidManifest.xml')
 profile = read('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart')
 test = read('packages/reader_runtime/test/flutter_reader_platform_frame_cadence_test.dart')
 
-for path in (
-    'packages/reader_runtime/lib/src/flutter_reader_touch_resampling.dart',
-    'packages/reader_runtime/test/flutter_reader_touch_resampling_test.dart',
+touch_adapter = read('packages/reader_runtime/lib/src/flutter_reader_touch_resampling.dart')
+if 'samplingOffset' in touch_adapter:
+    raise SystemExit('ADR 0325 must not tune GestureBinding.samplingOffset')
+for token in (
+    'final class FlutterReaderTouchResamplingLease',
+    'binding.resamplingEnabled = true;',
+    'GestureBinding.instance.resamplingEnabled = restoreEnabled;',
 ):
-    if (ROOT / path).exists():
-        raise SystemExit(f'dev.310 retained falsified touch-resampling file: {path}')
-
-runtime_product = ''.join(
-    path.read_text(encoding='utf-8')
-    for path in (ROOT / 'packages/reader_runtime/lib').rglob('*.dart')
-)
-for forbidden in ('GestureBinding', 'resamplingEnabled', 'samplingOffset'):
-    if forbidden in runtime_product:
-        raise SystemExit(f'dev.310 retained touch-resampling product mutation: {forbidden}')
+    require(touch_adapter, token, 'ADR 0325 scoped touch resampling')
+adr0325 = read('docs/adr/0325-vertical-drag-displacement-resampling.md')
+for token in ('20/22', 'ballistic', 'finger-down drag', '0/113', '0.0171%'):
+    require(adr0325, token, 'dev.310 ballistic result preserved while drag boundary reopens')
 
 for token in (
     'import android.view.Choreographer',
@@ -88,9 +86,9 @@ for token in (
     '_platformFrameCadenceProbe = probe;',
     'unawaited(probe.start());',
     'unawaited(probe.stop());',
-    '_reader = created;\n    _syncPlatformFrameCadenceProbe();',
-    'if (adaptsDirection) {\n      _reader?.setDirection(candidate.direction);\n      _syncExternalPresentationFit();\n      _syncPlatformFrameCadenceProbe();',
-    '_reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));\n    _syncExternalPresentationFit();\n    _syncPlatformFrameCadenceProbe();',
+    '_reader = created;\n    _syncTouchResampling();\n    _syncPlatformFrameCadenceProbe();',
+    'if (adaptsDirection) {\n      _reader?.setDirection(candidate.direction);\n      _syncExternalPresentationFit();\n      _syncTouchResampling();\n      _syncPlatformFrameCadenceProbe();',
+    '_reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));\n    _syncExternalPresentationFit();\n    _syncTouchResampling();\n    _syncPlatformFrameCadenceProbe();',
 ):
     require(runtime, token, 'vertical Reader probe lifecycle')
 
@@ -141,7 +139,7 @@ all_docs = ''.join(read(path) for path in (
 for token in (
     '20/22', '28.2005ms', '42.888ms', 'ballistic',
     'platformFrameCadenceOutlier', 'Choreographer', '256', '2s',
-    'Superseded by dev.310',
+    '## Status\n\nSuperseded',
 ):
     require(all_docs, token, 'governed ballistic/platform cadence boundary')
 

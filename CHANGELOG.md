@@ -1,3 +1,18 @@
+## Unreleased — vertical drag displacement resampling
+
+- Re-open Flutter touch resampling only for finger-down vertical drag after new per-frame displacement diagnostics separated it from the previously falsified ballistic cadence hypothesis.
+  With healthy ~8.3ms frames, matched constant-speed drag windows without resampling showed 9.9%–18.3% mean adjacent velocity change, 13–15 >20% jumps per window and maxima up to 255%.
+  Flutter's built-in resampler reduced matched windows to 0 >20% jumps and <=0.0171% max while post-lift ballistic behavior stayed independently smooth.
+- Restore the old `reader_runtime` ref-counted lease boundary: vertical continuous Reader enables `GestureBinding.resamplingEnabled`, final release restores the prior process-global value, and mode changes resync ownership.
+  `reader` still cannot own framework input state; `samplingOffset`, custom interpolation/Ticker, forced frames, ScrollPhysics, geometry, Pipeline windows and NetLane remain unchanged.
+  Device acceptance must include direct-manipulation latency because Flutter's default resampler deliberately trades some latency for uniform motion.
+
+## Unreleased — vertical static ratio rebuild scope
+
+- Stop amplifying each live source-canvas ratio publication into a whole `ReaderView` rebuild. Pending-only ratio facts now update state without dirtying widgets; a real vertical extent change invalidates only the ListView geometry subtree through a Reader-local layout revision.
+- Preserve the existing scroll-stable prefix, decode-ahead future geometry, reverse-prefix `geometryCorrectionTarget`, idle top-pixel anchor and cached page shells. Encoded/decode/upload windows, NetLane, static warm and all Pipeline policy remain unchanged.
+- Add a runtime-listenable regression that distinguishes zero-rebuild pending updates from ListView-local real extent changes; Reader navigation 24/24 and dev.280/dev.281/dev.287/dev.294/dev.308 gates pass. Fresh Profile/Release device verification of visible jitter remains pending.
+
 ## Unreleased — vertical scene-motion diagnostic gating
 
 - Keep vertical idle static warming, the 3/7 one-frame intent envelope, initial six-screen composition pass, nominal `current±7` keepAlive and bounded recenter unchanged after re-auditing a power report; these are intentional staged preload/composition behavior rather than evidence of an 11-way media-work burst.

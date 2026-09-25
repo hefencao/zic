@@ -20,7 +20,7 @@ require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',"part '
 require('packages/pipeline_runtime/lib/src/pipeline_page_dimensions.dart','final class PipelinePageDimensions','abstract interface class PipelinePageDimensionsFeed','bool replay = true','bool publish(PipelinePageDimensions dimensions)')
 require('packages/reader_runtime/lib/src/reader_runtime_screen.dart','_pipeline.pageDimensions.addListener(_handlePipelinePageDimensions);','void _handlePipelinePageDimensions(PipelinePageDimensions dimensions)','basis: dimensions.basis,','_pipeline.pageDimensions.removeListener(_handlePipelinePageDimensions);')
 reader=text('packages/reader/lib/src/reader_view.dart')
-for marker in ('int? _lastVerticalVisibleMaxIndex;','_adoptFutureVerticalRatios(latest);','void _adoptFutureVerticalRatios(','for (var index = visibleMax + 1; index < pages.length; index++)','TraceEventKind.pageGeometryPrepared',"'source': 'decode-ahead-ratio'"):
+for marker in ('int? _lastVerticalVisibleMaxIndex;','_adoptFutureVerticalRatios(latest);','bool _adoptFutureVerticalRatios(','for (var index = visibleMax + 1; index < pages.length; index++)','TraceEventKind.pageGeometryPrepared',"'source': 'decode-ahead-ratio'"):
     req(marker in reader,f'Reader future geometry preparation missing: {marker}')
 for marker in ('reader-vertical-presentation:', 'presentationExtentAt(', 'final presentation = OverflowBox('):
     req(marker not in reader,f'dev.286 presentation workaround remains in Reader: {marker}')
