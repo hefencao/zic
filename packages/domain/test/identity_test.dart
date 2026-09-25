@@ -74,6 +74,31 @@ void main() {
     expect(DownloadId.fromJson(id.toJson()), id);
   });
 
+  test('hot identity key projections are memoized per immutable identity', () {
+    final download = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+    );
+    final decode = DecodeId(
+      download: download,
+      physicalWidth: 1080,
+      physicalHeight: 1920,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.androidTexture,
+    );
+
+    expect(identical(download.key, download.key), isTrue);
+    expect(identical(download.legacyKey, download.legacyKey), isTrue);
+    expect(identical(decode.key, decode.key), isTrue);
+    expect(identical(decode.legacyKey, decode.legacyKey), isTrue);
+  });
+
   test('physical media identity separates exact fallback from canonical body', () {
     final download = DownloadId(
       content: const ContentId(

@@ -59,7 +59,7 @@ final class ContentId {
 }
 
 final class DownloadId {
-  const DownloadId({
+  DownloadId({
     required this.content,
     required this.sourceRevision,
     required this.canonicalUri,
@@ -77,15 +77,25 @@ final class DownloadId {
   /// exact pageId + URI against this DownloadId.
   final int? pageIndexHint;
 
-  /// Collision-free framed identity used for new keys.
-  String get key =>
+  // DownloadId is immutable but sits on every Reader planning hot path. Keep
+  // its framed/storage keys and structural hash as per-instance derived facts
+  // instead of rebuilding the same long provider identity every time a plan
+  // touches a Map/Set or lane key. These caches do not change identity or
+  // ownership semantics; they only memoize pure projections of final fields.
+  late final String _canonicalUriString = canonicalUri.toString();
+  late final String _key =
       'download:v2${_frame(content.sourceId)}${_frame(content.comicId)}'
       '${_frame(content.chapterId)}${_frame(content.pageId)}'
-      '${_frame(sourceRevision)}${_frame(canonicalUri.toString())}';
+      '${_frame(sourceRevision)}${_frame(_canonicalUriString)}';
+  late final String _legacyKey =
+      '${content.legacyKey}|$sourceRevision|$_canonicalUriString';
+  late final int _hashCode = Object.hash(content, sourceRevision, canonicalUri);
+
+  /// Collision-free framed identity used for new keys.
+  String get key => _key;
 
   /// The pre-v2 key used by older cache/index records.
-  String get legacyKey =>
-      '${content.legacyKey}|$sourceRevision|${canonicalUri.toString()}';
+  String get legacyKey => _legacyKey;
 
   Map<String, Object> toJson() => <String, Object>{
         'content': content.toJson(),
@@ -114,7 +124,7 @@ final class DownloadId {
           canonicalUri == other.canonicalUri;
 
   @override
-  int get hashCode => Object.hash(content, sourceRevision, canonicalUri);
+  int get hashCode => _hashCode;
 
   @override
   String toString() => 'DownloadId($key)';
@@ -204,14 +214,28 @@ final class DecodeId {
   final PixelFormat pixelFormat;
   final RendererKind renderer;
 
-  String get key =>
+  // DecodeId is likewise immutable and is repeatedly projected into lane and
+  // plan keys while a continuous Reader crosses page boundaries. Memoizing
+  // these pure derived values removes repeated DownloadId framing without
+  // changing DecodeId equality, scheduling rank or renderer ownership.
+  late final String _key =
       'decode:v2${_frame(download.key)}${_frame(physicalWidth.toString())}'
       '${_frame(physicalHeight.toString())}${_frame(pixelFormat.name)}'
       '${_frame(renderer.name)}';
-
-  String get legacyKey =>
+  late final String _legacyKey =
       '${download.legacyKey}|${physicalWidth}x$physicalHeight|'
       '${pixelFormat.name}|${renderer.name}';
+  late final int _hashCode = Object.hash(
+        download,
+        physicalWidth,
+        physicalHeight,
+        pixelFormat,
+        renderer,
+      );
+
+  String get key => _key;
+
+  String get legacyKey => _legacyKey;
 
   @override
   bool operator ==(Object other) =>
@@ -224,13 +248,7 @@ final class DecodeId {
           renderer == other.renderer;
 
   @override
-  int get hashCode => Object.hash(
-        download,
-        physicalWidth,
-        physicalHeight,
-        pixelFormat,
-        renderer,
-      );
+  int get hashCode => _hashCode;
 
   @override
   String toString() => 'DecodeId($key)';
