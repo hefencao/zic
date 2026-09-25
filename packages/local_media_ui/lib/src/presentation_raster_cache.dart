@@ -44,6 +44,13 @@ final class PipelinePresentationRasterCache
   final Set<Object> _speculativeAdmissionDenied = <Object>{};
   final Set<PipelinePresentationCacheInvalidationListener> _listeners =
       <PipelinePresentationCacheInvalidationListener>{};
+  final Set<Object> _pendingBudgetInvalidations = <Object>{};
+  final Set<Object> _pendingGenericProviderEvictions = <Object>{};
+  final List<_PresentationRasterEntry> _pendingPhysicalEvictions =
+      <_PresentationRasterEntry>[];
+  bool _maintenanceScheduled = false;
+  bool _globalBudgetSyncPending = false;
+  int _maintenanceEpoch = 0;
   int _bytes = 0;
 
   ImageProvider<Object> providerFor({
@@ -79,6 +86,18 @@ final class PipelinePresentationRasterCache
     _claimsByIdentity[presentationIdentity] = claim;
     if (claim != PipelinePresentationCacheClaim.speculative) {
       _speculativeAdmissionDenied.remove(presentationIdentity);
+      // Budget trim withdraws speculative authority before its idle physical
+      // cleanup. A role promotion can arrive in that gap; reclaim the still-live
+      // managed keepAlive instead of completing a stale far-page eviction and
+      // immediately forcing the new deadline page to rebuild the same raster.
+      final reclaimed = _takePendingBudgetEviction(presentationIdentity);
+      if (reclaimed != null) {
+        reclaimed.claim = claim;
+        _entries[reclaimed.key] = reclaimed;
+        _keysByIdentity[presentationIdentity] = reclaimed.key;
+        _bytes += reclaimed.sizeBytes;
+        _scheduleMaintenance(syncGlobalBudget: true);
+      }
     }
     final key = _keysByIdentity[presentationIdentity];
     final entry = key == null ? null : _entries.remove(key);
@@ -87,6 +106,21 @@ final class PipelinePresentationRasterCache
       _entries[key!] = entry;
     }
     _trimToBudget();
+  }
+
+  _PresentationRasterEntry? _takePendingBudgetEviction(
+    Object presentationIdentity,
+  ) {
+    for (var index = 0; index < _pendingPhysicalEvictions.length; index++) {
+      final entry = _pendingPhysicalEvictions[index];
+      if (!identical(entry.key.presentationIdentity, presentationIdentity)) {
+        continue;
+      }
+      _pendingPhysicalEvictions.removeAt(index);
+      _pendingBudgetInvalidations.remove(presentationIdentity);
+      return entry;
+    }
+    return null;
   }
 
   @override
@@ -214,9 +248,9 @@ final class PipelinePresentationRasterCache
         // ImageCache keepAlive entry so the same raster is not governed by two
         // unrelated LRUs; mounted listeners remain live and the handle keeps
         // the completer/raster resident until this authority evicts it.
-        _imageCache.evict(entry.providerKey, includeLive: false);
         _trimToBudget();
-        _syncGlobalImageCacheBudget();
+        _pendingGenericProviderEvictions.add(entry.providerKey);
+        _scheduleMaintenance(syncGlobalBudget: true);
       },
       onError: (Object error, StackTrace? stackTrace) {
         completer.removeListener(firstFrame);
@@ -260,7 +294,12 @@ final class PipelinePresentationRasterCache
         }
       }
       if (victim == null) break;
-      _evict(victim, notify: true, denySpeculativeRewarm: true);
+      _evict(
+        victim,
+        notify: true,
+        denySpeculativeRewarm: true,
+        deferBudgetInvalidation: true,
+      );
     }
   }
 
@@ -268,6 +307,7 @@ final class PipelinePresentationRasterCache
     PresentationRasterCacheKey key, {
     required bool notify,
     bool denySpeculativeRewarm = false,
+    bool deferBudgetInvalidation = false,
   }) {
     final entry = _entries.remove(key);
     if (entry == null) return;
@@ -278,15 +318,113 @@ final class PipelinePresentationRasterCache
       _speculativeAdmissionDenied.add(key.presentationIdentity);
     }
     _bytes -= entry.sizeBytes;
-    entry.handle.dispose();
-    _imageCache.evict(entry.providerKey, includeLive: false);
-    _syncGlobalImageCacheBudget();
+    if (deferBudgetInvalidation) {
+      _pendingPhysicalEvictions.add(entry);
+      _scheduleMaintenance();
+    } else {
+      _scheduleFrameDeferredPhysicalEviction(entry);
+    }
     if (notify) {
-      final listeners = _listeners.toList(growable: false);
-      for (final listener in listeners) {
-        listener(key.presentationIdentity);
+      if (deferBudgetInvalidation) {
+        _pendingBudgetInvalidations.add(key.presentationIdentity);
+      } else {
+        _notifyInvalidation(key.presentationIdentity);
       }
     }
+    _scheduleMaintenance(syncGlobalBudget: true);
+  }
+
+  void _scheduleFrameDeferredPhysicalEviction(_PresentationRasterEntry entry) {
+    void cleanup() {
+      entry.handle.dispose();
+      final providerReowned = _entries.values.any(
+        (current) => current.providerKey == entry.providerKey,
+      );
+      if (!providerReowned) {
+        _imageCache.evict(entry.providerKey, includeLive: false);
+      }
+    }
+
+    final binding = WidgetsBinding.instance;
+    if (binding.schedulerPhase != SchedulerPhase.idle ||
+        binding.hasScheduledFrame) {
+      binding.addPostFrameCallback((_) => cleanup());
+      return;
+    }
+    Timer.run(cleanup);
+  }
+
+  void _notifyInvalidation(Object presentationIdentity) {
+    final listeners = _listeners.toList(growable: false);
+    for (final listener in listeners) {
+      listener(presentationIdentity);
+    }
+  }
+
+  void _scheduleMaintenance({bool syncGlobalBudget = false}) {
+    if (syncGlobalBudget) _globalBudgetSyncPending = true;
+    if (_maintenanceScheduled) return;
+    _maintenanceScheduled = true;
+    final epoch = _maintenanceEpoch;
+
+    void flush() {
+      developer.Timeline.startSync('zic-presentation-raster-maintenance');
+      try {
+        if (epoch != _maintenanceEpoch) return;
+        _maintenanceScheduled = false;
+        final physicalEvictions = List<_PresentationRasterEntry>.of(
+          _pendingPhysicalEvictions,
+        );
+        _pendingPhysicalEvictions.clear();
+        for (final entry in physicalEvictions) {
+          entry.handle.dispose();
+          final providerReowned = _entries.values.any(
+            (current) => current.providerKey == entry.providerKey,
+          );
+          if (!providerReowned) {
+            _imageCache.evict(entry.providerKey, includeLive: false);
+          }
+        }
+
+        final providerEvictions = _pendingGenericProviderEvictions.toList(
+          growable: false,
+        );
+        _pendingGenericProviderEvictions.clear();
+        for (final providerKey in providerEvictions) {
+          _imageCache.evict(providerKey, includeLive: false);
+        }
+
+        if (_globalBudgetSyncPending) {
+          _globalBudgetSyncPending = false;
+          _syncGlobalImageCacheBudget();
+        }
+
+        final invalidations = _pendingBudgetInvalidations.toList(
+          growable: false,
+        );
+        _pendingBudgetInvalidations.clear();
+        for (final identity in invalidations) {
+          _notifyInvalidation(identity);
+        }
+
+        if (_pendingPhysicalEvictions.isNotEmpty ||
+            _pendingGenericProviderEvictions.isNotEmpty ||
+            _pendingBudgetInvalidations.isNotEmpty ||
+            _globalBudgetSyncPending) {
+          _scheduleMaintenance();
+        }
+      } finally {
+        developer.Timeline.finishSync();
+      }
+    }
+
+    unawaited(
+      SchedulerBinding.instance.scheduleTask<void>(
+        flush,
+        Priority.idle,
+        debugLabel: 'zic-presentation-raster-maintenance',
+      ),
+    );
   }
 
   @override
@@ -310,9 +448,23 @@ final class PipelinePresentationRasterCache
   PresentationRasterCacheReport clearPresentationRasters() {
     final beforeBytes = _bytes;
     final beforeEntries = _entries.length;
-    final identities = _entries.keys
-        .map((key) => key.presentationIdentity)
-        .toList(growable: false);
+    final identities = <Object>{
+      ..._pendingBudgetInvalidations,
+      ..._entries.keys.map((key) => key.presentationIdentity),
+    };
+    _maintenanceEpoch++;
+    _maintenanceScheduled = false;
+    _globalBudgetSyncPending = false;
+    for (final entry in _pendingPhysicalEvictions) {
+      entry.handle.dispose();
+      _imageCache.evict(entry.providerKey, includeLive: false);
+    }
+    _pendingPhysicalEvictions.clear();
+    for (final providerKey in _pendingGenericProviderEvictions) {
+      _imageCache.evict(providerKey, includeLive: false);
+    }
+    _pendingGenericProviderEvictions.clear();
+    _pendingBudgetInvalidations.clear();
     for (final entry in _entries.values) {
       if (entry.claim == PipelinePresentationCacheClaim.speculative) {
         _speculativeAdmissionDenied.add(entry.key.presentationIdentity);
