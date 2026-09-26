@@ -75,6 +75,28 @@ const readingLongPressZoomLimitKey =
     ValueKey<String>('reading-long-press-zoom-limit');
 const readingZoomDecodeBoostKey =
     ValueKey<String>('reading-zoom-decode-boost');
+const readingPagedContinuousReadingKey =
+    ValueKey<String>('reading-paged-continuous-reading');
+const readingContinuousContinuousReadingKey =
+    ValueKey<String>('reading-continuous-continuous-reading');
+const readingContinuousZoomStageFirstKey =
+    ValueKey<String>('reading-continuous-zoom-stage-first');
+const readingContinuousZoomStageSecondKey =
+    ValueKey<String>('reading-continuous-zoom-stage-second');
+const readingContinuousLongPressZoomKey =
+    ValueKey<String>('reading-continuous-long-press-zoom');
+const readingContinuousLongPressZoomScaleKey =
+    ValueKey<String>('reading-continuous-long-press-zoom-scale');
+const readingContinuousLongPressZoomMoveModeKey =
+    ValueKey<String>('reading-continuous-long-press-zoom-move-mode');
+const readingContinuousDoubleTapZoomOriginKey =
+    ValueKey<String>('reading-continuous-double-tap-zoom-origin');
+const readingContinuousLongPressZoomPanRatioKey =
+    ValueKey<String>('reading-continuous-long-press-zoom-pan-ratio');
+const readingContinuousLongPressZoomLimitKey =
+    ValueKey<String>('reading-continuous-long-press-zoom-limit');
+const readingContinuousZoomDecodeBoostKey =
+    ValueKey<String>('reading-continuous-zoom-decode-boost');
 const readingPreviewMaxItemsPerRowKey =
     ValueKey<String>('reading-preview-max-items-per-row');
 
@@ -1255,32 +1277,6 @@ final class ReadingSettingsScreen extends StatelessWidget {
               value: preferences.adaptiveReaderEnabled,
               onChanged: preferences.setAdaptiveReaderEnabled,
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text('纵向拼接'),
-                  const SizedBox(height: 6),
-                  SegmentedButton<bool>(
-                    key: readingVerticalStitchKey,
-                    showSelectedIcon: false,
-                    segments: const <ButtonSegment<bool>>[
-                      ButtonSegment(value: true, label: Text('拼接')),
-                      ButtonSegment(value: false, label: Text('保留间距')),
-                    ],
-                    selected: <bool>{preferences.defaultVerticalStitch},
-                    onSelectionChanged: (values) =>
-                        preferences.setDefaultVerticalStitch(values.single),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '纵向连续模式可移除页间距；不合并页面文件或缓存身份。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
             const _SettingsSectionTitle('界面'),
             SwitchListTile(
               title: const Text('进入时隐藏阅读控制'),
@@ -1327,200 +1323,304 @@ final class ReadingSettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const _SettingsSectionTitle('操作 · 双击放大'),
-            _readerScaleSlider(
-              key: readingZoomStageFirstKey,
-              title: '一级倍率',
-              value: preferences.defaultZoomStageFirst,
-              min: 1.25,
-              max: 4,
-              divisions: 11,
-              onChanged: preferences.setDefaultZoomStageFirst,
+            ..._readerModeSettingsTiles(
+              context,
+              preferences,
+              ReaderMode.paged,
             ),
-            _readerScaleSlider(
-              key: readingZoomStageSecondKey,
-              title: '二级倍率',
-              value: preferences.defaultZoomStageSecond,
-              min: preferences.defaultZoomStageFirst
-                  .clamp(1.25, 4)
-                  .toDouble(),
-              max: 8,
-              divisions: ((8 -
-                          preferences.defaultZoomStageFirst
-                              .clamp(1.25, 4)
-                              .toDouble()) *
-                      4)
-                  .round(),
-              onChanged: preferences.setDefaultZoomStageSecond,
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text('双击放大图片位置'),
-                  const SizedBox(height: 6),
-                  SegmentedButton<ReaderDoubleTapZoomOrigin>(
-                    key: readingDoubleTapZoomOriginKey,
-                    showSelectedIcon: false,
-                    segments:
-                        const <ButtonSegment<ReaderDoubleTapZoomOrigin>>[
-                      ButtonSegment(
-                        value: ReaderDoubleTapZoomOrigin.center,
-                        label: Text('居中'),
-                      ),
-                      ButtonSegment(
-                        value: ReaderDoubleTapZoomOrigin.snap,
-                        label: Text('吸附'),
-                      ),
-                      ButtonSegment(
-                        value: ReaderDoubleTapZoomOrigin.focus,
-                        label: Text('聚焦'),
-                      ),
-                    ],
-                    selected: <ReaderDoubleTapZoomOrigin>{
-                      preferences.doubleTapZoomOrigin,
-                    },
-                    onSelectionChanged: (values) =>
-                        preferences.setDoubleTapZoomOrigin(values.single),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '居中：以屏幕中心放大；吸附：按点击侧贴齐边缘；聚焦：以点击位置为中心。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            const _SettingsSectionTitle('操作 · 长按放大'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  SegmentedButton<bool>(
-                    key: readingLongPressZoomKey,
-                    showSelectedIcon: false,
-                    segments: const <ButtonSegment<bool>>[
-                      ButtonSegment(value: true, label: Text('启用')),
-                      ButtonSegment(value: false, label: Text('停用')),
-                    ],
-                    selected: <bool>{preferences.longPressZoomEnabled},
-                    onSelectionChanged: (values) =>
-                        preferences.setLongPressZoomEnabled(values.single),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '作为默认值；开启自适应后，条漫默认关闭，页漫/动图默认开启，'
-                    '本漫画仍可显式覆盖。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              key: readingLongPressZoomScaleKey,
-              title: const Text('长按放大倍率'),
-              subtitle: Slider(
-                min: 1.25,
-                max: 4,
-                divisions: 11,
-                label:
-                    '${preferences.longPressZoomScale.toStringAsFixed(2)}x',
-                value:
-                    preferences.longPressZoomScale.clamp(1.25, 4).toDouble(),
-                onChanged: preferences.setLongPressZoomScale,
-              ),
-              trailing: Text(
-                '${preferences.longPressZoomScale.toStringAsFixed(2)}x',
-              ),
-            ),
-            SwitchListTile(
-              key: readingLongPressZoomRestoreKey,
-              title: const Text('长按放大松手复原'),
-              subtitle: const Text(
-                '松手后恢复原始大小；关闭后保持放大，'
-                '双击页面或切换页面退出。',
-              ),
-              value: preferences.longPressZoomRestoreOnRelease,
-              onChanged: preferences.setLongPressZoomRestoreOnRelease,
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text('长按放大移动方式'),
-                  const SizedBox(height: 6),
-                  SegmentedButton<ReaderLongPressMoveMode>(
-                    key: readingLongPressZoomMoveModeKey,
-                    showSelectedIcon: false,
-                    segments: const <ButtonSegment<ReaderLongPressMoveMode>>[
-                      ButtonSegment(
-                        value: ReaderLongPressMoveMode.drag,
-                        label: Text('拖动'),
-                      ),
-                      ButtonSegment(
-                        value: ReaderLongPressMoveMode.focus,
-                        label: Text('聚焦'),
-                      ),
-                    ],
-                    selected: <ReaderLongPressMoveMode>{
-                      preferences.longPressZoomMoveMode,
-                    },
-                    onSelectionChanged: (values) =>
-                        preferences.setLongPressZoomMoveMode(values.single),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '拖动：内容跟随手指移动；聚焦：手指作为放大镜位置。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              key: readingLongPressZoomPanRatioKey,
-              title: const Text('长按放大拖动比率'),
-              subtitle: Slider(
-                min: 0.25,
-                max: 3,
-                divisions: 11,
-                label:
-                    '${preferences.longPressZoomPanRatio.toStringAsFixed(2)}x',
-                value: preferences.longPressZoomPanRatio.clamp(0.25, 3).toDouble(),
-                onChanged: preferences.setLongPressZoomPanRatio,
-              ),
-              trailing: Text(
-                '${preferences.longPressZoomPanRatio.toStringAsFixed(2)}x',
-              ),
-            ),
-            SwitchListTile(
-              key: readingLongPressZoomLimitKey,
-              title: const Text('放大拖动限制在可视范围'),
-              subtitle: const Text(
-                '顶部超出上边界时底部不得超出下边界；'
-                '关闭后可自由把页面拖出屏幕。',
-              ),
-              value: preferences.longPressZoomLimitToViewport,
-              onChanged: preferences.setLongPressZoomLimitToViewport,
-            ),
-            const _SettingsSectionTitle('缩放质量'),
-            SwitchListTile(
-              key: readingZoomDecodeBoostKey,
-              title: const Text('放大时提升解码分辨率'),
-              subtitle: const Text(
-                '仅对可视区域涉及的页面按当前倍率提高解码尺寸，'
-                '不超过原图分辨率。',
-              ),
-              value: preferences.zoomDecodeBoostEnabled,
-              onChanged: preferences.setZoomDecodeBoostEnabled,
+            ..._readerModeSettingsTiles(
+              context,
+              preferences,
+              ReaderMode.continuous,
             ),
           ],
         ),
       ),
     );
   }
+}
+
+List<Widget> _readerModeSettingsTiles(
+  BuildContext context,
+  AppPreferencesController preferences,
+  ReaderMode mode,
+) {
+  final continuous = mode == ReaderMode.continuous;
+  final settings = preferences.readerModeSettings(mode);
+  void update(ReaderModeSettings value) =>
+      preferences.setReaderModeSettings(mode, value);
+
+  final firstKey =
+      continuous ? readingContinuousZoomStageFirstKey : readingZoomStageFirstKey;
+  final secondKey = continuous
+      ? readingContinuousZoomStageSecondKey
+      : readingZoomStageSecondKey;
+  final originKey = continuous
+      ? readingContinuousDoubleTapZoomOriginKey
+      : readingDoubleTapZoomOriginKey;
+  final longPressKey = continuous
+      ? readingContinuousLongPressZoomKey
+      : readingLongPressZoomKey;
+  final longPressScaleKey = continuous
+      ? readingContinuousLongPressZoomScaleKey
+      : readingLongPressZoomScaleKey;
+  final moveModeKey = continuous
+      ? readingContinuousLongPressZoomMoveModeKey
+      : readingLongPressZoomMoveModeKey;
+  final panRatioKey = continuous
+      ? readingContinuousLongPressZoomPanRatioKey
+      : readingLongPressZoomPanRatioKey;
+  final limitKey = continuous
+      ? readingContinuousLongPressZoomLimitKey
+      : readingLongPressZoomLimitKey;
+  final decodeBoostKey = continuous
+      ? readingContinuousZoomDecodeBoostKey
+      : readingZoomDecodeBoostKey;
+
+  return <Widget>[
+    _SettingsSectionTitle(continuous ? '连续模式' : '分页模式'),
+    SwitchListTile(
+      key: continuous
+          ? readingContinuousContinuousReadingKey
+          : readingPagedContinuousReadingKey,
+      title: const Text('连续阅读'),
+      subtitle: const Text(
+        '允许在本章边界继续滑动到相邻章节。只控制 Reader 界面；'
+        '相邻章节预加载始终保持开启。',
+      ),
+      value: settings.crossChapterReading,
+      onChanged: (value) =>
+          update(settings.copyWith(crossChapterReading: value)),
+    ),
+    if (continuous)
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const Text('纵向拼接'),
+            const SizedBox(height: 6),
+            SegmentedButton<bool>(
+              key: readingVerticalStitchKey,
+              showSelectedIcon: false,
+              segments: const <ButtonSegment<bool>>[
+                ButtonSegment(value: true, label: Text('拼接')),
+                ButtonSegment(value: false, label: Text('保留间距')),
+              ],
+              selected: <bool>{preferences.defaultVerticalStitch},
+              onSelectionChanged: (values) =>
+                  preferences.setDefaultVerticalStitch(values.single),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '只改变连续模式的页间视觉间距；不合并页面文件、章节或缓存身份。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Text('双击放大', style: Theme.of(context).textTheme.labelLarge),
+    ),
+    _readerScaleSlider(
+      key: firstKey,
+      title: '一级倍率',
+      value: settings.zoomStageFirst,
+      min: 1.25,
+      max: 4,
+      divisions: 11,
+      onChanged: (value) => update(
+        settings.copyWith(
+          zoomStages: <double>[
+            value,
+            settings.zoomStageSecond < value
+                ? value
+                : settings.zoomStageSecond,
+          ],
+        ),
+      ),
+    ),
+    _readerScaleSlider(
+      key: secondKey,
+      title: '二级倍率',
+      value: settings.zoomStageSecond,
+      min: settings.zoomStageFirst.clamp(1.25, 4).toDouble(),
+      max: 8,
+      divisions: ((8 -
+                  settings.zoomStageFirst.clamp(1.25, 4).toDouble()) *
+              4)
+          .round(),
+      onChanged: (value) => update(
+        settings.copyWith(
+          zoomStages: <double>[settings.zoomStageFirst, value],
+        ),
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text('双击放大图片位置'),
+          const SizedBox(height: 6),
+          SegmentedButton<ReaderDoubleTapZoomOrigin>(
+            key: originKey,
+            showSelectedIcon: false,
+            segments: const <ButtonSegment<ReaderDoubleTapZoomOrigin>>[
+              ButtonSegment(
+                value: ReaderDoubleTapZoomOrigin.center,
+                label: Text('居中'),
+              ),
+              ButtonSegment(
+                value: ReaderDoubleTapZoomOrigin.snap,
+                label: Text('吸附'),
+              ),
+              ButtonSegment(
+                value: ReaderDoubleTapZoomOrigin.focus,
+                label: Text('聚焦'),
+              ),
+            ],
+            selected: <ReaderDoubleTapZoomOrigin>{settings.doubleTapZoomOrigin},
+            onSelectionChanged: (values) => update(
+              settings.copyWith(doubleTapZoomOrigin: values.single),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '居中：以屏幕中心放大；吸附：按点击侧贴齐边缘；聚焦：以点击位置为中心。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Text('长按放大', style: Theme.of(context).textTheme.labelLarge),
+    ),
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SegmentedButton<bool>(
+            key: longPressKey,
+            showSelectedIcon: false,
+            segments: const <ButtonSegment<bool>>[
+              ButtonSegment(value: true, label: Text('启用')),
+              ButtonSegment(value: false, label: Text('停用')),
+            ],
+            selected: <bool>{settings.longPressZoomEnabled},
+            onSelectionChanged: (values) => update(
+              settings.copyWith(longPressZoomEnabled: values.single),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            continuous
+                ? '连续模式单独保存；开启自适应时高置信条漫仍可覆盖默认值。'
+                : '分页模式单独保存；开启自适应时高置信页漫/条漫可覆盖默认值。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    ),
+    ListTile(
+      key: longPressScaleKey,
+      title: const Text('长按放大倍率'),
+      subtitle: Slider(
+        min: 1.25,
+        max: 4,
+        divisions: 11,
+        label: settings.effectiveLongPressZoomScale.toStringAsFixed(2) + 'x',
+        value:
+            settings.effectiveLongPressZoomScale.clamp(1.25, 4).toDouble(),
+        onChanged: (value) =>
+            update(settings.copyWith(longPressZoomScale: value)),
+      ),
+      trailing:
+          Text(settings.effectiveLongPressZoomScale.toStringAsFixed(2) + 'x'),
+    ),
+    if (!continuous)
+      SwitchListTile(
+        key: readingLongPressZoomRestoreKey,
+        title: const Text('长按放大松手复原'),
+        subtitle: const Text(
+          '松手后恢复原始大小；关闭后保持放大，双击页面或切换页面退出。',
+        ),
+        value: settings.longPressZoomRestoreOnRelease,
+        onChanged: (value) => update(
+          settings.copyWith(longPressZoomRestoreOnRelease: value),
+        ),
+      ),
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text('长按放大移动方式'),
+          const SizedBox(height: 6),
+          SegmentedButton<ReaderLongPressMoveMode>(
+            key: moveModeKey,
+            showSelectedIcon: false,
+            segments: const <ButtonSegment<ReaderLongPressMoveMode>>[
+              ButtonSegment(
+                value: ReaderLongPressMoveMode.drag,
+                label: Text('拖动'),
+              ),
+              ButtonSegment(
+                value: ReaderLongPressMoveMode.focus,
+                label: Text('聚焦'),
+              ),
+            ],
+            selected: <ReaderLongPressMoveMode>{settings.longPressZoomMoveMode},
+            onSelectionChanged: (values) => update(
+              settings.copyWith(longPressZoomMoveMode: values.single),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '拖动：内容跟随手指移动；聚焦：手指作为放大镜位置。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    ),
+    ListTile(
+      key: panRatioKey,
+      title: const Text('长按放大拖动比率'),
+      subtitle: Slider(
+        min: 0.25,
+        max: 3,
+        divisions: 11,
+        label: settings.longPressZoomPanRatio.toStringAsFixed(2) + 'x',
+        value: settings.longPressZoomPanRatio.clamp(0.25, 3).toDouble(),
+        onChanged: (value) =>
+            update(settings.copyWith(longPressZoomPanRatio: value)),
+      ),
+      trailing: Text(settings.longPressZoomPanRatio.toStringAsFixed(2) + 'x'),
+    ),
+    SwitchListTile(
+      key: limitKey,
+      title: const Text('放大拖动限制在可视范围'),
+      subtitle: const Text(
+        '顶部超出上边界时底部不得超出下边界；关闭后可自由把页面拖出屏幕。',
+      ),
+      value: settings.longPressZoomLimitToViewport,
+      onChanged: (value) =>
+          update(settings.copyWith(longPressZoomLimitToViewport: value)),
+    ),
+    SwitchListTile(
+      key: decodeBoostKey,
+      title: const Text('放大时提升解码分辨率'),
+      subtitle: const Text(
+        '仅对可视区域涉及的页面按当前倍率提高解码尺寸，不超过原图分辨率。',
+      ),
+      value: settings.zoomDecodeBoost,
+      onChanged: (value) =>
+          update(settings.copyWith(zoomDecodeBoost: value)),
+    ),
+  ];
 }
 
 Widget _readerScaleSlider({

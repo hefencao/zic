@@ -2,8 +2,6 @@ import 'dart:async';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
@@ -185,18 +183,9 @@ final class AppPreferencesController extends ChangeNotifier {
       ReaderSystemStatusBarMode.show;
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
-  double _defaultZoomStageFirst = 1.5;
-  double _defaultZoomStageSecond = 2.0;
-  bool _longPressZoomEnabled = true;
-  double _longPressZoomScale = 2.0;
-  bool _longPressZoomRestoreOnRelease = true;
-  ReaderLongPressMoveMode _longPressZoomMoveMode =
-      ReaderLongPressMoveMode.drag;
-  double _longPressZoomPanRatio = 1.0;
-  bool _longPressZoomLimitToViewport = true;
-  ReaderDoubleTapZoomOrigin _doubleTapZoomOrigin =
-      ReaderDoubleTapZoomOrigin.center;
-  bool _zoomDecodeBoostEnabled = true;
+  ReaderModeSettings _pagedReaderSettings = const ReaderModeSettings();
+  ReaderModeSettings _continuousReaderSettings =
+      const ReaderModeSettings.continuousDefaults();
   int _detailsPreviewMaxItemsPerRow = 4;
   String _networkUserAgent = defaultNetworkUserAgent;
   String _debugTraceExportDirectory = defaultDebugTraceExportDirectory;
@@ -250,16 +239,13 @@ final class AppPreferencesController extends ChangeNotifier {
   ReaderSystemStatusBarMode get systemStatusBarMode => _systemStatusBarMode;
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
-  double get defaultZoomStageFirst => _defaultZoomStageFirst;
-  double get defaultZoomStageSecond => _defaultZoomStageSecond;
-  ReaderDoubleTapZoomOrigin get doubleTapZoomOrigin => _doubleTapZoomOrigin;
-  bool get longPressZoomEnabled => _longPressZoomEnabled;
-  double get longPressZoomScale => _longPressZoomScale;
-  bool get longPressZoomRestoreOnRelease => _longPressZoomRestoreOnRelease;
-  ReaderLongPressMoveMode get longPressZoomMoveMode => _longPressZoomMoveMode;
-  double get longPressZoomPanRatio => _longPressZoomPanRatio;
-  bool get longPressZoomLimitToViewport => _longPressZoomLimitToViewport;
-  bool get zoomDecodeBoostEnabled => _zoomDecodeBoostEnabled;
+  ReaderModeSettings get pagedReaderSettings => _pagedReaderSettings;
+  ReaderModeSettings get continuousReaderSettings => _continuousReaderSettings;
+
+  ReaderModeSettings readerModeSettings(ReaderMode mode) =>
+      mode == ReaderMode.continuous
+          ? _continuousReaderSettings
+          : _pagedReaderSettings;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   String get networkUserAgent => _networkUserAgent;
   String get debugTraceExportDirectory => _debugTraceExportDirectory;
@@ -434,49 +420,57 @@ final class AppPreferencesController extends ChangeNotifier {
       values['defaultVerticalStitch'],
       _defaultVerticalStitch,
     );
-    _defaultZoomStageFirst =
-        _doubleValue(values['defaultZoomStage1'], _defaultZoomStageFirst,
-            min: 1.1, max: 8);
-    _defaultZoomStageSecond =
-        _doubleValue(values['defaultZoomStage2'], _defaultZoomStageSecond,
-            min: 1.1, max: 8);
-    if (_defaultZoomStageSecond < _defaultZoomStageFirst) {
-      _defaultZoomStageSecond = _defaultZoomStageFirst;
-    }
-    _longPressZoomEnabled =
-        _boolValue(values['longPressZoomEnabled'], _longPressZoomEnabled);
-    _longPressZoomScale = _doubleValue(
-      values['longPressZoomScale'],
-      _longPressZoomScale,
-      min: 1.1,
-      max: 8,
+    final legacyPagedReaderSettings = ReaderModeSettings(
+      zoomStages: <double>[
+        _doubleValue(values['defaultZoomStage1'], 1.5, min: 1.1, max: 8),
+        _doubleValue(values['defaultZoomStage2'], 2.0, min: 1.1, max: 8),
+      ],
+      longPressZoomEnabled:
+          _boolValue(values['longPressZoomEnabled'], true),
+      longPressZoomScale:
+          _doubleValue(values['longPressZoomScale'], 2.0, min: 1.1, max: 8),
+      longPressZoomRestoreOnRelease:
+          _boolValue(values['longPressZoomRestoreOnRelease'], true),
+      longPressZoomMoveMode: _enumByName(
+        ReaderLongPressMoveMode.values,
+        values['longPressZoomMoveMode'],
+        ReaderLongPressMoveMode.drag,
+      ),
+      longPressZoomPanRatio:
+          _doubleValue(values['longPressZoomPanRatio'], 1.0, min: 0.25, max: 4),
+      longPressZoomLimitToViewport:
+          _boolValue(values['longPressZoomLimitToViewport'], true),
+      doubleTapZoomOrigin: _enumByName(
+        ReaderDoubleTapZoomOrigin.values,
+        values['doubleTapZoomOrigin'],
+        ReaderDoubleTapZoomOrigin.center,
+      ),
+      zoomDecodeBoost: _boolValue(values['zoomDecodeBoost'], true),
     );
-    _longPressZoomRestoreOnRelease = _boolValue(
-      values['longPressZoomRestoreOnRelease'],
-      _longPressZoomRestoreOnRelease,
+    final legacyContinuousReaderSettings = ReaderModeSettings(
+      zoomStages: legacyPagedReaderSettings.zoomStages,
+      longPressZoomEnabled: false,
+      longPressZoomScale: legacyPagedReaderSettings.longPressZoomScale,
+      longPressZoomRestoreOnRelease: false,
+      longPressZoomMoveMode: legacyPagedReaderSettings.longPressZoomMoveMode,
+      longPressZoomPanRatio: legacyPagedReaderSettings.longPressZoomPanRatio,
+      longPressZoomLimitToViewport:
+          legacyPagedReaderSettings.longPressZoomLimitToViewport,
+      doubleTapZoomOrigin: legacyPagedReaderSettings.doubleTapZoomOrigin,
+      zoomDecodeBoost: legacyPagedReaderSettings.zoomDecodeBoost,
     );
-    _longPressZoomMoveMode = _enumByName(
-      ReaderLongPressMoveMode.values,
-      values['longPressZoomMoveMode'],
-      _longPressZoomMoveMode,
+    final storedModeSettings = values['readerModeSettings'];
+    final storedModeSettingsMap = storedModeSettings is Map
+        ? storedModeSettings.cast<Object?, Object?>()
+        : const <Object?, Object?>{};
+    _pagedReaderSettings = _decodeReaderModeSettings(
+      storedModeSettingsMap['paged'],
+      legacyPagedReaderSettings,
     );
-    _longPressZoomPanRatio = _doubleValue(
-      values['longPressZoomPanRatio'],
-      _longPressZoomPanRatio,
-      min: 0.25,
-      max: 4,
+    _continuousReaderSettings = _decodeReaderModeSettings(
+      storedModeSettingsMap['continuous'],
+      legacyContinuousReaderSettings,
     );
-    _longPressZoomLimitToViewport = _boolValue(
-      values['longPressZoomLimitToViewport'],
-      _longPressZoomLimitToViewport,
-    );
-    _doubleTapZoomOrigin = _enumByName(
-      ReaderDoubleTapZoomOrigin.values,
-      values['doubleTapZoomOrigin'],
-      _doubleTapZoomOrigin,
-    );
-    _zoomDecodeBoostEnabled =
-        _boolValue(values['zoomDecodeBoost'], _zoomDecodeBoostEnabled);
     _detailsPreviewMaxItemsPerRow = _intInRange(
       values['detailsPreviewMaxItemsPerRow'],
       fallback: _detailsPreviewMaxItemsPerRow,
@@ -643,70 +637,15 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
-  void setDefaultZoomStageFirst(double value) {
-    final clamped = value.clamp(1.1, 8.0).toDouble();
-    if (_disposed || _defaultZoomStageFirst == clamped) return;
-    _defaultZoomStageFirst = clamped;
-    if (_defaultZoomStageSecond < clamped) {
-      _defaultZoomStageSecond = clamped;
+  void setReaderModeSettings(ReaderMode mode, ReaderModeSettings value) {
+    if (_disposed) return;
+    if (mode == ReaderMode.continuous) {
+      if (_continuousReaderSettings == value) return;
+      _continuousReaderSettings = value;
+    } else {
+      if (_pagedReaderSettings == value) return;
+      _pagedReaderSettings = value;
     }
-    _changed();
-  }
-
-  void setDefaultZoomStageSecond(double value) {
-    final clamped = value.clamp(1.1, 8.0).toDouble();
-    if (_disposed || _defaultZoomStageSecond == clamped) return;
-    _defaultZoomStageSecond = math.max(clamped, _defaultZoomStageFirst);
-    _changed();
-  }
-
-  void setLongPressZoomEnabled(bool value) {
-    if (_disposed || _longPressZoomEnabled == value) return;
-    _longPressZoomEnabled = value;
-    _changed();
-  }
-
-  void setLongPressZoomScale(double value) {
-    final clamped = value.clamp(1.1, 8.0).toDouble();
-    if (_disposed || _longPressZoomScale == clamped) return;
-    _longPressZoomScale = clamped;
-    _changed();
-  }
-
-  void setLongPressZoomRestoreOnRelease(bool value) {
-    if (_disposed || _longPressZoomRestoreOnRelease == value) return;
-    _longPressZoomRestoreOnRelease = value;
-    _changed();
-  }
-
-  void setLongPressZoomMoveMode(ReaderLongPressMoveMode value) {
-    if (_disposed || _longPressZoomMoveMode == value) return;
-    _longPressZoomMoveMode = value;
-    _changed();
-  }
-
-  void setLongPressZoomPanRatio(double value) {
-    final clamped = value.clamp(0.25, 4.0).toDouble();
-    if (_disposed || _longPressZoomPanRatio == clamped) return;
-    _longPressZoomPanRatio = clamped;
-    _changed();
-  }
-
-  void setLongPressZoomLimitToViewport(bool value) {
-    if (_disposed || _longPressZoomLimitToViewport == value) return;
-    _longPressZoomLimitToViewport = value;
-    _changed();
-  }
-
-  void setDoubleTapZoomOrigin(ReaderDoubleTapZoomOrigin value) {
-    if (_disposed || _doubleTapZoomOrigin == value) return;
-    _doubleTapZoomOrigin = value;
-    _changed();
-  }
-
-  void setZoomDecodeBoostEnabled(bool value) {
-    if (_disposed || _zoomDecodeBoostEnabled == value) return;
-    _zoomDecodeBoostEnabled = value;
     _changed();
   }
 
@@ -1042,7 +981,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 8,
+      'version': 9,
       'themeMode': _themeMode.name,
       'amoledDarkTheme': _amoledDarkTheme,
       'debugModeEnabled': _debugModeEnabled,
@@ -1056,16 +995,10 @@ final class AppPreferencesController extends ChangeNotifier {
       'systemStatusBarMode': _systemStatusBarMode.name,
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
-      'defaultZoomStage1': _defaultZoomStageFirst,
-      'defaultZoomStage2': _defaultZoomStageSecond,
-      'doubleTapZoomOrigin': _doubleTapZoomOrigin.name,
-      'longPressZoomEnabled': _longPressZoomEnabled,
-      'longPressZoomScale': _longPressZoomScale,
-      'longPressZoomRestoreOnRelease': _longPressZoomRestoreOnRelease,
-      'longPressZoomMoveMode': _longPressZoomMoveMode.name,
-      'longPressZoomPanRatio': _longPressZoomPanRatio,
-      'longPressZoomLimitToViewport': _longPressZoomLimitToViewport,
-      'zoomDecodeBoost': _zoomDecodeBoostEnabled,
+      'readerModeSettings': <String, Object?>{
+        'paged': _encodeReaderModeSettings(_pagedReaderSettings),
+        'continuous': _encodeReaderModeSettings(_continuousReaderSettings),
+      },
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'networkUserAgent': _networkUserAgent,
       'debugTraceExportDirectory': _debugTraceExportDirectory,
@@ -1141,6 +1074,85 @@ Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
+
+ReaderModeSettings _decodeReaderModeSettings(
+  Object? raw,
+  ReaderModeSettings fallback,
+) {
+  if (raw is! Map) return fallback;
+  final values = raw.cast<Object?, Object?>();
+  final first = _doubleValue(
+    values['zoomStage1'],
+    fallback.zoomStageFirst,
+    min: 1.1,
+    max: 8,
+  );
+  final second = _doubleValue(
+    values['zoomStage2'],
+    fallback.zoomStageSecond,
+    min: first,
+    max: 8,
+  );
+  return ReaderModeSettings(
+    crossChapterReading: _boolValue(
+      values['crossChapterReading'],
+      fallback.crossChapterReading,
+    ),
+    zoomStages: <double>[first, second],
+    longPressZoomEnabled: _boolValue(
+      values['longPressZoomEnabled'],
+      fallback.longPressZoomEnabled,
+    ),
+    longPressZoomScale: _doubleValue(
+      values['longPressZoomScale'],
+      fallback.longPressZoomScale,
+      min: 1.1,
+      max: 8,
+    ),
+    longPressZoomRestoreOnRelease: _boolValue(
+      values['longPressZoomRestoreOnRelease'],
+      fallback.longPressZoomRestoreOnRelease,
+    ),
+    longPressZoomMoveMode: _enumByName(
+      ReaderLongPressMoveMode.values,
+      values['longPressZoomMoveMode'],
+      fallback.longPressZoomMoveMode,
+    ),
+    longPressZoomPanRatio: _doubleValue(
+      values['longPressZoomPanRatio'],
+      fallback.longPressZoomPanRatio,
+      min: 0.25,
+      max: 4,
+    ),
+    longPressZoomLimitToViewport: _boolValue(
+      values['longPressZoomLimitToViewport'],
+      fallback.longPressZoomLimitToViewport,
+    ),
+    doubleTapZoomOrigin: _enumByName(
+      ReaderDoubleTapZoomOrigin.values,
+      values['doubleTapZoomOrigin'],
+      fallback.doubleTapZoomOrigin,
+    ),
+    zoomDecodeBoost:
+        _boolValue(values['zoomDecodeBoost'], fallback.zoomDecodeBoost),
+  );
+}
+
+Map<String, Object?> _encodeReaderModeSettings(ReaderModeSettings settings) =>
+    <String, Object?>{
+      'crossChapterReading': settings.crossChapterReading,
+      'zoomStage1': settings.zoomStageFirst,
+      'zoomStage2': settings.zoomStageSecond,
+      'longPressZoomEnabled': settings.longPressZoomEnabled,
+      'longPressZoomScale': settings.effectiveLongPressZoomScale,
+      'longPressZoomRestoreOnRelease':
+          settings.longPressZoomRestoreOnRelease,
+      'longPressZoomMoveMode': settings.longPressZoomMoveMode.name,
+      'longPressZoomPanRatio': settings.longPressZoomPanRatio,
+      'longPressZoomLimitToViewport': settings.longPressZoomLimitToViewport,
+      'doubleTapZoomOrigin': settings.doubleTapZoomOrigin.name,
+      'zoomDecodeBoost': settings.zoomDecodeBoost,
+    };
 
 double _doubleValue(
   Object? raw,

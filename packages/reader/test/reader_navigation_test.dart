@@ -73,6 +73,92 @@ void main() {
   });
 
 
+  testWidgets(
+      'paged chapter-boundary traversal is gated only by cross-chapter UI setting',
+      (tester) async {
+    final chapter = _chapter(pageCount: 2);
+    final controller = ReaderController(
+      sessionId: 'reader-chapter-boundary-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final crossChapter = ValueNotifier<bool>(false);
+    addTearDown(crossChapter.dispose);
+    final requested = <ReaderChapterBoundary>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: crossChapter,
+          builder: (context, enabled, _) => ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            crossChapterReading: enabled,
+            canReadNextChapter: true,
+            onChapterBoundaryRequested: requested.add,
+            pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+              key: ValueKey<String>('boundary:${asset.pageId}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    controller.requestPage(1);
+    await tester.pump();
+    await tester.drag(find.byType(PageView), const Offset(-360, 0));
+    await tester.pump();
+    expect(requested, isEmpty);
+
+    crossChapter.value = true;
+    await tester.pump();
+    await tester.drag(find.byType(PageView), const Offset(-360, 0));
+    await tester.pump();
+    expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
+  });
+
+  testWidgets('single-page RTL maps forward boundary gesture to next chapter',
+      (tester) async {
+    final base = _chapter(pageCount: 1);
+    final chapter = ChapterManifest(
+      sourceId: base.sourceId,
+      comicId: base.comicId,
+      chapter: base.chapter,
+      pages: base.pages,
+      readingDirection: ReadingDirection.rtl,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-single-rtl-boundary-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <ReaderChapterBoundary>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          crossChapterReading: true,
+          canReadPreviousChapter: true,
+          canReadNextChapter: true,
+          onChapterBoundaryRequested: requested.add,
+          pageBuilder: (context, asset, reportFirstFrame) =>
+              const ColoredBox(color: Colors.black),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.drag(find.byType(PageView), const Offset(360, 0));
+    await tester.pump();
+    expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
+  });
+
   testWidgets('presentation revision rebuilds only the changed page slot',
       (tester) async {
     final chapter = _chapter(pageCount: 3);

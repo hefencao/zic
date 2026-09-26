@@ -1150,14 +1150,18 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   详情页等待 Reader route返回后 MUST 使用 route-local final progress更新当前投影，不得为此重读整库。
   异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
-- 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并保留各自持久化值。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
+- 阅读设置中同时适用于 paged 与 continuous 的 presentation/gesture 项 MUST 按 mode 独立持久化，不能共享同一可变值；当前至少包括“连续阅读”、双击倍率/锚点、长按启用/倍率/移动/拖动边界与 zoom decode boost。只适用于单一 mode 的分页方向、纵向拼接仍保持各自单一 owner；系统栏等真正全局 UI policy 不得复制成两份。
+- 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并在 paged/continuous 各自保存。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
 - 长按放大移动方式 MUST 可设置为拖动或聚焦。拖动模式内容位移 = 手指累计位移 × 拖动比率（默认 1.0，即按放大后分辨率 1:1 跟随；
   比率可设 0.25–4），聚焦模式保持手指下的内容点始终位于手指处（位移 = p·(1−s)）。拖动实现 MUST 以长按起点平移为基准应用一次累计位移，MUST NOT 逐帧重复累加导致失控。
 - "最大可视"边界约束（默认开启、可设置关闭）MUST 按实际显示图片矩形计算，而非页面控件矩形：contain 留边时以图片边缘为准——缩放后图片能覆盖视口的轴，一侧越界则对侧不得越界；不能覆盖的轴保持图片居中。
   关闭后允许自由拖出视口。
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
-- 阅读设置 UI MUST 至少按“布局 / 界面 / 操作·双击放大 / 操作·长按放大”分区，双击倍率/锚点不得与长按倍率/释放/移动方式交错排列。
+- 阅读设置 UI MUST 至少先区分“布局 / 界面 / 分页模式 / 连续模式”；两个 mode 内再保持双击与长按设置成组排列，双击倍率/锚点不得与长按倍率/释放/移动方式交错。相同项的 paged / continuous 控件不得绑定同一可变 preference。
+- “连续阅读” MUST 在 paged 与 continuous 两个 mode 中分别设置。开启时 Reader 只在当前章首/尾的明确边界 overscroll 后请求上一/下一章；关闭时 MUST 只禁用该 UI traversal。章节 manifest/session MUST 继续一章一个，不得把多章拼成一个 Reader chapter。
+- 相邻章节预加载 MUST 与上述 UI 开关解耦：无论两个 mode 的“连续阅读”是否开启，只要 Reader route 存在且有相邻章，App composition SHOULD 把现有稳定 encoded window（当前前 7 / 后 3）的**剩余水位**跨章节延伸；当前章前方/后方已经覆盖的页数必须先从 7/3 中扣除，MUST NOT 额外再加一组 7/3 demand。相邻章 demand 随当前页推进在同一 preload lease 上伸缩，并通过同一 `CompositionDownloadTransferRuntime` / `DownloadTransferOwner` / `NetLane` 建立 opportunistic demand。该 demand MUST 低于当前章正常 far demand（当前 adjacent preload priority 500、当前章 far 下限 520），MUST 继续受同一 `SpeculativeEncodedReadBudget`（默认 50MB）与 source bucket/concurrency 约束，MUST NOT 建立第二 scheduler 或 UI-owned network gate。
+- 跨章预加载 MAY materialize/refresh transient source chapter capability，但 MUST NOT 仅因预加载而把未进入章节持久写入 library；用户实际跨章前 MUST flush 当前 progress checkpoint，并通过当前 `HomeLibrarySession` 确立目标章节 durable identity 后再替换 prepared Reader chapter。
 - Reader 的“进入时隐藏阅读控制”只控制 Reader 上下控制与系统导航栏；系统状态栏 MUST 使用全局三态 `显示 / 隐藏 / 跟随控制栏`，默认显示。`显示/隐藏`独立于控制栏，`跟随控制栏` MUST 直接消费同一个 Reader controls visibility presentation fact，不得建立第二个可见性 owner。Android 16 / targetSdk 36 及以后不得依赖被系统忽略的旧 Flutter 非 edge-to-edge `SystemUiMode` 隐藏状态栏，Android 实现 MUST 由 Reader platform owner 使用 `WindowInsetsController` show/hide status/navigation bars。Reader exit MUST 恢复系统栏；App resume 和控制栏显隐变化 MUST 重新投影当前 policy。
 - 连续模式的缩放（双击分级、捏合与长按放大）MUST 作用于整条页面序列的统一变换：所有可见页一起缩放，接缝不得分裂。放大是视口空间的视觉层：
   列表滚动 MUST 保持可用（可在放大状态下继续滚动切页），跳页/滑动不得自动复位缩放；仅方向切换/换章节等结构性变更复位。

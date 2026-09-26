@@ -40,14 +40,14 @@ void main() {
   test('long-press scale and status-bar mode participate in settings identity',
       () {
     const defaults = ReaderSessionSettings();
-    expect(defaults.effectiveLongPressZoomScale, 2.0);
+    expect(defaults.paged.effectiveLongPressZoomScale, 2.0);
     expect(defaults.systemStatusBarMode, ReaderSystemStatusBarMode.show);
 
     final changed = defaults.copyWith(
-      longPressZoomScale: 2.75,
+      paged: defaults.paged.copyWith(longPressZoomScale: 2.75),
       systemStatusBarMode: ReaderSystemStatusBarMode.followControls,
     );
-    expect(changed.effectiveLongPressZoomScale, 2.75);
+    expect(changed.paged.effectiveLongPressZoomScale, 2.75);
     expect(
       changed.systemStatusBarMode,
       ReaderSystemStatusBarMode.followControls,
@@ -62,6 +62,25 @@ void main() {
     );
     expect(defaults.resolveSystemStatusBarVisible(false), isTrue);
     expect(changed, isNot(defaults));
+  });
+
+  test('paged and continuous mode settings stay independent', () {
+    const defaults = ReaderSessionSettings();
+    final changed = defaults.copyWith(
+      paged: defaults.paged.copyWith(
+        crossChapterReading: true,
+        zoomStages: const <double>[2.0, 3.0],
+      ),
+    );
+
+    expect(changed.paged.crossChapterReading, isTrue);
+    expect(changed.paged.zoomStageFirst, 2.0);
+    expect(changed.continuous.crossChapterReading, isFalse);
+    expect(changed.continuous.zoomStageFirst, 1.5);
+    expect(
+      changed.modeSettingsFor(ReaderMode.paged),
+      isNot(changed.modeSettingsFor(ReaderMode.continuous)),
+    );
   });
 
   test('page inversion is only effective for enabled per-comic settings', () {
@@ -128,7 +147,7 @@ void main() {
 
     const paged = ReaderSessionSettings(
       globalAdaptiveEnabled: true,
-      defaultLongPressZoom: false,
+      paged: ReaderModeSettings(longPressZoomEnabled: false),
       adaptiveProfile: AdaptiveReaderProfile(
         direction: ReadingDirection.rtl,
         confidence: 0.9,

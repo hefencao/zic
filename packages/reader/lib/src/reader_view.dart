@@ -23,6 +23,12 @@ typedef ReaderPageBuilder = Widget? Function(
   VoidCallback reportFirstFrame,
 );
 
+enum ReaderChapterBoundary { previous, next }
+
+typedef ReaderChapterBoundaryCallback = FutureOr<void> Function(
+  ReaderChapterBoundary boundary,
+);
+
 /// How the zoomed content follows the finger during a long-press zoom.
 enum ReaderLongPressMoveMode {
   /// Drag: content moves with the finger, scaled by the pan ratio.
@@ -133,6 +139,10 @@ final class ReaderView extends StatefulWidget {
     this.longPressZoomLimitToViewport = true,
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.onZoomScaleChanged,
+    this.crossChapterReading = false,
+    this.canReadPreviousChapter = false,
+    this.canReadNextChapter = false,
+    this.onChapterBoundaryRequested,
     super.key,
   });
 
@@ -206,6 +216,14 @@ final class ReaderView extends StatefulWidget {
   /// raise decode resolution for the visible region only.
   final ValueChanged<double>? onZoomScaleChanged;
 
+  /// Chapter traversal is presentation/navigation only. The callback does not
+  /// own or gate adjacent chapter prefetch, which remains composition/Pipeline
+  /// work even when this switch is false.
+  final bool crossChapterReading;
+  final bool canReadPreviousChapter;
+  final bool canReadNextChapter;
+  final ReaderChapterBoundaryCallback? onChapterBoundaryRequested;
+
   @override
   State<ReaderView> createState() => _ReaderViewState();
 }
@@ -220,6 +238,10 @@ final class _ReaderViewState extends State<ReaderView>
   double? _lastPagedVelocity;
   int? _lastPagedMetricsMicros;
   Interaction _interaction = Interaction.idle;
+  ReaderChapterBoundary? _chapterBoundaryOverscroll;
+  double _chapterBoundaryOverscrollDistance = 0;
+  bool _chapterBoundaryRequestInFlight = false;
+  static const double _chapterBoundaryThreshold = 72;
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
@@ -581,6 +603,15 @@ final class _ReaderViewState extends State<ReaderView>
             final cacheExtent = _viewport.height > 0
                 ? _viewport.height * _verticalCacheScreens
                 : null;
+            final crossChapterScrollable = widget.crossChapterReading &&
+                (widget.canReadPreviousChapter || widget.canReadNextChapter);
+            final verticalPhysics = crossChapterScrollable
+                ? _ReaderVerticalScrollPhysics(
+                    geometryCorrectionTarget: () =>
+                        _pendingVerticalGeometryCorrection,
+                    parent: const AlwaysScrollableScrollPhysics(),
+                  )
+                : _verticalScrollPhysics;
             final list = ValueListenableBuilder<int>(
               valueListenable: _verticalLayoutRevision,
               builder: (_, _, _) {
@@ -595,7 +626,7 @@ final class _ReaderViewState extends State<ReaderView>
                   // is suspended for the duration and resumes on release.
                   physics: _stripLensActive
                       ? const NeverScrollableScrollPhysics()
-                      : _verticalScrollPhysics,
+                      : verticalPhysics,
                   // In stitched mode adjacent pages share one paint layer. A
                   // RepaintBoundary per page lets external texture edges round
                   // independently while scrolling and can expose a transient
@@ -681,7 +712,13 @@ final class _ReaderViewState extends State<ReaderView>
               reverse: direction == ReadingDirection.rtl,
               scrollDirection: Axis.horizontal,
               physics: _zoomedPage == null
-                  ? const PageScrollPhysics()
+                  ? widget.crossChapterReading &&
+                          (widget.canReadPreviousChapter ||
+                              widget.canReadNextChapter)
+                      ? const PageScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        )
+                      : const PageScrollPhysics()
                   : const NeverScrollableScrollPhysics(),
               onPageChanged: _handlePageChanged,
               itemBuilder: (context, index) => _buildPage(index),
@@ -2098,9 +2135,66 @@ final class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  void _resetChapterBoundaryOverscroll() {
+    _chapterBoundaryOverscroll = null;
+    _chapterBoundaryOverscrollDistance = 0;
+  }
+
+  void _trackChapterBoundaryOverscroll(OverscrollNotification notification) {
+    if (!widget.crossChapterReading ||
+        widget.onChapterBoundaryRequested == null ||
+        _chapterBoundaryRequestInFlight) {
+      _resetChapterBoundaryOverscroll();
+      return;
+    }
+    final currentIndex = widget.controller.currentIndex;
+    final lastIndex = widget.controller.chapter.pages.length - 1;
+    ReaderChapterBoundary? boundary;
+    if (notification.overscroll < 0 &&
+        currentIndex == 0 &&
+        widget.canReadPreviousChapter) {
+      boundary = ReaderChapterBoundary.previous;
+    } else if (notification.overscroll > 0 &&
+        currentIndex == lastIndex &&
+        widget.canReadNextChapter) {
+      boundary = ReaderChapterBoundary.next;
+    }
+    if (boundary == null) {
+      _resetChapterBoundaryOverscroll();
+      return;
+    }
+    if (_chapterBoundaryOverscroll != boundary) {
+      _chapterBoundaryOverscroll = boundary;
+      _chapterBoundaryOverscrollDistance = 0;
+    }
+    _chapterBoundaryOverscrollDistance += notification.overscroll.abs();
+  }
+
+  void _completeChapterBoundaryOverscroll() {
+    final boundary = _chapterBoundaryOverscroll;
+    final distance = _chapterBoundaryOverscrollDistance;
+    _resetChapterBoundaryOverscroll();
+    final callback = widget.onChapterBoundaryRequested;
+    if (boundary == null ||
+        distance < _chapterBoundaryThreshold ||
+        callback == null ||
+        _chapterBoundaryRequestInFlight) {
+      return;
+    }
+    _chapterBoundaryRequestInFlight = true;
+    unawaited(
+      Future<void>.sync(() => callback(boundary)).whenComplete(() {
+        if (mounted) {
+          _chapterBoundaryRequestInFlight = false;
+        }
+      }),
+    );
+  }
+
   bool _handlePagedScrollNotification(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
+      _resetChapterBoundaryOverscroll();
       _pendingVerticalAnchor = null;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
@@ -2116,11 +2210,14 @@ final class _ReaderViewState extends State<ReaderView>
               ? Interaction.scrolling
               : Interaction.dragging;
       _emitFromPageMetrics(notification.metrics);
+    } else if (notification is OverscrollNotification) {
+      _trackChapterBoundaryOverscroll(notification);
     } else if (notification is ScrollEndNotification) {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.idle;
       _emitFromPageMetrics(notification.metrics);
+      _completeChapterBoundaryOverscroll();
     }
     return false;
   }
@@ -2128,6 +2225,7 @@ final class _ReaderViewState extends State<ReaderView>
   bool _handleVerticalScrollNotification(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
+      _resetChapterBoundaryOverscroll();
       _pendingVerticalAnchor = null;
       _pendingVerticalGeometryCorrection = null;
       _lastVerticalScrollUpdateMicros = null;
@@ -2156,6 +2254,8 @@ final class _ReaderViewState extends State<ReaderView>
         dragDriven: dragDriven,
       );
       _emitFromVerticalMetrics(notification.metrics);
+    } else if (notification is OverscrollNotification) {
+      _trackChapterBoundaryOverscroll(notification);
     } else if (notification is ScrollEndNotification) {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
@@ -2181,6 +2281,7 @@ final class _ReaderViewState extends State<ReaderView>
       if (_interaction == Interaction.idle) {
         _schedulePendingVerticalRatioCommit();
       }
+      _completeChapterBoundaryOverscroll();
     }
     return false;
   }

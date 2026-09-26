@@ -214,8 +214,50 @@ void main() {
     expect(updatedSecondSlider.min, 2.25);
     updatedSecondSlider.onChanged?.call(3.75);
     await tester.pump();
-    expect(preferences.defaultZoomStageFirst, 2.25);
-    expect(preferences.defaultZoomStageSecond, 3.75);
+    expect(preferences.pagedReaderSettings.zoomStageFirst, 2.25);
+    expect(preferences.pagedReaderSettings.zoomStageSecond, 3.75);
+    expect(preferences.continuousReaderSettings.zoomStageFirst, 1.5);
+    expect(preferences.continuousReaderSettings.zoomStageSecond, 2.0);
+  });
+
+  testWidgets('paged and continuous cross-chapter reading settings are independent',
+      (tester) async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReadingSettingsScreen(preferences: preferences),
+      ),
+    );
+    final scrollable = find.byType(Scrollable).first;
+
+    await tester.scrollUntilVisible(
+      find.byKey(readingPagedContinuousReadingKey),
+      320,
+      scrollable: scrollable,
+    );
+    final pagedContinuous = tester.widget<SwitchListTile>(
+      find.byKey(readingPagedContinuousReadingKey),
+    );
+    expect(pagedContinuous.value, isFalse);
+    pagedContinuous.onChanged?.call(true);
+    await tester.pump();
+    expect(preferences.pagedReaderSettings.crossChapterReading, isTrue);
+    expect(preferences.continuousReaderSettings.crossChapterReading, isFalse);
+
+    await tester.scrollUntilVisible(
+      find.byKey(readingContinuousContinuousReadingKey),
+      320,
+      scrollable: scrollable,
+    );
+    final continuousContinuous = tester.widget<SwitchListTile>(
+      find.byKey(readingContinuousContinuousReadingKey),
+    );
+    expect(continuousContinuous.value, isFalse);
+    continuousContinuous.onChanged?.call(true);
+    await tester.pump();
+    expect(preferences.pagedReaderSettings.crossChapterReading, isTrue);
+    expect(preferences.continuousReaderSettings.crossChapterReading, isTrue);
   });
 
   testWidgets('network prefetch budget updates without leaving the settings page', (
@@ -570,19 +612,29 @@ void main() {
     expect(controller.systemStatusBarMode, ReaderSystemStatusBarMode.hide);
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
-    expect(controller.defaultZoomStageFirst, 3.0);
-    expect(controller.defaultZoomStageSecond, 5.0);
-    expect(controller.longPressZoomEnabled, isFalse);
-    expect(controller.longPressZoomScale, 2.75);
-    expect(controller.longPressZoomRestoreOnRelease, isFalse);
+    expect(controller.pagedReaderSettings.zoomStageFirst, 3.0);
+    expect(controller.pagedReaderSettings.zoomStageSecond, 5.0);
+    expect(controller.pagedReaderSettings.longPressZoomEnabled, isFalse);
+    expect(controller.pagedReaderSettings.longPressZoomScale, 2.75);
     expect(
-      controller.longPressZoomMoveMode,
+      controller.pagedReaderSettings.longPressZoomRestoreOnRelease,
+      isFalse,
+    );
+    expect(
+      controller.pagedReaderSettings.longPressZoomMoveMode,
       ReaderLongPressMoveMode.focus,
     );
-    expect(controller.longPressZoomPanRatio, 1.5);
-    expect(controller.longPressZoomLimitToViewport, isFalse);
-    expect(controller.doubleTapZoomOrigin, ReaderDoubleTapZoomOrigin.snap);
-    expect(controller.zoomDecodeBoostEnabled, isFalse);
+    expect(controller.pagedReaderSettings.longPressZoomPanRatio, 1.5);
+    expect(
+      controller.pagedReaderSettings.longPressZoomLimitToViewport,
+      isFalse,
+    );
+    expect(
+      controller.pagedReaderSettings.doubleTapZoomOrigin,
+      ReaderDoubleTapZoomOrigin.snap,
+    );
+    expect(controller.pagedReaderSettings.zoomDecodeBoost, isFalse);
+    expect(controller.continuousReaderSettings.longPressZoomEnabled, isFalse);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
     expect(controller.networkUserAgent, 'fixture-network-agent');
     expect(controller.debugTraceExportDirectory, 'Diagnostics/Trace');
@@ -644,6 +696,7 @@ void main() {
     expect(
       controller
           .readerSessionSettingsFor('venera:alpha', 'comic')
+          .paged
           .effectiveLongPressZoomScale,
       2.75,
     );
@@ -689,12 +742,17 @@ void main() {
     controller.setSystemStatusBarMode(
       ReaderSystemStatusBarMode.followControls,
     );
-    controller.setLongPressZoomScale(3.25);
-    controller.setLongPressZoomRestoreOnRelease(true);
-    controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
-    controller.setLongPressZoomPanRatio(2.0);
-    controller.setLongPressZoomLimitToViewport(true);
-    controller.setDoubleTapZoomOrigin(ReaderDoubleTapZoomOrigin.focus);
+    controller.setReaderModeSettings(
+      ReaderMode.paged,
+      controller.pagedReaderSettings.copyWith(
+        longPressZoomScale: 3.25,
+        longPressZoomRestoreOnRelease: true,
+        longPressZoomMoveMode: ReaderLongPressMoveMode.drag,
+        longPressZoomPanRatio: 2.0,
+        longPressZoomLimitToViewport: true,
+        doubleTapZoomOrigin: ReaderDoubleTapZoomOrigin.focus,
+      ),
+    );
     controller.rememberSourceSearch('Gamma');
     controller.acknowledgeComicVersionNotice(
       'source-a',
@@ -716,11 +774,13 @@ void main() {
     expect(written?['amoledDarkTheme'], isFalse);
     expect(written?['debugModeEnabled'], isTrue);
     expect(written?['shelfSortMode'], 'custom');
-    expect(written?['version'], 8);
+    expect(written?['version'], 9);
     expect(written?['readerPagedDirectionPreference'], 'source');
     expect(written?['systemStatusBarMode'], 'followControls');
     expect(written?.containsKey('showSystemStatusBar'), isFalse);
-    expect(written?['longPressZoomScale'], 3.25);
+    final writtenModeSettings = written?['readerModeSettings']! as Map;
+    final writtenPagedSettings = writtenModeSettings['paged']! as Map;
+    expect(writtenPagedSettings['longPressZoomScale'], 3.25);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
     expect(written?['debugTraceExportDirectory'], 'Debug/Reader');
@@ -763,11 +823,11 @@ void main() {
       },
     );
     expect(written?.containsKey('sourceAdaptiveWebtoonWeights'), isFalse);
-    expect(written?['longPressZoomRestoreOnRelease'], true);
-    expect(written?['longPressZoomMoveMode'], 'drag');
-    expect(written?['longPressZoomPanRatio'], 2.0);
-    expect(written?['longPressZoomLimitToViewport'], true);
-    expect(written?['doubleTapZoomOrigin'], 'focus');
+    expect(writtenPagedSettings['longPressZoomRestoreOnRelease'], true);
+    expect(writtenPagedSettings['longPressZoomMoveMode'], 'drag');
+    expect(writtenPagedSettings['longPressZoomPanRatio'], 2.0);
+    expect(writtenPagedSettings['longPressZoomLimitToViewport'], true);
+    expect(writtenPagedSettings['doubleTapZoomOrigin'], 'focus');
     expect(written?.containsKey('animatedWebpPrefetchBudgetMiB'), isFalse);
     expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
     expect(
@@ -784,6 +844,75 @@ void main() {
     );
   });
 
+  test('mode-scoped reader settings load and persist independently', () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    Map<String, Object?>? written;
+
+    await controller.attach(
+      read: () async => <String, Object?>{
+        'readerModeSettings': <String, Object?>{
+          'paged': <String, Object?>{
+            'crossChapterReading': true,
+            'zoomStage1': 1.75,
+            'zoomStage2': 2.75,
+            'longPressZoomEnabled': true,
+            'longPressZoomScale': 2.5,
+            'longPressZoomRestoreOnRelease': true,
+            'longPressZoomMoveMode': 'drag',
+            'longPressZoomPanRatio': 1.25,
+            'longPressZoomLimitToViewport': true,
+            'doubleTapZoomOrigin': 'snap',
+            'zoomDecodeBoost': false,
+          },
+          'continuous': <String, Object?>{
+            'crossChapterReading': false,
+            'zoomStage1': 2.25,
+            'zoomStage2': 3.5,
+            'longPressZoomEnabled': false,
+            'longPressZoomScale': 3.0,
+            'longPressZoomRestoreOnRelease': false,
+            'longPressZoomMoveMode': 'focus',
+            'longPressZoomPanRatio': 0.75,
+            'longPressZoomLimitToViewport': false,
+            'doubleTapZoomOrigin': 'focus',
+            'zoomDecodeBoost': true,
+          },
+        },
+      },
+      write: (values) async => written = Map<String, Object?>.from(values),
+    );
+
+    expect(controller.pagedReaderSettings.crossChapterReading, isTrue);
+    expect(controller.pagedReaderSettings.zoomStageFirst, 1.75);
+    expect(controller.pagedReaderSettings.doubleTapZoomOrigin,
+        ReaderDoubleTapZoomOrigin.snap);
+    expect(controller.pagedReaderSettings.zoomDecodeBoost, isFalse);
+    expect(controller.continuousReaderSettings.crossChapterReading, isFalse);
+    expect(controller.continuousReaderSettings.zoomStageFirst, 2.25);
+    expect(controller.continuousReaderSettings.longPressZoomScale, 3.0);
+    expect(controller.continuousReaderSettings.longPressZoomMoveMode,
+        ReaderLongPressMoveMode.focus);
+
+    controller.setReaderModeSettings(
+      ReaderMode.continuous,
+      controller.continuousReaderSettings.copyWith(
+        crossChapterReading: true,
+        zoomStages: const <double>[2.5, 4.0],
+      ),
+    );
+    await controller.flush();
+
+    final modeSettings = written?['readerModeSettings']! as Map;
+    final paged = modeSettings['paged']! as Map;
+    final continuous = modeSettings['continuous']! as Map;
+    expect(paged['crossChapterReading'], isTrue);
+    expect(paged['zoomStage1'], 1.75);
+    expect(continuous['crossChapterReading'], isTrue);
+    expect(continuous['zoomStage1'], 2.5);
+    expect(continuous['zoomStage2'], 4.0);
+  });
+
   test('reading defaults match the product baseline', () {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);
@@ -792,20 +921,26 @@ void main() {
       ReaderPagedDirectionPreference.ltr,
     );
     expect(controller.systemStatusBarMode, ReaderSystemStatusBarMode.show);
-    expect(controller.defaultZoomStageFirst, 1.5);
-    expect(controller.defaultZoomStageSecond, 2.0);
-    expect(controller.longPressZoomScale, 2.0);
+    expect(controller.pagedReaderSettings.zoomStageFirst, 1.5);
+    expect(controller.pagedReaderSettings.zoomStageSecond, 2.0);
+    expect(controller.pagedReaderSettings.longPressZoomScale, 2.0);
     expect(
-      controller.doubleTapZoomOrigin,
+      controller.pagedReaderSettings.doubleTapZoomOrigin,
       ReaderDoubleTapZoomOrigin.center,
     );
-    expect(controller.longPressZoomRestoreOnRelease, isTrue);
     expect(
-      controller.longPressZoomMoveMode,
+      controller.pagedReaderSettings.longPressZoomRestoreOnRelease,
+      isTrue,
+    );
+    expect(
+      controller.pagedReaderSettings.longPressZoomMoveMode,
       ReaderLongPressMoveMode.drag,
     );
-    expect(controller.longPressZoomPanRatio, 1.0);
-    expect(controller.longPressZoomLimitToViewport, isTrue);
+    expect(controller.pagedReaderSettings.longPressZoomPanRatio, 1.0);
+    expect(controller.pagedReaderSettings.longPressZoomLimitToViewport, isTrue);
+    expect(controller.pagedReaderSettings.crossChapterReading, isFalse);
+    expect(controller.continuousReaderSettings.crossChapterReading, isFalse);
+    expect(controller.continuousReaderSettings.longPressZoomEnabled, isFalse);
   });
 
   test('legacy status-bar boolean migrates to the three-state policy',

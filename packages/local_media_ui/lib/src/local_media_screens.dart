@@ -119,6 +119,73 @@ final class LocalImageResponseSource {
   final bool selfBoundedOpen;
 }
 
+Transport importedImageChapterLoaderTransport({
+  required ImportedChapterRecord record,
+  required Map<String, LocalImageFileBytesLoader> byteLoaders,
+  required Map<String, LocalImageResponseSource> responseSources,
+}) {
+  final chapter = record.toManifest();
+  final sources = _importedImageChapterLoaderSources(
+    record: record,
+    chapter: chapter,
+    byteLoaders: byteLoaders,
+    responseSources: responseSources,
+  );
+  return LoaderTransport(sources);
+}
+
+Map<Uri, LoaderTransportSource> _importedImageChapterLoaderSources({
+  required ImportedChapterRecord record,
+  required ChapterManifest chapter,
+  required Map<String, LocalImageFileBytesLoader> byteLoaders,
+  required Map<String, LocalImageResponseSource> responseSources,
+}) {
+  final sources = <Uri, LoaderTransportSource>{};
+  for (var index = 0; index < record.pages.length; index++) {
+    final page = record.pages[index];
+    final uri = chapter.pages[index].uri;
+    final loader = byteLoaders[page.sourceId];
+    final responseSource = responseSources[page.sourceId];
+    if (loader != null && responseSource != null) {
+      throw StateError(
+        'page source composition must choose local bytes or origin response, not both',
+      );
+    }
+    sources[uri] = LoaderTransportSource(
+      revision: '${record.sourceRevision}:$index',
+      loadBytes: loader,
+      openControlledResponse: responseSource?.openControlledResponse,
+      selfBoundedOpen: responseSource?.selfBoundedOpen ?? false,
+      openResponse: responseSource == null && loader == null
+          ? ({ByteRange? range, Validators? validators}) =>
+              _openLocalMediaResponse(
+                page.sourceId,
+                range: range,
+                validators: validators,
+              )
+          : null,
+    );
+  }
+  return sources;
+}
+
+PipelineReaderSessionFactory importedImageChapterPipelineFactory({
+  required ImportedChapterRecord record,
+  required Map<String, LocalImageFileBytesLoader> byteLoaders,
+  required Map<String, LocalImageResponseSource> responseSources,
+  required PipelineReaderSessionFactory pipelineFactory,
+}) {
+  final chapter = record.toManifest();
+  return pipelineFactory.withLoaderSources(
+    _importedImageChapterLoaderSources(
+      record: record,
+      chapter: chapter,
+      byteLoaders: byteLoaders,
+      responseSources: responseSources,
+    ),
+  );
+}
+
 final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
@@ -138,6 +205,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
+    this.canReadPreviousChapter = false,
+    this.canReadNextChapter = false,
+    this.onChapterBoundaryRequested,
     this.traceSink,
     super.key,
   });
@@ -159,44 +229,27 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
+  final bool canReadPreviousChapter;
+  final bool canReadNextChapter;
+  final ReaderChapterBoundaryCallback? onChapterBoundaryRequested;
   final TraceSink? traceSink;
 
   @override
   Widget build(BuildContext context) {
     final chapter = record.toManifest();
-    final sources = <Uri, LoaderTransportSource>{};
-    for (var index = 0; index < record.pages.length; index++) {
-      final page = record.pages[index];
-      final uri = chapter.pages[index].uri;
-      final loader = byteLoaders[page.sourceId];
-      final responseSource = responseSources[page.sourceId];
-      if (loader != null && responseSource != null) {
-        throw StateError(
-          'page source composition must choose local bytes or origin response, not both',
-        );
-      }
-      sources[uri] = LoaderTransportSource(
-        revision: '${record.sourceRevision}:$index',
-        loadBytes: loader,
-        openControlledResponse: responseSource?.openControlledResponse,
-        selfBoundedOpen: responseSource?.selfBoundedOpen ?? false,
-        openResponse: responseSource == null && loader == null
-            ? ({ByteRange? range, Validators? validators}) =>
-                _openLocalMediaResponse(
-                  page.sourceId,
-                  range: range,
-                  validators: validators,
-                )
-            : null,
-      );
-    }
+    final configuredFactory = importedImageChapterPipelineFactory(
+      record: record,
+      byteLoaders: byteLoaders,
+      responseSources: responseSources,
+      pipelineFactory: pipelineFactory,
+    );
 
     return PipelineReaderSessionHost(
       key: ValueKey<_ImportedChapterPipelineKey>(
         _ImportedChapterPipelineKey(record),
       ),
       chapter: chapter,
-      factory: pipelineFactory.withLoaderSources(sources),
+      factory: configuredFactory,
       traceSink: traceSink,
       builder: (context, pipeline) => ReaderRuntimeScreen(
         pipeline: pipeline,
@@ -221,6 +274,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         initiallyImmersive: initiallyImmersive,
         initialSettings: initialReaderSettings,
         onSettingsChanged: onReaderSettingsChanged,
+        canReadPreviousChapter: canReadPreviousChapter,
+        canReadNextChapter: canReadNextChapter,
+        onChapterBoundaryRequested: onChapterBoundaryRequested,
         pageSubtitleBuilder: (asset) {
           final current = record.pages[asset.index];
           return '${current.displayName} · ${_importedPageFormat(current).label}';

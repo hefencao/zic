@@ -910,7 +910,8 @@ DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 cur
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺寸只作兜底，预热失败可重试且不得改变 demand/playback 语义。adaptive profile 不得借此改写 NetLane、download/decode window 或 prefetch owner。手势缩放是纯 presentation 行为：
 `ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0，两个倍率均由独立 slider 调整 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
-所有页面一起缩放）。长按放大的 global 值是无 adaptive 建议时的分页基线；高置信 adaptive profile 可按漫画类型给出手势默认，
+所有页面一起缩放）。全局 Reader presentation/gesture 偏好由 App preferences 按布局保存为两个独立 `ReaderModeSettings`：paged 与 continuous 的连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界和 zoom decode boost 可以分别取值；
+只适用于单一布局的分页方向、纵向拼接仍各自保持单一 owner，系统栏等真正全局 UI policy 也不复制。高置信 adaptive profile 可按漫画类型覆盖长按启用默认，
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
 留边轴保持图片居中（契约见 SPEC 2.3）；这些是 UI 设置，不改变 demand/prefetch/texture 所有权或 NetLane 调度。strip 缩放是视口空间视觉层：
@@ -923,6 +924,13 @@ Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipe
 双击配对用屏幕坐标、阶段用离散索引单调推进（不受动画中间值影响），换级偏移按当前倍率换算锚点保持、动画向目标帧逐帧钳制插值不回跳不越界，
 放大态冻结延迟比例提交防止放大镜下内容改尺寸、回 1x 即落盘，仅方向切换/controller 替换等结构性变更复位；
 settled scale 经既有 `onZoomScaleChanged` 投影给 zoom decode boost，仅为可视区域提高解码分辨率。
+
+章节 UI 与章节预加载是两个独立边界。Reader 仍保持“一章一个不可变 `ChapterManifest` / `PipelineReaderSessionHost`”，不得把相邻章节页面拼成一个伪 manifest。
+每个 mode 的 `ReaderModeSettings.crossChapterReading` 只允许 Reader 在章节首/尾的明确 overscroll 手势触发上一/下一章切换；关闭时只禁止 UI traversal，不撤销任何相邻章节预加载。
+跨章节预加载由 App composition 在当前 Reader route 生命周期内建立低优先级 `CompositionChapterPreloadLease`，直接挂到现有 `CompositionDownloadTransferRuntime` / `DownloadTransferOwner` / `NetLane`；
+它延伸的是同一个稳定前 7 / 后 3 encoded window，而不是额外再加 7/3：先扣掉当前章按实际阅读顺序仍可覆盖的页数，只把残余水位补到下一章开头或上一章结尾；因此跨章后总逻辑窗口不扩张。adjacent claim priority 500 低于当前章 far window 的最低 520，
+并继续受共享 `SpeculativeEncodedReadBudget`（默认 50MB）和既有 source bucket/concurrency 限制。页面推进时只更新同一 preload lease 的 demand 集，不因水位伸缩反复创建物理 transfer owner。它不得读取 `crossChapterReading`、不得创建第二个 scheduler、不得绕过 ArtifactCache/partial/physical-session authority。
+真正跨章时先 flush 当前 Reader progress checkpoint，再通过 `HomeLibrarySession.upsertChapter` 确立目标章 durable identity，然后替换 prepared chapter；预加载本身不得因“只是预热”提前持久化未进入章节。
 `reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 提交最新 checkpoint。
 SQLite 实现使用独立 progress isolate/WAL connection；
 Reader 热路径只将 checkpoint 有序入队，不执行同步 sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。

@@ -10,11 +10,63 @@ import 'package:transport/transport.dart';
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_reuse.dart';
+import 'artifact_cache_transport.dart';
 import 'partial_download_handoff.dart';
 import 'partial_download_store.dart';
 import 'physical_transfer_retention.dart';
 import 'promoted_artifact_cache_handoff.dart';
+import 'reader_page_identity.dart';
 import 'version_page_authority.dart';
+
+/// Scoped low-priority chapter preload attached to the composition transfer
+/// owner. Closing the lease removes only this speculative demand; physical
+/// transfer/session retention remains governed by the shared owner.
+final class CompositionChapterPreloadLease {
+  CompositionChapterPreloadLease._(
+    this._consumer, {
+    required this.chapter,
+    required this.priority,
+  });
+
+  DownloadTransferConsumer? _consumer;
+  final ChapterManifest chapter;
+  final int priority;
+  int _revision = 0;
+
+  bool get isClosed => _consumer == null;
+
+  void replacePages(Iterable<PageAsset> pages) {
+    final consumer = _consumer;
+    if (consumer == null) return;
+    final desired = <DownloadId, TransferDemand>{};
+    for (final page in pages) {
+      if (page.chapterId != chapter.chapter.chapterId) {
+        throw ArgumentError.value(
+          page.chapterId,
+          'pages',
+          'chapter preload pages must belong to the lease chapter',
+        );
+      }
+      desired[readerPageDownloadId(chapter, page)] = TransferDemand(
+        priority: priority,
+        reason: 'cross-chapter-preload',
+        flowTargetFrames: page.animatedHint ? 1 : 0,
+      );
+    }
+    consumer.replaceDemands(
+      'chapter-preload',
+      ++_revision,
+      desired,
+    );
+  }
+
+  Future<void> close() async {
+    final consumer = _consumer;
+    if (consumer == null) return;
+    _consumer = null;
+    await consumer.dispose();
+  }
+}
 
 /// Composition-level owner for physical image transfer state.
 ///
@@ -757,6 +809,66 @@ final class CompositionDownloadTransferRuntime {
       if (_canJoinEquivalentSession(session)) return true;
     }
     return false;
+  }
+
+  /// Preloads an explicitly bounded set of pages from an adjacent chapter.
+  ///
+  /// This is composition-level speculation: it shares DownloadTransferOwner,
+  /// NetLane, retry, partial and artifact authority with the active Reader. It
+  /// deliberately has no Reader UI/mode input, so disabling cross-chapter UI
+  /// traversal cannot disable adjacent-chapter preload.
+  CompositionChapterPreloadLease preloadChapterPages({
+    required String scopeId,
+    required ChapterManifest chapter,
+    required Iterable<PageAsset> pages,
+    required Transport Function(Uri uri) fallbackFor,
+    required TraceSink traceSink,
+    String Function(DownloadId id)? downloadBucketFor,
+    int Function(DownloadId id)? downloadBucketLimitFor,
+    int priority = 500,
+  }) {
+    if (priority <= 0 || priority >= 780) {
+      throw ArgumentError.value(
+        priority,
+        'priority',
+        'chapter preload must stay below visible/previous Reader demand',
+      );
+    }
+    final selected = pages.toList(growable: false);
+    final identities = <MapEntry<Uri, DownloadId>>[
+      for (final page in chapter.pages)
+        MapEntry<Uri, DownloadId>(
+          page.uri,
+          readerPageDownloadId(chapter, page),
+        ),
+    ];
+    final cache = artifactCacheManager;
+    final Transport? cacheTransport = cache == null
+        ? null
+        : ArtifactCacheTransport(
+            cache: cache,
+            identities: identities,
+            fallbackFor: fallbackFor,
+            readScheduler: localReadScheduler,
+            demandPriority: (_) => priority,
+            clock: clock,
+            traceSink: traceSink,
+            sessionId: scopeId,
+          );
+    final consumer = attachConsumer(
+      scopeId: scopeId,
+      transportFor: (uri) => cacheTransport ?? fallbackFor(uri),
+      consumerTraceSink: traceSink,
+      downloadBucketFor: downloadBucketFor,
+      downloadBucketLimitFor: downloadBucketLimitFor,
+    );
+    final lease = CompositionChapterPreloadLease._(
+      consumer,
+      chapter: chapter,
+      priority: priority,
+    );
+    lease.replacePages(selected);
+    return lease;
   }
 
   DownloadTransferConsumer attachConsumer({

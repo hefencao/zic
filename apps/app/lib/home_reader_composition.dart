@@ -22,6 +22,27 @@ typedef HomeReaderVersionAuthorityPreparer = Future<int> Function(
   ImportedLibraryEntry entry,
 );
 
+({int previous, int next, int displayedIndex}) homeReaderAdjacentPreloadResidual({
+  required int pageCount,
+  required int rawPageIndex,
+  required bool inverted,
+  required int forwardEncodedPages,
+  required int backwardEncodedPages,
+}) {
+  if (pageCount <= 0) return (previous: 0, next: 0, displayedIndex: 0);
+  final raw = rawPageIndex.clamp(0, pageCount - 1).toInt();
+  final displayedIndex = inverted ? pageCount - 1 - raw : raw;
+  return (
+    previous: (backwardEncodedPages - displayedIndex)
+        .clamp(0, backwardEncodedPages)
+        .toInt(),
+    next: (forwardEncodedPages - (pageCount - 1 - displayedIndex))
+        .clamp(0, forwardEncodedPages)
+        .toInt(),
+    displayedIndex: displayedIndex,
+  );
+}
+
 /// Prepared, immutable input handed from App composition to the Reader route.
 ///
 /// This contains no navigation or widget state. Transport/session ownership

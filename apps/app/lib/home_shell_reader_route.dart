@@ -2,6 +2,18 @@ part of 'home_shell.dart';
 
 typedef _PreparedImportedChapter = HomeReaderPreparedChapter;
 
+final class _ReaderAdjacentChapterRef {
+  const _ReaderAdjacentChapterRef({
+    required this.chapterId,
+    required this.sequence,
+    this.entry,
+  });
+
+  final String chapterId;
+  final int sequence;
+  final ImportedLibraryEntry? entry;
+}
+
 typedef _ReaderPageGenerationRecovery = Future<bool> Function(
   int rawPageIndex,
   Object error, {
@@ -154,10 +166,129 @@ final class _ReaderComicVersionNoticeGateState
 }
 
 extension _HomeShellReaderRouteComposition on _HomeShellState {
+  PipelineReaderSessionFactory _readerPipelineFactory() =>
+      defaultLocalMediaPipelineFactory
+          .withArtifactCacheManager(_readerArtifactCache)
+          .withPartialDownloadStore(
+            _downloadComposition?.artifactStore,
+          )
+          .withTransferRuntime(
+            _downloadComposition?.transferRuntime,
+          )
+          .withUserAgentProvider(() => widget.preferences.networkUserAgent);
+
+  List<_ReaderAdjacentChapterRef> _readerChapterSequence(
+    ImportedLibraryEntry current,
+  ) {
+    LibraryComic? comic;
+    for (final candidate in _libraryComics) {
+      if (candidate.sourceId == current.chapter.sourceId &&
+          candidate.comicId == current.chapter.comicId) {
+        comic = candidate;
+        break;
+      }
+    }
+    final byChapterId = <String, ImportedLibraryEntry>{
+      if (comic != null)
+        for (final entry in comic.chapters) entry.chapter.chapterId: entry,
+    };
+    final refs = <_ReaderAdjacentChapterRef>[];
+    if (comic != null && comic.sourceChapters.isNotEmpty) {
+      for (final chapter in comic.sourceChapters) {
+        refs.add(
+          _ReaderAdjacentChapterRef(
+            chapterId: chapter.chapterId,
+            sequence: chapter.sequence,
+            entry: byChapterId[chapter.chapterId],
+          ),
+        );
+      }
+    } else if (comic != null) {
+      for (final entry in comic.chapters) {
+        refs.add(
+          _ReaderAdjacentChapterRef(
+            chapterId: entry.chapter.chapterId,
+            sequence: entry.chapter.sequence,
+            entry: entry,
+          ),
+        );
+      }
+    }
+    if (!refs.any((ref) => ref.chapterId == current.chapter.chapterId)) {
+      final currentRef = _ReaderAdjacentChapterRef(
+        chapterId: current.chapter.chapterId,
+        sequence: current.chapter.sequence,
+        entry: current,
+      );
+      final insertAt = refs.indexWhere(
+        (ref) => ref.sequence > current.chapter.sequence,
+      );
+      if (insertAt < 0) {
+        refs.add(currentRef);
+      } else {
+        refs.insert(insertAt, currentRef);
+      }
+    }
+    return refs;
+  }
+
+  _ReaderAdjacentChapterRef? _readerAdjacentChapter(
+    ImportedLibraryEntry current,
+    ReaderChapterBoundary boundary,
+  ) {
+    final sequence = _readerChapterSequence(current);
+    final index = sequence.indexWhere(
+      (ref) => ref.chapterId == current.chapter.chapterId,
+    );
+    if (index < 0) return null;
+    final adjacentIndex =
+        boundary == ReaderChapterBoundary.previous ? index - 1 : index + 1;
+    if (adjacentIndex < 0 || adjacentIndex >= sequence.length) return null;
+    return sequence[adjacentIndex];
+  }
+
+  Future<ImportedLibraryEntry?> _loadReaderAdjacentEntry(
+    ImportedLibraryEntry current,
+    ReaderChapterBoundary boundary,
+  ) async {
+    final adjacent = _readerAdjacentChapter(current, boundary);
+    if (adjacent == null) return null;
+    final existing = adjacent.entry;
+    if (existing != null) return existing;
+    if (current.chapter.sourceId == 'local-folder') return null;
+
+    await _externalSources.waitForSource(current.chapter.sourceId);
+    final source = _sourceForId(current.chapter.sourceId);
+    if (source == null) return null;
+    final manifest = await _loadCompatibleSourceChapter(
+      source,
+      adjacent.chapterId,
+    );
+    final comic = Comic(
+      comicId: current.chapter.comicId,
+      sourceId: current.chapter.sourceId,
+      title: current.chapter.comicTitle,
+      authors: current.chapter.comicAuthors,
+      tags: current.chapter.comicTags,
+      coverUri: current.chapter.coverSourceId == null
+          ? null
+          : Uri.tryParse(current.chapter.coverSourceId!),
+      description: current.chapter.comicDescription,
+      readingDirection: current.chapter.readingDirection,
+    );
+    return ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: comic,
+        manifest: manifest,
+      ),
+    );
+  }
+
   Widget _buildImportedChapterScreen(
     _PreparedImportedChapter prepared, {
     required Future<void> Function(ReadingProgress) onProgressChanged,
     _ReaderPageGenerationRecovery? onPageGenerationRecovery,
+    ReaderChapterBoundaryCallback? onChapterBoundaryRequested,
   }) {
     final current = prepared.entry;
     final preference = _preferences[
@@ -263,15 +394,13 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
                 error,
                 userInitiated: userInitiated,
               ),
-      pipelineFactory: defaultLocalMediaPipelineFactory
-          .withArtifactCacheManager(_readerArtifactCache)
-          .withPartialDownloadStore(
-            _downloadComposition?.artifactStore,
-          )
-          .withTransferRuntime(
-            _downloadComposition?.transferRuntime,
-          )
-          .withUserAgentProvider(() => widget.preferences.networkUserAgent),
+      canReadPreviousChapter:
+          _readerAdjacentChapter(current, ReaderChapterBoundary.previous) !=
+              null,
+      canReadNextChapter:
+          _readerAdjacentChapter(current, ReaderChapterBoundary.next) != null,
+      onChapterBoundaryRequested: onChapterBoundaryRequested,
+      pipelineFactory: _readerPipelineFactory(),
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {
         final currentPreference = _preferences[
@@ -315,9 +444,11 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     if (!mounted) return null;
     ReadingProgress? latestProgress;
     var currentRawPageIndex = initialPageIndex;
+    VoidCallback? onReaderPageChanged;
     Future<void> onProgressChanged(ReadingProgress progress) {
       latestProgress = progress;
       currentRawPageIndex = progress.pageIndex;
+      onReaderPageChanged?.call();
       return _enqueueReaderProgress(progress);
     }
     widget.debugTrace.record(
@@ -353,7 +484,270 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     final automaticGenerationRecoveries = <String>{};
     _PreparedImportedChapter? currentPrepared;
     ({String pageKey, Future<bool> future})? activeGenerationRecovery;
+    final adjacentPreparations =
+        <String, Future<_PreparedImportedChapter?>>{};
+    final adjacentPreloadLeases =
+        <ReaderChapterBoundary, CompositionChapterPreloadLease>{};
+    final adjacentPreloadChapterKeys = <ReaderChapterBoundary, String>{};
+    ({_PreparedImportedChapter prepared, int rawPageIndex})?
+        pendingAdjacentPreload;
+    Future<void>? adjacentPreloadDrain;
     var routeActive = false;
+
+    String adjacentKey(
+      ImportedLibraryEntry current,
+      ReaderChapterBoundary boundary,
+    ) =>
+        '${current.chapter.chapterId}:${current.chapter.sourceRevision}:${boundary.name}';
+
+    Future<_PreparedImportedChapter?> prepareAdjacent(
+      _PreparedImportedChapter current,
+      ReaderChapterBoundary boundary,
+    ) {
+      final key = adjacentKey(current.entry, boundary);
+      return adjacentPreparations.putIfAbsent(key, () async {
+        final entry = await _loadReaderAdjacentEntry(current.entry, boundary);
+        if (entry == null) return null;
+        final settings = widget.preferences.readerSessionSettingsFor(
+          entry.chapter.sourceId,
+          entry.chapter.comicId,
+        );
+        final inverted = settings.effectiveInvertPageOrder;
+        final lastPage = entry.chapter.pages.length - 1;
+        final initial = boundary == ReaderChapterBoundary.previous
+            ? inverted
+                ? 0
+                : lastPage
+            : inverted
+                ? lastPage
+                : 0;
+        return _readerChapterComposition.prepare(
+          () async => entry,
+          refreshRemote: false,
+          initialPageIndex: initial,
+        );
+      });
+    }
+
+    Future<void> closeAdjacentPreload(
+      ReaderChapterBoundary boundary,
+    ) async {
+      adjacentPreloadChapterKeys.remove(boundary);
+      final lease = adjacentPreloadLeases.remove(boundary);
+      if (lease != null) await lease.close();
+    }
+
+    Future<void> closeAdjacentPreloads() async {
+      for (final boundary in ReaderChapterBoundary.values) {
+        await closeAdjacentPreload(boundary);
+      }
+    }
+
+    Future<void> applyAdjacentPreload(
+      _PreparedImportedChapter prepared,
+      int rawPageIndex,
+    ) async {
+      if (!routeActive || !identical(currentPrepared, prepared)) return;
+      final runtime = _downloadComposition?.transferRuntime;
+      if (runtime == null) {
+        await closeAdjacentPreloads();
+        return;
+      }
+      final current = prepared.entry;
+      final pageCount = current.chapter.pages.length;
+      if (pageCount <= 0) {
+        await closeAdjacentPreloads();
+        return;
+      }
+      final currentSettings = widget.preferences.readerSessionSettingsFor(
+        current.chapter.sourceId,
+        current.chapter.comicId,
+      );
+      final inverted = currentSettings.effectiveInvertPageOrder;
+      final raw = rawPageIndex.clamp(0, pageCount - 1).toInt();
+      final window = ReaderPipelineProfile.stable.windowResolver;
+      final residual = homeReaderAdjacentPreloadResidual(
+        pageCount: pageCount,
+        rawPageIndex: raw,
+        inverted: inverted,
+        forwardEncodedPages: window.forwardEncodedPages,
+        backwardEncodedPages: window.backwardEncodedPages,
+      );
+      final displayedIndex = residual.displayedIndex;
+      final desiredCounts = <ReaderChapterBoundary, int>{
+        ReaderChapterBoundary.previous: residual.previous,
+        ReaderChapterBoundary.next: residual.next,
+      };
+
+      for (final boundary in ReaderChapterBoundary.values) {
+        final requestedCount = desiredCounts[boundary] ?? 0;
+        if (requestedCount <= 0) {
+          await closeAdjacentPreload(boundary);
+          continue;
+        }
+        _PreparedImportedChapter? adjacent;
+        try {
+          adjacent = await prepareAdjacent(prepared, boundary);
+        } on Object catch (error) {
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.nowMicros(),
+              sessionId: 'reader-entry',
+              kind: TraceEventKind.taskFailed,
+              payload: <String, Object?>{
+                'stage': 'cross-chapter-preload-prepare-failed',
+                'boundary': boundary.name,
+                'chapterId': current.chapter.chapterId,
+                'error': error.toString(),
+              },
+            ),
+          );
+          continue;
+        }
+        if (!routeActive ||
+            !identical(currentPrepared, prepared) ||
+            adjacent == null) {
+          return;
+        }
+        final manifest = adjacent.entry.chapter.toManifest();
+        final adjacentPageCount = manifest.pages.length;
+        final preloadCount = requestedCount
+            .clamp(0, adjacentPageCount)
+            .toInt();
+        final adjacentSettings = widget.preferences.readerSessionSettingsFor(
+          adjacent.entry.chapter.sourceId,
+          adjacent.entry.chapter.comicId,
+        );
+        final adjacentInverted = adjacentSettings.effectiveInvertPageOrder;
+        final pages = boundary == ReaderChapterBoundary.previous
+            ? adjacentInverted
+                ? manifest.pages.take(preloadCount).toList(growable: false)
+                : manifest.pages
+                    .skip(adjacentPageCount - preloadCount)
+                    .toList(growable: false)
+            : adjacentInverted
+                ? manifest.pages
+                    .skip(adjacentPageCount - preloadCount)
+                    .toList(growable: false)
+                : manifest.pages.take(preloadCount).toList(growable: false);
+        if (pages.isEmpty) {
+          await closeAdjacentPreload(boundary);
+          continue;
+        }
+
+        final chapterKey = '${manifest.sourceId}:${manifest.comicId}:'
+            '${manifest.chapter.chapterId}:${manifest.chapter.sourceRevision}';
+        final existing = adjacentPreloadLeases[boundary];
+        if (existing != null &&
+            adjacentPreloadChapterKeys[boundary] == chapterKey) {
+          existing.replacePages(pages);
+        } else {
+          await closeAdjacentPreload(boundary);
+          if (!routeActive || !identical(currentPrepared, prepared)) return;
+          final loaderTransport = importedImageChapterLoaderTransport(
+            record: adjacent.entry.chapter,
+            byteLoaders: adjacent.byteLoaders,
+            responseSources: adjacent.responseSources,
+          );
+          final profile = ReaderPipelineProfile.stable;
+          adjacentPreloadLeases[boundary] = runtime.preloadChapterPages(
+            scopeId: 'reader-adjacent:${boundary.name}:$chapterKey',
+            chapter: manifest,
+            pages: pages,
+            fallbackFor: (_) => loaderTransport,
+            traceSink: widget.debugTrace,
+            downloadBucketFor: profile.downloadBucket,
+            downloadBucketLimitFor: profile.downloadBucketLimit,
+          );
+          adjacentPreloadChapterKeys[boundary] = chapterKey;
+        }
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.nowMicros(),
+            sessionId: 'reader-entry',
+            kind: TraceEventKind.readerObservation,
+            payload: <String, Object?>{
+              'stage': 'cross-chapter-preload-synced',
+              'boundary': boundary.name,
+              'fromChapterId': current.chapter.chapterId,
+              'chapterId': adjacent.entry.chapter.chapterId,
+              'pages': pages.length,
+              'rawPageIndex': raw,
+              'displayedPageIndex': displayedIndex,
+              'priority': 500,
+            },
+          ),
+        );
+      }
+    }
+
+    Future<void> drainAdjacentPreload() async {
+      while (routeActive) {
+        final request = pendingAdjacentPreload;
+        if (request == null) return;
+        pendingAdjacentPreload = null;
+        await applyAdjacentPreload(request.prepared, request.rawPageIndex);
+      }
+    }
+
+    void scheduleAdjacentPreload(
+      _PreparedImportedChapter prepared,
+      int rawPageIndex,
+    ) {
+      if (!routeActive) return;
+      pendingAdjacentPreload = (
+        prepared: prepared,
+        rawPageIndex: rawPageIndex,
+      );
+      if (adjacentPreloadDrain != null) return;
+      late final Future<void> drain;
+      drain = drainAdjacentPreload().whenComplete(() {
+        if (!identical(adjacentPreloadDrain, drain)) return;
+        adjacentPreloadDrain = null;
+        final pending = pendingAdjacentPreload;
+        if (routeActive && pending != null) {
+          scheduleAdjacentPreload(pending.prepared, pending.rawPageIndex);
+        }
+      });
+      adjacentPreloadDrain = drain;
+      unawaited(drain);
+    }
+
+    onReaderPageChanged = () {
+      final prepared = currentPrepared;
+      final rawPageIndex = currentRawPageIndex;
+      if (prepared == null || rawPageIndex == null) return;
+      scheduleAdjacentPreload(prepared, rawPageIndex);
+    };
+
+    Future<void> requestChapterBoundary(
+      ReaderChapterBoundary boundary,
+    ) async {
+      final previous = currentPrepared;
+      if (!routeActive || previous == null) return;
+      final preparedAdjacent = await prepareAdjacent(previous, boundary);
+      if (!routeActive || preparedAdjacent == null) return;
+      try {
+        await _flushReaderProgressCheckpoints();
+      } on Object catch (error) {
+        debugPrint('reader chapter-boundary progress flush failed: $error');
+      }
+      final persistedEntry =
+          await _librarySession.upsertChapter(preparedAdjacent.entry.chapter);
+      if (!routeActive) return;
+      final replacement = HomeReaderPreparedChapter(
+        entry: persistedEntry,
+        byteLoaders: preparedAdjacent.byteLoaders,
+        responseSources: preparedAdjacent.responseSources,
+        initialPageIndex: preparedAdjacent.initialPageIndex,
+      );
+      currentPrepared = replacement;
+      currentRawPageIndex = replacement.initialPageIndex ??
+          replacement.entry.progress?.pageIndex ??
+          0;
+      replacementPrepared.value = replacement;
+      scheduleAdjacentPreload(replacement, currentRawPageIndex!);
+    }
 
     Future<bool> recoverPageGeneration(
       int rawPageIndex,
@@ -457,6 +851,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
         currentPrepared = replacement;
         currentRawPageIndex = rawPageIndex;
         replacementPrepared.value = replacement;
+        scheduleAdjacentPreload(replacement, rawPageIndex);
         await WidgetsBinding.instance.endOfFrame;
         final replaced = routeActive;
         widget.debugTrace.record(
@@ -500,6 +895,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
           currentRawPageIndex = prepared.initialPageIndex ??
               prepared.entry.progress?.pageIndex ??
               0;
+          scheduleAdjacentPreload(prepared, currentRawPageIndex!);
           return prepared;
         },
         builder: (_, prepared) =>
@@ -509,6 +905,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
             replacement ?? prepared,
             onProgressChanged: onProgressChanged,
             onPageGenerationRecovery: recoverPageGeneration,
+            onChapterBoundaryRequested: requestChapterBoundary,
           ),
         ),
       ),
@@ -550,6 +947,10 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
       return progress;
     } finally {
       routeActive = false;
+      pendingAdjacentPreload = null;
+      final preloadDrain = adjacentPreloadDrain;
+      if (preloadDrain != null) await preloadDrain;
+      await closeAdjacentPreloads();
       replacementPrepared.dispose();
       final readerRouteClosed = _routeAdmission.endReaderRoute();
       if (readerRouteClosed && mounted) {

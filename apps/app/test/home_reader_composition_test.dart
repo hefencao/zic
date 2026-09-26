@@ -8,6 +8,72 @@ import 'package:zic/home_reader_composition.dart';
 import 'package:zic/source_resource_gateway.dart';
 
 void main() {
+  test('adjacent preload fills only the residual 7/3 encoded window', () {
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 10,
+        rawPageIndex: 4,
+        inverted: false,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 0, next: 2, displayedIndex: 4),
+    );
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 10,
+        rawPageIndex: 8,
+        inverted: false,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 0, next: 6, displayedIndex: 8),
+    );
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 10,
+        rawPageIndex: 0,
+        inverted: false,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 3, next: 0, displayedIndex: 0),
+    );
+  });
+
+  test('adjacent preload residual follows inverted reading order', () {
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 10,
+        rawPageIndex: 8,
+        inverted: true,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 2, next: 0, displayedIndex: 1),
+    );
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 10,
+        rawPageIndex: 1,
+        inverted: true,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 0, next: 6, displayedIndex: 8),
+    );
+    expect(
+      homeReaderAdjacentPreloadResidual(
+        pageCount: 1,
+        rawPageIndex: 0,
+        inverted: true,
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+      ),
+      (previous: 3, next: 7, displayedIndex: 0),
+    );
+  });
+
   test('cold Reader preparation waits for durable service adoption before binding',
       () async {
     final entry = _entry(sourceId: 'local-folder', pageSource: '/page.jpg');

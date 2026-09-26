@@ -6,7 +6,6 @@
 - 当前主任务：Home 生产组合已由 `DemoHome` 收口为 `HomeShell`，并把 durable service adoption/cache-generation commit 抽到非 UI `HomeServiceAdoptionCoordinator`；后续 Home 改动继续沿现有 owner 边界拆分，禁止把 service/Reader/source authority 收回 Widget State。
 - 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；
   2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
-
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；
 2. `AGENTS.md`：架构边界与无修改/最小修改规则；
@@ -52,10 +51,11 @@
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
   每漫画“使用自适应设置”是独立开关；手动阅读方向只有跟随/LTR/RTL/纵向，
   “启用本漫画覆盖”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override，开启后 adaptive 入口仍保留；清除手动覆盖不得清 adaptive policy/profile。
-  全局分页方向为 LTR/RTL/跟随来源且默认 LTR；阅读设置按布局、界面、双击操作、长按操作拆开，双击一级/二级倍率都使用 slider，长按倍率独立于双击倍率并默认 2.0x。
+  全局分页方向为 LTR/RTL/跟随来源且默认 LTR；阅读设置现按 `ReaderModeSettings` 分成 paged / continuous 两套 mode profile，相同 presentation/gesture 项允许不同值。双击一级/二级倍率都使用 slider，长按倍率独立于双击倍率并默认 2.0x。
+  两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 overscroll navigation。相邻章节预加载与该 UI 开关完全解耦，章节仍保持一章一个 immutable manifest/session，实际跨章前 flush progress 并由 HomeLibrarySession upsert 目标章。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示；follow 模式直接复用 Reader 控制栏可见性。Android 16/targetSdk 36 由 reader_runtime 的 WindowInsetsController owner 实际 show/hide，navigation bar 仍跟随控制栏，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
-- 逻辑与解码窗口固定为前 7 / 后 3（7/3）及解码前 2 / 后 1（2/1）。
+- 逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 的残余水位，不额外扩窗；同一 lease 随页推进伸缩，priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture。
 - 传输租约竞争采用 ranked-transport-lease-reclaim；支持 active current-class demotion 与 新current waiter 的 40分 差值抢占。
 - 物理准备限制在 max2 并设立 post-local network-admission rank barrier，在任何 NetLane task 启动前执行 physical-local-prepare，0-byte victim 自动重排 local prepare。

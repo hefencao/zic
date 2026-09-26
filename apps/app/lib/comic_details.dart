@@ -1617,7 +1617,14 @@ final class _LocalComicDetailsScreenState
             chapters: _replaceChapterProgress(_library.chapters, progress),
           ),
         );
-        final entry = openedEntry;
+        final opened = openedEntry;
+        final entry = _chapterEntryForProgress(_library.chapters, progress) ??
+            (opened != null &&
+                    opened.chapter.sourceId == progress.sourceId &&
+                    opened.chapter.comicId == progress.comicId &&
+                    opened.chapter.chapterId == progress.chapterId
+                ? opened
+                : null);
         if (entry != null) {
           final state = _readStateById(
             _library.readStates,
@@ -3315,7 +3322,14 @@ final class _RemoteComicDetailsScreenState
             chapters: _replaceChapterProgress(_library.chapters, progress),
           ),
         );
-        final entry = openedEntry;
+        final opened = openedEntry;
+        final entry = _chapterEntryForProgress(_library.chapters, progress) ??
+            (opened != null &&
+                    opened.chapter.sourceId == progress.sourceId &&
+                    opened.chapter.comicId == progress.comicId &&
+                    opened.chapter.chapterId == progress.chapterId
+                ? opened
+                : null);
         if (entry != null) {
           final state = _readStateById(
             _library.readStates,
@@ -4712,6 +4726,20 @@ ComicManifest _removeChapterFromManifest(
       preview: manifest.preview,
       comments: manifest.comments,
     );
+
+ImportedLibraryEntry? _chapterEntryForProgress(
+  Iterable<ImportedLibraryEntry> entries,
+  ReadingProgress progress,
+) {
+  for (final entry in entries) {
+    if (entry.chapter.sourceId == progress.sourceId &&
+        entry.chapter.comicId == progress.comicId &&
+        entry.chapter.chapterId == progress.chapterId) {
+      return entry;
+    }
+  }
+  return null;
+}
 
 List<ImportedLibraryEntry> _replaceChapterProgress(
   Iterable<ImportedLibraryEntry> entries,

@@ -121,6 +121,9 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.initiallyImmersive = true,
     this.initialSettings = const ReaderSessionSettings(),
     this.onSettingsChanged,
+    this.canReadPreviousChapter = false,
+    this.canReadNextChapter = false,
+    this.onChapterBoundaryRequested,
     this.screenKey,
     super.key,
   });
@@ -140,6 +143,9 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final bool initiallyImmersive;
   final ReaderSessionSettings initialSettings;
   final ReaderSessionSettingsWriter? onSettingsChanged;
+  final bool canReadPreviousChapter;
+  final bool canReadNextChapter;
+  final ReaderChapterBoundaryCallback? onChapterBoundaryRequested;
   final Key? screenKey;
 
   @override
@@ -746,10 +752,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     final base = _target;
     if (reader == null || base == null || !mounted) return;
     final asset = widget.chapter.pages[reader.currentIndex];
+    final modeSettings = _settings.modeSettingsForDirection(reader.direction);
     final boosted = boostedDecodeTargetForZoom(
       base,
       scale: scale,
-      enabled: _settings.zoomDecodeBoost && !_playback.value.paused,
+      enabled: modeSettings.zoomDecodeBoost && !_playback.value.paused,
       viewportLogicalWidth: _mediaQuerySize.width.round(),
       viewportLogicalHeight: _mediaQuerySize.height.round(),
       devicePixelRatio: _mediaQueryDevicePixelRatio,
@@ -1186,6 +1193,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               child: child,
             );
           };
+    final modeSettings = _settings.modeSettingsForDirection(reader.direction);
     return WillPopScope(
       onWillPop: _flushProgressBeforePop,
       child: Scaffold(
@@ -1206,18 +1214,22 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               onTap: _toggleControls,
               verticalStitch: _settings.effectiveVerticalStitch,
               pageAspectRatiosListenable: _pageAspectRatios,
-              zoomStageFirst: _settings.zoomStageFirst,
-              zoomStageSecond: _settings.zoomStageSecond,
+              zoomStageFirst: modeSettings.zoomStageFirst,
+              zoomStageSecond: modeSettings.zoomStageSecond,
               longPressZoomEnabled: _effectiveLongPressZoom(reader),
-              longPressZoomScale: _settings.effectiveLongPressZoomScale,
+              longPressZoomScale: modeSettings.effectiveLongPressZoomScale,
               longPressZoomRestoreOnRelease:
-                  _settings.longPressZoomRestoreOnRelease,
-              longPressZoomMoveMode: _settings.longPressZoomMoveMode,
-              longPressZoomPanRatio: _settings.longPressZoomPanRatio,
+                  modeSettings.longPressZoomRestoreOnRelease,
+              longPressZoomMoveMode: modeSettings.longPressZoomMoveMode,
+              longPressZoomPanRatio: modeSettings.longPressZoomPanRatio,
               longPressZoomLimitToViewport:
-                  _settings.longPressZoomLimitToViewport,
-              doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
+                  modeSettings.longPressZoomLimitToViewport,
+              doubleTapZoomOrigin: modeSettings.doubleTapZoomOrigin,
               onZoomScaleChanged: _handleZoomScaleChanged,
+              crossChapterReading: modeSettings.crossChapterReading,
+              canReadPreviousChapter: widget.canReadPreviousChapter,
+              canReadNextChapter: widget.canReadNextChapter,
+              onChapterBoundaryRequested: widget.onChapterBoundaryRequested,
             ),
             AnimatedBuilder(
               animation: reader,

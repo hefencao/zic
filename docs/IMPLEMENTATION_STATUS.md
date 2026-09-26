@@ -68,8 +68,11 @@ App build：0.31.0+328
   旧 plugin-scoped 数据信任只在完整 source 集已由 installed-plugin authority 证明时退役；partial runtime discovery 会保留兼容 fallback。
   configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
   阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
-  全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接、长按放大等离散项使用互斥胶囊。
-  阅读设置已按布局、界面、双击操作、长按操作、缩放质量拆分；双击一级/二级倍率均使用 slider，长按倍率独立于双击倍率，默认 2.0x。
+  全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接等只属于单一布局的选项仍保持单 owner。
+  阅读设置现由独立 `ReaderModeSettings` 分别保存 paged / continuous：连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界、zoom decode boost 可在两种布局中分别取值；旧扁平偏好会迁移进 mode profiles。
+  Reader 新增按 mode 独立的“连续阅读”：只控制章节边界 UI traversal，不控制预加载。章节仍一章一个 immutable manifest/session；边界 overscroll 跨章前 flush progress 并通过 HomeLibrarySession 持久确立目标章。
+  相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
+  priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 ListView-local anchor/geometry rebuild；pending-only ratio live feed 不再 dirty 整个 ReaderView，vertical模式 保持布局稳定。

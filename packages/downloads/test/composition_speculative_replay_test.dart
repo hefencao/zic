@@ -5,9 +5,50 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('chapter preload is a low-priority scoped transfer demand', () async {
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: null,
+      partialDownloadStore: null,
+      net: NetLane(maxActive: 2),
+    );
+    addTearDown(runtime.dispose);
+    final chapter = _chapterManifest(<String>['adjacent-0', 'adjacent-1']);
+    final transport = _ImmediateTransport(List<int>.filled(128, 7));
+
+    final lease = runtime.preloadChapterPages(
+      scopeId: 'adjacent:test',
+      chapter: chapter,
+      pages: <PageAsset>[chapter.pages.first],
+      fallbackFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+      priority: 500,
+    );
+    final first = readerPageDownloadId(chapter, chapter.pages.first);
+    final second = readerPageDownloadId(chapter, chapter.pages.last);
+
+    expect(runtime.registry.find(first)?.demanded, isTrue);
+    expect(runtime.registry.find(first)?.effectivePriority, 500);
+    expect(runtime.registry.find(second)?.demanded ?? false, isFalse);
+
+    lease.replacePages(chapter.pages);
+    expect(runtime.registry.find(first)?.demanded, isTrue);
+    expect(runtime.registry.find(second)?.demanded, isTrue);
+    expect(runtime.registry.find(second)?.effectivePriority, 500);
+
+    lease.replacePages(<PageAsset>[chapter.pages.first]);
+    expect(runtime.registry.find(first)?.demanded, isTrue);
+    expect(runtime.registry.find(first)?.effectivePriority, 500);
+    expect(runtime.registry.find(second)?.demanded, isFalse);
+
+    await lease.close();
+    expect(runtime.registry.find(first)?.demanded, isFalse);
+    expect(runtime.registry.find(second)?.demanded, isFalse);
+  });
+
   test('hot partial replay uses the composition local-read scheduler', () async {
     final reads = ArtifactCacheReadScheduler(maxActive: 2);
     final runtime = CompositionDownloadTransferRuntime(
@@ -504,6 +545,29 @@ void main() {
   });
 }
 
+ChapterManifest _chapterManifest(List<String> pageIds) => ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: pageIds.length,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        for (var index = 0; index < pageIds.length; index++)
+          PageAsset(
+            pageId: pageIds[index],
+            chapterId: 'chapter',
+            index: index,
+            uri: Uri.parse('https://example.test/' + pageIds[index] + '.webp'),
+          ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+
 DownloadId _id(String page) => DownloadId(
       content: ContentId(
         sourceId: 'source',
@@ -521,6 +585,27 @@ Future<Uint8List> _collect(Stream<List<int>> stream) async {
     builder.add(chunk);
   }
   return builder.takeBytes();
+}
+
+final class _ImmediateTransport implements Transport {
+  _ImmediateTransport(List<int> bytes) : bytes = Uint8List.fromList(bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.length,
+        validators: const Validators(etag: 'preload'),
+        rangeSupported: false,
+      );
 }
 
 final class _EmptyArtifactCacheBackend implements ArtifactCacheBackend {

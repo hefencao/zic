@@ -158,7 +158,8 @@ def main() -> None:
         "apps/app/lib/reader_preferences.dart",
         "sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId)",
         "pagedDirectionPreference: readerPagedDirectionPreference",
-        "longPressZoomScale: longPressZoomScale",
+        "paged: pagedReaderSettings",
+        "continuous: continuousReaderSettings",
         "systemStatusBarMode: systemStatusBarMode",
     )
     require(
@@ -213,6 +214,9 @@ def main() -> None:
         "globalAdaptiveEnabled && comicAdaptiveEnabled",
         "ReaderPagedDirectionPreference.ltr",
         "resolvePagedDirection",
+        "ReaderModeSettings",
+        "crossChapterReading",
+        "modeSettingsForDirection",
         "effectiveLongPressZoomFor",
         "effectiveLongPressZoomScale",
         "ReaderSystemStatusBarMode",
@@ -227,7 +231,9 @@ def main() -> None:
         "if (adaptsDirection)",
         "_settings.resolvePagedDirection(widget.chapter.readingDirection)",
         "_settings.effectiveLongPressZoomFor(reader.direction)",
-        "longPressZoomScale: _settings.effectiveLongPressZoomScale",
+        "_settings.modeSettingsForDirection(reader.direction)",
+        "longPressZoomScale: modeSettings.effectiveLongPressZoomScale",
+        "crossChapterReading: modeSettings.crossChapterReading",
         "_settings.resolveSystemStatusBarVisible(_controlsVisible)",
         "_readerSystemUi.apply(",
         "showStatusBar:",
@@ -260,19 +266,23 @@ def main() -> None:
         "apps/app/lib/app_settings_screen.dart",
         "_SettingsSectionTitle('布局')",
         "_SettingsSectionTitle('界面')",
-        "_SettingsSectionTitle('操作 · 双击放大')",
-        "_SettingsSectionTitle('操作 · 长按放大')",
+        "_SettingsSectionTitle(continuous ? '连续模式' : '分页模式')",
+        "title: const Text('连续阅读')",
+        "readingPagedContinuousReadingKey",
+        "readingContinuousContinuousReadingKey",
         "title: const Text('自适应阅读')",
         "key: readingPagedDirectionKey",
         "ReaderPagedDirectionPreference.ltr",
         "key: readingShowStatusBarKey",
         "SegmentedButton<ReaderSystemStatusBarMode>",
-        "key: readingLongPressZoomScaleKey",
+        "readingLongPressZoomScaleKey",
+        "readingContinuousLongPressZoomScaleKey",
         "_readerScaleSlider",
         "Slider(",
         "SegmentedButton<bool>",
         "key: readingVerticalStitchKey",
-        "key: readingLongPressZoomKey",
+        "readingLongPressZoomKey",
+        "readingContinuousLongPressZoomKey",
         "SegmentedButton<ReaderDoubleTapZoomOrigin>",
         "SegmentedButton<ReaderLongPressMoveMode>",
     )
@@ -308,6 +318,42 @@ def main() -> None:
         "packages/local_media_ui/lib/src/local_media_screens.dart",
         "this.adaptiveMetadata",
         "adaptiveMetadata: adaptiveMetadata ??",
+        "importedImageChapterPipelineFactory",
+    )
+    require(
+        "packages/reader/lib/src/reader_view.dart",
+        "ReaderChapterBoundary",
+        "crossChapterReading",
+        "AlwaysScrollableScrollPhysics",
+        "_completeChapterBoundaryOverscroll",
+    )
+    require(
+        "packages/downloads/lib/src/composition_download_transfer_runtime.dart",
+        "CompositionChapterPreloadLease",
+        "replacePages",
+        "preloadChapterPages",
+        "reason: 'cross-chapter-preload'",
+    )
+    require(
+        "apps/app/lib/home_reader_composition.dart",
+        "homeReaderAdjacentPreloadResidual",
+        "backwardEncodedPages - displayedIndex",
+        "forwardEncodedPages - (pageCount - 1 - displayedIndex)",
+    )
+    require(
+        "apps/app/lib/home_shell_reader_route.dart",
+        "applyAdjacentPreload",
+        "scheduleAdjacentPreload",
+        "ReaderPipelineProfile.stable.windowResolver",
+        "homeReaderAdjacentPreloadResidual",
+        "existing.replacePages(pages)",
+        "runtime.preloadChapterPages",
+        "downloadBucketFor: profile.downloadBucket",
+        "downloadBucketLimitFor: profile.downloadBucketLimit",
+    )
+    reject(
+        "apps/app/lib/home_shell_reader_route.dart",
+        "crossChapterReading",
     )
     print("Reader layout settings contract: OK")
 
