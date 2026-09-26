@@ -10,7 +10,7 @@
 
 并覆盖：
 
-`PersistentDownloadArtifactStore -> SqliteIndex -> artifact read/touch worker`
+`PersistentDownloadArtifactStore -> SqliteIndex -> owner-local artifact snapshot / touch worker`
 
 以及 external-static presentation cache maintenance。
 
@@ -35,7 +35,7 @@
 | Reader-local encoded replay | DownloadIngressProjectionRegistry | 有界 owner queue + native source workers | 保留 worker |
 | encoded source epoch/length/kind/sealed | Ingress | owner state；重 copy/FFI 可 worker | 保留单一 state owner |
 | native source memory mutation | NativeSource | 2个 source-write isolate workers | 保留，消费上游 rank/cancel |
-| durable artifact metadata | SqliteIndex | persistent SQLite read/touch workers | 保留，owner/scheduler不变 |
+| durable artifact metadata | SqliteIndex | owner-local read transaction + persistent touch worker | read worker撤销；touch保留 |
 | external-static raster residency/LRU | PipelinePresentationRasterCache | owner内部 idle/deferred maintenance | 保留异步，不另建 owner |
 | network download | DownloadTransferOwner + NetLane | transport async I/O | 不新增 download thread pool |
 
@@ -56,18 +56,13 @@
 
 此前 source-write pool 曾被 decode prewarm/shutdown API 隐式拥有，现拆成显式独立 lifecycle，由 composition 并列管理。
 
-### 2. SQLite read/touch：保留 worker，但不是为了追求吞吐数字
+### 2. SQLite read 同步收回 owner；touch 保留 worker
 
 host file-backed microbench：artifact authority 的直接 owner connection 三组查询约 **130.1µs/call**，persistent read worker roundtrip约 **123.9µs/call**；conditional touch 直接执行约 **2.423ms/call**，worker roundtrip约 **1.803ms/call**。
 
-read worker 的收益不是让单次查询显著更快，而是避免真实设备 I/O pressure 下 sqlite3 prepare/step 同步占住 UI isolate。touch 已经是明确的毫秒级同步写风险。
+再次按同一判定规则复审后，read worker 被撤销。约 0.13ms 的 metadata snapshot 没有足够阻塞证据支撑常驻 isolate；它反而需要第二 SQLite connection、request id/completer routing、spawn/close/error fallback。artifact object + replica + storage root 现在直接由 `SqliteIndex` owner connection 在**同一个短 read transaction**形成 snapshot，随后真正可能慢的 body/access probe 仍保持异步。
 
-收口要求：
-
-- artifact object + replica + storage root 在 worker 独立只读连接的**同一个 read transaction**形成 snapshot；
-- worker启动/读取失败可回退 `SqliteIndex` owner connection，辅助 worker不是 durable authority；
-- touch 必须先经过 composition 已有 `StorageWriteScheduler` admission，再交给 worker执行一次 conditional UPDATE；
-- worker不得再自建 debounce/retry timer或第二套 write scheduler。
+touch 不同：同步 UPDATE 已有约 2ms 量级证据，因此继续保留 worker，但必须先经过 composition 既有 `StorageWriteScheduler` admission，只执行一次 conditional UPDATE；worker不得自建 debounce/retry timer或第二套 write scheduler。
 
 ### 3. version candidate isolate：复杂度高于收益，撤销
 

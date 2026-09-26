@@ -40,6 +40,42 @@ void main() {
     }
   });
 
+  test('resident direct file capability is generation-scoped', () async {
+    var closes = 0;
+    final bytes = <int>[
+      ...('RIFF....WEBP'.codeUnits),
+      ...List<int>.filled(64, 1),
+    ];
+    const directPath = '/proc/self/fd/123';
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.length,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+      residentReplayRangeChunks: (start, endExclusive) async =>
+          Stream<List<int>>.value(bytes.sublist(start, endExclusive)),
+      residentReplayRangeClose: () async {
+        closes++;
+      },
+      residentReplayDirectFilePath: directPath,
+      residentReplayAccessMode: 'direct',
+    );
+
+    expect(session.residentReplayDirectFilePath, directPath);
+    expect(session.residentIngressDeferred, isTrue);
+
+    await session.reset(removeCacheRecord: false);
+
+    expect(session.residentReplayDirectFilePath, isNull);
+    expect(session.residentIngressDeferred, isFalse);
+    await session.settleCacheMutations();
+    expect(
+      closes,
+      1,
+      reason: 'retiring the physical generation closes its retained lease',
+    );
+  });
+
   test('network attempt publishes transient response total without owning durable length',
       () async {
     expect(session.totalLength, isNull);

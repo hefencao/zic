@@ -15,7 +15,7 @@
 ## 证据
 
 - 旧 trace 的 Reader-local resident ingress hydration 共 73 个可配对区间：median **5.835ms**、p90 **10.519ms**、max **14.803ms**；其中 23 次 >=8ms、5 次 >=12ms。这个量级足以单独吞掉 120Hz/60Hz 的大部分 frame budget，因此 native reserve/copy/file-range 必须离开 UI isolate。
-- host file-backed SQLite microbench 中，artifact authority 三组直接查询约 **130.1µs/call**，persistent read worker roundtrip约 **123.9µs/call**；worker不是为了提高吞吐，而是隔离 sqlite3 prepare/step 在真实设备 I/O pressure 下的同步阻塞风险。conditional touch 直接 owner connection约 **2.423ms/call**，worker roundtrip约 **1.803ms/call**，更明确不应占 UI isolate。
+- host file-backed SQLite microbench 中，artifact authority 三组直接查询约 **130.1µs/call**，persistent read worker roundtrip约 **123.9µs/call**。复审后这不足以证明常驻 read isolate 的价值：两者都远低于 frame budget，而 worker 额外引入第二连接、request/completer 路由和 close 生命周期，因此 authority snapshot 收回 `SqliteIndex` owner connection 内的短 read transaction。conditional touch 直接 owner connection约 **2.423ms/call**，worker roundtrip约 **1.803ms/call**，仍保留 worker。
 - version-page candidate 对 Reader 工作集只是少量 immutable map/index 查询。把它放进 `Isolate.run` 会要求 projection serialization、authority revision、prepared-demand object、stale commit fence 和 LiveCoordinator latest-wins drain。复审未找到与这些复杂度匹配的阻塞证据，因此撤销该 worker 路径，恢复 transfer owner 内同步 acquire-time resolution。
 - source-ready wake 本身只是已有 source revision 触发 decode lane wake。另建 frame-deferred pending map/scheduler没有独立重活可隔离，也会延迟 producer→consumer 边；因此撤销该额外 queue，直接在 LiveCoordinator owner 内执行 wake。
 
@@ -28,7 +28,7 @@
 - `DownloadIngressProjectionRegistry` 仍拥有 Reader-local replay operation queue。其 `PriorityObservableTaskControl` 必须贯穿 `Ingress -> BackgroundWritableEncodedSource -> native source-write worker`。worker pending queue按实时 priority 取任务；queued cancellation直接撤销 pending work；已经进入 native operation 的 work 必须真实返回后才释放 worker。
 - native decode worker 与 native source-write worker具有独立、显式的 composition lifecycle：分别 prewarm/shutdown。两者是真正的 isolate/worker 执行域，因为 decode、native memory reserve/copy/file-range 都可能消耗毫秒级 CPU/FFI 时间。
 - `Ingress` 是 encoded source epoch/length/kind/sealed 的唯一逻辑 owner。同步 append 与后台 append/rebuild 只是 live transfer 和 replay/materialization 的执行 seam，不能维护两份状态。
-- `SqliteIndex` 是 artifact metadata owner。background authority reader使用独立只读连接，但一次 artifact-object/replica/root 读取必须处于同一个 SQLite read transaction；worker失败可回退 owner connection。recency touch必须先经过既有 `StorageWriteScheduler` admission，再由 SQLite worker执行一次 conditional UPDATE；worker不得自建 debounce/retry/write scheduler。
+- `SqliteIndex` 是 artifact metadata owner。artifact-object/replica/root snapshot 直接在 owner connection 的一个短 SQLite read transaction 内完成；不得仅为了约 0.13ms 的 metadata 查询常驻第二 read connection/isolate。recency touch必须先经过既有 `StorageWriteScheduler` admission，再由 SQLite worker执行一次 conditional UPDATE；worker不得自建 debounce/retry/write scheduler。
 - presentation raster idle maintenance仍属于 `PipelinePresentationRasterCache` owner；延后执行只改变执行时机，不改变 eviction/rescue authority。
 - network I/O继续依赖异步 transport + `NetLane`，不得为“多线程”额外建立 download worker pool。Dart `async` 已足以表达等待；真正需要 isolate/thread 的只有会在 UI isolate 上实际执行 CPU/同步 FFI 的重活。
 
@@ -46,7 +46,7 @@
 
 - media ingress + resident ingress focused tests证明 scheduler control 到达 background native source seam；
 - transfer owner/live coordinator tests在撤销 background candidate prepare 后继续覆盖 acquire-time physical identity复用、priority-only migration和 source-ready decode wake；
-- storage worker tests证明 immutable authority snapshot、conditional recency execution与既有 storage-write pressure admission；
+- storage tests证明 owner-local immutable authority snapshot 保持单事务一致性，touch worker 保持 conditional recency execution 与既有 storage-write pressure admission；
 - isolated staged-tree tests、documentation/ownership gates与 `tool/check.sh` 作为合入门槛。
 
 该决策不改变 Pipeline 7/3 download、2/1 decode、static warm、NetLane、Reader ScrollPhysics 或 presentation cache budget。

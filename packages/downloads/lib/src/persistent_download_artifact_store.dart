@@ -4612,7 +4612,7 @@ final class PersistentDownloadArtifactStore
     if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
       return null;
     }
-    final authority = await _index.readArtifactAuthorityInBackground(
+    final authority = _index.readArtifactAuthoritySnapshot(
       record.effectiveArtifactId,
     );
     final replicas = await _resolveArtifactReplicas(record,
@@ -5739,7 +5739,7 @@ final class PersistentDownloadArtifactStore
     DownloadId id,
     CacheRec record,
   ) async {
-    final authority = await _index.readArtifactAuthorityInBackground(
+    final authority = _index.readArtifactAuthoritySnapshot(
       record.effectiveArtifactId,
     );
     final replicas = await _resolveArtifactReplicas(record,

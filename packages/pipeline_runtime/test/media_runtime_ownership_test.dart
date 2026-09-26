@@ -862,6 +862,54 @@ void main() {
     },
   );
 
+  test('Reader observation reconcile yields to an already queued frame',
+      () async {
+    final scheduler = _ControlledFrameScheduler(scheduled: true);
+    final runtime = _Runtime(scheduler: scheduler);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
+    ).create(
+      chapter: _galleryChapter(pageCount: 2),
+      sessionId: 'observation-after-frame-test',
+    );
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.flutterImage,
+      ),
+    );
+    final page = session.chapter.pages.first;
+
+    session.enqueueObservation(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.scrolling,
+        logicalPosition: 0,
+        velocity: 1200,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: page.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(session.revision, 0);
+    expect(scheduler.pendingCallbackCount, 1);
+
+    scheduler.flushAfterFrame();
+    expect(session.revision, greaterThan(0));
+
+    await session.dispose();
+  });
+
   test('transition gallery prewarm waits for one idle handoff', () async {
     final scheduler = _ControlledFrameScheduler(scheduled: true);
     final runtime = _Runtime(

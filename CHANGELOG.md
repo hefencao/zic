@@ -2,7 +2,7 @@
 
 - Re-audit background execution by measured blocking cost instead of defaulting to workers: remove version-candidate `Isolate.run` preparation/two-phase demand commit and the extra deferred source-wake queue; both are short owner-local control work and remain synchronous.
 - Keep genuinely heavy native resident-source writes off the UI isolate: propagate the existing Reader-local ingress priority/cancellation through the source-write worker queue; queued cancellation withdraws pending work while in-flight native operations keep their slot until real completion.
-- Split native decode/source-write worker lifecycle APIs and make SQLite artifact object/replica/root background reads one transaction with owner-connection fallback; SQLite touch still enters through the existing storage-write scheduler before worker execution. See ADR 0328.
+- Split native decode/source-write worker lifecycle APIs. SQLite artifact object/replica/root metadata now stays as one short owner-connection transaction instead of a persistent read isolate; SQLite touch still enters through the existing storage-write scheduler before worker execution. See ADR 0328.
 
 ## Unreleased — vertical drag displacement resampling
 

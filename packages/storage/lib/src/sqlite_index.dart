@@ -13,8 +13,21 @@ import 'physical_media_projection_index.dart';
 import 'physical_partial_index.dart';
 import 'storage_root_access.dart';
 
-part 'sqlite_artifact_read_worker.dart';
 part 'sqlite_artifact_touch_worker.dart';
+
+/// Immutable durable authority needed to open one artifact from the owning
+/// SQLite connection as one transactionally consistent snapshot.
+final class ArtifactAuthorityReadSnapshot {
+  const ArtifactAuthorityReadSnapshot({
+    required this.object,
+    required this.replicas,
+    required this.storageRootsByIdentity,
+  });
+
+  final ArtifactObjectRecord? object;
+  final List<ArtifactReplicaRecord> replicas;
+  final Map<String, StorageRootRecord> storageRootsByIdentity;
+}
 
 final class SqliteIndex
     implements
@@ -39,7 +52,6 @@ final class SqliteIndex
   final String? path;
   sql.Database? _db;
   Map<String, CacheRec>? _cachedEntries;
-  Future<_SqliteArtifactReadWorker>? _artifactReadWorker;
   Future<_SqliteArtifactTouchWorker>? _artifactTouchWorker;
 
   void _invalidateCache() {
@@ -432,16 +444,17 @@ final class SqliteIndex
         .toList(growable: false);
   }
 
-  /// Reads immutable artifact/replica/root authority on a dedicated SQLite
-  /// read connection when this index is file-backed.
+  /// Reads immutable artifact/replica/root authority from the owning SQLite
+  /// connection as one short read transaction.
   ///
-  /// The worker never mutates durable state and therefore is not a second
-  /// storage owner. It exists so Reader materialization does not execute
-  /// sqlite3 prepare/step on the UI isolate. In-memory indexes keep the direct
-  /// path used by unit tests because their database cannot be shared by path.
-  Future<ArtifactAuthorityReadSnapshot> readArtifactAuthorityInBackground(
+  /// This snapshot is intentionally owner-local. The measured query cost is
+  /// sub-millisecond, so a persistent read isolate would add lifecycle,
+  /// request-routing and a second connection without isolating meaningful
+  /// frame-budget work. Slow body/access checks remain asynchronous below this
+  /// metadata boundary.
+  ArtifactAuthorityReadSnapshot readArtifactAuthoritySnapshot(
     String artifactId,
-  ) async {
+  ) {
     final normalized = artifactId.trim();
     if (normalized.isEmpty) {
       return const ArtifactAuthorityReadSnapshot(
@@ -450,34 +463,16 @@ final class SqliteIndex
         storageRootsByIdentity: <String, StorageRootRecord>{},
       );
     }
-    final dbPath = path;
-    if (dbPath == null) {
-      return _readArtifactAuthoritySnapshot(_requireDb(), normalized);
-    }
+    final db = _requireDb();
+    db.execute('BEGIN');
     try {
-      final worker = await _artifactReadWorkerFor(dbPath);
-      return await worker.read(normalized);
+      final snapshot = _readArtifactAuthoritySnapshot(db, normalized);
+      db.execute('COMMIT');
+      return snapshot;
     } on Object {
-      // The worker is an execution optimization, not durable authority. A
-      // startup/read failure must not make a valid artifact unreadable.
-      return _readArtifactAuthoritySnapshot(_requireDb(), normalized);
+      _rollbackArtifactAuthorityRead(db);
+      rethrow;
     }
-  }
-
-  Future<_SqliteArtifactReadWorker> _artifactReadWorkerFor(String dbPath) {
-    final existing = _artifactReadWorker;
-    if (existing != null) return existing;
-    final created = _SqliteArtifactReadWorker.spawn(dbPath);
-    _artifactReadWorker = created;
-    unawaited(created.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {
-        if (identical(_artifactReadWorker, created)) {
-          _artifactReadWorker = null;
-        }
-      },
-    ));
-    return created;
   }
 
   Future<ArtifactReplicaRecord?> getArtifactReplica(String replicaId) async {
@@ -2573,16 +2568,6 @@ final class SqliteIndex
         // Auxiliary recency maintenance must not block durable index close.
       }
     }
-    final readWorker = _artifactReadWorker;
-    _artifactReadWorker = null;
-    if (readWorker != null) {
-      try {
-        final worker = await readWorker;
-        await worker.close();
-      } on Object {
-        // Background reads own no durable mutation or close authority.
-      }
-    }
     _invalidateCache();
     _db?.dispose();
     _db = null;
@@ -3455,6 +3440,69 @@ void _backfillArtifactReplicas(sql.Database db) {
       ],
     );
   }
+}
+
+void _rollbackArtifactAuthorityRead(sql.Database db) {
+  try {
+    db.execute('ROLLBACK');
+  } on Object {
+    // BEGIN may itself have failed; preserve the original read failure.
+  }
+}
+
+ArtifactAuthorityReadSnapshot _readArtifactAuthoritySnapshot(
+  sql.Database db,
+  String artifactId,
+) {
+  final objectRows = db.select(
+    'SELECT artifact_id, path, bytes, checksum, checksum_algorithm, '
+    'storage_root_id FROM artifact_object WHERE artifact_id = ? LIMIT 1',
+    <Object?>[artifactId],
+  );
+  final object = objectRows.isEmpty
+      ? null
+      : ArtifactObjectRecord(
+          artifactId: objectRows.first['artifact_id']! as String,
+          accessLocator: objectRows.first['path']! as String,
+          bytes: objectRows.first['bytes']! as int,
+          checksum: objectRows.first['checksum']! as String,
+          checksumAlgorithm:
+              (objectRows.first['checksum_algorithm'] as String?) ?? 'crc32',
+          storageRootId:
+              (objectRows.first['storage_root_id'] as String?) ?? 'default',
+        );
+  final replicas = db
+      .select(
+        'SELECT replica_id, artifact_id, access_locator, storage_root_id, '
+        'created_us, touched_us FROM artifact_replica WHERE artifact_id = ? '
+        'ORDER BY touched_us DESC, replica_id',
+        <Object?>[artifactId],
+      )
+      .map(
+        (row) => ArtifactReplicaRecord(
+          replicaId: row['replica_id']! as String,
+          artifactId: row['artifact_id']! as String,
+          accessLocator: row['access_locator']! as String,
+          storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+          createdUs: row['created_us']! as int,
+          touchedUs: row['touched_us']! as int,
+        ),
+      )
+      .toList(growable: false);
+  final rootIds = <String>{
+    if (object != null) object.storageRootId,
+    for (final replica in replicas) replica.storageRootId,
+  };
+  final roots = <String, StorageRootRecord>{};
+  for (final rootId in rootIds) {
+    final root = _readStorageRoot(db, rootId);
+    if (root != null) roots[rootId] = root;
+  }
+  return ArtifactAuthorityReadSnapshot(
+    object: object,
+    replicas: List<ArtifactReplicaRecord>.unmodifiable(replicas),
+    storageRootsByIdentity: Map<String, StorageRootRecord>.unmodifiable(roots),
+  );
 }
 
 void _backfillStorageRootRegistry(sql.Database db) {

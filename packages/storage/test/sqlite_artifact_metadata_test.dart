@@ -5,9 +5,10 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('artifact authority read worker returns immutable durable snapshot',
-      () async {
-    final dir = await Directory.systemTemp.createTemp('artifact-read-worker-');
+  test('artifact authority snapshot is transactionally consistent', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'artifact-authority-snapshot-',
+    );
     addTearDown(() => dir.delete(recursive: true));
     final index = SqliteIndex('${dir.path}/cache.sqlite');
     await index.open();
@@ -52,7 +53,7 @@ void main() {
       touchedUs: 2,
     );
 
-    final snapshot = await index.readArtifactAuthorityInBackground(artifactId);
+    final snapshot = index.readArtifactAuthoritySnapshot(artifactId);
 
     expect(snapshot.object?.artifactId, artifactId);
     expect(snapshot.object?.accessLocator, '${dir.path}/root/page.bin');
@@ -72,8 +73,7 @@ void main() {
       <String>{'${dir.path}/root', 'content://zic.test/tree/root'},
     );
 
-    // The background connection is read-only and does not become a second
-    // owner: the foreground connection remains writable after the snapshot.
+    // Snapshot reads stay on the owning connection and leave it writable.
     await index.put(
       CacheRec(
         id: id,

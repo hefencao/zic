@@ -85,7 +85,7 @@ App build：0.31.0+328
 - 原生纹理呈现：以 presentationIdentity 标识 resident surface，接入 Android SurfaceProducer。
 - 后台执行收口：ADR 0328 改为按实际阻塞成本分类，而不是统一“放后台”。version-candidate `Isolate.run`、prepared-demand two-phase commit 与额外 source-wake deferred queue 已撤销，保持同步 owner-local control；Reader observation 只保留同 isolate 的 frame/event-turn 让行。
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
-  artifact object/replica/root 后台读取使用单事务 snapshot，worker失败回退 SqliteIndex owner connection；recency touch 仍先经过既有 StorageWriteScheduler admission。
+  artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
 
 ## 2. 当前开放问题

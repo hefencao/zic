@@ -33,7 +33,7 @@
 - 2026-09-25 后台执行链按 ADR 0328 再次收紧：并非所有 hot-path 工作都值得 worker 化。
   version candidate `Isolate.run` + prepared-demand two-phase commit、以及 source-ready 的额外 deferred queue 已撤销，恢复同步 owner-local control；Reader observation 只在同一 UI isolate 上按 frame/event-turn 让行。
   保留的 worker 都有阻塞证据：resident source hydration 旧trace median 5.835ms / p90 10.519ms / max 14.803ms，因此 native reserve/copy/file-range 继续离开 UI isolate；source-write pending queue消费原 ingress rank/cancel，decode/source-write lifecycle分离。
-  SQLite authority read/touch仍由 SqliteIndex 拥有，read为单事务snapshot，touch先过既有 StorageWriteScheduler。
+  SQLite authority仍由 SqliteIndex 拥有：约0.13ms的read已撤销常驻worker，直接在owner connection做单事务snapshot；touch保留worker且先过既有 StorageWriteScheduler。
   后续若再“放后台”，先区分 async scheduling 与真正 multithread/isolate：网络等待继续用 Future+NetLane；只有 CPU/同步FFI/磁盘调用会实际占 frame budget时才新增 worker，且不得复制 owner/retry/eligibility/state。
 ## 4. 下一步命令
 - `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`
