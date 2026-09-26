@@ -169,6 +169,13 @@ void main() {
     await tester.drag(list, const Offset(0, -800));
     await tester.pumpAndSettle();
     expect(requested, isEmpty);
+    final scrollableFinder = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    final scrollableBefore =
+        tester.state<ScrollableState>(scrollableFinder);
+    final pixelsBefore = scrollableBefore.position.pixels;
 
     final gesture = await tester.startGesture(tester.getCenter(list));
     await gesture.moveBy(const Offset(0, -80));
@@ -178,6 +185,10 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('松手加载下一章'), findsOneWidget);
     expect(requested, isEmpty);
+    final scrollableWhileArmed =
+        tester.state<ScrollableState>(scrollableFinder);
+    expect(scrollableWhileArmed, same(scrollableBefore));
+    expect(scrollableWhileArmed.position.pixels, closeTo(pixelsBefore, 0.01));
 
     await gesture.up();
     await tester.pump();
@@ -197,6 +208,82 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('正在加载下一章…'), findsNothing);
+    final scrollableAfter =
+        tester.state<ScrollableState>(scrollableFinder);
+    expect(scrollableAfter, same(scrollableBefore));
+    expect(scrollableAfter.position.pixels, closeTo(pixelsBefore, 0.01));
+  });
+
+  testWidgets('continuous start boundary keeps scrollable identity', (
+    tester,
+  ) async {
+    final base = _chapter(pageCount: 2);
+    final chapter = ChapterManifest(
+      sourceId: base.sourceId,
+      comicId: base.comicId,
+      chapter: base.chapter,
+      pages: base.pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-vertical-previous-boundary-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <ReaderChapterBoundary>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 400,
+          height: 400,
+          child: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            crossChapterReading: true,
+            canReadPreviousChapter: true,
+            onChapterBoundaryRequested: requested.add,
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final list =
+        find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollableFinder = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    await tester.drag(list, const Offset(0, 800));
+    await tester.pumpAndSettle();
+    final scrollableBefore =
+        tester.state<ScrollableState>(scrollableFinder);
+    expect(scrollableBefore.position.pixels, closeTo(0, 0.01));
+
+    final gesture = await tester.startGesture(tester.getCenter(list));
+    await gesture.moveBy(const Offset(0, 80));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('松手加载上一章'), findsOneWidget);
+    final scrollableWhileArmed =
+        tester.state<ScrollableState>(scrollableFinder);
+    expect(scrollableWhileArmed, same(scrollableBefore));
+    expect(scrollableWhileArmed.position.pixels, closeTo(0, 0.01));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      requested,
+      <ReaderChapterBoundary>[ReaderChapterBoundary.previous],
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

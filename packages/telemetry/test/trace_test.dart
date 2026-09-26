@@ -43,7 +43,12 @@ void main() {
         'duration': const Duration(milliseconds: 5),
         'dateTime': DateTime.utc(2026, 9, 9, 12, 30),
         'custom': const _FixtureTraceObject('opaque'),
-        'nested': <Object?, Object?>{7: _FixtureTraceState.ready},
+        'nested': <Object?, Object?>{
+          7: _FixtureTraceState.ready,
+          'nan': double.nan,
+          'positiveInfinity': double.infinity,
+          'negativeInfinity': double.negativeInfinity,
+        },
       },
     );
 
@@ -54,6 +59,9 @@ void main() {
     expect(encoded, contains('2026-09-09T12:30:00.000Z'));
     expect(encoded, contains('fixture:opaque'));
     expect(encoded, contains(r'"7":"ready"'));
+    expect(encoded, contains(r'"nan":"non-finite:NaN"'));
+    expect(encoded, contains(r'"positiveInfinity":"non-finite:+Infinity"'));
+    expect(encoded, contains(r'"negativeInfinity":"non-finite:-Infinity"'));
   });
 
   test('trace replaces Venera locator payloads with compact summaries', () {

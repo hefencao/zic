@@ -226,7 +226,14 @@ Map<String, Object?> _sanitizeTraceMap(Map<String, Object?> value) =>
     };
 
 Object? _sanitizeTraceValue(Object? value) {
-  if (value == null || value is bool || value is num) return value;
+  if (value == null || value is bool) return value;
+  if (value is double && !value.isFinite) {
+    if (value.isNaN) return 'non-finite:NaN';
+    return value.isNegative
+        ? 'non-finite:-Infinity'
+        : 'non-finite:+Infinity';
+  }
+  if (value is num) return value;
   if (value is String) return _sanitizeTraceString(value);
   if (value is Enum) return value.name;
   if (value is Uri) return _sanitizeTraceString(value.toString());

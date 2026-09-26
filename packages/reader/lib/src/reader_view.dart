@@ -744,61 +744,57 @@ final class _ReaderViewState extends State<ReaderView>
   }) {
     final boundary =
         _chapterBoundaryRequesting ?? _chapterBoundaryOverscroll;
-    if (boundary == null) return child;
-    final loading = _chapterBoundaryRequesting != null;
-    final ready =
-        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
-    final isNext = boundary == ReaderChapterBoundary.next;
-    final text = loading
-        ? isNext
-            ? '正在加载下一章…'
-            : '正在加载上一章…'
-        : ready
-            ? isNext
-                ? '松手加载下一章'
-                : '松手加载上一章'
-            : direction == ReadingDirection.vertical
-                ? isNext
-                    ? '继续上滑加载下一章'
-                    : '继续下拉加载上一章'
-                : isNext
-                    ? '继续滑动加载下一章'
-                    : '继续滑动加载上一章';
-    final alignment = direction == ReadingDirection.vertical
-        ? isNext
-            ? Alignment.bottomCenter
-            : Alignment.topCenter
-        : Alignment.bottomCenter;
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        child,
-        IgnorePointer(
-          child: SafeArea(
-            child: Align(
-              alignment: alignment,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Semantics(
-                  liveRegion: true,
-                  label: text,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(20),
+    Widget? indicator;
+    if (boundary != null) {
+      final loading = _chapterBoundaryRequesting != null;
+      final ready =
+          _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+      final isNext = boundary == ReaderChapterBoundary.next;
+      final text = loading
+          ? isNext
+              ? '正在加载下一章…'
+              : '正在加载上一章…'
+          : ready
+              ? isNext
+                  ? '松手加载下一章'
+                  : '松手加载上一章'
+              : direction == ReadingDirection.vertical
+                  ? isNext
+                      ? '继续上滑加载下一章'
+                      : '继续下拉加载上一章'
+                  : isNext
+                      ? '继续滑动加载下一章'
+                      : '继续滑动加载上一章';
+      final alignment = direction == ReadingDirection.vertical
+          ? isNext
+              ? Alignment.bottomCenter
+              : Alignment.topCenter
+          : Alignment.bottomCenter;
+      indicator = IgnorePointer(
+        child: SafeArea(
+          child: Align(
+            alignment: alignment,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Semantics(
+                liveRegion: true,
+                label: text,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 9,
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 9,
+                    child: Text(
+                      text,
+                      key: ValueKey<String>(
+                        'reader-chapter-boundary-' + boundary.name,
                       ),
-                      child: Text(
-                        text,
-                        key: ValueKey<String>(
-                          'reader-chapter-boundary-' + boundary.name,
-                        ),
-                        style: const TextStyle(color: Colors.white),
-                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
                   ),
                 ),
@@ -806,6 +802,13 @@ final class _ReaderViewState extends State<ReaderView>
             ),
           ),
         ),
+      );
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        child,
+        if (indicator != null) indicator,
       ],
     );
   }
