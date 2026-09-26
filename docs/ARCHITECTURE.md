@@ -926,11 +926,13 @@ Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipe
 settled scale 经既有 `onZoomScaleChanged` 投影给 zoom decode boost，仅为可视区域提高解码分辨率。
 
 章节 UI 与章节预加载是两个独立边界。Reader 仍保持“一章一个不可变 `ChapterManifest` / `PipelineReaderSessionHost`”，不得把相邻章节页面拼成一个伪 manifest。
-每个 mode 的 `ReaderModeSettings.crossChapterReading` 只允许 Reader 在章节首/尾的明确 overscroll 手势触发上一/下一章切换；关闭时只禁止 UI traversal，不撤销任何相邻章节预加载。
+逻辑章节 previous/next 由 chapter `sequence` 升序定义，详情列表或 source chapter 的展示顺序不得成为 Reader 导航 authority；因此列表正序/倒序都不改变“底部=逻辑下一章、顶部=逻辑上一章”。
+每个 mode 的 `ReaderModeSettings.crossChapterReading` 只 gate 章节边界 UI traversal。paged 使用 PageView 的明确边界 pull；continuous 必须先由 ScrollPosition 的真实首/尾几何确认到章边界，再从边界后的单指 pointer pull 计算提交距离，不能用 coverage-current page 或 Android overscroll physics 代替边界 authority。
+ScrollPosition 因 layout/ballistic correction 产生的通知 MAY 更新内部测量与 pipeline observation，但 MUST NOT 在 layout pass 中同步驱动 ValueNotifier/widget rebuild；应复用既有 post-frame observation owner。关闭跨章 UI 时不撤销任何相邻章节预加载。
 跨章节预加载由 App composition 在当前 Reader route 生命周期内建立低优先级 `CompositionChapterPreloadLease`，直接挂到现有 `CompositionDownloadTransferRuntime` / `DownloadTransferOwner` / `NetLane`；
 它延伸的是同一个稳定前 7 / 后 3 encoded window，而不是额外再加 7/3：先扣掉当前章按实际阅读顺序仍可覆盖的页数，只把残余水位补到下一章开头或上一章结尾；因此跨章后总逻辑窗口不扩张。adjacent claim priority 500 低于当前章 far window 的最低 520，
 并继续受共享 `SpeculativeEncodedReadBudget`（默认 50MB）和既有 source bucket/concurrency 限制。页面推进时只更新同一 preload lease 的 demand 集，不因水位伸缩反复创建物理 transfer owner。它不得读取 `crossChapterReading`、不得创建第二个 scheduler、不得绕过 ArtifactCache/partial/physical-session authority。
-真正跨章时先 flush 当前 Reader progress checkpoint，再通过 `HomeLibrarySession.upsertChapter` 确立目标章 durable identity，然后替换 prepared chapter；预加载本身不得因“只是预热”提前持久化未进入章节。
+真正跨章时先 flush 当前 Reader progress checkpoint，再通过 `HomeLibrarySession.upsertChapter` 确立目标章 durable identity，然后替换 prepared chapter；预加载本身不得因“只是预热”提前持久化未进入章节。相邻章 preparation 可在同一路由内合并并复用成功结果，但 null/error 必须从 coalescing cache 退役，使瞬时 source/plugin 失败可以在后续边界 pull 重试。
 `reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 提交最新 checkpoint。
 SQLite 实现使用独立 progress isolate/WAL connection；
 Reader 热路径只将 checkpoint 有序入队，不执行同步 sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。

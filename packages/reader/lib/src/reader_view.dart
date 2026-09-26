@@ -241,7 +241,11 @@ final class _ReaderViewState extends State<ReaderView>
   ReaderChapterBoundary? _chapterBoundaryOverscroll;
   double _chapterBoundaryOverscrollDistance = 0;
   bool _chapterBoundaryRequestInFlight = false;
-  static const double _chapterBoundaryThreshold = 72;
+  ReaderChapterBoundary? _chapterBoundaryRequesting;
+  bool _chapterBoundaryVisualRefreshScheduled = false;
+  ReaderChapterBoundary? _chapterBoundaryPointerBoundary;
+  Offset? _chapterBoundaryPointerAnchor;
+  static const double _chapterBoundaryThreshold = 32;
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
@@ -692,39 +696,117 @@ final class _ReaderViewState extends State<ReaderView>
             // Pinch is tracked with raw pointers instead of a
             // ScaleGestureRecognizer so single-finger drags always stay with
             // the list's scroll recognizer.
-            return NotificationListener<ScrollNotification>(
-              onNotification: _handleVerticalScrollNotification,
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: _handleStripPointerDown,
-                onPointerMove: _handleStripPointerMove,
-                onPointerUp: _handleStripPointerUp,
-                onPointerCancel: _handleStripPointerCancel,
-                child: transformed,
+            return _withChapterBoundaryIndicator(
+              direction: direction,
+              child: NotificationListener<ScrollNotification>(
+                onNotification: _handleVerticalScrollNotification,
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _handleStripPointerDown,
+                  onPointerMove: _handleStripPointerMove,
+                  onPointerUp: _handleStripPointerUp,
+                  onPointerCancel: _handleStripPointerCancel,
+                  child: transformed,
+                ),
               ),
             );
           }
-          return NotificationListener<ScrollNotification>(
-            onNotification: _handlePagedScrollNotification,
-            child: PageView.builder(
-              controller: _pageController,
-              itemCount: chapter.pages.length,
-              reverse: direction == ReadingDirection.rtl,
-              scrollDirection: Axis.horizontal,
-              physics: _zoomedPage == null
-                  ? widget.crossChapterReading &&
-                          (widget.canReadPreviousChapter ||
-                              widget.canReadNextChapter)
-                      ? const PageScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
-                        )
-                      : const PageScrollPhysics()
-                  : const NeverScrollableScrollPhysics(),
-              onPageChanged: _handlePageChanged,
-              itemBuilder: (context, index) => _buildPage(index),
+          return _withChapterBoundaryIndicator(
+            direction: direction,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handlePagedScrollNotification,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: chapter.pages.length,
+                reverse: direction == ReadingDirection.rtl,
+                scrollDirection: Axis.horizontal,
+                physics: _zoomedPage == null
+                    ? widget.crossChapterReading &&
+                            (widget.canReadPreviousChapter ||
+                                widget.canReadNextChapter)
+                        ? const PageScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          )
+                        : const PageScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                onPageChanged: _handlePageChanged,
+                itemBuilder: (context, index) => _buildPage(index),
+              ),
             ),
           );
       },
+    );
+  }
+
+  Widget _withChapterBoundaryIndicator({
+    required Widget child,
+    required ReadingDirection direction,
+  }) {
+    final boundary =
+        _chapterBoundaryRequesting ?? _chapterBoundaryOverscroll;
+    if (boundary == null) return child;
+    final loading = _chapterBoundaryRequesting != null;
+    final ready =
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    final isNext = boundary == ReaderChapterBoundary.next;
+    final text = loading
+        ? isNext
+            ? '正在加载下一章…'
+            : '正在加载上一章…'
+        : ready
+            ? isNext
+                ? '松手加载下一章'
+                : '松手加载上一章'
+            : direction == ReadingDirection.vertical
+                ? isNext
+                    ? '继续上滑加载下一章'
+                    : '继续下拉加载上一章'
+                : isNext
+                    ? '继续滑动加载下一章'
+                    : '继续滑动加载上一章';
+    final alignment = direction == ReadingDirection.vertical
+        ? isNext
+            ? Alignment.bottomCenter
+            : Alignment.topCenter
+        : Alignment.bottomCenter;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        child,
+        IgnorePointer(
+          child: SafeArea(
+            child: Align(
+              alignment: alignment,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Semantics(
+                  liveRegion: true,
+                  label: text,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 9,
+                      ),
+                      child: Text(
+                        text,
+                        key: ValueKey<String>(
+                          'reader-chapter-boundary-' + boundary.name,
+                        ),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1060,6 +1142,10 @@ final class _ReaderViewState extends State<ReaderView>
         _verticalController.position,
         forceLayoutSnapshot: true,
       );
+      if (_interaction == Interaction.idle &&
+          _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
+        _scheduleVerticalKeepAliveRecenter();
+      }
     });
   }
 
@@ -1358,9 +1444,11 @@ final class _ReaderViewState extends State<ReaderView>
   void _handleStripPointerDown(PointerDownEvent event) {
     _stripPointerPositions[event.pointer] = event.position;
     if (_stripPointerPositions.length == 1) {
+      _beginVerticalChapterBoundaryPointerTracking(event);
       _beginStripHorizontalPanTracking(event.position);
     }
     if (_stripPointerPositions.length == 2) {
+      _cancelVerticalChapterBoundaryPointerTracking();
       _resetStripHorizontalPanTracking();
       _completeStripZoomAnimationInstantly();
       final positions =
@@ -1380,6 +1468,7 @@ final class _ReaderViewState extends State<ReaderView>
   void _handleStripPointerMove(PointerMoveEvent event) {
     if (!_stripPointerPositions.containsKey(event.pointer)) return;
     _stripPointerPositions[event.pointer] = event.position;
+    _trackVerticalChapterBoundaryPointer(event);
     if (_stripPinchActive &&
         _stripPointerPositions.length >= 2 &&
         _stripPinchInitialDistance != null &&
@@ -1422,7 +1511,18 @@ final class _ReaderViewState extends State<ReaderView>
   }
 
   void _handleStripPointerUp(PointerUpEvent event) {
+    final boundaryReady = _chapterBoundaryPointerBoundary != null &&
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    _chapterBoundaryPointerBoundary = null;
+    _chapterBoundaryPointerAnchor = null;
     _stripPointerPositions.remove(event.pointer);
+    if (_stripPointerPositions.isEmpty) {
+      if (boundaryReady) {
+        _completeChapterBoundaryOverscroll();
+      } else {
+        _clearChapterBoundaryOverscrollUi();
+      }
+    }
     if (_stripPinchActive && _stripPointerPositions.length < 2) {
       _finishStripPinch();
     }
@@ -1436,7 +1536,10 @@ final class _ReaderViewState extends State<ReaderView>
   }
 
   void _handleStripPointerCancel(PointerCancelEvent event) {
+    _chapterBoundaryPointerBoundary = null;
+    _chapterBoundaryPointerAnchor = null;
     _stripPointerPositions.remove(event.pointer);
+    _clearChapterBoundaryOverscrollUi();
     if (_stripPinchActive && _stripPointerPositions.length < 2) {
       _finishStripPinch();
     }
@@ -2135,16 +2238,133 @@ final class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  void _scheduleChapterBoundaryVisualRefresh() {
+    if (!mounted || _chapterBoundaryVisualRefreshScheduled) return;
+    _chapterBoundaryVisualRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _chapterBoundaryVisualRefreshScheduled = false;
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
+
   void _resetChapterBoundaryOverscroll() {
     _chapterBoundaryOverscroll = null;
     _chapterBoundaryOverscrollDistance = 0;
   }
 
+  void _clearChapterBoundaryOverscrollUi() {
+    final changed = _chapterBoundaryOverscroll != null ||
+        _chapterBoundaryOverscrollDistance != 0;
+    _resetChapterBoundaryOverscroll();
+    if (changed && !_chapterBoundaryRequestInFlight) {
+      _scheduleChapterBoundaryVisualRefresh();
+    }
+  }
+
+  ReaderChapterBoundary? _verticalChapterBoundaryAtCurrentScroll() {
+    if (!widget.crossChapterReading ||
+        widget.onChapterBoundaryRequested == null ||
+        _chapterBoundaryRequestInFlight ||
+        !_verticalController.hasClients ||
+        !_verticalController.position.hasContentDimensions) {
+      return null;
+    }
+    final position = _verticalController.position;
+    if (position.extentAfter <= 0.5 && widget.canReadNextChapter) {
+      return ReaderChapterBoundary.next;
+    }
+    if (position.extentBefore <= 0.5 && widget.canReadPreviousChapter) {
+      return ReaderChapterBoundary.previous;
+    }
+    return null;
+  }
+
+  void _beginVerticalChapterBoundaryPointerTracking(PointerDownEvent event) {
+    _chapterBoundaryPointerBoundary = null;
+    _chapterBoundaryPointerAnchor = null;
+    if (_stripPointerPositions.length != 1 ||
+        _stripZoomed ||
+        _stripLensActive ||
+        _stripPinchActive) {
+      return;
+    }
+    final boundary = _verticalChapterBoundaryAtCurrentScroll();
+    if (boundary == null) return;
+    _chapterBoundaryPointerBoundary = boundary;
+    _chapterBoundaryPointerAnchor = event.position;
+    _chapterBoundaryOverscroll = boundary;
+    _chapterBoundaryOverscrollDistance = 0;
+    _scheduleChapterBoundaryVisualRefresh();
+  }
+
+  void _trackVerticalChapterBoundaryPointer(PointerMoveEvent event) {
+    if (_stripPointerPositions.length != 1 ||
+        _stripZoomed ||
+        _stripLensActive ||
+        _stripPinchActive) {
+      _chapterBoundaryPointerBoundary = null;
+      _chapterBoundaryPointerAnchor = null;
+      _clearChapterBoundaryOverscrollUi();
+      return;
+    }
+    final boundary = _verticalChapterBoundaryAtCurrentScroll();
+    if (boundary == null) {
+      _chapterBoundaryPointerBoundary = null;
+      _chapterBoundaryPointerAnchor = null;
+      _clearChapterBoundaryOverscrollUi();
+      return;
+    }
+    final previousBoundary = _chapterBoundaryPointerBoundary;
+    final anchor = _chapterBoundaryPointerAnchor;
+    if (previousBoundary != boundary || anchor == null) {
+      _chapterBoundaryPointerBoundary = boundary;
+      _chapterBoundaryPointerAnchor = event.position;
+      _chapterBoundaryOverscroll = boundary;
+      _chapterBoundaryOverscrollDistance = 0;
+      _scheduleChapterBoundaryVisualRefresh();
+      return;
+    }
+    final wasReady =
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    final deltaY = event.position.dy - anchor.dy;
+    _chapterBoundaryOverscroll = boundary;
+    _chapterBoundaryOverscrollDistance = math.max(
+      0,
+      boundary == ReaderChapterBoundary.next ? -deltaY : deltaY,
+    );
+    final isReady =
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    if (wasReady != isReady) {
+      _scheduleChapterBoundaryVisualRefresh();
+    }
+  }
+
+  void _cancelVerticalChapterBoundaryPointerTracking() {
+    final hadBoundary = _chapterBoundaryPointerBoundary != null;
+    _chapterBoundaryPointerBoundary = null;
+    _chapterBoundaryPointerAnchor = null;
+    if (hadBoundary) {
+      _clearChapterBoundaryOverscrollUi();
+    }
+  }
+
   void _trackChapterBoundaryOverscroll(OverscrollNotification notification) {
+    if (widget.controller.direction == ReadingDirection.vertical) {
+      // Continuous mode measures deliberate pull distance from raw pointer
+      // motion after the real scroll boundary is reached. Android clamping
+      // physics does not provide a stable overscroll-distance semantic.
+      return;
+    }
+    if (notification.dragDetails == null) {
+      // Ballistic/layout corrections are not chapter-navigation intent.
+      _resetChapterBoundaryOverscroll();
+      return;
+    }
     if (!widget.crossChapterReading ||
         widget.onChapterBoundaryRequested == null ||
         _chapterBoundaryRequestInFlight) {
-      _resetChapterBoundaryOverscroll();
+      _clearChapterBoundaryOverscrollUi();
       return;
     }
     final currentIndex = widget.controller.currentIndex;
@@ -2160,33 +2380,49 @@ final class _ReaderViewState extends State<ReaderView>
       boundary = ReaderChapterBoundary.next;
     }
     if (boundary == null) {
-      _resetChapterBoundaryOverscroll();
+      _clearChapterBoundaryOverscrollUi();
       return;
     }
-    if (_chapterBoundaryOverscroll != boundary) {
+    final previousBoundary = _chapterBoundaryOverscroll;
+    final wasReady =
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    if (previousBoundary != boundary) {
       _chapterBoundaryOverscroll = boundary;
       _chapterBoundaryOverscrollDistance = 0;
     }
     _chapterBoundaryOverscrollDistance += notification.overscroll.abs();
+    final isReady =
+        _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
+    if (previousBoundary != boundary || wasReady != isReady) {
+      _scheduleChapterBoundaryVisualRefresh();
+    }
   }
 
   void _completeChapterBoundaryOverscroll() {
     final boundary = _chapterBoundaryOverscroll;
     final distance = _chapterBoundaryOverscrollDistance;
-    _resetChapterBoundaryOverscroll();
+    _chapterBoundaryOverscroll = null;
+    _chapterBoundaryOverscrollDistance = 0;
     final callback = widget.onChapterBoundaryRequested;
     if (boundary == null ||
-        distance < _chapterBoundaryThreshold ||
         callback == null ||
         _chapterBoundaryRequestInFlight) {
       return;
     }
+    if (distance < _chapterBoundaryThreshold) {
+      _scheduleChapterBoundaryVisualRefresh();
+      return;
+    }
     _chapterBoundaryRequestInFlight = true;
+    _chapterBoundaryRequesting = boundary;
+    _scheduleChapterBoundaryVisualRefresh();
     unawaited(
       Future<void>.sync(() => callback(boundary)).whenComplete(() {
-        if (mounted) {
+        if (!mounted) return;
+        setState(() {
           _chapterBoundaryRequestInFlight = false;
-        }
+          _chapterBoundaryRequesting = null;
+        });
       }),
     );
   }
@@ -2237,7 +2473,14 @@ final class _ReaderViewState extends State<ReaderView>
               ? Interaction.scrolling
               : Interaction.dragging;
       _startVerticalSceneMotionProbe();
-      _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
+      if (notification.dragDetails == null) {
+        _scheduleVerticalObservationRefreshAfterLayout();
+      } else {
+        _emitFromVerticalMetrics(
+          notification.metrics,
+          forceLayoutSnapshot: true,
+        );
+      }
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
       final dragDriven = notification.dragDetails != null;
@@ -2253,7 +2496,11 @@ final class _ReaderViewState extends State<ReaderView>
         notification.metrics,
         dragDriven: dragDriven,
       );
-      _emitFromVerticalMetrics(notification.metrics);
+      if (dragDriven) {
+        _emitFromVerticalMetrics(notification.metrics);
+      } else {
+        _scheduleVerticalObservationRefreshAfterLayout();
+      }
     } else if (notification is OverscrollNotification) {
       _trackChapterBoundaryOverscroll(notification);
     } else if (notification is ScrollEndNotification) {
@@ -2264,7 +2511,14 @@ final class _ReaderViewState extends State<ReaderView>
       _flushVerticalScrollCadenceSummary(widget.clock.nowMicros());
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
-      _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
+      if (notification.dragDetails == null) {
+        _scheduleVerticalObservationRefreshAfterLayout();
+      } else {
+        _emitFromVerticalMetrics(
+          notification.metrics,
+          forceLayoutSnapshot: true,
+        );
+      }
       if (_interaction == Interaction.idle &&
           _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
         _scheduleVerticalKeepAliveRecenter();

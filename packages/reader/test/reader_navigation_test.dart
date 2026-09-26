@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,6 +118,158 @@ void main() {
     await tester.pump();
     await tester.drag(find.byType(PageView), const Offset(-360, 0));
     await tester.pump();
+    expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
+  });
+
+  testWidgets(
+      'continuous boundary shows loading feedback while next chapter is prepared',
+      (tester) async {
+    final base = _chapter(pageCount: 1);
+    final chapter = ChapterManifest(
+      sourceId: base.sourceId,
+      comicId: base.comicId,
+      chapter: base.chapter,
+      pages: base.pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-vertical-boundary-feedback-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <ReaderChapterBoundary>[];
+    final completion = Completer<void>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 400,
+          height: 400,
+          child: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            crossChapterReading: true,
+            canReadNextChapter: true,
+            onChapterBoundaryRequested: (boundary) {
+              requested.add(boundary);
+              return completion.future;
+            },
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final list =
+        find.byKey(const ValueKey<String>('reader-vertical-list'));
+    await tester.drag(list, const Offset(0, -800));
+    await tester.pumpAndSettle();
+    expect(requested, isEmpty);
+
+    final gesture = await tester.startGesture(tester.getCenter(list));
+    await gesture.moveBy(const Offset(0, -80));
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('松手加载下一章'), findsOneWidget);
+    expect(requested, isEmpty);
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+
+    expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
+    expect(tester.takeException(), isNull);
+    expect(find.text('正在加载下一章…'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey<String>('reader-chapter-boundary-next'),
+      ),
+      findsOneWidget,
+    );
+
+    completion.complete();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('正在加载下一章…'), findsNothing);
+  });
+
+  testWidgets(
+      'continuous end boundary uses scroll geometry when final page is short',
+      (tester) async {
+    final base = _chapter(pageCount: 2);
+    final chapter = ChapterManifest(
+      sourceId: base.sourceId,
+      comicId: base.comicId,
+      chapter: base.chapter,
+      pages: base.pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-short-final-page-boundary-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <ReaderChapterBoundary>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 400,
+          height: 400,
+          child: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            verticalStitch: true,
+            pageAspectRatios: <String, double>{
+              chapter.pages[0].assetKey: 2.0,
+              chapter.pages[1].assetKey: 0.1,
+            },
+            crossChapterReading: true,
+            canReadNextChapter: true,
+            onChapterBoundaryRequested: requested.add,
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollable = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    final scrollState = tester.state<ScrollableState>(scrollable);
+    scrollState.position.jumpTo(scrollState.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+
+    expect(requested, isEmpty);
+    expect(
+      controller.currentIndex,
+      0,
+      reason:
+          'the tall penultimate page remains coverage-current at max extent',
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(list));
+    await gesture.moveBy(const Offset(0, -80));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('松手加载下一章'), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+
     expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
   });
 

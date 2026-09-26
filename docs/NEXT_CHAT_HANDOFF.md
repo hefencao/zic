@@ -49,10 +49,10 @@
 - 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。
   旧 plugin-scoped trust 的 source 迁移只有在 installed record 能证明 source 集完整时才退休 plugin fallback；runtime discovery 不完整时必须继续保留。
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
-  每漫画“使用自适应设置”是独立开关；手动阅读方向只有跟随/LTR/RTL/纵向，
-  “启用本漫画覆盖”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override，开启后 adaptive 入口仍保留；清除手动覆盖不得清 adaptive policy/profile。
+  每漫画“使用自适应设置”是独立开关；手动阅读方向只有跟随/LTR/RTL/纵向，“启用本漫画覆盖”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override，开启后 adaptive 入口仍保留；清除手动覆盖不得清 adaptive policy/profile。
   全局分页方向为 LTR/RTL/跟随来源且默认 LTR；阅读设置现按 `ReaderModeSettings` 分成 paged / continuous 两套 mode profile，相同 presentation/gesture 项允许不同值。双击一级/二级倍率都使用 slider，长按倍率独立于双击倍率并默认 2.0x。
-  两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 overscroll navigation。相邻章节预加载与该 UI 开关完全解耦，章节仍保持一章一个 immutable manifest/session，实际跨章前 flush progress 并由 HomeLibrarySession upsert 目标章。
+  两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
+  章节仍保持一章一个 immutable manifest/session，实际跨章前 flush progress 并由 HomeLibrarySession upsert 目标章。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示；follow 模式直接复用 Reader 控制栏可见性。Android 16/targetSdk 36 由 reader_runtime 的 WindowInsetsController owner 实际 show/hide，navigation bar 仍跟随控制栏，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
 - 逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 的残余水位，不额外扩窗；同一 lease 随页推进伸缩，priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。

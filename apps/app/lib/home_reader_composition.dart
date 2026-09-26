@@ -22,6 +22,51 @@ typedef HomeReaderVersionAuthorityPreparer = Future<int> Function(
   ImportedLibraryEntry entry,
 );
 
+Future<T?> homeReaderCoalesceSuccessfulAdjacentPreparation<T>({
+  required Map<String, Future<T?>> cache,
+  required String key,
+  required Future<T?> Function() prepare,
+}) {
+  final existing = cache[key];
+  if (existing != null) return existing;
+  late final Future<T?> preparation;
+  preparation = prepare();
+  cache[key] = preparation;
+  unawaited(
+    preparation.then<void>(
+      (prepared) {
+        if (prepared == null && identical(cache[key], preparation)) {
+          cache.remove(key);
+        }
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(cache[key], preparation)) {
+          cache.remove(key);
+        }
+      },
+    ),
+  );
+  return preparation;
+}
+
+List<T> homeReaderLogicalChapterOrder<T>(
+  Iterable<T> chapters, {
+  required int Function(T chapter) sequenceOf,
+}) {
+  final indexed = <({T chapter, int sourceOrder})>[];
+  var sourceOrder = 0;
+  for (final chapter in chapters) {
+    indexed.add((chapter: chapter, sourceOrder: sourceOrder++));
+  }
+  indexed.sort((left, right) {
+    final bySequence =
+        sequenceOf(left.chapter).compareTo(sequenceOf(right.chapter));
+    if (bySequence != 0) return bySequence;
+    return left.sourceOrder.compareTo(right.sourceOrder);
+  });
+  return <T>[for (final item in indexed) item.chapter];
+}
+
 ({int previous, int next, int displayedIndex}) homeReaderAdjacentPreloadResidual({
   required int pageCount,
   required int rawPageIndex,

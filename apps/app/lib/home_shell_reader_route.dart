@@ -215,21 +215,18 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
       }
     }
     if (!refs.any((ref) => ref.chapterId == current.chapter.chapterId)) {
-      final currentRef = _ReaderAdjacentChapterRef(
-        chapterId: current.chapter.chapterId,
-        sequence: current.chapter.sequence,
-        entry: current,
+      refs.add(
+        _ReaderAdjacentChapterRef(
+          chapterId: current.chapter.chapterId,
+          sequence: current.chapter.sequence,
+          entry: current,
+        ),
       );
-      final insertAt = refs.indexWhere(
-        (ref) => ref.sequence > current.chapter.sequence,
-      );
-      if (insertAt < 0) {
-        refs.add(currentRef);
-      } else {
-        refs.insert(insertAt, currentRef);
-      }
     }
-    return refs;
+    return homeReaderLogicalChapterOrder(
+      refs,
+      sequenceOf: (ref) => ref.sequence,
+    );
   }
 
   _ReaderAdjacentChapterRef? _readerAdjacentChapter(
@@ -503,31 +500,34 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     Future<_PreparedImportedChapter?> prepareAdjacent(
       _PreparedImportedChapter current,
       ReaderChapterBoundary boundary,
-    ) {
-      final key = adjacentKey(current.entry, boundary);
-      return adjacentPreparations.putIfAbsent(key, () async {
-        final entry = await _loadReaderAdjacentEntry(current.entry, boundary);
-        if (entry == null) return null;
-        final settings = widget.preferences.readerSessionSettingsFor(
-          entry.chapter.sourceId,
-          entry.chapter.comicId,
+    ) =>
+        homeReaderCoalesceSuccessfulAdjacentPreparation(
+          cache: adjacentPreparations,
+          key: adjacentKey(current.entry, boundary),
+          prepare: () async {
+            final entry =
+                await _loadReaderAdjacentEntry(current.entry, boundary);
+            if (entry == null) return null;
+            final settings = widget.preferences.readerSessionSettingsFor(
+              entry.chapter.sourceId,
+              entry.chapter.comicId,
+            );
+            final inverted = settings.effectiveInvertPageOrder;
+            final lastPage = entry.chapter.pages.length - 1;
+            final initial = boundary == ReaderChapterBoundary.previous
+                ? inverted
+                    ? 0
+                    : lastPage
+                : inverted
+                    ? lastPage
+                    : 0;
+            return _readerChapterComposition.prepare(
+              () async => entry,
+              refreshRemote: false,
+              initialPageIndex: initial,
+            );
+          },
         );
-        final inverted = settings.effectiveInvertPageOrder;
-        final lastPage = entry.chapter.pages.length - 1;
-        final initial = boundary == ReaderChapterBoundary.previous
-            ? inverted
-                ? 0
-                : lastPage
-            : inverted
-                ? lastPage
-                : 0;
-        return _readerChapterComposition.prepare(
-          () async => entry,
-          refreshRemote: false,
-          initialPageIndex: initial,
-        );
-      });
-    }
 
     Future<void> closeAdjacentPreload(
       ReaderChapterBoundary boundary,
@@ -725,28 +725,97 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     ) async {
       final previous = currentPrepared;
       if (!routeActive || previous == null) return;
-      final preparedAdjacent = await prepareAdjacent(previous, boundary);
-      if (!routeActive || preparedAdjacent == null) return;
-      try {
-        await _flushReaderProgressCheckpoints();
-      } on Object catch (error) {
-        debugPrint('reader chapter-boundary progress flush failed: $error');
-      }
-      final persistedEntry =
-          await _librarySession.upsertChapter(preparedAdjacent.entry.chapter);
-      if (!routeActive) return;
-      final replacement = HomeReaderPreparedChapter(
-        entry: persistedEntry,
-        byteLoaders: preparedAdjacent.byteLoaders,
-        responseSources: preparedAdjacent.responseSources,
-        initialPageIndex: preparedAdjacent.initialPageIndex,
+      final adjacentRef = _readerAdjacentChapter(previous.entry, boundary);
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.nowMicros(),
+          sessionId: 'reader-entry',
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{
+            'stage': 'chapter-boundary-request-start',
+            'boundary': boundary.name,
+            'fromChapterId': previous.entry.chapter.chapterId,
+            'fromSequence': previous.entry.chapter.sequence,
+            'targetChapterId': adjacentRef?.chapterId,
+            'targetSequence': adjacentRef?.sequence,
+          },
+        ),
       );
-      currentPrepared = replacement;
-      currentRawPageIndex = replacement.initialPageIndex ??
-          replacement.entry.progress?.pageIndex ??
-          0;
-      replacementPrepared.value = replacement;
-      scheduleAdjacentPreload(replacement, currentRawPageIndex!);
+      try {
+        final preparedAdjacent = await prepareAdjacent(previous, boundary);
+        if (!routeActive) return;
+        if (preparedAdjacent == null) {
+          throw StateError(
+            boundary == ReaderChapterBoundary.next
+                ? '下一章暂时不可用'
+                : '上一章暂时不可用',
+          );
+        }
+        try {
+          await _flushReaderProgressCheckpoints();
+        } on Object catch (error) {
+          debugPrint('reader chapter-boundary progress flush failed: $error');
+        }
+        final persistedEntry =
+            await _librarySession.upsertChapter(preparedAdjacent.entry.chapter);
+        if (!routeActive) return;
+        final replacement = HomeReaderPreparedChapter(
+          entry: persistedEntry,
+          byteLoaders: preparedAdjacent.byteLoaders,
+          responseSources: preparedAdjacent.responseSources,
+          initialPageIndex: preparedAdjacent.initialPageIndex,
+        );
+        currentPrepared = replacement;
+        currentRawPageIndex = replacement.initialPageIndex ??
+            replacement.entry.progress?.pageIndex ??
+            0;
+        replacementPrepared.value = replacement;
+        scheduleAdjacentPreload(replacement, currentRawPageIndex!);
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.nowMicros(),
+            sessionId: 'reader-entry',
+            kind: TraceEventKind.readerObservation,
+            payload: <String, Object?>{
+              'stage': 'chapter-boundary-request-complete',
+              'boundary': boundary.name,
+              'fromChapterId': previous.entry.chapter.chapterId,
+              'fromSequence': previous.entry.chapter.sequence,
+              'chapterId': replacement.entry.chapter.chapterId,
+              'sequence': replacement.entry.chapter.sequence,
+              'initialPageIndex': currentRawPageIndex,
+            },
+          ),
+        );
+      } on Object catch (error) {
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.nowMicros(),
+            sessionId: 'reader-entry',
+            kind: TraceEventKind.taskFailed,
+            payload: <String, Object?>{
+              'stage': 'chapter-boundary-request-failed',
+              'boundary': boundary.name,
+              'fromChapterId': previous.entry.chapter.chapterId,
+              'fromSequence': previous.entry.chapter.sequence,
+              'targetChapterId': adjacentRef?.chapterId,
+              'targetSequence': adjacentRef?.sequence,
+              'error': error.toString(),
+            },
+          ),
+        );
+        if (routeActive) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            SnackBar(
+              content: Text(
+                boundary == ReaderChapterBoundary.next
+                    ? '加载下一章失败，可继续上滑重试'
+                    : '加载上一章失败，可继续下拉重试',
+              ),
+            ),
+          );
+        }
+      }
     }
 
     Future<bool> recoverPageGeneration(

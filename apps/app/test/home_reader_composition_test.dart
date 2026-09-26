@@ -8,6 +8,84 @@ import 'package:zic/home_reader_composition.dart';
 import 'package:zic/source_resource_gateway.dart';
 
 void main() {
+  test('adjacent preparation evicts failures so a later retry can succeed',
+      () async {
+    final cache = <String, Future<String?>>{};
+    var attempts = 0;
+
+    Future<String?> prepare() async {
+      attempts++;
+      if (attempts == 1) throw StateError('transient plugin failure');
+      return 'ready';
+    }
+
+    await expectLater(
+      homeReaderCoalesceSuccessfulAdjacentPreparation(
+        cache: cache,
+        key: 'next',
+        prepare: prepare,
+      ),
+      throwsStateError,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(cache, isEmpty);
+
+    final retried = await homeReaderCoalesceSuccessfulAdjacentPreparation(
+      cache: cache,
+      key: 'next',
+      prepare: prepare,
+    );
+    expect(retried, 'ready');
+    expect(attempts, 2);
+  });
+
+  test('logical chapter order is sequence-ascending independent of source order',
+      () {
+    final sourceOrder = <({int sequence, String id})>[
+      (sequence: 5, id: 'chapter-6'),
+      (sequence: 4, id: 'chapter-5'),
+      (sequence: 3, id: 'chapter-4'),
+      (sequence: 2, id: 'chapter-3'),
+      (sequence: 1, id: 'chapter-2'),
+      (sequence: 0, id: 'chapter-1'),
+    ];
+
+    final logical = homeReaderLogicalChapterOrder(
+      sourceOrder,
+      sequenceOf: (chapter) => chapter.sequence,
+    );
+
+    expect(
+      logical.map((chapter) => chapter.id).toList(growable: false),
+      <String>[
+        'chapter-1',
+        'chapter-2',
+        'chapter-3',
+        'chapter-4',
+        'chapter-5',
+        'chapter-6',
+      ],
+    );
+  });
+
+  test('logical chapter order preserves source order for equal sequences', () {
+    final sourceOrder = <({int sequence, String id})>[
+      (sequence: 1, id: 'first'),
+      (sequence: 1, id: 'second'),
+      (sequence: 0, id: 'earlier'),
+    ];
+
+    final logical = homeReaderLogicalChapterOrder(
+      sourceOrder,
+      sequenceOf: (chapter) => chapter.sequence,
+    );
+
+    expect(
+      logical.map((chapter) => chapter.id).toList(growable: false),
+      <String>['earlier', 'first', 'second'],
+    );
+  });
+
   test('adjacent preload fills only the residual 7/3 encoded window', () {
     expect(
       homeReaderAdjacentPreloadResidual(

@@ -176,14 +176,13 @@ PipelineReaderSessionFactory importedImageChapterPipelineFactory({
   required PipelineReaderSessionFactory pipelineFactory,
 }) {
   final chapter = record.toManifest();
-  return pipelineFactory.withLoaderSources(
-    _importedImageChapterLoaderSources(
-      record: record,
-      chapter: chapter,
-      byteLoaders: byteLoaders,
-      responseSources: responseSources,
-    ),
+  final sources = _importedImageChapterLoaderSources(
+    record: record,
+    chapter: chapter,
+    byteLoaders: byteLoaders,
+    responseSources: responseSources,
   );
+  return pipelineFactory.withLoaderSources(sources);
 }
 
 final class ImportedImageChapterScreen extends StatelessWidget {
