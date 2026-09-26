@@ -6,6 +6,7 @@ import 'package:transport/transport.dart';
 
 typedef PartialDownloadBoundRangeReader = ({
   String accessMode,
+  String? directFilePath,
   Future<Uint8List> Function(int start, int endExclusive) readRange,
   Future<void> Function() close,
 });

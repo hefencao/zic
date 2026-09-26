@@ -196,6 +196,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Set<DecodeId> _decodeRecoveryPending = <DecodeId>{};
   final PlaybackGate _playbackGate = PlaybackGate();
   int _revision = 0;
+  int _downloadMapMicros = 0;
+  int _downloadTransferMicros = 0;
+  int _downloadObserveMicros = 0;
+  int _downloadNormalizeMicros = 0;
+  int _downloadValidateMicros = 0;
+  int _downloadApplyMicros = 0;
+  int _downloadCommitMicros = 0;
+  int _downloadScheduleMicros = 0;
+  int _metadataOnlyDecodeChanges = 0;
+  int _rankOnlyDecodeChanges = 0;
+  int _metadataOnlyUploadChanges = 0;
+  int _rankOnlyUploadChanges = 0;
+  int _producerDeferredUploadChanges = 0;
   bool _disposed = false;
 
   Map<DownloadId, DownloadDemand> get demands =>
@@ -237,6 +250,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   @override
   void reconcile(String sessionId, PipelineDelta update) {
+    if (_disposed) return;
+    _reconcileNow(sessionId, update);
+  }
+
+  void _reconcileNow(String sessionId, PipelineDelta update) {
     final startedAtMicros = clock.nowMicros();
     _revision = update.plan.revision;
 
@@ -250,6 +268,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     // Nest in reverse dependency order so commit unwinds network -> decode ->
     // upload, matching the historical admission order while every lane still
     // observes the same fully-mutated authoritative plan.
+    _metadataOnlyDecodeChanges = 0;
+    _rankOnlyDecodeChanges = 0;
+    _metadataOnlyUploadChanges = 0;
+    _rankOnlyUploadChanges = 0;
+    _producerDeferredUploadChanges = 0;
+    _downloadMapMicros = 0;
+    _downloadTransferMicros = 0;
+    _downloadObserveMicros = 0;
+    _downloadNormalizeMicros = 0;
+    _downloadValidateMicros = 0;
+    _downloadApplyMicros = 0;
+    _downloadCommitMicros = 0;
+    _downloadScheduleMicros = 0;
     var downloadsMicros = 0;
     var decodesMicros = 0;
     var uploadsMicros = 0;
@@ -292,6 +323,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               .clamp(0, 1 << 62)
               .toInt(),
           'downloadsMicros': downloadsMicros.clamp(0, 1 << 62).toInt(),
+          'downloadMapMicros': _downloadMapMicros,
+          'downloadTransferMicros': _downloadTransferMicros,
+          'downloadObserveMicros': _downloadObserveMicros,
+          'downloadNormalizeMicros': _downloadNormalizeMicros,
+          'downloadValidateMicros': _downloadValidateMicros,
+          'downloadApplyMicros': _downloadApplyMicros,
+          'downloadCommitMicros': _downloadCommitMicros,
+          'downloadScheduleMicros': _downloadScheduleMicros,
           'decodesMicros': decodesMicros.clamp(0, 1 << 62).toInt(),
           'uploadsMicros': uploadsMicros.clamp(0, 1 << 62).toInt(),
           'livenessMicros': livenessMicros.clamp(0, 1 << 62).toInt(),
@@ -306,6 +345,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           'uploadAdded': update.diff.uploads.added.length,
           'uploadChanged': update.diff.uploads.changed.length,
           'uploadRemoved': update.diff.uploads.removed.length,
+          'decodeMetadataOnly': _metadataOnlyDecodeChanges,
+          'decodeRankOnly': _rankOnlyDecodeChanges,
+          'uploadMetadataOnly': _metadataOnlyUploadChanges,
+          'uploadRankOnly': _rankOnlyUploadChanges,
+          'uploadProducerDeferred': _producerDeferredUploadChanges,
           'downloadCount': update.plan.downloads.length,
           'decodeCount': update.plan.decodes.length,
           'uploadCount': update.plan.uploads.length,
@@ -448,6 +492,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     MapDiff<DownloadId, DownloadDemand> diff,
   ) {
     if (diff.isEmpty) return;
+    var stageStartedAt = clock.nowMicros();
     for (final id in diff.removed) {
       _downloads.remove(id);
       _observedDownloadSessions.remove(id);
@@ -459,17 +504,21 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final entry in scheduled) {
       _downloads[entry.key] = entry.value;
     }
+    _downloadMapMicros = clock.nowMicros() - stageStartedAt;
+    stageStartedAt = clock.nowMicros();
     _downloadTransfer.replaceDemands(
       sessionId,
       _revision,
-      <DownloadId, TransferDemand>{
-        for (final entry in _downloads.entries)
-          entry.key: TransferDemand(
-            priority: entry.value.priority,
-            reason: entry.value.reason,
-            flowTargetFrames: entry.value.flowTargetFrames,
-          ),
-        });
+      _transferDemandsForDownloads(_downloads),
+    );
+    _downloadTransferMicros = clock.nowMicros() - stageStartedAt;
+    final transferTiming = _downloadTransfer.lastDemandMutationTiming;
+    _downloadNormalizeMicros = transferTiming.normalizeMicros;
+    _downloadValidateMicros = transferTiming.validateMicros;
+    _downloadApplyMicros = transferTiming.applyMicros;
+    _downloadCommitMicros = transferTiming.commitMicros;
+    _downloadScheduleMicros = transferTiming.scheduleMicros;
+    stageStartedAt = clock.nowMicros();
     // Source/ingress observation is physical-identity lifecycle work, not a
     // scheduling-priority side effect. Newly demanded identities must attach;
     // an existing logical id only re-enters this path if the physical session
@@ -477,20 +526,47 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     // in the transfer scheduler and does not repeatedly attach ingress or walk
     // Reader source-watch ownership on every page boundary.
     for (final entry in diff.added.entries) {
-      final session = _downloadSessionFor(entry.key);
+      // replaceDemands() has already made the acquire-time physical identity
+      // decision for this newly admitted logical page. Observation must reuse
+      // that carrier rather than asking composition to resolve the same
+      // canonical/equivalent identity a second time in the same reconcile.
+      final session =
+          _downloadTransfer.findAcquiredSession(entry.key) ??
+          _downloadSessionFor(entry.key);
       _observeDownloadIdentity(sessionId, entry.key, session);
     }
     for (final entry in diff.changed.entries) {
-      final session = _findDownloadSession(entry.key);
-      final observed = _observedDownloadSessions[entry.key];
-      if (session != null && !identical(observed, session)) {
+      // Scheduling-only migration cannot replace an acquire-time physical
+      // carrier while this logical demand remains attached. The ordinary hot
+      // path already has the observed session and needs no owner lookup at all.
+      // Recover only if observation bookkeeping is unexpectedly absent.
+      if (_observedDownloadSessions.containsKey(entry.key)) {
+        continue;
+      }
+      final session =
+          _downloadTransfer.findAcquiredSession(entry.key) ??
+          _findDownloadSession(entry.key);
+      if (session != null) {
         _observeDownloadIdentity(sessionId, entry.key, session);
         if (_sourceWatches.containsKey(entry.key)) {
           _watchSource(sessionId, entry.key, session);
         }
       }
     }
+    _downloadObserveMicros = clock.nowMicros() - stageStartedAt;
   }
+
+  Map<DownloadId, TransferDemand> _transferDemandsForDownloads(
+    Map<DownloadId, DownloadDemand> downloads,
+  ) =>
+      <DownloadId, TransferDemand>{
+        for (final entry in downloads.entries)
+          entry.key: TransferDemand(
+            priority: entry.value.priority,
+            reason: entry.value.reason,
+            flowTargetFrames: entry.value.flowTargetFrames,
+          ),
+      };
 
   void _observeDownloadIdentity(
     String sessionId,
@@ -566,11 +642,25 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   }
 
   void _watchSource(String sessionId, DownloadId id, DownloadSession session) {
+    // Cached/promoted downloads keep rank authoritative in the transfer claim
+    // without eagerly rewriting the physical DownloadSession on every viewport
+    // shift. Crossing into real source work is the synchronization boundary.
+    _downloadTransfer.syncAcquiredSessionPriority(id);
+    final existing = _sourceWatches[id];
+    if (existing != null && identical(existing.session, session)) {
+      // A retained logical source already owns the Reader-local projection for
+      // this exact physical DownloadSession. Decode/upload role migration is
+      // scheduling metadata only; do not re-enter ingress attachment merely to
+      // rediscover the same projection on every page-boundary shift. Replay
+      // priority still follows the physical demand rank through its dedicated
+      // lightweight update path.
+      ingresses?.updatePriority(session);
+      return;
+    }
     final projection = ingresses?.get(session);
     if (projection == null) {
       return;
     }
-    final existing = _sourceWatches[id];
     if (existing != null && identical(existing.projection, projection)) {
       if (!identical(existing.session, session)) {
         final previousSession = existing.session;
@@ -777,16 +867,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
-      final downloadSession =
-          _observedDownloadSessions[entry.key.download] ??
-          _findDownloadSession(entry.key.download);
-      if (downloadSession != null) {
-        _watchSource(sessionId, entry.key.download, downloadSession);
-      }
+      final changed = diff.changed.containsKey(entry.key);
+      final priorDemand = _decodes[entry.key];
       _decodes[entry.key] = entry.value;
       final demandRevision = _revision;
       _decodeDemandRevisions[entry.key] = demandRevision;
-      if (diff.added.containsKey(entry.key)) {
+      if (!changed) {
         _resourceTrace(
           sessionId,
           TraceEventKind.decodeDemand,
@@ -801,12 +887,62 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (onDecode == null && decodes == null) {
         continue;
       }
+
+      if (changed &&
+          priorDemand != null &&
+          priorDemand.role == entry.value.role &&
+          priorDemand.targetWatermark == entry.value.targetWatermark &&
+          !_hasPendingSourceRevision(entry.key)) {
+        // Role and decode execution target are unchanged. Priority/reason/
+        // decision metadata cannot create new decode work; an existing lane
+        // task keeps the same producer/source lifecycle and only its rank moves.
+        // If no task exists, the already-attached source/decode callbacks remain
+        // responsible for waking this retained demand when producer state moves.
+        decode.updatePriority(entry.key.key, entry.value.priority);
+        _metadataOnlyDecodeChanges++;
+        _rankOnlyDecodeChanges++;
+        continue;
+      }
+
       final decodeRegistry = decodes;
+      if (changed && _externalPresentationSatisfied.contains(entry.key)) {
+        // External first-frame proof is already complete. A retained page only
+        // changing role/rank must not re-enter source/decode lifecycle.
+        decode.updatePriority(entry.key.key, entry.value.priority);
+        decode.cancelQueued(entry.key.key);
+        _metadataOnlyDecodeChanges++;
+        continue;
+      }
+
+      if (changed && decodeRegistry != null) {
+        final pendingSourceWake = _hasPendingSourceRevision(entry.key);
+        final before = decodeRegistry.find(entry.key)?.snapshot;
+        final preparedDepth = uploads?.preparedDepth(entry.key) ?? 0;
+        if (!pendingSourceWake &&
+            !_decodeNeedsFill(
+              before,
+              entry.value,
+              preparedDepth: preparedDepth,
+              sourceWake: false,
+              force: true,
+            )) {
+          // The execution target is already satisfied. Keep the accepted plan
+          // metadata and lane rank current, but do not touch ingress/source
+          // ownership or manufacture another decode task for a retained page.
+          decode.updatePriority(entry.key.key, entry.value.priority);
+          decode.cancelQueued(entry.key.key);
+          _metadataOnlyDecodeChanges++;
+          continue;
+        }
+      }
+
+      final downloadSession =
+          _observedDownloadSessions[entry.key.download] ??
+          _findDownloadSession(entry.key.download);
+      if (downloadSession != null) {
+        _watchSource(sessionId, entry.key.download, downloadSession);
+      }
       if (_externalPresentationSatisfied.contains(entry.key)) {
-        // A Flutter/fallback first frame is the one-frame readiness proof for
-        // this exact DecodeId. Role/priority migrations keep that proof just
-        // like a resident native static frame; they must not restart the
-        // no-native-frame DecodeSession merely because the plan revision moved.
         decode.cancelQueued(entry.key.key);
         continue;
       }
@@ -822,15 +958,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             sourceWake: false,
             force: true,
           )) {
-        // Role/priority migration of an already-satisfied static page is
-        // scheduler metadata, not decode work. Remove any stale queued no-op
-        // and update a genuinely active task in place instead of following it
-        // with another lane task that will rediscover the same fact.
+        decode.updatePriority(entry.key.key, entry.value.priority);
         decode.cancelQueued(entry.key.key);
+        if (changed) _metadataOnlyDecodeChanges++;
         continue;
       }
-      final submit = diff.changed.containsKey(entry.key)
-          ? decode.follow
+      final submit = changed ? decode.follow
           : decode.submit;
       final submittedAtMicros = clock.nowMicros();
       submit(
@@ -1503,13 +1636,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
+      final changed = diff.changed.containsKey(entry.key);
       final priorUploadDemand = _uploads[entry.key];
-      final downloadSession =
-          _observedDownloadSessions[entry.key.download] ??
-          _findDownloadSession(entry.key.download);
-      if (downloadSession != null) {
-        _watchSource(sessionId, entry.key.download, downloadSession);
-      }
       _uploads[entry.key] = entry.value;
       if (priorUploadDemand?.viewportVisible == true &&
           !entry.value.viewportVisible) {
@@ -1519,7 +1647,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       final demandRevision = _revision;
       _uploadDemandRevisions[entry.key] = demandRevision;
-      if (diff.added.containsKey(entry.key)) {
+      if (!changed) {
         _resourceTrace(
           sessionId,
           TraceEventKind.uploadDemand,
@@ -1528,7 +1656,81 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           revision: demandRevision,
         );
       }
+      if (changed &&
+          priorUploadDemand != null &&
+          priorUploadDemand.role == entry.value.role &&
+          priorUploadDemand.retainOutput == entry.value.retainOutput &&
+          priorUploadDemand.viewportVisible == entry.value.viewportVisible) {
+        // Presentation role/visibility/retention are unchanged. Priority,
+        // reason and decision metadata cannot manufacture decoded producer
+        // inventory or invalidate a resident output, so only the lane rank
+        // needs to move. Producer callbacks still wake an absent task when a
+        // real decoded frame appears.
+        upload.updatePriority(entry.key.key, entry.value.priority);
+        _metadataOnlyUploadChanges++;
+        _rankOnlyUploadChanges++;
+        continue;
+      }
       final uploadRegistry = uploads;
+      if (changed &&
+          uploadRegistry != null &&
+          uploadRegistry.reusePreparedStaticForDemand(
+            entry.key,
+            entry.value,
+            revision: demandRevision,
+          )) {
+        // A ready one-frame output already satisfies this retained page. Keep
+        // only plan metadata and lane rank current; source attachment and
+        // upload preparation are lifecycle work and must not run again.
+        upload.updatePriority(entry.key.key, entry.value.priority);
+        upload.cancelQueued(entry.key.key);
+        _metadataOnlyUploadChanges++;
+        if (entry.value.role == PageRole.last) {
+          final existing = uploadRegistry.find(entry.key);
+          final snapshot = existing?.snapshot;
+          if (snapshot?.frameIndex != null) {
+            traceSink.record(
+              traceEvent(
+                clock: clock,
+                sessionId: sessionId,
+                kind: TraceEventKind.lastFrameKept,
+                identityHash: _decodeTraceIdentity(entry.key),
+                revision: demandRevision,
+                payload: <String, Object?>{
+                  'frame': snapshot!.frameIndex,
+                  'outputBytes': snapshot.outputBytes,
+                },
+              ),
+            );
+          }
+        }
+        continue;
+      }
+
+      if (changed && uploadRegistry != null) {
+        final existing = uploadRegistry.find(entry.key);
+        final residentOutput = existing?.snapshot.frameIndex;
+        final decodeHolder = decodes?.find(entry.key)?.holder;
+        if (residentOutput == null &&
+            (decodeHolder == null || decodeHolder.isEmpty)) {
+          // Upload is producer-driven. A retained page whose rank changed but
+          // still has neither a resident output nor decoded input has no upload
+          // lifecycle work to perform. Keep only accepted plan/lane metadata;
+          // the first decoded-frame callback will wake this demand when real
+          // producer inventory exists.
+          upload.updatePriority(entry.key.key, entry.value.priority);
+          upload.cancelQueued(entry.key.key);
+          _producerDeferredUploadChanges++;
+          continue;
+        }
+      }
+
+      final downloadSession =
+          _observedDownloadSessions[entry.key.download] ??
+          _findDownloadSession(entry.key.download);
+      if (downloadSession != null) {
+        _watchSource(sessionId, entry.key.download, downloadSession);
+      }
       if (uploadRegistry != null) {
         if (entry.value.role == PageRole.current ||
             entry.value.role == PageRole.transition) {
@@ -1590,10 +1792,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         // A retained/ready authoritative static output only changed policy
         // role. Do not enqueue an UploadLane task merely to run prepare() into
         // its already-ready no-op branch.
+        upload.updatePriority(entry.key.key, entry.value.priority);
         upload.cancelQueued(entry.key.key);
+        if (changed) _metadataOnlyUploadChanges++;
         continue;
       }
-      if (uploadRegistry != null && entry.value.role == PageRole.next) {
+      if (uploadRegistry != null) {
         final decodeHolder = decodes?.find(entry.key)?.holder;
         final residentOutput = uploadRegistry
             .find(entry.key)
@@ -1601,12 +1805,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             .frameIndex;
         if (residentOutput == null &&
             (decodeHolder == null || decodeHolder.isEmpty)) {
-          // Hidden paged-next preupload is producer-driven. Its UploadDemand
-          // owns the right to prepare one output, but an empty decode holder is
-          // not upload work yet. The first decoded-frame callback wakes this
-          // lane once real input exists instead of burning an initial no-op
-          // task before decode and then another task for the same frame.
+          // Upload is producer-driven for every role. An UploadDemand owns the
+          // right/rank to present an output, but an empty decode holder is not
+          // upload work. The first decoded-frame callback wakes this lane once
+          // real input exists instead of burning a no-op task on every retained
+          // static page whose role/priority moved with the viewport.
           upload.cancelQueued(entry.key.key);
+          if (changed) _producerDeferredUploadChanges++;
           continue;
         }
       }

@@ -1042,10 +1042,22 @@ final class PipelineReaderSession {
     if (_observationDrainScheduled) return;
     _observationDrainScheduled = true;
     final generation = _observationGeneration;
-    // scheduleMicrotask here starves platform/input/vsync events until the
-    // whole plan/reconcile/lane-pump control transaction has completed. A
-    // zero-delay Timer keeps the same latest-wins semantics while yielding one
-    // ordinary event-loop turn after the frame that produced the observation.
+    final scheduler = _media.frameScheduler;
+    final frameQueued =
+        scheduler.inPersistentCallbacks || scheduler.hasScheduledFrame;
+    if (frameQueued) {
+      // A Reader scroll/page-boundary observation is control work produced by
+      // presentation motion. If Flutter already owes the user a frame, run the
+      // latest-wins reconcile only after that visual frame has been delivered;
+      // an ordinary Timer can otherwise win the event-loop race and consume
+      // several milliseconds of UI-isolate control work before beginFrame.
+      // This changes only the execution seam, not policy or demand order.
+      scheduler.afterFrame(() => _drainObservation(generation));
+      return;
+    }
+    // With no frame pending, do not manufacture one merely to update resource
+    // control state. Yield one ordinary event turn, preserving the historical
+    // prompt idle/non-visual path.
     Timer.run(() => _drainObservation(generation));
   }
 

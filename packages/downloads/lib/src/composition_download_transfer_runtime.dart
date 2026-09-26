@@ -219,6 +219,7 @@ final class CompositionDownloadTransferRuntime {
     }
     final next = <String, CanonicalMediaChapterAuthority>{};
     for (final authority in authorities) {
+      if (!authority.hasResolvablePhysicalMedia) continue;
       if (next.containsKey(authority.exactKey)) {
         throw StateError(
           'duplicate canonical media authority for ${authority.exactKey}',
@@ -570,6 +571,14 @@ final class CompositionDownloadTransferRuntime {
     // one reusable carrier candidate and may yield to a more advanced verified
     // equivalent on the next acquire.
     if (exact?.demanded == true) return exactId;
+    if (exact?.state == DownloadState.promoted) {
+      // Canonical physical authority has already had first refusal above. In
+      // its absence, a complete exact body cannot be made more useful by
+      // scanning version-equivalent carriers: it is already a full replayable
+      // authority. Reusing it also keeps rapid Reader working-set re-entry O(1)
+      // instead of re-running equivalence discovery for every cached page.
+      return exactId;
+    }
 
     final candidates = <DownloadId, DownloadSession>{};
     if (exact != null && _canJoinEquivalentSession(exact)) {
@@ -606,10 +615,18 @@ final class CompositionDownloadTransferRuntime {
     DownloadId physicalAnchor,
   ) {
     final physicalId = registry.physicalMediaIdFor(exactId);
+    final direct = registry.hasDirectPhysicalMediaBinding(exactId);
+    final legacyAlias = physicalAnchor != exactId && !direct;
+    if (physicalId.isExactFallback && !direct && !legacyAlias) {
+      // Exact fallback is the absence of a physical-owner redirection, not an
+      // ownership transition worth tracing. Emitting one event per newly
+      // observed page used to hash the same long exact key twice on the Reader
+      // hot path solely to report that nothing special happened.
+      return;
+    }
     if (_lastTracedPhysicalMediaOwner[exactId] == physicalId) return;
     _lastTracedPhysicalMediaOwner[exactId] = physicalId;
     try {
-      final direct = registry.hasDirectPhysicalMediaBinding(exactId);
       final exactToken = workspace.layout.tokenFor(exactId);
       traceHub.record(
         traceEvent(
@@ -627,7 +644,7 @@ final class CompositionDownloadTransferRuntime {
             'physicalToken': workspace.layout.tokenForPhysical(physicalId),
             'physicalMediaKind': physicalId.kind.name,
             'canonicalDirect': direct && !physicalId.isExactFallback,
-            'legacyAlias': physicalAnchor != exactId && !direct,
+            'legacyAlias': legacyAlias,
           },
         ),
       );

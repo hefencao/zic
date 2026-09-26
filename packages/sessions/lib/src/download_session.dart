@@ -390,6 +390,7 @@ final class DownloadSession {
   Object? _residentReplayGenerationToken;
   Object? _residentReplayCacheKey;
   String _residentReplayAccessMode = 'unknown';
+  String? _residentReplayDirectFilePath;
   Future<void> _residentReplayCloseTail = Future<void>.value();
   Failure? _failure;
 
@@ -452,6 +453,15 @@ final class DownloadSession {
 
   String get residentReplayAccessMode =>
       residentIngressDeferred ? _residentReplayAccessMode : 'unknown';
+
+  /// Engine-readable direct file authority for this exact resident generation.
+  ///
+  /// The path is only valid while the retained replay reader lease remains
+  /// owned by this DownloadSession. Reader-local ingress may consume it as a
+  /// read-only materialization capability; it must never close/rebind the
+  /// underlying reader or infer persistence ownership from the path itself.
+  String? get residentReplayDirectFilePath =>
+      residentIngressDeferred ? _residentReplayDirectFilePath : null;
 
   /// Compatibility/diagnostic label; behavior must use [residentBodyAuthority].
   String? get residentSource => switch (residentBodyAuthority) {
@@ -1317,6 +1327,7 @@ final class DownloadSession {
     DownloadResidentReplayRangeChunks? residentReplayRangeChunks,
     DownloadResidentReplayRangeClose? residentReplayRangeClose,
     String residentReplayAccessMode = 'unknown',
+    String? residentReplayDirectFilePath,
     Object? residentReplayCacheKey,
   }) {
     _requireNotDisposed();
@@ -1356,6 +1367,7 @@ final class DownloadSession {
     _residentReplayGenerationToken = Object();
     _residentReplayCacheKey = residentReplayCacheKey;
     _residentReplayAccessMode = residentReplayAccessMode;
+    _residentReplayDirectFilePath = residentReplayDirectFilePath;
     _residentLength = totalLength;
     _validators = validators;
     _validatorRequestUri = validators.isEmpty
@@ -2449,6 +2461,7 @@ final class DownloadSession {
     _residentReplayGenerationToken = null;
     _residentReplayCacheKey = null;
     _residentReplayAccessMode = 'unknown';
+    _residentReplayDirectFilePath = null;
     if (close == null) return;
     _residentReplayCloseTail = _residentReplayCloseTail.then((_) async {
       try {
@@ -2948,6 +2961,7 @@ final class DownloadSession {
             sealed: (_state == DownloadState.sealed ||
                     _state == DownloadState.promoted) &&
                 initialProbeLength == targetLength,
+            control: control,
           );
           control?.throwIfCancelled();
           if (!identical(
@@ -3082,6 +3096,7 @@ final class DownloadSession {
             epoch: epoch,
             chunks: chunks,
             sealed: sealed,
+            control: control,
           );
           projection.expectLength(totalLength);
         }
@@ -3223,6 +3238,7 @@ final class DownloadSession {
           control: control,
         ),
         sealed: sealed && initialProbeLength == targetLength,
+        control: control,
       );
       _requireEpoch(epoch);
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);
@@ -3267,6 +3283,7 @@ final class DownloadSession {
         control: control,
       ),
       sealed: sealed,
+      control: control,
     );
     _requireEpoch(epoch);
     _traceIngressProjection(projection.scopeId, before, projection.snapshot);

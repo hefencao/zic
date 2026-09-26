@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
@@ -13,8 +14,7 @@ import 'resident_replay_reader_pool.dart';
 
 typedef PartialDownloadHandoffError = void Function(
   Object error,
-  StackTrace stackTrace,
-);
+  StackTrace stackTrace);
 typedef PartialEquivalentCandidates = Iterable<DownloadId> Function(
   DownloadId id,
 );
@@ -51,7 +51,8 @@ final class PartialDownloadHandoff {
   final Expando<_ExactDurableRestoreProof> _exactDurableRestoreProofs =
       Expando<_ExactDurableRestoreProof>('exact-durable-restore');
   final Expando<int> _durablePartialLengths =
-      Expando<int>('durable-partial-length');
+      Expando<int>('durable-partial-length',
+  );
 
   int durablePartialLength(DownloadSession session) =>
       _durablePartialLengths[session] ?? 0;
@@ -90,14 +91,28 @@ final class PartialDownloadHandoff {
       return;
     }
 
-    // The recoverable owner probe is filesystem work too. Route it through the
-    // same composition read scheduler as durable prefix/range reads so two
-    // parallel local preparations cannot bypass actual foreground local-read
-    // pressure with unscheduled stat/sidecar work. Keep the lease narrow: later canonical
-    // lookup and prefix proof get their own ranked quanta instead of one long
-    // foreground lease that would push every successor preparation into the
-    // current frame's native decode window.
-    final ownedProbeStartedAtMicros = clock?.nowMicros();
+    // A verified exact READY row is stronger immutable authority than an
+    // absent mutable checkpoint, but an actual deterministic session body must
+    // still win. Use the persistent metadata index only as a cheap gate, then
+    // prove that neither session-owned body path exists under the same ranked
+    // read scheduler before opening the READY entry. Stale metadata/open state
+    // simply falls through to the historical owned-checkpoint path.
+    final exactReadyPreflight =
+        await _exactReadyCandidateWithoutDeterministicBody(
+          session,
+          control: control,
+          restoreStartedAtMicros: restoreStartedAtMicros,
+        );
+    _PartialRestoreCandidate? durableCandidate = exactReadyPreflight.candidate;
+
+    if (durableCandidate == null) {
+      // The recoverable owner probe is filesystem work too. Route it through
+      // the same composition read scheduler as durable prefix/range reads so
+      // two parallel local preparations cannot bypass actual foreground
+      // local-read pressure with unscheduled stat/sidecar work. Keep the lease
+      // narrow: later canonical lookup and prefix proof get their own ranked
+      // quanta instead of one long foreground lease.
+      final ownedProbeStartedAtMicros = clock?.nowMicros();
     await _withReadLease(
       session,
       () => session.restore(
@@ -123,8 +138,8 @@ final class PartialDownloadHandoff {
         session.artifact.committedLength > 0) {
       return;
     }
+    }
 
-    _PartialRestoreCandidate? durableCandidate;
     PartialDownloadEntry? physicalPartial;
     if (!session.physicalId.isExactFallback && cache != null) {
       final requiresBoundReplay = cache.supportsPhysicalArtifactBoundReplay;
@@ -166,7 +181,8 @@ final class PartialDownloadHandoff {
         if (recoveredHistoricalBinding) {
           final reboundOpenStartedAtMicros = clock?.nowMicros();
           physical = requiresBoundReplay
-              ? await cache.openPhysicalArtifactForBoundReplay(session.physicalId)
+              ? await cache.openPhysicalArtifactForBoundReplay(session.physicalId,
+                )
               : await cache.openPhysicalArtifact(session.physicalId);
           _recordRestoreStage(
             session,
@@ -251,9 +267,11 @@ final class PartialDownloadHandoff {
       }
     }
     if (physicalPartial == null) {
-      durableCandidate = await _restoreCandidate(
+      durableCandidate ??= await _restoreCandidate(
         session.id,
         control: control,
+        exactMetadataInspected: exactReadyPreflight.metadataInspected,
+        exactMetadata: exactReadyPreflight.metadata,
       );
     }
 
@@ -282,8 +300,7 @@ final class PartialDownloadHandoff {
           startedAtMicros: startedAtMicros,
           reason: adopted ? 'adopted' : 'rejected',
           extra: <String, Object?>{
-            'accessMode': physicalEntry.accessMode,
-          },
+            'accessMode': physicalEntry.accessMode},
         );
         if (adopted) {
           _record(
@@ -342,6 +359,8 @@ final class PartialDownloadHandoff {
         await _restoreCandidate(
           session.id,
           control: control,
+          exactMetadataInspected: exactReadyPreflight.metadataInspected,
+          exactMetadata: exactReadyPreflight.metadata,
         );
     if (candidate == null) {
       // Historical URI reuse is intentionally weaker than verified
@@ -360,8 +379,7 @@ final class PartialDownloadHandoff {
           ? null
           : await cache.lookupHistoricalCarrier(
               session.id,
-              control: control,
-            );
+              control: control);
       control?.throwIfCancelled();
       if (historical != null &&
           historical.lookup.durable &&
@@ -452,9 +470,9 @@ final class PartialDownloadHandoff {
                   ? null
                   : (start, endExclusive) async => openRange(
                         start: start,
-                        endExclusive: endExclusive,
-                      ),
+                        endExclusive: endExclusive),
           residentReplayRangeClose: reader?.close,
+          residentReplayDirectFilePath: reader?.directFilePath,
           residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
           residentReplayCacheKey: _residentReplayCacheKey(session, entry),
         );
@@ -584,6 +602,7 @@ final class PartialDownloadHandoff {
                 if (reader == null) return null;
                 return (
                   accessMode: reader.accessMode,
+                  directFilePath: reader.directFilePath,
                   readRange: reader.readRange,
                   close: reader.close,
                 );
@@ -822,9 +841,9 @@ final class PartialDownloadHandoff {
                 _openBoundRange(reader, start, endExclusive)
             : (start, endExclusive) async => openRange!(
                   start: start,
-                  endExclusive: endExclusive,
-                ),
+                  endExclusive: endExclusive),
         residentReplayRangeClose: reader?.close,
+        residentReplayDirectFilePath: reader?.directFilePath,
         residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
         residentReplayCacheKey: _residentReplayCacheKey(session, entry),
       );
@@ -884,6 +903,88 @@ final class PartialDownloadHandoff {
     }
   }
 
+  Future<_ExactReadyPreflight>
+  _exactReadyCandidateWithoutDeterministicBody(
+    DownloadSession session, {
+    TaskControl? control,
+    required int? restoreStartedAtMicros,
+  }) async {
+    final metadataStore = store is PartialDownloadMetadataStore
+        ? store as PartialDownloadMetadataStore
+        : null;
+    if (metadataStore == null) {
+      return const _ExactReadyPreflight(metadataInspected: false);
+    }
+
+    final startedAtMicros = clock?.nowMicros();
+    final metadata = await _awaitCancellable(
+      metadataStore.inspectPartialDownloadMetadata(session.id),
+      control,
+    );
+    control?.throwIfCancelled();
+    if (metadata == null ||
+        metadata.length <= 0 ||
+        !metadata.exactDurableFinal) {
+      return _ExactReadyPreflight(
+        metadataInspected: true,
+        metadata: metadata,
+      );
+    }
+
+    final bodyTypes = await _withReadLease(
+      session,
+      () => Future.wait<FileSystemEntityType>(<Future<FileSystemEntityType>>[
+        FileSystemEntity.type(session.artifact.finalPath, followLinks: false),
+        FileSystemEntity.type(session.artifact.partialPath, followLinks: false),
+      ]),
+      control: control,
+    );
+    control?.throwIfCancelled();
+    final deterministicBodyPresent = bodyTypes.any(
+      (type) => type != FileSystemEntityType.notFound,
+    );
+    _recordRestoreStage(
+      session,
+      stage: 'exact-ready-preflight',
+      startedAtMicros: startedAtMicros,
+      restoreStartedAtMicros: restoreStartedAtMicros,
+      extra: <String, Object?>{
+        'metadataLength': metadata.length,
+        'deterministicBodyPresent': deterministicBodyPresent,
+      },
+    );
+    if (deterministicBodyPresent) {
+      return _ExactReadyPreflight(
+        metadataInspected: true,
+        metadata: metadata,
+      );
+    }
+
+    final entry = await _awaitCancellable(
+      store.openPartialDownload(session.id),
+      control,
+    );
+    control?.throwIfCancelled();
+    if (entry == null ||
+        entry.length <= 0 ||
+        !entry.exactDurableFinal ||
+        entry.length != metadata.length) {
+      return _ExactReadyPreflight(
+        metadataInspected: true,
+        metadata: metadata,
+      );
+    }
+    return _ExactReadyPreflight(
+      metadataInspected: true,
+      metadata: metadata,
+      candidate: _PartialRestoreCandidate(
+        entry: entry,
+        equivalent: false,
+        candidatesChecked: 0,
+      ),
+    );
+  }
+
   Future<List<int>> _readEntryPrefix(
     PartialDownloadEntry entry, {
     PartialDownloadBoundRangeReader? boundReader,
@@ -900,8 +1001,7 @@ final class PartialDownloadHandoff {
               ? entry.open(start: 0)
               : exactPrefix(
                   start: 0,
-                  endExclusive: prefixEnd,
-                ),
+                  endExclusive: prefixEnd),
     );
     final prefix = <int>[];
     try {
@@ -1110,6 +1210,8 @@ final class PartialDownloadHandoff {
   Future<_PartialRestoreCandidate?> _restoreCandidate(
     DownloadId id, {
     TaskControl? control,
+    bool exactMetadataInspected = false,
+    PartialDownloadMetadata? exactMetadata,
   }) async {
     final candidates = equivalentCandidates;
     if (candidates == null) {
@@ -1124,13 +1226,14 @@ final class PartialDownloadHandoff {
         candidates,
         metadataStore,
         control: control,
+        exactMetadataInspected: exactMetadataInspected,
+        exactMetadata: exactMetadata,
       );
     }
     return _restoreCandidateLegacy(
       id,
       candidates(id),
-      control: control,
-    );
+      control: control);
   }
 
   Future<_PartialRestoreCandidate?> _restoreCandidateByMetadata(
@@ -1138,6 +1241,8 @@ final class PartialDownloadHandoff {
     PartialEquivalentCandidates candidates,
     PartialDownloadMetadataStore metadataStore, {
     TaskControl? control,
+    bool exactMetadataInspected = false,
+    PartialDownloadMetadata? exactMetadata,
   }) async {
     final equivalentIds = <DownloadId>[];
     final seen = <DownloadId>{id};
@@ -1147,25 +1252,27 @@ final class PartialDownloadHandoff {
     var checked = 0;
     var order = 0;
     final ranked = <_RankedPartialCandidate>[];
+    PartialDownloadEntry? exactWithoutMetadata;
 
-    final exactMetadata = await _awaitCancellable(
+    final resolvedExactMetadata = exactMetadataInspected
+        ? exactMetadata
+        : await _awaitCancellable(
       metadataStore.inspectPartialDownloadMetadata(id),
       control,
     );
-    if (exactMetadata != null && exactMetadata.length > 0) {
-      if (exactMetadata.exactDurableFinal) {
+    if (resolvedExactMetadata != null && resolvedExactMetadata.length > 0) {
+      if (resolvedExactMetadata.exactDurableFinal) {
         final entry = await _awaitCancellable(
           store.openPartialDownload(id),
           control,
         );
         if (entry != null && entry.length > 0) {
-          if (entry.length != exactMetadata.length ||
+          if (entry.length != resolvedExactMetadata.length ||
               !entry.exactDurableFinal) {
             return _restoreCandidateLegacy(
               id,
               equivalentIds,
-              control: control,
-            );
+              control: control);
           }
           return _PartialRestoreCandidate(
             entry: entry,
@@ -1177,7 +1284,34 @@ final class PartialDownloadHandoff {
         ranked.add(
           _RankedPartialCandidate(
             id: id,
-            metadataLength: exactMetadata.length,
+            metadataLength: resolvedExactMetadata.length,
+            equivalent: false,
+            order: order++,
+          ),
+        );
+      }
+    } else {
+      // Metadata is a ranking accelerator, not absence authority. A stale or
+      // missing index row must not let a verified equivalent silently skip an
+      // existing exact physical body. Probe exact once, retain that result for
+      // later ranking, and never reopen it merely because candidates exist.
+      exactWithoutMetadata = await _awaitCancellable(
+        store.openPartialDownload(id),
+        control,
+      );
+      final exact = exactWithoutMetadata;
+      if (exact != null && exact.length > 0) {
+        if (exact.exactDurableFinal) {
+          return _PartialRestoreCandidate(
+            entry: exact,
+            equivalent: false,
+            candidatesChecked: checked,
+          );
+        }
+        ranked.add(
+          _RankedPartialCandidate(
+            id: id,
+            metadataLength: exact.length,
             equivalent: false,
             order: order++,
           ),
@@ -1206,8 +1340,7 @@ final class PartialDownloadHandoff {
           return _restoreCandidateLegacy(
             id,
             equivalentIds,
-            control: control,
-          );
+            control: control);
         }
         return _PartialRestoreCandidate(
           entry: entry,
@@ -1233,7 +1366,9 @@ final class PartialDownloadHandoff {
     });
     for (final candidate in ranked) {
       control?.throwIfCancelled();
-      final entry = await _awaitCancellable(
+      final entry = candidate.id == id && exactWithoutMetadata != null
+          ? exactWithoutMetadata
+          : await _awaitCancellable(
         store.openPartialDownload(candidate.id),
         control,
       );
@@ -1244,8 +1379,7 @@ final class PartialDownloadHandoff {
         return _restoreCandidateLegacy(
           id,
           equivalentIds,
-          control: control,
-        );
+          control: control);
       }
       return _PartialRestoreCandidate(
         entry: entry,
@@ -1433,16 +1567,14 @@ final class PartialDownloadHandoff {
           totalLength: session.totalLength,
           open: ({required int start}) => session.artifact.readChunks(
             start: start,
-            endExclusive: length,
-          ),
+            endExclusive: length),
         );
         final stagingStore = store;
         if (stagingStore is TransferStagingPartialDownloadStore) {
           await (stagingStore as TransferStagingPartialDownloadStore)
               .storeTransferPartialDownload(
             id: targetId,
-            entry: entry,
-          );
+            entry: entry);
         } else {
           await store.storePartialDownload(id: targetId, entry: entry);
         }
@@ -1507,7 +1639,8 @@ final class PartialDownloadHandoff {
         if (startedAtMicros != null)
           'handoffMicros': (sourceClock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
       },
-    ));
+    ),
+    );
   }
 
   void _recordRestoreStage(
@@ -1536,7 +1669,8 @@ final class PartialDownloadHandoff {
               (now - restoreStartedAtMicros).clamp(0, 1 << 62).toInt(),
         ...extra,
       },
-    ));
+    ),
+    );
   }
 }
 
@@ -1564,6 +1698,18 @@ final class _RankedPartialCandidate {
   final int metadataLength;
   final bool equivalent;
   final int order;
+}
+
+final class _ExactReadyPreflight {
+  const _ExactReadyPreflight({
+    required this.metadataInspected,
+    this.metadata,
+    this.candidate,
+  });
+
+  final bool metadataInspected;
+  final PartialDownloadMetadata? metadata;
+  final _PartialRestoreCandidate? candidate;
 }
 
 final class _PartialRestoreCandidate {

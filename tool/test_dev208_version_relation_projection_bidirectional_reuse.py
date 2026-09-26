@@ -77,6 +77,7 @@ runtime = read("packages/downloads/lib/src/composition_download_transfer_runtime
 for token in (
     "replaceCanonicalMediaAuthorityScope(",
     "PhysicalMediaId? _resolveCanonicalPhysicalMedia(DownloadId id)",
+    "_applyCanonicalPhysicalMedia(exactId);",
     "registry.hasDirectPhysicalMediaBinding(exactId)",
 ):
     require(runtime, token, "direct canonical physical media authority")

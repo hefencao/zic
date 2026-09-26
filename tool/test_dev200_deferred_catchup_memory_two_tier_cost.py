@@ -62,11 +62,18 @@ for token in (
     'diff: DemandDiff.between(detached, readdedBackground)',
     'expect(transport.requests, hasLength(1));',
     'very large unsupported-range partial waits for transition demand',
-    "role: PageRole.next,\n      priority: 820",
-    "role: PageRole.transition,\n      priority: 900",
 ):
     if token not in TEST:
         raise SystemExit(f'dev.200 behavior regression missing: {token}')
+for role, priority in (('next', 820), ('transition', 900)):
+    if re.search(
+        rf'role:\s*PageRole\.{role},\s*priority:\s*{priority}',
+        TEST,
+        re.MULTILINE,
+    ) is None:
+        raise SystemExit(
+            f'dev.200 behavior regression missing: {role} priority {priority}'
+        )
 
 # The catchup admission decision may depend only on preserved byte cost and
 # scheduler-owned priority.  Existing LiveCoordinator playback collaborators are

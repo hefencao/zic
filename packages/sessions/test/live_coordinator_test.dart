@@ -21,7 +21,8 @@ final class _Clock implements MonoClock {
 
 void main() {
   test('live coordinator runs added download demand through network lane', () async {
-    final temp = await Directory.systemTemp.createTemp('live_coordinator_test_');
+    final temp = await Directory.systemTemp.createTemp('live_coordinator_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
 
     final id = DownloadId(
@@ -78,14 +79,15 @@ void main() {
     expect(session?.state, DownloadState.promoted);
     expect(
       await File(session!.artifact.finalPath).readAsBytes(),
-      <int>[1, 2, 3, 4],
-    );
+      <int>[1, 2, 3, 4,
+      ]);
     expect((await index.get(id.key))?.state, CacheState.ready);
-  });
-
+  },
+  );
 
   test('Reader-local source follows media demand rather than download-window retention', () async {
-    final temp = await Directory.systemTemp.createTemp('live_source_lifetime_test_');
+    final temp = await Directory.systemTemp.createTemp('live_source_lifetime_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -195,7 +197,8 @@ void main() {
 
     expect(coordinator.demands, contains(id));
     expect(registry.find(id), isNotNull,
-        reason: 'encoded transfer retention is independent from Reader media');
+        reason: 'encoded transfer retention is independent from Reader media',
+      );
     expect(ingresses.find(id), isNull);
     expect(sources.find(id), isNull);
     expect(
@@ -246,7 +249,8 @@ void main() {
       unknownBeforeConsumerRelease,
       reason: 'reacquiring the same source must not oscillate WebP cost evidence',
     );
-  });
+  },
+  );
 
   test('durable resident needMoreData expands Reader prefix and wakes decode',
       () async {
@@ -303,11 +307,13 @@ void main() {
         expect(session, same(physical));
         control.throwIfCancelled();
         ranges.add((start, endExclusive));
-        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive),
+              );
       },
     );
     final cursorFactory =
-        _NeedMoreDataCursorFactory(requiredLength: initialQuantum * 2);
+        _NeedMoreDataCursorFactory(requiredLength: initialQuantum * 2,
+      );
     final decodes = DecodeRegistry(
       downloads: registry,
       ingresses: ingresses,
@@ -375,16 +381,21 @@ void main() {
     expect(ranges, contains((0, initialQuantum)));
     expect(ranges, contains((initialQuantum, totalLength)),
         reason: 'durable SAF replay uses the physical-local decode quantum and '
-            'clamps its next growth step to durable EOF');
+            'clamps its next growth step to durable EOF',
+      );
     expect(cursorFactory.needMoreCount, 1,
-        reason: 'decoder evidence should request one larger durable prefix');
+        reason: 'decoder evidence should request one larger durable prefix',
+      );
     expect(ingresses.find(id)?.snapshot.length, totalLength);
     expect(physical.artifact.committedLength, 0,
-        reason: 'decoder-driven hydration must not recreate a session artifact');
-  });
+        reason: 'decoder-driven hydration must not recreate a session artifact',
+      );
+  },
+  );
 
   test('download priority migration does not re-observe physical identity', () async {
-    final temp = await Directory.systemTemp.createTemp('live_identity_observe_test_');
+    final temp = await Directory.systemTemp.createTemp('live_identity_observe_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -407,12 +418,17 @@ void main() {
     );
     addTearDown(registry.dispose);
     var observed = 0;
-    final coordinator = LiveCoordinator(
+      var compositionFinds = 0;
+      final coordinator = LiveCoordinator(
       registry: registry,
       transportFor: (_) => FakeTransport(bytes: const <int>[1, 2, 3]),
       clock: clock,
       net: NetLane(maxActive: 1),
       onDownloadObserved: (_) => observed++,
+        findDownloadSession: (candidate) {
+          compositionFinds++;
+          return registry.find(candidate);
+        },
     );
     addTearDown(coordinator.dispose);
 
@@ -441,8 +457,9 @@ void main() {
       ),
     );
     expect(observed, 1);
+      expect(compositionFinds, 0);
 
-    final changed = plan(2, 700);
+      final changed = plan(2, 700);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -452,10 +469,18 @@ void main() {
       ),
     );
     expect(observed, 1);
-  });
+      expect(
+        compositionFinds,
+        0,
+        reason:
+            'scheduling-only migration must use the acquire-time physical carrier',
+      );
+    },
+  );
 
   test('priority-role migration stays aggregate in reconcile trace', () async {
-    final temp = await Directory.systemTemp.createTemp('live_trace_migration_test_');
+    final temp = await Directory.systemTemp.createTemp('live_trace_migration_test_',
+    );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -562,7 +587,8 @@ void main() {
 
   test('large unsupported-range catchup waits for foreground-adjacent demand',
       () async {
-    final temp = await Directory.systemTemp.createTemp('live_catchup_defer_test_');
+    final temp = await Directory.systemTemp.createTemp('live_catchup_defer_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -732,15 +758,16 @@ void main() {
     expect(transport.requests, hasLength(2));
     expect(
       transport.requests[1].range?.start,
-      preservedLength - 64 * 1024,
-    );
+      preservedLength - 64 * 1024);
     expect(session.state, DownloadState.promoted);
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
-  });
+  },
+  );
 
   test('very large unsupported-range partial waits for transition demand',
       () async {
-    final temp = await Directory.systemTemp.createTemp('live_catchup_tier_test_');
+    final temp = await Directory.systemTemp.createTemp('live_catchup_tier_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -846,12 +873,14 @@ void main() {
     expect(transport.requests, hasLength(2));
     expect(session.state, DownloadState.promoted);
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
-  });
+  },
+  );
 
   test('active nonresumable transfer survives window detach and is not reopened',
       () async {
     final temp =
-        await Directory.systemTemp.createTemp('live_retained_download_test_');
+        await Directory.systemTemp.createTemp('live_retained_download_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -925,7 +954,10 @@ void main() {
       ),
     );
     expect(registry.find(id)?.demanded, isFalse);
-    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 0);
+    expect(
+      coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!),
+      0,
+    );
 
     // A short forward/back gesture must reuse the same receiving transport,
     // not cancel and reopen it. This matches VibeVenera's logical-detach
@@ -948,7 +980,10 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
     expect(registry.find(id)?.demanded, isTrue);
-    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 1000);
+    expect(
+      coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!),
+      1000,
+    );
     expect(transport.opens, 1);
 
     transport.add('payload'.codeUnits);
@@ -956,12 +991,14 @@ void main() {
     await coordinator.idle();
     expect(registry.find(id)?.state, DownloadState.promoted);
     expect(transport.opens, 1);
-  });
+  },
+  );
 
   test('remaining consumer claim keeps transfer and downgrades priority',
       () async {
     final temp = await Directory.systemTemp
-        .createTemp('live_multi_consumer_claim_test_');
+        .createTemp('live_multi_consumer_claim_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -1032,7 +1069,10 @@ void main() {
     expect(session.demanded, isTrue);
     expect(session.demandCount, 1);
     expect(session.effectivePriority, 700);
-    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 700);
+    expect(
+      coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!),
+      700,
+    );
     expect(transport.opens, 1);
 
     transport.add('payload'.codeUnits);
@@ -1045,11 +1085,13 @@ void main() {
     other.detach();
     await coordinator.dispose();
     await registry.dispose();
-  });
+  },
+  );
 
   test('detached receiving survives adjacent previous pressure', () async {
     final temp =
-        await Directory.systemTemp.createTemp('live_receiving_pressure_test_');
+        await Directory.systemTemp.createTemp('live_receiving_pressure_test_',
+    );
     addTearDown(() async => temp.delete(recursive: true));
     final retainedId = DownloadId(
       content: const ContentId(
@@ -1182,7 +1224,8 @@ void main() {
 
   test('detached pre-open run drops to rank zero and yields only to current', () async {
     final temp =
-        await Directory.systemTemp.createTemp('live_preopen_detach_test_');
+        await Directory.systemTemp.createTemp('live_preopen_detach_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final openingId = DownloadId(
       content: const ContentId(
@@ -1297,7 +1340,8 @@ void main() {
     await coordinator.idle();
     expect(openingSession?.activeRun, isFalse);
     expect(registry.find(previousId)?.state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('live coordinator retries a demanded network failure', () async {
     final temp = await Directory.systemTemp.createTemp('live_retry_test_');
@@ -1366,7 +1410,8 @@ void main() {
 
   test('terminal source failure survives scheduling-only demand changes',
       () async {
-    final temp = await Directory.systemTemp.createTemp('live_terminal_failure_');
+    final temp = await Directory.systemTemp.createTemp('live_terminal_failure_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -1388,7 +1433,8 @@ void main() {
     );
     addTearDown(registry.dispose);
     final transport = _AlwaysFailTransport(
-      const Failure(code: ErrorCode.source, message: 'deterministic source failure'),
+      const Failure(code: ErrorCode.source, message: 'deterministic source failure',
+        ),
     );
     final coordinator = LiveCoordinator(
       registry: registry,
@@ -1448,7 +1494,8 @@ void main() {
     await coordinator.idle();
     await Future<void>.delayed(Duration.zero);
     expect(transport.opens, 1);
-  });
+  },
+  );
 
   test('download completion wakes a waiting decode demand', () async {
     final temp = await Directory.systemTemp.createTemp('live_decode_test_');
@@ -1541,8 +1588,7 @@ void main() {
       },
       keep: <ResourceId>{
         ResourceId.download(id),
-        ResourceId.decode(decodeId),
-      },
+        ResourceId.decode(decodeId)},
     );
 
     coordinator.reconcile(
@@ -1584,8 +1630,10 @@ void main() {
     expect(decodeDemand.identityHash, frameDecoded.identityHash);
     expect(decodeDemand.identityHash, uploadDemand.identityHash);
     expect(decodeDemand.identityHash, uploadStarted.identityHash);
-    expect(decodeDemand.monotonicMicros, lessThan(decodeStarted.monotonicMicros));
-    expect(decodeStarted.monotonicMicros, lessThan(frameDecoded.monotonicMicros));
+    expect(decodeDemand.monotonicMicros, lessThan(decodeStarted.monotonicMicros),
+    );
+    expect(decodeStarted.monotonicMicros, lessThan(frameDecoded.monotonicMicros),
+    );
 
     final claim = uploads.find(decodeId)?.claimPresent();
     expect(claim, isNotNull);
@@ -1764,7 +1812,8 @@ void main() {
 
     await session.pause(writer);
     session.endRun(run);
-  });
+  },
+  );
 
   test('draining the last buffered partial frame re-enters partial loop',
       () async {
@@ -1892,7 +1941,8 @@ void main() {
 
     expect(sawWaitingWithBufferedFrames, isTrue);
     expect(cursors.created, 2,
-        reason: 'last buffered frame must wake decoder to rewind the partial');
+        reason: 'last buffered frame must wake decoder to rewind the partial',
+      );
     expect(decodes.find(decodeId)!.snapshot.cycle, 1);
     expect(
       trace.events.where(
@@ -1907,7 +1957,8 @@ void main() {
     uploads.dispose();
     decodes.dispose();
     await downloads.dispose();
-  });
+  },
+  );
 
 
   test('playback state never gates decode refill for other demanded pages',
@@ -1922,7 +1973,8 @@ void main() {
     expect(source, isNot(contains('decode-startup-deferred')));
     expect(source, isNot(contains('_startupBufferingCurrent')));
     expect(source, isNot(contains('isStartupBuffering')));
-  });
+  },
+  );
 
   test('paged next preupload stays frozen until role promotion', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1975,8 +2027,7 @@ void main() {
       registry: downloads,
       ingresses: ingresses,
       transportFor: (_) => _ImmediateTransport(
-        'RIFF....WEBPnext'.codeUnits,
-      ),
+        'RIFF....WEBPnext'.codeUnits),
       clock: clock,
       traceSink: trace,
       decodes: decodes,
@@ -2028,15 +2079,13 @@ void main() {
           },
           keep: <ResourceId>{
             ResourceId.download(id),
-            ResourceId.decode(decodeId),
-          },
+            ResourceId.decode(decodeId)},
         );
 
     final nextPlan = plan(
       revision: 1,
       role: PageRole.next,
-      priority: 820,
-    );
+      priority: 820);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -2077,8 +2126,7 @@ void main() {
         plan: transitionPlan,
         diff: DemandDiff.between(nextPlan, transitionPlan),
         window: RoleWindow(
-          const <int, PageRole>{1: PageRole.transition},
-        ),
+          const <int, PageRole>{1: PageRole.transition}),
       ),
     );
     await coordinator.idle();
@@ -2097,8 +2145,7 @@ void main() {
     final nextAgainPlan = plan(
       revision: 3,
       role: PageRole.next,
-      priority: 820,
-    );
+      priority: 820);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -2247,8 +2294,7 @@ void main() {
           const <int, PageRole>{
             0: PageRole.current,
             1: PageRole.transition,
-          },
-        ),
+          }),
       ),
     );
     await currentDecodeStarted.future;
@@ -2256,14 +2302,24 @@ void main() {
     await prefetchTransport.close();
 
     await prefetchDecoded.future.timeout(const Duration(seconds: 1));
-    expect(decodes.find(prefetchDecode)?.snapshot.depth, 1);
+      final prefetchCommitDeadline = DateTime.now().add(
+        const Duration(seconds: 1),
+      );
+      while ((decodes.find(prefetchDecode)?.snapshot.depth ?? 0) < 1) {
+        if (DateTime.now().isAfter(prefetchCommitDeadline)) {
+          fail('prefetch cursor completed without committing decode depth');
+        }
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(decodes.find(prefetchDecode)?.snapshot.depth, 1);
 
     releaseCurrentDecode.complete();
     await coordinator.idle();
     await coordinator.dispose();
     decodes.dispose();
     await downloads.dispose();
-  });
+  },
+  );
 
   test('gated source revision survives until prefetch is promoted current',
       () async {
@@ -2394,8 +2450,7 @@ void main() {
           const <int, PageRole>{
             0: PageRole.current,
             2: PageRole.next2,
-          },
-        ),
+          }),
       ),
     );
     await blockedTransport.opened.future;
@@ -2410,7 +2465,8 @@ void main() {
     // Let the directed source-wake task run while current bootstrap gates it.
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
-    expect(decodes.find(promotedDecode)?.snapshot.state, DecodeState.waitingSource);
+    expect(decodes.find(promotedDecode)?.snapshot.state, DecodeState.waitingSource,
+      );
     expect(decodes.find(promotedDecode)?.snapshot.depth, 0);
 
     final promoted = DemandPlan(
@@ -2456,7 +2512,8 @@ void main() {
     await coordinator.dispose();
     decodes.dispose();
     await downloads.dispose();
-  });
+  },
+  );
 
   test(
       'logical source watch rebinds after aliased physical owner retires',
@@ -2663,7 +2720,8 @@ void main() {
     );
     expect(generationRebind.payload['invalidatedUploads'], 1);
     expect(generationRebind.payload['invalidatedDecodes'], 1);
-  });
+  },
+  );
 
   test(
       'upload registry replaces a stale concrete decode generation binding',
@@ -2733,7 +2791,8 @@ void main() {
     expect(replacementUpload, isNot(same(firstUpload)));
     expect(firstUpload.state, UploadState.disposed);
     expect(replacementUpload.decode, same(replacementDecode));
-  });
+  },
+  );
 
   test('role promotion reaches an already active cursor decode request',
       () async {
@@ -2861,7 +2920,8 @@ void main() {
     cursors.cursor.release.complete();
     await coordinator.idle();
     expect(decodes.find(decodeId)?.snapshot.depth, 1);
-  });
+  },
+  );
 
   test('source revisions arriving during decode are drained exactly once',
       () async {
@@ -2975,7 +3035,8 @@ void main() {
 
     await coordinator.dispose();
     await downloads.dispose();
-  });
+  },
+  );
 
   test(
       'logical decode observes the same equivalent physical carrier selected by transfer owner',
@@ -3041,7 +3102,8 @@ void main() {
           (session, start, endExclusive, {required control}) async {
         expect(session, same(physical));
         control.throwIfCancelled();
-        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive),
+              );
       },
     );
     final net = NetLane(maxActive: 1);
@@ -3056,14 +3118,18 @@ void main() {
       transportFor: (_) => FakeTransport(bytes: bytes),
       traceSink: const NoopTraceSink(),
     );
-    final coordinator = LiveCoordinator(
+      var acquireFallbacks = 0;
+      final coordinator = LiveCoordinator(
       registry: downloads,
       ingresses: ingresses,
       transportFor: (_) => FakeTransport(bytes: bytes),
       clock: clock,
       onDecode: (_, _, _) async {},
       downloadTransfer: consumer,
-      downloadSessionFor: (id) => id == logicalId ? physical : downloads.get(id),
+      downloadSessionFor: (id) {
+          acquireFallbacks++;
+          return id == logicalId ? physical : downloads.get(id);
+        },
       findDownloadSession: (id) => id == logicalId ? physical : downloads.find(id),
       net: net,
       decode: DecodeLane(maxActive: 1),
@@ -3120,12 +3186,20 @@ void main() {
     expect(ingresses.find(logicalId), isNull);
     expect(idleExact.demanded, isFalse);
     expect(physical.demanded, isTrue);
-  });
+      expect(
+        acquireFallbacks,
+        0,
+        reason:
+            'added observation must reuse the physical carrier already selected by transfer acquisition',
+      );
+    },
+  );
 
   test(
       'late Reader joins promoted physical download without blocking decode/upload reconcile',
       () async {
-    final temp = await Directory.systemTemp.createTemp('live_late_reader_test_');
+    final temp = await Directory.systemTemp.createTemp('live_late_reader_test_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final source = File('${temp.path}/source.webp');
     final bytes = 'RIFF....WEBPpromoted-reader-reentry'.codeUnits;
@@ -3271,7 +3345,8 @@ void main() {
     expect(decodes.find(decodeId), isNotNull);
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(uploader.outputs, hasLength(1));
-  });
+  },
+  );
 
   test('static output stays resident across a demand gap and page revisit',
       () async {
@@ -3408,8 +3483,71 @@ void main() {
         .where((event) => event.kind == TraceEventKind.decodeStarted)
         .length;
 
-    prior = visible;
-    final dormant = plan(revision: 2, decode: false, upload: false);
+      final reranked = DemandPlan(
+        revision: 2,
+        downloads: <DownloadId, DownloadDemand>{
+          id: const DownloadDemand(
+            role: PageRole.next,
+            priority: 820,
+            reason: 'revisit-reranked',
+            expirationRevision: 3,
+          ),
+        },
+        decodes: <DecodeId, DecodeDemand>{
+          decodeId: const DecodeDemand(
+            role: PageRole.next,
+            priority: 820,
+            targetWatermark: 1,
+            reason: 'revisit-reranked',
+            expirationRevision: 3,
+          ),
+        },
+        uploads: <DecodeId, UploadDemand>{
+          decodeId: const UploadDemand(
+            role: PageRole.next2,
+            priority: 800,
+            reason: 'revisit-reranked',
+            expirationRevision: 3,
+          ),
+        },
+        keep: <ResourceId>{
+          ResourceId.download(id),
+          ResourceId.decode(decodeId),
+        },
+      );
+      coordinator.reconcile(
+        'reader',
+        PipelineDelta(
+          plan: reranked,
+          diff: DemandDiff.between(visible, reranked),
+          window: RoleWindow(const <int, PageRole>{0: PageRole.next}),
+        ),
+      );
+      await coordinator.idle();
+      final rerankTiming = trace.events.lastWhere(
+        (event) => event.kind == TraceEventKind.pipelineReconcileTiming,
+      );
+      expect(rerankTiming.payload['decodeChanged'], 1);
+      expect(rerankTiming.payload['uploadChanged'], 1);
+      expect(rerankTiming.payload['decodeMetadataOnly'], 1);
+      expect(rerankTiming.payload['uploadMetadataOnly'], 1);
+      expect(
+        trace.events
+            .where((event) => event.kind == TraceEventKind.decodeStarted)
+            .length,
+        decodeStartsBeforeDormant,
+        reason: 'satisfied static rerank is not decode work',
+      );
+      expect(
+        trace.events
+            .where((event) => event.kind == TraceEventKind.uploadStarted)
+            .length,
+        uploadStartsBeforeDormant,
+        reason: 'resident static rerank is not upload work',
+      );
+
+      prior = reranked;
+    final dormant = plan(revision: 3, decode: false, upload: false);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -3438,7 +3576,7 @@ void main() {
     );
 
     prior = dormant;
-    final revisited = plan(revision: 3, decode: true, upload: true);
+    final revisited = plan(revision: 4, decode: true, upload: true);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -3450,7 +3588,8 @@ void main() {
     await coordinator.idle();
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(uploader.outputs, hasLength(1),
-        reason: 'revisit reuses the retained static output');
+        reason: 'revisit reuses the retained static output',
+      );
     expect(
       trace.events
           .where((event) => event.kind == TraceEventKind.uploadStarted)
@@ -3465,7 +3604,8 @@ void main() {
       decodeStartsBeforeDormant,
       reason: 'static revisit must not enqueue a no-op decode fill',
     );
-  });
+  },
+  );
 
 
   test('resident fallback current wakes after initial ingress hydration', () async {
@@ -3519,7 +3659,8 @@ void main() {
           (session, start, endExclusive, {required control}) async {
         expect(session, same(physical));
         control.throwIfCancelled();
-        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive),
+              );
       },
     );
     final decodes = DecodeRegistry(
@@ -3592,9 +3733,11 @@ void main() {
       ),
     );
 
-    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    final hydrationDeadline = DateTime.now().add(
+      const Duration(seconds: 2),
+    );
     while (requested.isEmpty) {
-      if (DateTime.now().isAfter(deadline)) {
+      if (DateTime.now().isAfter(hydrationDeadline)) {
         final decodeSnapshot = decodes.find(decodeId)?.snapshot;
         final ingressSnapshot = ingresses.find(id)?.snapshot;
         fail(
@@ -3611,6 +3754,7 @@ void main() {
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
+    expect(ingresses.find(id)?.snapshot.kind, isNot(ContentKind.unknown));
     expect(requested, <DecodeId>[decodeId]);
   });
 
@@ -3667,8 +3811,8 @@ void main() {
       registry: downloads,
       ingresses: ingresses,
       transportFor: (_) => const _ImmediateTransport(
-        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      ),
+        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]),
       clock: clock,
       decodes: decodes,
       onExternalPresentationRequested: (id, revision) {
@@ -3745,8 +3889,8 @@ void main() {
         plan: plan,
         diff: DemandDiff.between(DemandPlan.empty(), plan),
         window: RoleWindow(
-          const <int, PageRole>{0: PageRole.current, 1: PageRole.next},
-        ),
+          const <int, PageRole>{0: PageRole.current, 1: PageRole.next,
+          }),
       ),
     );
 
@@ -3760,7 +3904,8 @@ void main() {
     expect(requested, <DecodeId>[firstDecode]);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(requested, <DecodeId>[firstDecode],
-        reason: 'second fallback must wait for the first actual presented frame');
+        reason: 'second fallback must wait for the first actual presented frame',
+      );
 
     expect(
       coordinator.completeExternalPresentation('reader', firstDecode),
@@ -3781,12 +3926,14 @@ void main() {
     final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
     while (requested.length < 2) {
       if (DateTime.now().isAfter(secondDeadline)) {
-        fail('second external presentation request did not follow first-frame proof');
+        fail('second external presentation request did not follow first-frame proof',
+          );
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(requested, <DecodeId>[firstDecode, secondDecode]);
-  });
+  },
+  );
 
   test('visible fallback preempts another visible external first-frame wait', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -3840,8 +3987,8 @@ void main() {
       registry: downloads,
       ingresses: ingresses,
       transportFor: (_) => const _ImmediateTransport(
-        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      ),
+        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]),
       clock: clock,
       decodes: decodes,
       onExternalPresentationRequested: (id, revision) {
@@ -3922,8 +4069,7 @@ void main() {
           const <int, PageRole>{
             0: PageRole.current,
             1: PageRole.transition,
-          },
-        ),
+          }),
       ),
     );
 
@@ -3937,7 +4083,8 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(requested.toSet(), <DecodeId>{firstDecode, secondDecode});
-  });
+  },
+  );
 
   test('stalled nearer decode never gates farther encoded transfer', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -4039,8 +4186,8 @@ void main() {
         plan: plan,
         diff: DemandDiff.between(DemandPlan.empty(), plan),
         window: RoleWindow(
-          const <int, PageRole>{0: PageRole.next, 1: PageRole.far},
-        ),
+          const <int, PageRole>{0: PageRole.next, 1: PageRole.far,
+        }),
       ),
     );
 
@@ -4131,8 +4278,7 @@ final class _BlockingCursor implements FrameCursor {
   _BlockingCursor(
     this.epoch, {
     required this.started,
-    required this.release,
-  });
+    required this.release});
 
   @override
   final int epoch;
@@ -4165,8 +4311,7 @@ final class _SignallingStaticCursor implements FrameCursor, LoopCursor {
   AnimationInfo get animation => const AnimationInfo(
         frameCount: 1,
         loopCount: 1,
-        complete: true,
-      );
+        complete: true);
 
   @override
   int get cycle => 0;
@@ -4495,8 +4640,7 @@ final class _LatePartialLoopCursor implements FrameCursor, LoopCursor {
   AnimationInfo get animation => AnimationInfo(
         frameCount: frameCount,
         loopCount: 0,
-        complete: false,
-      );
+        complete: false);
 
   @override
   int get cycle => 0;
@@ -4588,8 +4732,7 @@ final class _StaticCursor implements FrameCursor, LoopCursor {
   AnimationInfo get animation => const AnimationInfo(
         frameCount: 1,
         loopCount: 1,
-        complete: true,
-      );
+        complete: true);
 
   @override
   int get cycle => 0;

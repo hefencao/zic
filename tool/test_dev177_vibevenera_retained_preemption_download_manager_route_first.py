@@ -71,11 +71,17 @@ coordinator_test = read('packages/sessions/test/live_coordinator_test.dart')
 for token in (
     'active nonresumable transfer survives window detach and is not reopened',
     'coordinator.downloadTaskKeyFor(id)!',
-    'expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 0);',
-    'expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 1000);',
     'expect(transport.opens, 1);',
 ):
     require(coordinator_test, token, 'quick detach/reattach no-redownload regression')
+for priority in (0, 1000):
+    if re.search(
+        rf'coordinator\.net\.priorityOf\(coordinator\.downloadTaskKeyFor\(id\)!\),\s*{priority},',
+        coordinator_test,
+    ) is None:
+        raise SystemExit(
+            f'missing quick detach/reattach priority regression: {priority}'
+        )
 
 adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 for token in (

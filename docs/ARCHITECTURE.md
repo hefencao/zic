@@ -1372,6 +1372,8 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   其rank变化直接唤醒同一`ArtifactCacheReadScheduler`重新pump pending队列；
   因此已排队的background页升为transition/current时可立即按新rank竞争，而不是等待无关I/O释放lease后才偶然重排。
   该seam只传播既有scheduler事实，不取消/重开already-admitted read，也不产生Reader-owned gate或第二local scheduler。
+  Reader-local native source replay 的后台 reserve/copy/file-range 同样只能作为 execution seam：`DownloadIngressProjectionRegistry` 的 scheduler-owned control 必须贯穿 `Ingress -> BackgroundWritableEncodedSource -> native source-write worker`；pending worker 必须按实时 priority 排序并响应 queued cancellation，in-flight native operation 仍须真实退出后释放 slot。decode worker 与 source-write worker lifecycle 必须显式分离，由 composition 并列 prewarm/shutdown，不得用 decode API 暗中拥有 source mutation worker。
+  durable artifact authority 的 background SQLite reader 仍由 `SqliteIndex` 拥有；artifact object/replica/storage-root 必须在一个 read transaction 中形成同一 snapshot，worker 失败可回退 owner connection，不得把辅助 worker 提升为 durable authority。详见 ADR 0328。
   durable cold-partial只读lookup必须由persistent index/file直接裁决，
   hit/miss均不得为读取或存在性探测materialize durable-store `DownloadSession`；store session只允许用于durable mutation。
   若 exact ready durable artifact 已经以完整长度成功恢复进当前 ephemeral `DownloadSession` generation，

@@ -20,13 +20,14 @@ final class _IngressProjectionEntry {
   DownloadSession session;
   final DownloadIngressProjection projection;
   _IngressAttachmentControl? control;
-  final Completer<void> completer;
+  Completer<void> completer;
   Future<void>? attachment;
   Future<void>? residentHydration;
   DownloadSnapshotListener? sessionListener;
   int residentRequestedLength = 0;
   SourceEpoch? residentHydrationFailedEpoch;
   bool active = true;
+  bool parked = false;
 
   int get priority => control?.priority ?? session.effectivePriority;
 }
@@ -86,6 +87,9 @@ final class DownloadIngressProjectionRegistry {
   DownloadIngressProjection attach(DownloadSession session) {
     final existing = _entries[session.id];
     if (existing != null && identical(existing.session, session)) {
+      if (existing.parked) {
+        return _reactivateParked(existing);
+      }
       existing.control?.updatePriority(session.effectivePriority);
       _scheduleReplayPump();
       return existing.projection;
@@ -193,10 +197,62 @@ final class DownloadIngressProjectionRegistry {
 
   void updatePriority(DownloadSession session) {
     final entry = _entries[session.id];
-    if (entry != null && identical(entry.session, session)) {
-      entry.control?.updatePriority(session.effectivePriority);
+    if (entry != null && identical(entry.session, session) && !entry.parked) {
+      final control = entry.control;
+      if (control == null || control.priority == session.effectivePriority) {
+        return;
+      }
+      control.updatePriority(session.effectivePriority);
       _scheduleReplayPump();
     }
+  }
+
+  DownloadIngressProjection _reactivateParked(_IngressProjectionEntry entry) {
+    final session = entry.session;
+    final snapshot = entry.projection.snapshot;
+    if (snapshot.epoch != session.epoch || snapshot.failure != null) {
+      release(session);
+      return attach(session);
+    }
+    entry.parked = false;
+    entry.control = session.committedLength == 0
+        ? null
+        : _IngressAttachmentControl(priority: session.effectivePriority);
+    entry.completer = Completer<void>();
+    _observeSession(entry);
+    if (session.residentIngressDeferred) {
+      session.attachDeferredResidentIngressProjection(entry.projection);
+    }
+    _enqueueReplay(entry);
+    return entry.projection;
+  }
+
+  /// Suspends an already-created Reader-local source without discarding its
+  /// encoded bytes.
+  ///
+  /// This never admits a new source. It is used only after media demand leaves
+  /// a page that still belongs to this Reader's encoded working set. Physical
+  /// fan-out and session observation are detached immediately, so a mutable
+  /// partial cannot keep growing through the parked projection. Re-entry
+  /// resumes the same generation from its retained prefix.
+  bool park(DownloadSession session) {
+    final entry = _entries[session.id];
+    if (entry == null || !identical(entry.session, session)) return false;
+    if (entry.parked) return true;
+    final snapshot = entry.projection.snapshot;
+    if (snapshot.length == 0 || snapshot.failure != null) {
+      release(session);
+      return false;
+    }
+    entry.parked = true;
+    _pendingReplays.remove(entry);
+    entry.control?.cancel();
+    entry.control = null;
+    _removeSessionListener(entry);
+    session.detachIngressProjection(entry.projection.scopeId);
+    entry.projection.detach();
+    _scheduleReplayPump();
+    return true;
   }
 
   void detach(DownloadSession session) {
@@ -206,6 +262,7 @@ final class DownloadIngressProjectionRegistry {
     _pendingReplays.remove(entry);
     _activeReplays.remove(entry);
     entry.active = false;
+    entry.parked = false;
     entry.control?.cancel();
     if (!entry.completer.isCompleted) {
       entry.completer.complete();
@@ -246,6 +303,7 @@ final class DownloadIngressProjectionRegistry {
     _activeReplays.clear();
     for (final entry in entries) {
       entry.active = false;
+      entry.parked = false;
       entry.control?.cancel();
       if (!entry.completer.isCompleted) {
         entry.completer.complete();
@@ -258,7 +316,8 @@ final class DownloadIngressProjectionRegistry {
 
   void _observeSession(_IngressProjectionEntry entry) {
     void listener(DownloadSnapshot snapshot) {
-      if (!entry.active || !identical(_entries[entry.session.id], entry)) {
+      if (entry.parked ||
+          !entry.active || !identical(_entries[entry.session.id], entry)) {
         return;
       }
       entry.control?.updatePriority(snapshot.effectivePriority);
@@ -294,8 +353,7 @@ final class DownloadIngressProjectionRegistry {
   }
 
   Future<void> _requestInitialResidentHydration(
-    _IngressProjectionEntry entry,
-  ) {
+    _IngressProjectionEntry entry) {
     if (!entry.active || !entry.session.residentIngressDeferred) {
       return Future<void>.value();
     }
@@ -303,7 +361,8 @@ final class DownloadIngressProjectionRegistry {
       localWebpDecodePrefixQuantumBytes,
     );
     entry.control ??=
-        _IngressAttachmentControl(priority: entry.session.effectivePriority);
+        _IngressAttachmentControl(priority: entry.session.effectivePriority,
+    );
     final total = entry.session.committedLength;
     if (total <= 0) return Future<void>.value();
     final target = _residentInitialHydrationBytes < total
@@ -322,8 +381,7 @@ final class DownloadIngressProjectionRegistry {
   /// `requiredSourceLength` after native need-more-data evidence.
   Future<void> ensureResidentPrefix(
     DownloadSession session,
-    int endExclusive,
-  ) {
+    int endExclusive) {
     final entry = _entries[session.id];
     if (entry == null ||
         !identical(entry.session, session) ||
@@ -340,7 +398,8 @@ final class DownloadIngressProjectionRegistry {
     _IngressProjectionEntry entry,
     int target,
   ) {
-    if (!entry.active || !entry.session.residentIngressDeferred) {
+    if (entry.parked ||
+        !entry.active || !entry.session.residentIngressDeferred) {
       return Future<void>.value();
     }
     if (target > entry.residentRequestedLength) {
@@ -356,13 +415,15 @@ final class DownloadIngressProjectionRegistry {
     var failedCurrentEpoch = false;
     late final Future<void> tracked;
     tracked = _hydrateResident(entry).then<void>((_) {
-      if (entry.active &&
+      if (!entry.parked &&
+                entry.active &&
           identical(_entries[entry.session.id], entry) &&
           entry.session.epoch == attemptEpoch) {
         entry.residentHydrationFailedEpoch = null;
       }
     }, onError: (Object error, StackTrace stack) {
-      if (!entry.active ||
+      if (entry.parked ||
+                !entry.active ||
           !identical(_entries[entry.session.id], entry) ||
           !entry.session.residentIngressDeferred ||
           entry.session.epoch != attemptEpoch) {
@@ -385,7 +446,8 @@ final class DownloadIngressProjectionRegistry {
         error: '$failure',
       );
       entry.projection.fail(failure);
-    }).whenComplete(() {
+    },
+        ).whenComplete(() {
       if (identical(entry.residentHydration, tracked)) {
         entry.residentHydration = null;
       }
@@ -394,14 +456,15 @@ final class DownloadIngressProjectionRegistry {
       final epochAdvanced = entry.session.epoch != attemptEpoch;
       if (!failedCurrentEpoch &&
           (requestAdvanced || epochAdvanced) &&
-          entry.active &&
+              !entry.parked &&
+              entry.active &&
           identical(_entries[entry.session.id], entry) &&
           entry.session.residentIngressDeferred &&
           entry.projection.snapshot.length < entry.residentRequestedLength) {
         unawaited(_requestResidentHydration(
           entry,
-          entry.residentRequestedLength,
-        ));
+          entry.residentRequestedLength),
+            );
       }
     });
     entry.residentHydration = tracked;
@@ -412,9 +475,11 @@ final class DownloadIngressProjectionRegistry {
     final session = entry.session;
     final projection = entry.projection;
     final control = entry.control ??=
-        _IngressAttachmentControl(priority: session.effectivePriority);
+        _IngressAttachmentControl(priority: session.effectivePriority,
+    );
     control.throwIfCancelled();
-    if (!session.residentIngressDeferred ||
+    if (entry.parked ||
+        !session.residentIngressDeferred ||
         session.state != DownloadState.promoted) {
       return;
     }
@@ -430,6 +495,34 @@ final class DownloadIngressProjectionRegistry {
       start: current,
       endExclusive: target,
     );
+    projection.expectLength(session.totalLength);
+    if (current == 0) {
+      projection.beginSynchronizedReplay();
+      final directFilePath = session.residentReplayDirectFilePath;
+      if (directFilePath != null && directFilePath.isNotEmpty) {
+        final rebuilt = await projection.rebuildFromDirectFile(
+          epoch: epoch,
+          metadataPrefix: session.readSourceMetadataPrefix(),
+          path: directFilePath,
+          endExclusive: target,
+          sealed: target == total,
+          control: control,
+        );
+        control.throwIfCancelled();
+        if (session.epoch != epoch || !session.residentIngressDeferred) return;
+        if (rebuilt) {
+          projection.publishSynchronizedReplayPrefix();
+          _recordResidentHydration(
+            entry,
+            action: 'completed-direct-file-background',
+            start: current,
+            endExclusive: target,
+          );
+          return;
+        }
+      }
+    }
+
     final range = residentReplayRangeSource;
     final controlledRange = residentReplayRangeSourceWithControl;
     if (range == null && controlledRange == null) {
@@ -443,18 +536,16 @@ final class DownloadIngressProjectionRegistry {
             session,
             current,
             target,
-            control: control,
-          )
+            control: control)
         : await range!(session, current, target);
     control.throwIfCancelled();
     if (session.epoch != epoch || !session.residentIngressDeferred) return;
-    projection.expectLength(session.totalLength);
     if (current == 0) {
-      projection.beginSynchronizedReplay();
       await projection.rebuild(
         epoch: epoch,
         chunks: chunks,
         sealed: target == total,
+        control: control,
       );
       control.throwIfCancelled();
       if (session.epoch != epoch || !session.residentIngressDeferred) return;
@@ -528,7 +619,8 @@ final class DownloadIngressProjectionRegistry {
   }
 
   void _enqueueReplay(_IngressProjectionEntry entry) {
-    if (!entry.active ||
+    if (entry.parked ||
+        !entry.active ||
         !identical(_entries[entry.session.id], entry) ||
         _pendingReplays.contains(entry) ||
         _activeReplays.contains(entry)) {
@@ -561,7 +653,8 @@ final class DownloadIngressProjectionRegistry {
 
     while (_activeReplays.length < maxActiveReplays &&
         _pendingReplays.isNotEmpty) {
-      final index = _pendingReplays.indexWhere((entry) => entry.active);
+      final index = _pendingReplays.indexWhere((entry) => entry.active && !entry.parked,
+      );
       if (index < 0) {
         _pendingReplays.clear();
         return;
@@ -580,6 +673,7 @@ final class DownloadIngressProjectionRegistry {
   bool _hasHigherPrioritySourcePendingThan(_IngressProjectionEntry candidate) {
     for (final entry in _entries.values) {
       if (!entry.active ||
+          entry.parked ||
           identical(entry, candidate) ||
           _pendingReplays.contains(entry) ||
           _activeReplays.contains(entry) ||
@@ -598,7 +692,7 @@ final class DownloadIngressProjectionRegistry {
   }
 
   void _startReplay(_IngressProjectionEntry entry) {
-    if (!entry.active) return;
+    if (!entry.active || entry.parked) return;
     _activeReplays.add(entry);
 
     final session = entry.session;

@@ -543,6 +543,8 @@ final class DecodeLane implements TaskLane {
   int get active => _core.active;
   @override
   bool get isIdle => _core.isIdle;
+  bool updatePriority(String key, int priority) =>
+      _core.updatePriority(key, priority);
   @override
   void batch(void Function() action) => _core.batch(action);
   @override
@@ -589,6 +591,8 @@ final class UploadLane implements TaskLane {
   int get active => _core.active;
   @override
   bool get isIdle => _core.isIdle;
+  bool updatePriority(String key, int priority) =>
+      _core.updatePriority(key, priority);
   @override
   void batch(void Function() action) => _core.batch(action);
   @override

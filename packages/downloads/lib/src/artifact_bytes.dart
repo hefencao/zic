@@ -103,6 +103,7 @@ abstract interface class ArtifactBytes {
 /// resolution on every decoder range request. Callers must serialize reads.
 abstract interface class ArtifactByteRangeReader {
   String get accessMode;
+  String? get directFilePath;
 
   /// Exact physical length observed through this already-open generation.
   /// READY restore can use the same descriptor for seal-length preflight and
@@ -153,6 +154,9 @@ final class _LocalArtifactByteRangeReader implements ArtifactByteRangeReader {
 
   @override
   String get accessMode => 'direct';
+
+  @override
+  String get directFilePath => _path;
 
   @override
   Future<int> length() async {
@@ -254,6 +258,9 @@ final class _SafArtifactByteRangeReader implements ArtifactByteRangeReader {
 
   @override
   String get accessMode => 'saf';
+
+  @override
+  String? get directFilePath => null;
 
   Future<int> _ensureOpen() async {
     if (_closed) {

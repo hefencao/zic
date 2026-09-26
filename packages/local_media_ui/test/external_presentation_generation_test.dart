@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_media_ui/local_media_ui.dart';
 import 'package:media/media.dart';
@@ -18,6 +19,11 @@ void main() {
   testWidgets(
     'mounted external static reloads when Pipeline presentation generation changes',
     (tester) async {
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(() {
+        pipelinePresentationRasterCache.clearPresentationRasters();
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+      });
       final bytes = base64Decode(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
         'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -95,6 +101,16 @@ void main() {
         reason:
             'widget lifetime must not suppress the new Pipeline presentation grant',
       );
+      // Managed raster maintenance is deliberately queued at scheduler-idle so
+      // a same-generation deadline promotion can revoke a speculative eviction
+      // intent (ADR 0327). Retire this test's mounted consumer and drain that
+      // owner queue before flutter_test checks for leaked scheduler timers.
+      await tester.pumpWidget(const SizedBox.shrink());
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      for (var turn = 0; turn < 2; turn++) {
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+        await tester.pump(const Duration(milliseconds: 1));
+      }
     },
   );
 

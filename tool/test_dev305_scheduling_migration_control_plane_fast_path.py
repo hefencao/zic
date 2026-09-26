@@ -27,9 +27,11 @@ require(download, 'if (previous == null) {', 'new-scope lifecycle boundary')
 require(download, 'TraceEventKind.demandApplied,', 'new-scope demand trace')
 for token in (
     'final Map<DownloadId, DownloadSession> _observedDownloadSessions =',
-    'if (session != null && !identical(observed, session))',
+    'for (final entry in diff.added.entries) {',
+    'for (final entry in diff.changed.entries) {',
+    'if (_observedDownloadSessions.containsKey(entry.key)) {',
+    '_downloadTransfer.findAcquiredSession(entry.key)',
     'void _observeDownloadIdentity(',
-    'if (diff.added.containsKey(entry.key)) {',
 ):
     require(coordinator, token, 'identity/scheduling separation')
 require(transfer, 'bool _tryUpdateExistingClaimScheduling(',

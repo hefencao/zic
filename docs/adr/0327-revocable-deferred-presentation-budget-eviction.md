@@ -22,7 +22,7 @@ ADR 0322/0324 已经规定 `PipelinePresentationRasterCache` 是 Reader external
 
 修复后的标准 Profile 重新安装到同一 `210a3115`，再次进入同一 42 页章节并以生产 ScrollPhysics 正常速度从 page 13 前进到 28、再回到 22。新 trace `zic-debug-trace-2026-09-25T11-37-31.jsonl` 有 38 次 budget invalidation，全部仍是合法 `far/none` 且 `presentationWarmAllowed=false`；修复前的 12 次 `next2/transition + allowed=true` 降为 **0**。没有 `taskFailed`、`writerRejected` 或 `sourceDisabled`，最大 Pipeline reconcile 为 1.632ms。稳定滚动 summary 中位 frame gap 约 8.402ms；仅 Reader 初段 page14 出现一次 34.289ms gap，后续没有形成原先“数页一次”的周期模式。
 
-`external_presentation_generation_test.dart` 当前工作区的两个 widget 用例仍超时；对本 ADR reclaim hunk 做临时撤销 A/B 后仍以相同位置、相同方式失败，因此不是本变更引入，未为通过旧测试而恢复错误的 production eviction 生命周期。
+`external_presentation_generation_test.dart` 的 generation 用例在整包并行执行时曾留下一个 `SchedulerBinding.scheduleTask` 的零时长测试计时器；单测独跑正常，说明不是 production eviction 生命周期失败。测试现在显式卸载 mounted consumer、清空统一 raster owner，并排空该 owner 的 idle scheduler queue；`packages/local_media_ui/test` 26/26 通过，未为测试修改 production eviction 语义。
 
 ## 非目标
 

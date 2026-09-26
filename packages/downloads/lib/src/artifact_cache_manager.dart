@@ -223,17 +223,28 @@ final class ArtifactCacheManager {
 
   Iterable<DownloadId> directEquivalents(DownloadId id) {
     if (requiresFreshSource(id)) return const <DownloadId>[];
-    final resolved = <DownloadId>{};
-    final explicit = _equivalents[id];
-    if (explicit != null) {
-      resolved.addAll(explicit.where((candidate) => candidate != id));
-    }
+    final resolved = <DownloadId>{...directLinkedEquivalents(id)};
     for (final resolver in _equivalenceResolvers.values) {
       for (final candidate in resolver(id)) {
         if (candidate != id) resolved.add(candidate);
       }
     }
     return List<DownloadId>.unmodifiable(resolved);
+  }
+
+  /// Returns only source-verified equivalence edges already owned as data by
+  /// this cache manager. Dynamic resolvers are intentionally excluded.
+  ///
+  /// Background version-page preparation uses its own immutable projection;
+  /// calling [directEquivalents] again during commit would execute that same
+  /// projection a second time on the owner isolate.
+  Iterable<DownloadId> directLinkedEquivalents(DownloadId id) {
+    if (requiresFreshSource(id)) return const <DownloadId>[];
+    final explicit = _equivalents[id];
+    if (explicit == null || explicit.isEmpty) return const <DownloadId>[];
+    return List<DownloadId>.unmodifiable(
+      explicit.where((candidate) => candidate != id),
+    );
   }
 
   /// Registers one bounded lazy direct-equivalence resolver.

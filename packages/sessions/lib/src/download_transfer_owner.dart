@@ -63,6 +63,22 @@ final class TransferDemand {
       );
 }
 
+final class TransferDemandMutationTiming {
+  const TransferDemandMutationTiming({
+    this.normalizeMicros = 0,
+    this.validateMicros = 0,
+    this.applyMicros = 0,
+    this.commitMicros = 0,
+    this.scheduleMicros = 0,
+  });
+
+  final int normalizeMicros;
+  final int validateMicros;
+  final int applyMicros;
+  final int commitMicros;
+  final int scheduleMicros;
+}
+
 typedef TransferPrepare = Future<void> Function(DownloadSession session);
 typedef TransferPrepareWithControl = Future<void> Function(
   DownloadSession session, {
@@ -332,8 +348,7 @@ final class DownloadTransferOwner {
       }
       await session.reset(
         removeCacheRecord: false,
-        deleteFinalArtifact: true,
-      );
+        deleteFinalArtifact: true);
       await afterPhysicalReset?.call();
       _locallyPreparedSessions.remove(physicalId);
       _preparedNetworkAdmissions.remove(physicalId);
@@ -397,6 +412,7 @@ final class DownloadTransferOwner {
         message: 'resident replay requires an attached transfer consumer',
       );
     }
+    claim.lease.updatePriority(claim.demand.priority);
     final sourceId = claim.exactId;
     final resumeValidators = session.resumeValidatorsFor(sourceId.canonicalUri);
     final transport = claim.consumer.transportFor(sourceId.canonicalUri);
@@ -414,8 +430,7 @@ final class DownloadTransferOwner {
           );
     final response = await _awaitResidentResponse(
       pendingResponse,
-      control,
-    );
+      control);
     if (control?.cancelled == true) {
       await response.discard(control: control);
       control!.throwIfCancelled();
@@ -683,12 +698,19 @@ final class DownloadTransferOwner {
     int revision,
     Map<DownloadId, TransferDemand> desired,
   ) {
+    var stageStartedAt = clock.nowMicros();
     final normalizedResult = _normalizeDemands(consumer, desired);
     final normalized = normalizedResult.demands;
+    final normalizeMicros = clock.nowMicros() - stageStartedAt;
+
+    stageStartedAt = clock.nowMicros();
     _validateDemandChecksums(consumer, normalized);
+    final validateMicros = clock.nowMicros() - stageStartedAt;
+
+    stageStartedAt = clock.nowMicros();
     consumer._sessionId = sessionId;
     consumer._revision = revision;
-    final removed = consumer._physicalDemands.keys
+    final removed = normalizedResult.affectedPhysicalIds
         .where((id) => !normalized.containsKey(id))
         .toList(growable: false);
     for (final id in removed) {
@@ -696,7 +718,13 @@ final class DownloadTransferOwner {
       _removeClaim(consumer, id, sessionId: sessionId);
     }
     final toSchedule = <DownloadId>[];
-    for (final entry in normalized.entries) {
+    for (final physicalId in normalizedResult.affectedPhysicalIds) {
+      final next = normalized[physicalId];
+      if (next == null) continue;
+      final entry = MapEntry<DownloadId, _ConsumerPhysicalDemand>(
+        physicalId,
+        next,
+      );
       final prior = consumer._physicalDemands[entry.key];
       if (prior == entry.value) continue;
       final schedulingOnly = prior != null &&
@@ -721,12 +749,26 @@ final class DownloadTransferOwner {
       }
       consumer._physicalDemands[entry.key] = entry.value;
     }
+    final applyMicros = clock.nowMicros() - stageStartedAt;
+
+    stageStartedAt = clock.nowMicros();
     consumer._demands
       ..clear()
       ..addAll(desired);
-    consumer._resolvedPhysicalIds
-      ..clear()
-      ..addAll(normalizedResult.resolvedPhysicalIds);
+    for (final logicalId in normalizedResult.removedLogicalIds) {
+      consumer._resolvedPhysicalIds.remove(logicalId);
+    }
+    consumer._resolvedPhysicalIds.addAll(normalizedResult.resolvedAdded);
+    for (final entry in normalizedResult.affectedMembers.entries) {
+      if (entry.value.isEmpty) {
+        consumer._logicalIdsByPhysical.remove(entry.key);
+      } else {
+        consumer._logicalIdsByPhysical[entry.key] = entry.value;
+      }
+    }
+    final commitMicros = clock.nowMicros() - stageStartedAt;
+
+    stageStartedAt = clock.nowMicros();
     toSchedule.sort((a, b) {
       final pa = normalized[a]?.demand.priority ?? 0;
       final pb = normalized[b]?.demand.priority ?? 0;
@@ -739,6 +781,14 @@ final class DownloadTransferOwner {
       _ensureDownloadTask(physicalId, registry.get(physicalId));
     }
     _drainPreparedNetworkAdmissions();
+    final scheduleMicros = clock.nowMicros() - stageStartedAt;
+    consumer._lastDemandMutationTiming = TransferDemandMutationTiming(
+      normalizeMicros: normalizeMicros,
+      validateMicros: validateMicros,
+      applyMicros: applyMicros,
+      commitMicros: commitMicros,
+      scheduleMicros: scheduleMicros,
+    );
   }
 
   void _flushDeferredDemandMutationWork() {
@@ -756,68 +806,115 @@ final class DownloadTransferOwner {
     DownloadTransferConsumer consumer,
     Map<DownloadId, TransferDemand> desired,
   ) {
-    final normalized = <DownloadId, _ConsumerPhysicalDemand>{};
-    final resolvedPhysicalIds = <DownloadId, DownloadId>{};
+    // Logical membership is the cheap diff authority. Physical identity remains
+    // acquire-time state: retained logical ids keep their admitted carrier and
+    // only newly added ids invoke the composition resolver. Recompute physical
+    // aggregation only for carriers touched by an add/remove/real demand
+    // change instead of rebuilding the whole working set every page step.
+    final affectedPhysicalIds = <DownloadId>{};
+    final resolvedAdded = <DownloadId, DownloadId>{};
+    final removedLogicalIds = <DownloadId>[];
+    final affectedMembers = <DownloadId, Set<DownloadId>>{};
+
+    Set<DownloadId> membersFor(DownloadId physicalId) =>
+        affectedMembers.putIfAbsent(
+          physicalId,
+          () => Set<DownloadId>.of(
+            consumer._logicalIdsByPhysical[physicalId] ??
+                const <DownloadId>{},
+          ),
+        );
+
+    for (final logicalId in consumer._demands.keys) {
+      if (desired.containsKey(logicalId)) continue;
+      final physicalId = consumer._resolvedPhysicalIds[logicalId];
+      if (physicalId == null) continue;
+      removedLogicalIds.add(logicalId);
+      affectedPhysicalIds.add(physicalId);
+      membersFor(physicalId).remove(logicalId);
+    }
+
     for (final entry in desired.entries) {
-      // Physical identity is an acquire-time decision. A role/priority-only
-      // page-boundary migration must keep the physical carrier already owned
-      // by this consumer instead of re-running version/canonical resolution
-      // for every retained member of the 3/7 window. A changed DownloadId is
-      // a new logical acquire and therefore resolves normally.
-      final physicalId = consumer._resolvedPhysicalIds[entry.key] ??
-          resolveTransferId(entry.key);
-      resolvedPhysicalIds[entry.key] = physicalId;
-      final rawDemand = entry.value;
-      final candidate = _ConsumerPhysicalDemand(
-        exactId: entry.key,
-        demand: TransferDemand(
-          priority: rawDemand.priority,
-          reason: rawDemand.reason,
-          flowTargetFrames: rawDemand.flowTargetFrames,
-          expectedChecksum:
-              _normalizeExpectedChecksum(rawDemand.expectedChecksum),
-          completionIntent: rawDemand.completionIntent,
-        ),
-      );
-      final existing = normalized[physicalId];
-      if (existing == null) {
-        normalized[physicalId] = candidate;
+      final logicalId = entry.key;
+      final prior = consumer._demands[logicalId];
+      var physicalId = consumer._resolvedPhysicalIds[logicalId];
+      if (physicalId == null) {
+        physicalId = resolveTransferId(logicalId);
+        resolvedAdded[logicalId] = physicalId;
+        affectedPhysicalIds.add(physicalId);
+        membersFor(physicalId).add(logicalId);
         continue;
       }
-      final leftChecksum =
-          _normalizeExpectedChecksum(existing.demand.expectedChecksum);
-      final rightChecksum =
-          _normalizeExpectedChecksum(candidate.demand.expectedChecksum);
-      if (leftChecksum != null &&
-          rightChecksum != null &&
-          leftChecksum != rightChecksum) {
-        throw StateError(
-          'conflicting checksums for physical transfer ${physicalId.key}: '
-          '$leftChecksum != $rightChecksum',
+      if (prior != entry.value) {
+        affectedPhysicalIds.add(physicalId);
+        membersFor(physicalId);
+      }
+    }
+
+    final normalized = <DownloadId, _ConsumerPhysicalDemand>{};
+    for (final physicalId in affectedPhysicalIds) {
+      _ConsumerPhysicalDemand? aggregate;
+      for (final logicalId in membersFor(physicalId)) {
+        final rawDemand = desired[logicalId];
+        if (rawDemand == null) continue;
+        final candidate = _ConsumerPhysicalDemand(
+          exactId: logicalId,
+          demand: TransferDemand(
+            priority: rawDemand.priority,
+            reason: rawDemand.reason,
+            flowTargetFrames: rawDemand.flowTargetFrames,
+            expectedChecksum:
+                _normalizeExpectedChecksum(rawDemand.expectedChecksum),
+            completionIntent: rawDemand.completionIntent,
+          ),
+        );
+        if (aggregate == null) {
+          aggregate = candidate;
+          continue;
+        }
+        final leftChecksum =
+            _normalizeExpectedChecksum(aggregate.demand.expectedChecksum);
+        final rightChecksum =
+            _normalizeExpectedChecksum(candidate.demand.expectedChecksum);
+        if (leftChecksum != null &&
+            rightChecksum != null &&
+            leftChecksum != rightChecksum) {
+          throw StateError(
+            'conflicting checksums for physical transfer ${physicalId.key}: '
+            '$leftChecksum != $rightChecksum',
+          );
+        }
+        final selected = candidate.demand.priority > aggregate.demand.priority
+            ? candidate
+            : aggregate;
+        final required =
+            aggregate.demand.completionIntent ==
+                TransferCompletionIntent.required ||
+            candidate.demand.completionIntent ==
+                TransferCompletionIntent.required;
+        aggregate = _ConsumerPhysicalDemand(
+          exactId: selected.exactId,
+          demand: TransferDemand(
+            priority: selected.demand.priority,
+            reason: selected.demand.reason,
+            flowTargetFrames: selected.demand.flowTargetFrames,
+            expectedChecksum: leftChecksum ?? rightChecksum,
+            completionIntent: required
+                ? TransferCompletionIntent.required
+                : TransferCompletionIntent.opportunistic,
+          ),
         );
       }
-      final selected = candidate.demand.priority > existing.demand.priority
-          ? candidate
-          : existing;
-      final required = existing.demand.completionIntent ==
-              TransferCompletionIntent.required ||
-          candidate.demand.completionIntent == TransferCompletionIntent.required;
-      normalized[physicalId] = _ConsumerPhysicalDemand(
-        exactId: selected.exactId,
-        demand: TransferDemand(
-          priority: selected.demand.priority,
-          reason: selected.demand.reason,
-          flowTargetFrames: selected.demand.flowTargetFrames,
-          expectedChecksum: leftChecksum ?? rightChecksum,
-          completionIntent: required
-              ? TransferCompletionIntent.required
-              : TransferCompletionIntent.opportunistic,
-        ),
-      );
+      if (aggregate != null) {
+        normalized[physicalId] = aggregate;
+      }
     }
     return _NormalizedConsumerDemands(
       demands: normalized,
-      resolvedPhysicalIds: resolvedPhysicalIds,
+      affectedPhysicalIds: affectedPhysicalIds,
+      resolvedAdded: resolvedAdded,
+      removedLogicalIds: removedLogicalIds,
+      affectedMembers: affectedMembers,
     );
   }
 
@@ -827,7 +924,8 @@ final class DownloadTransferOwner {
   ) {
     for (final entry in desired.entries) {
       final checksum =
-          _normalizeExpectedChecksum(entry.value.demand.expectedChecksum);
+          _normalizeExpectedChecksum(entry.value.demand.expectedChecksum,
+      );
       if (checksum == null) continue;
       final byScope = _claims[entry.key];
       if (byScope == null) continue;
@@ -873,6 +971,17 @@ final class DownloadTransferOwner {
       ..demand = next.demand
       ..sessionId = sessionId
       ..revision = revision;
+    if (session.state == DownloadState.promoted &&
+        _networkTaskKeys[id] == null &&
+        !_localPreparations.containsKey(id) &&
+        !_pendingLocalPreparations.containsKey(id)) {
+      // A complete immutable body with no transport/preparation task has no
+      // scheduler work to migrate. Keep the claim rank authoritative so
+      // Reader-local replay observes the latest priority, but do not walk
+      // retry/deferred/NetLane admission just to rediscover `promoted` for
+      // every retained page whose viewport-relative rank changed.
+      return true;
+    }
     claim.lease.updatePriority(next.demand.priority);
     _refreshClaimScheduling(id, session, next.demand);
 
@@ -943,6 +1052,18 @@ final class DownloadTransferOwner {
     _localPreparationControls[id]?.updatePriority(session.effectivePriority);
     _speculativeEncodedReadAccounts[id]?.setBypassed(_requiresCompletion(id));
     _pumpLocalPreparations();
+    final taskKey = _networkTaskKeys[id];
+    if (session.state == DownloadState.promoted &&
+        taskKey == null &&
+        !_localPreparations.containsKey(id)) {
+      // The immutable body is already authoritative and there is no transport
+      // or local-preparation task whose scheduling state can change. The
+      // demand lease above still updates effectivePriority for Reader-local
+      // replay, but retry/deferred/NetLane bookkeeping is not transport work
+      // and must not run for every retained cached page on a page-boundary
+      // role migration.
+      return;
+    }
     // A flow frame proof describes bytes already present in the physical
     // partial, not the policy target that happened to trigger suspension.
     // Demand/role changes therefore never invalidate it. A later positive
@@ -965,7 +1086,6 @@ final class DownloadTransferOwner {
         _downloadDeferredAtLength.remove(id);
       }
     }
-    final taskKey = _networkTaskKeys[id];
     if (taskKey != null) {
       final wasInactive = net.demandedOf(taskKey) == false;
       final inactiveDiagnostics = wasInactive
@@ -1112,6 +1232,7 @@ final class DownloadTransferOwner {
     consumer._demands.clear();
     consumer._physicalDemands.clear();
     consumer._resolvedPhysicalIds.clear();
+    consumer._logicalIdsByPhysical.clear();
     for (final id in ids) {
       _removeClaim(
         consumer,
@@ -1197,8 +1318,7 @@ final class DownloadTransferOwner {
         final flowSatisfiedForCurrentClaims = preferred != null &&
             _flowProofSatisfies(
               preferred.demand.flowTargetFrames,
-              session,
-            );
+              session);
         final taskRetiring = _networkTaskKeys.containsKey(id) &&
             !flowSatisfiedForCurrentClaims &&
             session.state != DownloadState.disposed;
@@ -1223,8 +1343,7 @@ final class DownloadTransferOwner {
 
   bool _flowProofSatisfies(
     int targetFrames,
-    DownloadSession session,
-  ) {
+    DownloadSession session) {
     if (targetFrames <= 0 || session.networkFlowSatisfiedFrames <= 0) {
       return false;
     }
@@ -1234,6 +1353,19 @@ final class DownloadTransferOwner {
     return session.committedLength >= session.networkFlowProofLength &&
         session.committedLength >= playableFloor &&
         session.networkFlowSatisfiedFrames >= targetFrames;
+  }
+
+  DownloadSession? _syncAcquiredSessionPriority(
+    DownloadTransferConsumer consumer,
+    DownloadId logicalId,
+  ) {
+    final physicalId = consumer._resolvedPhysicalIds[logicalId];
+    if (physicalId == null) return null;
+    final session = registry.find(physicalId);
+    final claim = _claims[physicalId]?[consumer.scopeId];
+    if (session == null || claim == null) return session;
+    claim.lease.updatePriority(claim.demand.priority);
+    return session;
   }
 
   void _observeDecodePrefixEvidence(
@@ -1254,8 +1386,7 @@ final class DownloadTransferOwner {
     if (claim == null) return;
     if (!_flowProofSatisfies(
       claim.demand.flowTargetFrames,
-      session,
-    )) {
+      session)) {
       _ensureDownloadTask(session.id, session);
     }
   }
@@ -1264,6 +1395,7 @@ final class DownloadTransferOwner {
     if (_presentationArtifactRecoveries.contains(id)) return;
     final claim = _preferredClaim(id);
     if (claim == null || !session.demanded) return;
+    claim.lease.updatePriority(claim.demand.priority);
     final effectivePriority = session.effectivePriority;
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
@@ -1292,8 +1424,7 @@ final class DownloadTransferOwner {
     }
     if (_flowProofSatisfies(
       claim.demand.flowTargetFrames,
-      session,
-    )) {
+      session)) {
       _preparedNetworkAdmissions.remove(id);
       _preparedAdmissionDeferrals.remove(id);
       return;
@@ -1463,7 +1594,8 @@ final class DownloadTransferOwner {
       final candidates = _pendingLocalPreparations.values.toList(growable: false)
         ..sort((left, right) {
           final priority = right.session.effectivePriority
-              .compareTo(left.session.effectivePriority);
+              .compareTo(left.session.effectivePriority,
+              );
           if (priority != 0) return priority;
           final leftSequence =
               _preferredClaim(left.id)?.sequence ?? (1 << 62);
@@ -1577,7 +1709,8 @@ final class DownloadTransferOwner {
     final pending = _pendingLocalPreparations.values.toList(growable: false)
       ..sort((left, right) {
         final priority = right.session.effectivePriority
-            .compareTo(left.session.effectivePriority);
+            .compareTo(left.session.effectivePriority,
+        );
         if (priority != 0) return priority;
         final leftSequence =
             _preferredClaim(left.id)?.sequence ?? (1 << 62);
@@ -1699,11 +1832,13 @@ final class DownloadTransferOwner {
       final candidates = _preparedNetworkAdmissions.entries
           .where((entry) =>
               identical(registry.findExact(entry.key), entry.value) &&
-              entry.value.demanded)
+              entry.value.demanded,
+              )
           .toList(growable: false)
         ..sort((left, right) {
           final priority = right.value.effectivePriority
-              .compareTo(left.value.effectivePriority);
+              .compareTo(left.value.effectivePriority,
+              );
           if (priority != 0) return priority;
           final leftSequence = _preferredClaim(left.key)?.sequence ?? (1 << 62);
           final rightSequence =
@@ -1712,7 +1847,8 @@ final class DownloadTransferOwner {
         });
       if (candidates.isEmpty) {
         _preparedNetworkAdmissions.removeWhere((id, session) =>
-            !identical(registry.findExact(id), session) || !session.demanded);
+            !identical(registry.findExact(id), session) || !session.demanded,
+        );
         return;
       }
       final candidate = candidates.first;
@@ -2037,8 +2173,7 @@ final class DownloadTransferOwner {
             ),
           ).run(
             expectedChecksum: _expectedChecksum(id),
-            cancel: token,
-          );
+            cancel: token);
           _cancelDownloadRetry(id);
           _downloadTerminalFailures.remove(id);
           _resumeMismatchCleanRestarts.remove(id);
@@ -2243,7 +2378,8 @@ final class DownloadTransferOwner {
         await session.failWithoutWriter(failure);
       }
     } finally {
-      if (identical(_speculativeEncodedReadAccounts[id], encodedBudgetAccount)) {
+      if (identical(_speculativeEncodedReadAccounts[id], encodedBudgetAccount,
+      )) {
         _speculativeEncodedReadAccounts.remove(id);
       }
       speculativeEncodedReadBudget?.releaseAccount(token);
@@ -2337,8 +2473,7 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
 
   void _cancelDownloadRetry(
     DownloadId id, {
-    bool resetBudget = true,
-  }) {
+    bool resetBudget = true}) {
     final waiter = _downloadRetryWaiters.remove(id);
     if (waiter != null && !waiter.isCompleted) waiter.complete();
     _downloadRetryPending.remove(id);
@@ -2488,10 +2623,12 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     String? checksum;
     for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
       final candidate =
-          _normalizeExpectedChecksum(claim.demand.expectedChecksum);
+          _normalizeExpectedChecksum(claim.demand.expectedChecksum,
+      );
       if (candidate == null) continue;
       if (checksum != null && checksum != candidate) {
-        throw StateError('conflicting checksums for physical transfer ${id.key}');
+        throw StateError('conflicting checksums for physical transfer ${id.key}',
+        );
       }
       checksum = candidate;
     }
@@ -2502,7 +2639,8 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     final values = _claims[id]?.values;
     if (values == null || values.isEmpty) return null;
     return values.reduce((left, right) {
-      final priorityOrder = left.demand.priority.compareTo(right.demand.priority);
+      final priorityOrder = left.demand.priority.compareTo(right.demand.priority,
+      );
       if (priorityOrder != 0) {
         return priorityOrder > 0 ? left : right;
       }
@@ -2698,8 +2836,12 @@ final class DownloadTransferConsumer {
       <DownloadId, _ConsumerPhysicalDemand>{};
   final Map<DownloadId, DownloadId> _resolvedPhysicalIds =
       <DownloadId, DownloadId>{};
+  final Map<DownloadId, Set<DownloadId>> _logicalIdsByPhysical =
+      <DownloadId, Set<DownloadId>>{};
   String? _sessionId;
   int _revision = 0;
+  TransferDemandMutationTiming _lastDemandMutationTiming =
+      const TransferDemandMutationTiming();
   bool _disposed = false;
   final Completer<void> _disposedCompleter = Completer<void>();
 
@@ -2710,6 +2852,29 @@ final class DownloadTransferConsumer {
   int get revision => _revision;
   Map<DownloadId, TransferDemand> get demands =>
       Map<DownloadId, TransferDemand>.unmodifiable(_demands);
+  TransferDemandMutationTiming get lastDemandMutationTiming =>
+      _lastDemandMutationTiming;
+
+  /// Returns the concrete session selected when [logicalId] entered this
+  /// consumer's working set, without re-running composition-level canonical or
+  /// verified-equivalence candidate selection.
+  ///
+  /// Physical carrier choice is acquire-time state. Scheduling-only role or
+  /// priority migration must keep consulting that admitted carrier; a later
+  /// equivalent candidate may only be considered after the logical identity
+  /// leaves and is acquired again. Registry lookup here still detects the
+  /// exceptional case where the concrete session object for that same physical
+  /// id was replaced.
+  DownloadSession? findAcquiredSession(DownloadId logicalId) {
+    final physicalId = _resolvedPhysicalIds[logicalId];
+    if (physicalId == null) return null;
+    return owner.registry.find(physicalId);
+  }
+
+  /// Synchronizes the latest accepted claim rank into the physical session only
+  /// when a consumer is about to perform real source/transport work.
+  DownloadSession? syncAcquiredSessionPriority(DownloadId logicalId) =>
+      owner._syncAcquiredSessionPriority(this, logicalId);
 
   void replaceDemands(
     String sessionId,
@@ -2808,18 +2973,23 @@ final class _ActiveProviderLease {
 final class _NormalizedConsumerDemands {
   const _NormalizedConsumerDemands({
     required this.demands,
-    required this.resolvedPhysicalIds,
+    required this.affectedPhysicalIds,
+    required this.resolvedAdded,
+    required this.removedLogicalIds,
+    required this.affectedMembers,
   });
 
   final Map<DownloadId, _ConsumerPhysicalDemand> demands;
-  final Map<DownloadId, DownloadId> resolvedPhysicalIds;
+  final Set<DownloadId> affectedPhysicalIds;
+  final Map<DownloadId, DownloadId> resolvedAdded;
+  final List<DownloadId> removedLogicalIds;
+  final Map<DownloadId, Set<DownloadId>> affectedMembers;
 }
 
 final class _ConsumerPhysicalDemand {
   const _ConsumerPhysicalDemand({
     required this.exactId,
-    required this.demand,
-  });
+    required this.demand});
 
   final DownloadId exactId;
   final TransferDemand demand;

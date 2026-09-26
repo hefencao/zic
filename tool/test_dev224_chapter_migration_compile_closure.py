@@ -9,7 +9,11 @@ live = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(enco
 
 required = (
     'final Map<DownloadId, Future<void>> _artifactWrites =',
-    'for (final entry in _downloads.entries)',
+    '_transferDemandsForDownloads(_downloads)',
+    'for (final entry in downloads.entries)',
+    'priority: entry.value.priority',
+    'reason: entry.value.reason',
+    'flowTargetFrames: entry.value.flowTargetFrames',
 )
 for token in required:
     text = persistent_store if '_artifactWrites' in token else live

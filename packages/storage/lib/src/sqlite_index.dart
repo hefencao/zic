@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
@@ -10,6 +12,9 @@ import 'physical_media_artifact_index.dart';
 import 'physical_media_projection_index.dart';
 import 'physical_partial_index.dart';
 import 'storage_root_access.dart';
+
+part 'sqlite_artifact_read_worker.dart';
+part 'sqlite_artifact_touch_worker.dart';
 
 final class SqliteIndex
     implements
@@ -34,6 +39,8 @@ final class SqliteIndex
   final String? path;
   sql.Database? _db;
   Map<String, CacheRec>? _cachedEntries;
+  Future<_SqliteArtifactReadWorker>? _artifactReadWorker;
+  Future<_SqliteArtifactTouchWorker>? _artifactTouchWorker;
 
   void _invalidateCache() {
     _cachedEntries = null;
@@ -423,6 +430,54 @@ final class SqliteIndex
           ),
         )
         .toList(growable: false);
+  }
+
+  /// Reads immutable artifact/replica/root authority on a dedicated SQLite
+  /// read connection when this index is file-backed.
+  ///
+  /// The worker never mutates durable state and therefore is not a second
+  /// storage owner. It exists so Reader materialization does not execute
+  /// sqlite3 prepare/step on the UI isolate. In-memory indexes keep the direct
+  /// path used by unit tests because their database cannot be shared by path.
+  Future<ArtifactAuthorityReadSnapshot> readArtifactAuthorityInBackground(
+    String artifactId,
+  ) async {
+    final normalized = artifactId.trim();
+    if (normalized.isEmpty) {
+      return const ArtifactAuthorityReadSnapshot(
+        object: null,
+        replicas: <ArtifactReplicaRecord>[],
+        storageRootsByIdentity: <String, StorageRootRecord>{},
+      );
+    }
+    final dbPath = path;
+    if (dbPath == null) {
+      return _readArtifactAuthoritySnapshot(_requireDb(), normalized);
+    }
+    try {
+      final worker = await _artifactReadWorkerFor(dbPath);
+      return await worker.read(normalized);
+    } on Object {
+      // The worker is an execution optimization, not durable authority. A
+      // startup/read failure must not make a valid artifact unreadable.
+      return _readArtifactAuthoritySnapshot(_requireDb(), normalized);
+    }
+  }
+
+  Future<_SqliteArtifactReadWorker> _artifactReadWorkerFor(String dbPath) {
+    final existing = _artifactReadWorker;
+    if (existing != null) return existing;
+    final created = _SqliteArtifactReadWorker.spawn(dbPath);
+    _artifactReadWorker = created;
+    unawaited(created.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {
+        if (identical(_artifactReadWorker, created)) {
+          _artifactReadWorker = null;
+        }
+      },
+    ));
+    return created;
   }
 
   Future<ArtifactReplicaRecord?> getArtifactReplica(String replicaId) async {
@@ -2116,6 +2171,53 @@ final class SqliteIndex
     }
   }
 
+  /// Executes best-effort recency maintenance on a dedicated SQLite writer.
+  /// The artifact id condition prevents a delayed touch from refreshing a
+  /// logical key after that key has rebound to different durable authority.
+  Future<void> touchIfArtifactInBackground({
+    required String key,
+    required String expectedArtifactId,
+    required int touchedUs,
+  }) async {
+    final dbPath = path;
+    if (dbPath == null) {
+      return touchIfArtifact(
+        key: key,
+        expectedArtifactId: expectedArtifactId,
+        touchedUs: touchedUs,
+      );
+    }
+    final worker = await _artifactTouchWorkerFor(dbPath);
+    await worker.touch(
+      key: key,
+      expectedArtifactId: expectedArtifactId,
+      touchedUs: touchedUs,
+    );
+    final cached = _cachedEntries;
+    final current = cached?[key];
+    if (current != null &&
+        current.effectiveArtifactId == expectedArtifactId &&
+        current.touchedUs < touchedUs) {
+      cached![key] = current.copyWith(touchedUs: touchedUs);
+    }
+  }
+
+  Future<_SqliteArtifactTouchWorker> _artifactTouchWorkerFor(String dbPath) {
+    final existing = _artifactTouchWorker;
+    if (existing != null) return existing;
+    final created = _SqliteArtifactTouchWorker.spawn(dbPath);
+    _artifactTouchWorker = created;
+    unawaited(created.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {
+        if (identical(_artifactTouchWorker, created)) {
+          _artifactTouchWorker = null;
+        }
+      },
+    ));
+    return created;
+  }
+
   @override
   Future<int> totalBytes({CacheState? state}) async {
     final cached = _cachedEntries;
@@ -2461,6 +2563,26 @@ final class SqliteIndex
 
   @override
   Future<void> close() async {
+    final touchWorker = _artifactTouchWorker;
+    _artifactTouchWorker = null;
+    if (touchWorker != null) {
+      try {
+        final worker = await touchWorker;
+        await worker.close();
+      } on Object {
+        // Auxiliary recency maintenance must not block durable index close.
+      }
+    }
+    final readWorker = _artifactReadWorker;
+    _artifactReadWorker = null;
+    if (readWorker != null) {
+      try {
+        final worker = await readWorker;
+        await worker.close();
+      } on Object {
+        // Background reads own no durable mutation or close authority.
+      }
+    }
     _invalidateCache();
     _db?.dispose();
     _db = null;

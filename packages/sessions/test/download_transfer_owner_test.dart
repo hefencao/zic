@@ -91,7 +91,79 @@ void main() {
       resolutionCalls,
       4,
       reason: 'only the newly acquired logical identity should resolve',
+      );
+    },
+  );
+
+  test('incremental logical changes recompute only the shared physical carrier',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_incremental_shared_physical_',
     );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final logicalA = _id('incremental-shared-a');
+    final logicalB = _id('incremental-shared-b');
+    final physical = _id('incremental-shared-physical');
+    var resolutionCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      resolveTransferId: (id) {
+        resolutionCalls++;
+        return id == logicalA || id == logicalB ? physical : id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final transport = _BlockedControlledTransport();
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-incremental-shared',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-incremental-shared',
+      1,
+      <DownloadId, TransferDemand>{
+        logicalA: const TransferDemand(priority: 820, reason: 'next'),
+        logicalB: const TransferDemand(priority: 780, reason: 'previous'),
+      },
+    );
+    expect(resolutionCalls, 2);
+    expect(owner.claimCount(physical), 1);
+    expect(registry.get(physical).effectivePriority, 820);
+
+    consumer.replaceDemands(
+      'reader-incremental-shared',
+      2,
+      <DownloadId, TransferDemand>{
+        logicalA: const TransferDemand(priority: 820, reason: 'next'),
+        logicalB: const TransferDemand(priority: 1000, reason: 'current'),
+      },
+    );
+    expect(resolutionCalls, 2);
+    expect(owner.claimCount(physical), 1);
+    expect(registry.get(physical).effectivePriority, 1000);
+
+    consumer.replaceDemands(
+      'reader-incremental-shared',
+      3,
+      <DownloadId, TransferDemand>{
+        logicalA: const TransferDemand(priority: 820, reason: 'next'),
+      },
+    );
+    expect(resolutionCalls, 2);
+    expect(owner.claimCount(physical), 1);
+    expect(registry.get(physical).effectivePriority, 820);
   });
 
   test('two consumers join one exact physical transfer and writer', () async {
@@ -187,8 +259,7 @@ void main() {
           reason: 'chapter-download-command',
           completionIntent: TransferCompletionIntent.required,
         ),
-      },
-    );
+      });
     await transport.firstOpened.future.timeout(const Duration(seconds: 2));
     final session = registry.get(id);
     final epochBefore = session.epoch;
@@ -226,7 +297,8 @@ void main() {
     expect(owner.requiredExactDurableTargets(id), contains(id));
 
     await consumer.dispose();
-  });
+  },
+  );
 
   test('prepared local completion bypasses provider transport admission', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -283,7 +355,8 @@ void main() {
     expect(transportLookups, 0);
     expect(transport.opens, 0);
     expect(
-      trace.events.where((event) => event.kind == TraceEventKind.downloadStarted),
+      trace.events.where((event) => event.kind == TraceEventKind.downloadStarted,
+        ),
       isEmpty,
     );
     final shortCircuit = trace.events.lastWhere(
@@ -294,6 +367,70 @@ void main() {
     );
     expect(shortCircuit.payload['state'], DownloadState.promoted.name);
     expect(shortCircuit.payload['committedLength'], bytes.length);
+    },
+  );
+
+  test('promoted idle rank syncs only when physical work needs it', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_promoted_rank_sync_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final bytes = _ownerAnimatedWebp(<int>[64]);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (session) async {
+        await session.bindResponse(
+          validators: const Validators(),
+          totalLength: bytes.length,
+        );
+        final writer = session.acquireWriter();
+        await session.append(writer, 0, bytes);
+        await session.seal(writer, expectedLength: bytes.length);
+        await session.promote();
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('promoted-rank-sync');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-promoted-rank-sync',
+      transportFor: (_) => throw StateError('local completion must win'),
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-promoted-rank-sync',
+      1,
+      _desired(id, priority: 780),
+    );
+    await consumer.idle();
+    final session = registry.get(id);
+    expect(session.state, DownloadState.promoted);
+    expect(session.effectivePriority, 780);
+
+    consumer.replaceDemands(
+      'reader-promoted-rank-sync',
+      2,
+      _desired(id, priority: 620),
+    );
+    expect(consumer.demands[id]?.priority, 620);
+    expect(
+      session.effectivePriority,
+      780,
+      reason: 'idle promoted rank stays claim-local until physical work starts',
+    );
+
+    expect(consumer.syncAcquiredSessionPriority(id), same(session));
+    expect(session.effectivePriority, 620);
   });
 
   test('failed local completion resets corrupt bytes before network fallback',
@@ -369,7 +506,8 @@ void main() {
       ),
       isTrue,
     );
-  });
+  },
+  );
 
   test('open watchdog aborts one attempt and provider retries the demand',
       () async {
@@ -417,7 +555,8 @@ void main() {
     expect(transport.firstCancelled.isCompleted, isTrue);
     expect(registry.get(id).state, DownloadState.promoted);
     expect(registry.get(id).snapshot.failure, isNull);
-  });
+  },
+  );
 
   test('transport attempt exhaustion does not multiply into owner recovery',
       () async {
@@ -468,8 +607,7 @@ void main() {
     expect(session.committedLength, 0);
     expect(
       trace.events.where(
-        (event) => event.kind == TraceEventKind.downloadStarted,
-      ).length,
+        (event) => event.kind == TraceEventKind.downloadStarted).length,
       1,
     );
     expect(
@@ -498,7 +636,8 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 80));
     expect(transport.opens, exhaustedOpenCalls);
-  });
+  },
+  );
 
   test('provider setup failures retry finitely and publish terminal failure',
       () async {
@@ -555,7 +694,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
     expect(lookups, 5, reason: 'unchanged demand must not hot-loop');
-  });
+  },
+  );
 
   test('retry sleeper failure still reaches the bounded terminal outcome',
       () async {
@@ -603,7 +743,8 @@ void main() {
     expect(opens, greaterThanOrEqualTo(3));
     expect(registry.get(id).state, DownloadState.failed);
     expect(registry.get(id).snapshot.failure?.code, ErrorCode.network);
-  });
+  },
+  );
 
   test('demand withdrawal during retry sleep does not start another attempt',
       () async {
@@ -657,7 +798,8 @@ void main() {
 
     expect(opens, 1);
     expect(owner.taskKeyFor(id), isNull);
-  });
+  },
+  );
 
   test('authoritative progress cancels a stale recovery timer', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -707,8 +849,7 @@ void main() {
     final session = registry.get(id);
     await session.bindResponse(
       validators: const Validators(),
-      totalLength: 1,
-    );
+      totalLength: 1);
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[1]);
     await session.pause(writer);
@@ -747,7 +888,8 @@ void main() {
     );
     await blockerStarted.future;
 
-    final partial = <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(4096, 7)];
+    final partial = <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(4096, 7),
+      ];
     final prepareDone = Completer<void>();
     var prepareCalls = 0;
     final owner = DownloadTransferOwner(
@@ -775,8 +917,8 @@ void main() {
 
     final id = _id('cold-partial-before-lane');
     final transport = _CountingBytesTransport(
-      <int>[...partial, ...List<int>.filled(4096, 8)],
-    );
+      <int>[...partial, ...List<int>.filled(4096, 8),
+      ]);
     final consumer = owner.attachConsumer(
       scopeId: 'reader-cold-partial-before-lane',
       transportFor: (_) => transport,
@@ -807,7 +949,8 @@ void main() {
     blockerRelease.complete();
     await net.idle();
     expect(transport.opens, 0);
-  });
+  },
+  );
 
   test('cancelling the final demand cancels controlled local preparation', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -863,7 +1006,8 @@ void main() {
     expect(prepareCalls, 1);
     expect(owner.taskKeyFor(id), isNull);
     expect(owner.registry.get(id).state, DownloadState.idle);
-  });
+  },
+  );
 
   test('withdrawn local preparations release both operation slots for a new window',
       () async {
@@ -946,7 +1090,8 @@ void main() {
       3,
       const <DownloadId, TransferDemand>{},
     );
-  });
+  },
+  );
 
   test('post-local network admission preserves higher demand priority', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1017,7 +1162,8 @@ void main() {
     expect(openOrder, hasLength(2));
     expect(openOrder.first, high.canonicalUri);
     expect(openOrder.last, low.canonicalUri);
-  });
+  },
+  );
 
   test('local preparation bounds operations without a foreground eligibility gate',
       () async {
@@ -1095,12 +1241,14 @@ void main() {
     bg1Release.complete();
     await bg2Entered.future;
     expect(fgRelease.isCompleted, isFalse,
-        reason: 'lower-priority work must not require current to finish first');
+        reason: 'lower-priority work must not require current to finish first',
+      );
     expect(maxActivePreparations, equals(2));
 
     fgRelease.complete();
     await consumer.idle();
-  });
+  },
+  );
 
   test(
       'blocked high-priority local preparation preempts one lower operation without narrowing the window',
@@ -1213,14 +1361,17 @@ void main() {
     );
 
     expect(bg2Cancelled.isCompleted, isFalse,
-        reason: 'a transient current must keep the shared preemption grace');
+        reason: 'a transient current must keep the shared preemption grace',
+      );
     await bg2Cancelled.future.timeout(const Duration(seconds: 1));
     await promotedEntered.future.timeout(const Duration(seconds: 1));
     expect(maxActivePreparations, 2,
-        reason: 'preemption must not exceed the operation-lifetime bound');
+        reason: 'preemption must not exceed the operation-lifetime bound',
+      );
     await bg2Reentered.future.timeout(const Duration(seconds: 1));
     expect(bg2Calls, 2,
-        reason: 'preemption cancels only the acceleration attempt, not demand');
+        reason: 'preemption cancels only the acceleration attempt, not demand',
+      );
     expect(
       trace.events.any(
         (event) =>
@@ -1235,7 +1386,8 @@ void main() {
     bg1Release.complete();
     bg2Release.complete();
     await consumer.idle();
-  });
+  },
+  );
 
   test('local preparation is retried after the physical session epoch resets',
       () async {
@@ -1299,7 +1451,8 @@ void main() {
       2,
       const <DownloadId, TransferDemand>{},
     );
-  });
+  },
+  );
 
   test('reentrant local preparation is coalesced before callback returns',
       () async {
@@ -1339,7 +1492,8 @@ void main() {
     });
 
     final id = _id('local-prepare-reentrant');
-    final transport = _CountingBytesTransport('RIFF....WEBPreentrant'.codeUnits);
+    final transport = _CountingBytesTransport('RIFF....WEBPreentrant'.codeUnits,
+      );
     consumer = owner.attachConsumer(
       scopeId: 'reader-local-prepare-reentrant',
       transportFor: (_) => transport,
@@ -1359,7 +1513,8 @@ void main() {
     await consumer.idle().timeout(const Duration(seconds: 2));
     expect(prepareCalls, 1);
     expect(registry.get(id).state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('failed local prepare falls back to provider once without prepare loop', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1387,7 +1542,8 @@ void main() {
     });
 
     final id = _id('local-prepare-network-fallback');
-    final transport = _CountingBytesTransport('RIFF....WEBPfallback'.codeUnits);
+    final transport = _CountingBytesTransport('RIFF....WEBPfallback'.codeUnits,
+      );
     final consumer = owner.attachConsumer(
       scopeId: 'reader-local-prepare-network-fallback',
       transportFor: (_) => transport,
@@ -1404,11 +1560,13 @@ void main() {
     expect(prepareCalls, 1);
     expect(transport.opens, 1);
     expect(registry.get(id).state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('detached active physical work becomes inactive and is reclaimed only under pressure',
       () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -1447,7 +1605,8 @@ void main() {
     expect(net.isActive(openingKey), isTrue);
     expect(net.demandedOf(openingKey), isTrue);
 
-    a.replaceDemands('reader-opening', 2, const <DownloadId, TransferDemand>{});
+    a.replaceDemands('reader-opening', 2, const <DownloadId, TransferDemand>{},
+      );
     expect(net.isActive(openingKey), isTrue);
     expect(net.priorityOf(openingKey), 0);
     expect(net.demandedOf(openingKey), isFalse);
@@ -1458,10 +1617,12 @@ void main() {
     await b.idle();
     expect(next.opens, 1);
     expect(registry.get(nextId).state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('working-set turn out and back reuses the same active physical task', () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_revisit_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_revisit_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -1488,7 +1649,8 @@ void main() {
       traceSink: trace,
     );
 
-    reader.replaceDemands('reader-turn-out-back', 1, _desired(id, priority: 820));
+    reader.replaceDemands('reader-turn-out-back', 1, _desired(id, priority: 820),
+      );
     await transport.opened.future;
     final firstKey = owner.taskKeyFor(id)!;
     expect(net.isActive(firstKey), isTrue);
@@ -1512,7 +1674,8 @@ void main() {
     expect(retentionEntered.payload['responseOpened'], isFalse);
     expect(retentionEntered.payload['transportLeaseHeld'], isTrue);
 
-    reader.replaceDemands('reader-turn-out-back', 3, _desired(id, priority: 800));
+    reader.replaceDemands('reader-turn-out-back', 3, _desired(id, priority: 800),
+      );
     expect(owner.taskKeyFor(id), firstKey);
     expect(net.isActive(firstKey), isTrue);
     expect(net.demandedOf(firstKey), isTrue);
@@ -1531,7 +1694,8 @@ void main() {
     // transport; ordinary working-set churn above never cancelled it.
     await reader.dispose();
     await transport.cancelled.future.timeout(const Duration(seconds: 1));
-  });
+  },
+  );
 
   test('scheduler preemption preserves committed partial as idle state', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1563,8 +1727,7 @@ void main() {
       suffix: victimBytes.sublist(prefixLength),
     );
     final incoming = _CountingBytesTransport(
-      _ownerAnimatedWebp(<int>[48]),
-    );
+      _ownerAnimatedWebp(<int>[48]));
     final trace = MemoryTraceSink();
     final oldReader = owner.attachConsumer(
       scopeId: 'reader-preempt-victim',
@@ -1614,10 +1777,12 @@ void main() {
     );
     expect(preemption.payload['partialPreserved'], isTrue);
     expect(preemption.payload['partialState'], DownloadState.idle.name);
-  });
+  },
+  );
 
   test('queued priority revisions keep one physical transfer task identity', () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_queue_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_queue_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -1659,8 +1824,7 @@ void main() {
     consumer.replaceDemands(
       'reader-queued',
       1,
-      _desired(id, priority: 700),
-    );
+      _desired(id, priority: 700));
     final taskKey = owner.taskKeyFor(id);
     expect(taskKey, isNotNull);
     expect(net.queued, 1);
@@ -1668,18 +1832,15 @@ void main() {
     consumer.replaceDemands(
       'reader-queued',
       2,
-      _desired(id, priority: 720),
-    );
+      _desired(id, priority: 720));
     consumer.replaceDemands(
       'reader-queued',
       3,
-      _desired(id, priority: 780),
-    );
+      _desired(id, priority: 780));
     consumer.replaceDemands(
       'reader-queued',
       4,
-      _desired(id, priority: 1000),
-    );
+      _desired(id, priority: 1000));
 
     expect(owner.taskKeyFor(id), taskKey);
     expect(net.queued, 1);
@@ -1689,7 +1850,8 @@ void main() {
     await consumer.idle();
     expect(transport.opens, 1);
     expect(registry.get(id).state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('consumer-paced flow suspension stays quiescent until unmet target arrives',
       () async {
@@ -1740,7 +1902,8 @@ void main() {
 
     await Future<void>.delayed(const Duration(milliseconds: 150));
     expect(transport.opens, 1,
-        reason: 'satisfied speculative credit must not reopen itself');
+        reason: 'satisfied speculative credit must not reopen itself',
+      );
 
     consumer.replaceDemands(
       'reader-flow',
@@ -1750,8 +1913,10 @@ void main() {
     await consumer.idle().timeout(const Duration(seconds: 2));
     expect(registry.get(id).state, DownloadState.promoted);
     expect(transport.opens, 1,
-        reason: 'raising flow credit resumes from the preserved open response');
-  });
+        reason: 'raising flow credit resumes from the preserved open response',
+      );
+  },
+  );
 
   test(
       'flow frame proof satisfies lower targets across role and demand changes',
@@ -1824,7 +1989,8 @@ void main() {
     );
     await consumer.idle().timeout(const Duration(seconds: 2));
     expect(transport.opens, 1,
-        reason: 'flow proof belongs to the partial, not to a live demand');
+        reason: 'flow proof belongs to the partial, not to a live demand',
+      );
 
     consumer.replaceDemands(
       'reader-flow-proof',
@@ -1833,7 +1999,8 @@ void main() {
     );
     await consumer.idle().timeout(const Duration(seconds: 2));
     expect(transport.opens, 1,
-        reason: 'only a target above the proven frame floor may reopen');
+        reason: 'only a target above the proven frame floor may reopen',
+      );
 
     consumer.replaceDemands(
       'reader-flow-proof',
@@ -1843,8 +2010,10 @@ void main() {
     await consumer.idle().timeout(const Duration(seconds: 2));
     expect(registry.get(id).state, DownloadState.promoted);
     expect(transport.opens, 1,
-        reason: 'foreground unlimited must not be satisfied by a bounded proof');
-  });
+        reason: 'foreground unlimited must not be satisfied by a bounded proof',
+      );
+  },
+  );
 
   test('decoder prefix floor invalidates an insufficient structural flow proof',
       () async {
@@ -1916,13 +2085,16 @@ void main() {
     await consumer.idle().timeout(const Duration(seconds: 2));
 
     expect(transport.opens, 1,
-        reason: 'decoder need-more-data must invalidate the old flow proof');
+        reason: 'decoder need-more-data must invalidate the old flow proof',
+      );
     expect(session.committedLength, greaterThanOrEqualTo(512 * 1024));
-  });
+  },
+  );
 
   test('transfer checksum constraints aggregate across consumers atomically',
       () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_checksum_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_checksum_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -1954,7 +2126,8 @@ void main() {
       await registry.dispose();
     });
     final id = _id('checksum-shared');
-    final transport = _CountingBytesTransport('RIFF....WEBPchecksum'.codeUnits);
+    final transport = _CountingBytesTransport('RIFF....WEBPchecksum'.codeUnits,
+      );
     final reader = owner.attachConsumer(
       scopeId: 'reader-checksum',
       transportFor: (_) => transport,
@@ -1974,8 +2147,7 @@ void main() {
     reader.replaceDemands(
       'reader-checksum',
       1,
-      _desired(id, priority: 1000),
-    );
+      _desired(id, priority: 1000));
     chapter.replaceDemands(
       'chapter-checksum',
       1,
@@ -1985,8 +2157,7 @@ void main() {
           reason: 'chapter-command',
           expectedChecksum: 'checksum-a',
         ),
-      },
-    );
+      });
     expect(owner.claimCount(id), 2);
     expect(registry.sessions, hasLength(1));
 
@@ -2002,8 +2173,7 @@ void main() {
           reason: 'chapter-command',
           expectedChecksum: ' CHECKSUM-A ',
         ),
-      },
-    );
+      });
     expect(owner.claimCount(id), 2);
 
     expect(
@@ -2016,14 +2186,14 @@ void main() {
             reason: 'chapter-command',
             expectedChecksum: 'checksum-b',
           ),
-        },
-      ),
+        }),
       throwsStateError,
     );
     expect(conflicting.demands, isEmpty);
     expect(owner.claimCount(id), 2);
     expect(registry.sessions, hasLength(1));
-  });
+  },
+  );
 
   test('required completion dynamically bypasses speculative budget on same physical task', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -2062,10 +2232,8 @@ void main() {
       <DownloadId, TransferDemand>{
         id: const TransferDemand(
           priority: 700,
-          reason: 'reader-prefetch',
-        ),
-      },
-    );
+          reason: 'reader-prefetch'),
+      });
 
     for (var attempt = 0;
         attempt < 100 && budget.activeSpeculativeBytes < 64;
@@ -2081,10 +2249,12 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
     expect(registry.get(id).state, DownloadState.receiving,
-        reason: 'speculative task must remain paused at the byte budget');
+        reason: 'speculative task must remain paused at the byte budget',
+      );
     expect(budget.activeSpeculativeBytes, 64);
     expect(net.readPermitReleasedTasks, 1,
-        reason: 'budget waiting must park the response instead of occupying the read permit');
+        reason: 'budget waiting must park the response instead of occupying the read permit',
+      );
 
     final required = owner.attachConsumer(
       scopeId: 'chapter-required-budget-bypass',
@@ -2106,8 +2276,10 @@ void main() {
     await required.idle().timeout(const Duration(seconds: 2));
     expect(registry.get(id).state, DownloadState.promoted);
     expect(transport.opens, 1,
-        reason: 'required completion must reuse the already-open physical task');
-  });
+        reason: 'required completion must reuse the already-open physical task',
+      );
+  },
+  );
 
   test('confirmed full-body mismatch discards one stale partial and restarts clean', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -2171,11 +2343,11 @@ void main() {
     expect(result.state, DownloadState.promoted);
     expect(result.epoch.value, 1);
     expect(transport.opens, 2,
-        reason: 'one mismatching catchup plus one clean offset-zero restart');
+        reason: 'one mismatching catchup plus one clean offset-zero restart',
+      );
     expect(
       await File(result.artifact.finalPath).readAsBytes(),
-      newBytes,
-    );
+      newBytes);
     final restart = trace.events.singleWhere(
       (event) =>
           event.kind == TraceEventKind.resumeRestarted &&
@@ -2183,10 +2355,12 @@ void main() {
               'confirmed-full-body-mismatch-clean-restart',
     );
     expect(restart.payload['discardedPartialBytes'], staleLength);
-  });
+  },
+  );
 
   test('required completion claim can finish a costly full-body catchup', () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_required_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_required_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -2257,16 +2431,17 @@ void main() {
           reason: 'chapter-download-command',
           completionIntent: TransferCompletionIntent.required,
         ),
-      },
-    );
+      });
     await required.idle();
     expect(session.state, DownloadState.promoted);
     expect(session.committedLength, fullBytes.length);
-  });
+  },
+  );
 
   test('final consumer detach retains hot physical partial for later reuse',
       () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_partial_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_partial_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -2311,10 +2486,12 @@ void main() {
     expect(session.committedLength, greaterThan(0));
     expect(registry.sessions, hasLength(1));
     expect(identical(registry.findExact(id), session), isTrue);
-  });
+  },
+  );
 
   test('equivalent failed partial resumes through provider exact request URI', () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_alias_source_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_alias_source_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -2397,7 +2574,8 @@ void main() {
     expect(transport.ranges.first?.start, 0);
     expect(transport.validatorsSeen.first, isNull);
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
-  });
+  },
+  );
 
   test(
       'orphaned provider claim stays on the admitted task until provider disposal',
@@ -2420,7 +2598,8 @@ void main() {
         pageId: 'provider-retain-new',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/provider-retain-new.webp'),
+      canonicalUri: Uri.parse('https://example.test/provider-retain-new.webp',
+        ),
     );
     final owner = DownloadTransferOwner(
       registry: registry,
@@ -2513,7 +2692,8 @@ void main() {
     newTransport.release.complete();
     await newReader.idle();
     expect(session.state, DownloadState.promoted);
-  });
+  },
+  );
 
 
   test(
@@ -2537,7 +2717,8 @@ void main() {
         pageId: 'current-provider-new',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/current-provider-new.webp'),
+      canonicalUri: Uri.parse('https://example.test/current-provider-new.webp',
+        ),
     );
     final net = NetLane(maxActive: 1, highPriorityThreshold: 1000);
     final owner = DownloadTransferOwner(
@@ -2613,7 +2794,8 @@ void main() {
     await currentReader.idle();
     expect(session.state, DownloadState.promoted);
     expect(currentTransport.opened.isCompleted, isFalse);
-  });
+  },
+  );
 
 
   test(
@@ -2708,7 +2890,8 @@ void main() {
     await newReader.idle();
     expect(session.state, DownloadState.promoted);
     expect(newTransport.opened.isCompleted, isFalse);
-  });
+  },
+  );
 
 
   test('a re-demand waits for cancelled task retirement before reopening',
@@ -2765,7 +2948,8 @@ void main() {
 
     expect(transport.opens, 2);
     expect(registry.get(id).state, DownloadState.promoted);
-  });
+  },
+  );
 
   test('reset during an admitted open cannot publish stale lifecycle failure',
       () async {
@@ -2818,12 +3002,14 @@ void main() {
     expect(session.state, DownloadState.promoted);
     expect(session.snapshot.failure, isNull);
     expect(session.hasWriter, isFalse);
-  });
+  },
+  );
 
   test(
       'task-retained transport survives provider consumer disposal on shared partial',
       () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_retained_transport_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_retained_transport_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -2839,7 +3025,8 @@ void main() {
         pageId: 'retained-transport-exact',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/retained-transport-exact.webp'),
+      canonicalUri: Uri.parse('https://example.test/retained-transport-exact.webp',
+        ),
     );
     final owner = DownloadTransferOwner(
       registry: registry,
@@ -2923,11 +3110,13 @@ void main() {
     expect(replacementTransport.opened.isCompleted, isFalse);
     expect(session.state, DownloadState.promoted);
     expect(session.committedLength, fullBytes.length);
-  });
+  },
+  );
 
   test('disposing active provider preserves remaining consumer and reopens once',
       () async {
-    final temp = await Directory.systemTemp.createTemp('transfer_owner_detach_');
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_detach_',
+      );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
     final registry = DownloadRegistry(
@@ -2946,7 +3135,8 @@ void main() {
 
     final id = _id('provider-detach');
     final transportA = _BlockedControlledTransport();
-    final transportB = _CountingBytesTransport('RIFF....WEBPresumed'.codeUnits);
+    final transportB = _CountingBytesTransport('RIFF....WEBPresumed'.codeUnits,
+      );
     final a = owner.attachConsumer(
       scopeId: 'reader-a',
       transportFor: (_) => transportA,
@@ -2978,7 +3168,8 @@ void main() {
     expect(transportB.opens, 1);
     expect(registry.sessions, hasLength(1));
     expect(owner.claimCount(id), 1);
-  });
+  },
+  );
 }
 
 DownloadId _id(String pageId) => DownloadId(

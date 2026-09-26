@@ -14,8 +14,10 @@ void main() {
   test('persistent POSIX partial is adopted as the active spool without copying',
       () async {
     final durableRoot =
-        await Directory.systemTemp.createTemp('partial-adopt-durable-');
-    final hotRoot = await Directory.systemTemp.createTemp('partial-adopt-hot-');
+        await Directory.systemTemp.createTemp('partial-adopt-durable-',
+      );
+    final hotRoot = await Directory.systemTemp.createTemp('partial-adopt-hot-',
+      );
     addTearDown(() async {
       await durableRoot.delete(recursive: true);
       await hotRoot.delete(recursive: true);
@@ -33,7 +35,8 @@ void main() {
     final bytes = Uint8List.fromList(
       List<int>.generate(8192, (index) => index & 0xff),
     );
-    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path,
+      );
     final hot = DownloadRegistry(
       layout: CacheLayout(hotRoot.path),
       clock: SystemClock(),
@@ -119,7 +122,8 @@ void main() {
     expect(afterRelease.evictedEntries, 1);
     expect(afterRelease.skippedBusy, 0);
     expect(await store.index.get(id.key), isNull);
-  });
+  },
+  );
 
   test(
     'canonical physical artifact restores before exact or equivalent carrier lookup',
@@ -202,7 +206,8 @@ void main() {
       expect(session.state, DownloadState.promoted);
       expect(session.residentBodyBacked, isTrue);
       expect(session.artifact.state, ArtifactState.empty,
-          reason: 'canonical READY must not pay for empty writable staging');
+          reason: 'canonical READY must not pay for empty writable staging',
+      );
       expect(session.physicalId, physical);
       expect(session.id, second);
       expect(session.committedLength, bytes.lengthInBytes);
@@ -750,7 +755,8 @@ void main() {
       final physicalIndex = store.index as PhysicalPartialIndex;
       final checkpoint = await physicalIndex.getPhysicalPartial(physical);
       expect(checkpoint?.bytes, expected.lengthInBytes,
-          reason: 'the durable index must describe the grown borrowed spool');
+          reason: 'the durable index must describe the grown borrowed spool',
+      );
       expect(await File(checkpoint!.path).length(), expected.lengthInBytes);
       expect(await File(checkpoint.path).readAsBytes(), expected);
     },
@@ -808,18 +814,17 @@ void main() {
           validators: const Validators(etag: 'checkpoint-v1'),
           totalLength: 16384,
           open: ({required int start}) => Stream<List<int>>.value(
-            Uint8List.sublistView(checkpoint, start),
-          ),
+            Uint8List.sublistView(checkpoint, start)),
         ),
       );
       final physicalIndex = store.index as PhysicalPartialIndex;
       final record = await physicalIndex.getPhysicalPartial(physical);
       expect(record, isNotNull);
-      await File(record!.path).writeAsBytes(
+      await File(record!.path,
+      ).writeAsBytes(
         crashTail,
         mode: FileMode.append,
-        flush: true,
-      );
+        flush: true);
       expect(
         await File(record.path).length(),
         checkpoint.lengthInBytes + crashTail.lengthInBytes,
@@ -830,7 +835,8 @@ void main() {
         requestId: id,
       );
       expect(cold, isNotNull,
-          reason: 'a longer body still contains the indexed durable checkpoint');
+          reason: 'a longer body still contains the indexed durable checkpoint',
+      );
       expect(cold!.length, checkpoint.lengthInBytes);
       final visible = BytesBuilder(copy: false);
       await for (final chunk in cold.open(start: 0)) {
@@ -845,15 +851,18 @@ void main() {
       expect(session.hasBorrowedPartialBacking, isTrue);
       expect(session.committedLength, checkpoint.lengthInBytes);
       expect(await File(record.path).length(), checkpoint.lengthInBytes,
-          reason: 'adoption must discard only the uncheckpointed crash tail');
+          reason: 'adoption must discard only the uncheckpointed crash tail',
+      );
       expect(await session.artifact.readBytes(), checkpoint);
     },
   );
 
   test('partial survives Reader-session workspace replacement without promotion',
       () async {
-    final firstRoot = await Directory.systemTemp.createTemp('partial-source-');
-    final secondRoot = await Directory.systemTemp.createTemp('partial-target-');
+    final firstRoot = await Directory.systemTemp.createTemp('partial-source-',
+      );
+    final secondRoot = await Directory.systemTemp.createTemp('partial-target-',
+      );
     addTearDown(() async {
       await firstRoot.delete(recursive: true);
       await secondRoot.delete(recursive: true);
@@ -890,7 +899,8 @@ void main() {
       totalLength: 1024,
     );
     final writer = source.acquireWriter();
-    final bytes = Uint8List.fromList(List<int>.generate(320, (i) => i & 0xff));
+    final bytes = Uint8List.fromList(List<int>.generate(320, (i) => i & 0xff),
+      );
     await source.append(writer, 0, bytes);
     await source.pause(writer);
 
@@ -904,12 +914,14 @@ void main() {
     expect(restored.validators.etag, 'reader-etag');
     expect(restored.totalLength, 1024);
     expect(await restored.artifact.readBytes(), bytes);
-  });
+  },
+  );
 
   test('composition transfer resumes network suffix on the adopted durable spool',
       () async {
     final durableRoot =
-        await Directory.systemTemp.createTemp('partial-adopt-resume-');
+        await Directory.systemTemp.createTemp('partial-adopt-resume-',
+      );
     addTearDown(() async => durableRoot.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -927,7 +939,8 @@ void main() {
     ]);
     const prefixLength = 24;
     const validators = Validators(etag: 'resume-v1');
-    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path,
+      );
     final backend = _CountingArtifactBackend(store);
     final runtime = CompositionDownloadTransferRuntime(
       artifactCacheManager: ArtifactCacheManager(backend: backend),
@@ -936,7 +949,8 @@ void main() {
     );
     addTearDown(() async {
       if (runtime.hasConsumers) {
-        for (final consumer in runtime.owner.consumers.toList(growable: false)) {
+        for (final consumer in runtime.owner.consumers.toList(growable: false,
+          )) {
           await consumer.dispose();
         }
       }
@@ -975,8 +989,7 @@ void main() {
           reason: 'zero-copy-resume',
           completionIntent: TransferCompletionIntent.required,
         ),
-      },
-    );
+      });
     await consumer.idle();
 
     final session = runtime.registry.findExact(id);
@@ -993,21 +1006,24 @@ void main() {
       ).artifactFor(id).finalPath,
     );
     expect(await session.artifact.readBytes(), fullBytes);
-    expect(await runtime.artifactCacheHandoff!.settleAutomatic(session), isTrue);
+    expect(await runtime.artifactCacheHandoff!.settleAutomatic(session), isTrue,
+      );
     expect(backend.storeCalls, 0);
 
     final ready = await store.index.get(id.key);
     expect(ready?.state, CacheState.ready);
     expect(ready?.bytes, fullBytes.lengthInBytes);
     await consumer.dispose();
-  });
+  },
+  );
 
   test('replacement runtime restores recoverable app-private partial before network',
       () async {
     final stableId =
         'runtime-recovery-${DateTime.now().microsecondsSinceEpoch}';
     final firstWorkspace =
-        EphemeralCacheWorkspace.recoverableTransfer(stableId);
+        EphemeralCacheWorkspace.recoverableTransfer(stableId,
+      );
     addTearDown(firstWorkspace.dispose);
     final id = DownloadId(
       content: const ContentId(
@@ -1048,7 +1064,8 @@ void main() {
     // A new process receives the same deterministic app-private staging root.
     // No durable PartialDownloadStore entry is involved in this recovery.
     final replacementWorkspace =
-        EphemeralCacheWorkspace.recoverableTransfer(stableId);
+        EphemeralCacheWorkspace.recoverableTransfer(stableId,
+      );
     expect(replacementWorkspace.rootPath, firstWorkspace.rootPath);
     final partialStore = _PartialStore();
     final runtime = CompositionDownloadTransferRuntime(
@@ -1085,21 +1102,25 @@ void main() {
     await consumer.idle();
 
     expect(partialStore.partial, isEmpty,
-        reason: 'restart recovery must not depend on durable partial handoff');
+        reason: 'restart recovery must not depend on durable partial handoff',
+      );
     expect(partialStore.openRequests, 0,
-        reason: 'owned recoverable body must short-circuit durable lookup');
+        reason: 'owned recoverable body must short-circuit durable lookup',
+      );
     expect(transport.rangeStarts, <int>[prefixLength]);
     final restored = runtime.registry.findExact(id);
     expect(restored, isNotNull);
     expect(restored!.state, DownloadState.promoted);
     expect(restored.committedLength, fullBytes.lengthInBytes);
     await consumer.dispose();
-  });
+  },
+  );
 
   test('exact durable ready restore skips the second promoted backend preflight',
       () async {
     final durableRoot =
-        await Directory.systemTemp.createTemp('ready-restore-proof-');
+        await Directory.systemTemp.createTemp('ready-restore-proof-',
+      );
     addTearDown(() async => durableRoot.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -1115,7 +1136,8 @@ void main() {
       0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
       0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
     ]);
-    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path,
+      );
     await store.storePromotedArtifact(id: id, bytes: bytes);
     final backend = _CountingArtifactBackend(store);
     final runtime = CompositionDownloadTransferRuntime(
@@ -1156,11 +1178,14 @@ void main() {
     expect(session!.state, DownloadState.promoted);
     expect(session.committedLength, bytes.lengthInBytes);
     expect(session.residentReplayAccessMode, 'direct',
-        reason: 'Persistent READY binds its selected physical access capability');
+        reason: 'Persistent READY binds its selected physical access capability',
+      );
     expect(transport.rangeStarts, isEmpty,
-        reason: 'a complete durable body must finish locally');
+        reason: 'a complete durable body must finish locally',
+      );
     expect(backend.openCalls, 0,
-        reason: 'the just-consumed exact durable body already proves handoff');
+        reason: 'the just-consumed exact durable body already proves handoff',
+      );
     expect(backend.storeCalls, 0);
 
     final replay = runtime.residentReplayRangeSource(
@@ -1172,12 +1197,15 @@ void main() {
     }
     expect(replayed, orderedEquals(bytes));
     expect(backend.openCalls, 0,
-        reason: 'decoder ranges must reuse the READY generation authority');
-  });
+        reason: 'decoder ranges must reuse the READY generation authority',
+      );
+  },
+  );
 
   test('physical partial never persists validators from an aliased provider',
       () async {
-    final root = await Directory.systemTemp.createTemp('partial-validator-scope-');
+    final root = await Directory.systemTemp.createTemp('partial-validator-scope-',
+      );
     addTearDown(() async => root.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -1203,7 +1231,8 @@ void main() {
       totalLength: 1024,
     );
     final writer = session.acquireWriter();
-    final bytes = Uint8List.fromList(List<int>.generate(320, (i) => i & 0xff));
+    final bytes = Uint8List.fromList(List<int>.generate(320, (i) => i & 0xff),
+      );
     await session.append(writer, 0, bytes);
     await session.pause(writer);
 
@@ -1214,7 +1243,8 @@ void main() {
     expect(backend.partial[id]?.bytes, bytes);
     expect(backend.partial[id]?.validators.isEmpty, isTrue);
     expect(backend.partial[id]?.totalLength, 1024);
-  });
+  },
+  );
 
   test('verified equivalent cold partial restores without copying exact entry',
       () async {
@@ -1240,7 +1270,8 @@ void main() {
       sourceRevision: 'new',
       canonicalUri: Uri.parse('https://example.test/new.webp'),
     );
-    final bytes = Uint8List.fromList(List<int>.generate(384, (i) => i & 0xff));
+    final bytes = Uint8List.fromList(List<int>.generate(384, (i) => i & 0xff),
+      );
     final backend = _PartialStore();
     backend.partial[oldId] = _StoredPartial(
       bytes: bytes,
@@ -1268,7 +1299,8 @@ void main() {
     expect(await session.artifact.readBytes(), bytes);
     expect(backend.partial.containsKey(newId), isFalse);
     expect(backend.partial.containsKey(oldId), isTrue);
-  });
+  },
+  );
   test('verified equivalent partials still choose the longest prefix', () async {
     final root = await Directory.systemTemp.createTemp(
       'partial-equivalent-longest-',
@@ -1341,7 +1373,8 @@ void main() {
     expect(session.validators.isEmpty, isTrue);
     expect(session.totalLength, 1024);
     expect(await session.artifact.readBytes(), orderedEquals(longBytes));
-  });
+  },
+  );
 
   test(
     'longer verified equivalent cold partial outranks shorter exact',
@@ -1535,7 +1568,8 @@ void main() {
       session.committedLength,
       backend.partial[candidates.last]!.bytes.lengthInBytes,
     );
-  });
+  },
+  );
 
   test(
     'metadata READY equivalent stops before later partial candidates',
@@ -1662,7 +1696,8 @@ void main() {
     await handoff.restoreInto(session);
 
     expect(session.committedLength, 512,
-        reason: 'stale metadata must fall back to physical longest-prefix scan');
+        reason: 'stale metadata must fall back to physical longest-prefix scan',
+    );
   });
 
   test('cancelling partial restore aborts body and preserves durable source',
@@ -1690,8 +1725,7 @@ void main() {
     );
     addTearDown(controller.close);
     final backend = _PartialStore(
-      streamFor: (_) => controller.stream,
-    );
+      streamFor: (_) => controller.stream);
     backend.partial[id] = _StoredPartial(
       bytes: bytes,
       validators: const Validators(etag: 'durable'),
@@ -1724,7 +1758,8 @@ void main() {
     expect(session.state, DownloadState.idle);
     expect(session.committedLength, 0);
     expect(backend.partial[id]?.bytes, bytes);
-  });
+  },
+  );
 
   test(
     'cancelled restore frees preparation ownership while physical read drains',
@@ -1831,7 +1866,8 @@ void main() {
   );
 
   test('cold partial hydration uses the shared persistent read scheduler', () async {
-    final root = await Directory.systemTemp.createTemp('partial-read-scheduler-');
+    final root = await Directory.systemTemp.createTemp('partial-read-scheduler-',
+      );
     addTearDown(() async => root.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -1848,7 +1884,8 @@ void main() {
     final backend = _PartialStore(
       onRead: () => activeWhileReading = scheduler.activeCount,
     );
-    final bytes = Uint8List.fromList(List<int>.generate(4096, (i) => i & 0xff));
+    final bytes = Uint8List.fromList(List<int>.generate(4096, (i) => i & 0xff),
+      );
     backend.partial[id] = _StoredPartial(
       bytes: bytes,
       validators: const Validators(),
@@ -1870,7 +1907,8 @@ void main() {
     expect(activeWhileReading, 1);
     expect(scheduler.activeCount, 0);
     expect(session.committedLength, bytes.lengthInBytes);
-  });
+  },
+  );
 
   test('recoverable owner probe waits for shared local-read capacity', () async {
     final root = await Directory.systemTemp.createTemp(
@@ -1929,7 +1967,8 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(completed, isFalse);
     expect(replacement.committedLength, 0,
-        reason: 'owned checkpoint stat/sidecar work must not bypass the scheduler');
+        reason: 'owned checkpoint stat/sidecar work must not bypass the scheduler',
+      );
 
     blockerA.release();
     await restore.timeout(const Duration(seconds: 1));
@@ -1937,7 +1976,82 @@ void main() {
     expect(replacement.committedLength, bytes.lengthInBytes);
     blockerB.release();
     expect(scheduler.activeCount, 0);
-  });
+  },
+  );
+
+  test(
+    'exact READY with no deterministic body bypasses mutable checkpoint probe',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ready-before-empty-checkpoint-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'ready-before-empty-checkpoint',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse(
+          'https://example.test/ready-before-empty-checkpoint.webp',
+        ),
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+      final session = registry.get(id);
+      final bytes = Uint8List.fromList(<int>[
+        ...'RIFF....WEBPready'.codeUnits,
+        ...List<int>.generate(128, (index) => index & 0xff),
+      ]);
+      const directFilePath = '/proc/self/fd/ready-exact';
+      final store = _ReadyBoundStore(
+        id: id,
+        bytes: bytes,
+        directFilePath: directFilePath,
+      );
+      final trace = MemoryTraceSink();
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        readScheduler: ArtifactCacheReadScheduler(maxActive: 2),
+        clock: SystemClock(),
+        traceSink: trace,
+      );
+
+      await handoff.restoreInto(session);
+
+      expect(store.metadataCalls, 1);
+      expect(store.openRequests, <DownloadId>[id]);
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.residentIngressDeferred, isTrue);
+      expect(session.residentReplayDirectFilePath, directFilePath);
+      expect(session.artifact.committedLength, 0);
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['stage'] == 'exact-ready-preflight' &&
+              event.payload['deterministicBodyPresent'] == false,
+        ),
+        isTrue,
+      );
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['stage'] == 'owned-checkpoint-probe',
+        ),
+        isFalse,
+        reason:
+            'an indexed exact READY body must not first probe an absent mutable spool',
+      );
+    },
+  );
 
   test(
     'deterministic session body keeps priority over exact READY fast path',
@@ -2059,29 +2173,35 @@ void main() {
       expect(session.residentBodyBacked, isTrue);
       expect(session.residentIngressDeferred, isTrue);
       expect(session.artifact.committedLength, 0,
-          reason: 'equivalent READY bytes must not be copied into hot storage');
+          reason: 'equivalent READY bytes must not be copied into hot storage',
+      );
       expect(await session.artifact.hasRestorableBody(), isFalse,
-          reason: 'the initialized deterministic artifact remains body-empty');
+          reason: 'the initialized deterministic artifact remains body-empty',
+      );
       expect(session.validators.isEmpty, isTrue,
-          reason: 'provider validators never cross equivalent source revisions');
+          reason: 'provider validators never cross equivalent source revisions',
+      );
       expect(session.committedLength, bytes.lengthInBytes);
       expect(session.sourceMetadataPrefixLength, 64);
       expect(store.readerOpenCalls, 1);
       expect(store.readerReadCalls, 1,
-          reason: 'restore reads only the metadata prefix before binding');
+          reason: 'restore reads only the metadata prefix before binding',
+      );
       expect(store.bodyOpenCalls, 0,
-          reason: 'the historical full-body restore path must stay unused');
+          reason: 'the historical full-body restore path must stay unused',
+      );
       expect(store.openRequests.where((id) => id == newId), hasLength(1),
-          reason: 'the cold exact miss must not be queried twice');
+          reason: 'the cold exact miss must not be queried twice',
+      );
       expect(store.openRequests, contains(oldId));
       expect(store.openRequests, isNot(contains(neverId)),
-          reason: 'the first complete equivalent READY ends candidate search');
+          reason: 'the first complete equivalent READY ends candidate search',
+      );
       expect(
         handoff.provesExactDurableBody(
           session,
           newId,
-          bytes.lengthInBytes,
-        ),
+          bytes.lengthInBytes),
         isFalse,
         reason: 'verified equivalence is not exact-target durable ownership',
       );
@@ -2147,7 +2267,8 @@ void main() {
         0xaf, 0x04, 0,
         ...List<int>.generate(1024, (index) => index & 0xff),
       ]);
-      final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+      final store = await PersistentDownloadArtifactStore.open(durableRoot.path,
+      );
       final cache = ArtifactCacheManager(
         backend: store,
         carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
@@ -2178,24 +2299,29 @@ void main() {
       expect(session.residentBodyBacked, isTrue);
       expect(session.residentIngressDeferred, isTrue);
       expect(session.artifact.committedLength, 0,
-          reason: 'historical READY bytes must never be copied into hot Artifact');
+          reason: 'historical READY bytes must never be copied into hot Artifact',
+      );
       expect(session.committedLength, bytes.lengthInBytes);
       expect(session.sourceMetadataPrefixLength, 64);
       expect(await cache.lookupAuthoritative(current), isNull,
-          reason: 'historical trust must not create an exact current binding');
+          reason: 'historical trust must not create an exact current binding',
+      );
       expect(cache.directEquivalents(current), isEmpty,
-          reason: 'historical trust is not verified equivalence');
+          reason: 'historical trust is not verified equivalence',
+      );
       expect(cache.hasPendingHistoricalCarrierRevalidation(current), isTrue);
       final recovery =
           cache.beginFreshSourceRecovery(<DownloadId>{current});
       cache.armFreshSourceRecovery(recovery);
       expect(await cache.readForeground(current), isNull,
-          reason: 'fresh-source quarantine must still reject normal cache routing');
+          reason: 'fresh-source quarantine must still reject normal cache routing',
+      );
       final retained =
           await cache.readRetainedHistoricalPresentation(current);
       expect(retained, isNotNull,
           reason:
-              'historical bind must preserve its exact selected storage generation for presentation continuity');
+              'historical bind must preserve its exact selected storage generation for presentation continuity',
+      );
       expect(retained!.storageId, historical);
       expect(retained.bytes, orderedEquals(bytes));
       cache.cancelFreshSourceRecovery(recovery);
@@ -2265,21 +2391,96 @@ void main() {
 
     await session.reset(deleteFinalArtifact: false);
     expect(store.readerCloseCalls, 0,
-        reason: 'session retirement returns the lease to the handoff pool');
+        reason: 'session retirement returns the lease to the handoff pool',
+      );
     await handoff.restoreInto(session);
     expect(session.state, DownloadState.promoted);
     expect(session.residentReplayGenerationToken, stableKey);
     expect(store.readerOpenCalls, 1,
-        reason: 'the same sealed generation must reuse the validated descriptor');
+        reason: 'the same sealed generation must reuse the validated descriptor',
+      );
 
     await session.reset(deleteFinalArtifact: false);
     await handoff.close();
     expect(store.readerCloseCalls, 1,
-        reason: 'handoff disposal owns the pooled descriptor lifetime');
-  });
+        reason: 'handoff disposal owns the pooled descriptor lifetime',
+      );
+  },
+  );
+
+  test(
+    'sealed READY generation token survives physical session retirement',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ready-reader-cross-session-generation-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'ready-reader-cross-session-generation',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse(
+          'https://example.test/ready-reader-cross-session-generation.webp',
+        ),
+      );
+      final bytes = Uint8List.fromList(<int>[
+        ...'RIFF....WEBP'.codeUnits,
+        ...List<int>.filled((256 * 1024) - 12, 0x6b),
+      ]);
+      final store = _ReadyBoundStore(id: id, bytes: bytes);
+      final handoff = PartialDownloadHandoff(store: store);
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+
+      final first = registry.get(id);
+      await handoff.restoreInto(first);
+      final stableKey = first.residentReplayGenerationToken;
+      expect(stableKey, isNotNull);
+      expect(store.readerOpenCalls, 1);
+
+      expect(registry.takeIdlePhysical(id), same(first));
+      await first.dispose();
+      expect(
+        store.readerCloseCalls,
+        0,
+        reason:
+            'retiring one physical session returns the immutable reader lease to the generation pool',
+      );
+
+      final replacement = registry.get(id);
+      expect(replacement, isNot(same(first)));
+      await handoff.restoreInto(replacement);
+      expect(replacement.state, DownloadState.promoted);
+      expect(
+        replacement.residentReplayGenerationToken,
+        stableKey,
+        reason:
+            'physical session lifetime must not manufacture a new immutable body generation',
+      );
+      expect(
+        store.readerOpenCalls,
+        1,
+        reason:
+            'the replacement session must lease the existing sealed generation reader',
+      );
+
+      expect(registry.takeIdlePhysical(id), same(replacement));
+      await replacement.dispose();
+      await handoff.close();
+      expect(store.readerCloseCalls, 1);
+    },
+  );
 
   test('sealed READY reader generation change reopens the provider', () async {
-    final root = await Directory.systemTemp.createTemp('ready-reader-pool-generation-');
+    final root = await Directory.systemTemp.createTemp('ready-reader-pool-generation-',
+    );
     addTearDown(() => root.delete(recursive: true));
     final id = DownloadId(
       content: const ContentId(
@@ -2289,7 +2490,8 @@ void main() {
         pageId: 'page',
       ),
       sourceRevision: 'r1',
-      canonicalUri: Uri.parse('https://example.test/ready-pool-generation.webp'),
+      canonicalUri: Uri.parse('https://example.test/ready-pool-generation.webp',
+      ),
     );
     final bytes = Uint8List.fromList(<int>[
       ...'RIFF....WEBP'.codeUnits,
@@ -2312,13 +2514,15 @@ void main() {
     store.sealedChecksum = 'cafebabe';
     await handoff.restoreInto(session);
     expect(store.readerOpenCalls, 2,
-        reason: 'a different immutable seal must not reuse the old descriptor');
+        reason: 'a different immutable seal must not reuse the old descriptor',
+    );
     expect(session.residentReplayGenerationToken, isNot(firstKey));
 
     await session.reset(deleteFinalArtifact: false);
     await handoff.close();
     expect(store.readerCloseCalls, 2,
-        reason: 'both sealed generations remain independently owned by the pool');
+        reason: 'both sealed generations remain independently owned by the pool',
+    );
   });
 
   test('bound READY reader preserves metadata prefix and stays retained for ranges', () async {
@@ -2361,16 +2565,20 @@ void main() {
     await handoff.restoreInto(session);
     expect(session.state, DownloadState.promoted);
     expect(session.artifact.state, ArtifactState.empty,
-        reason: 'exact READY bypasses restore only with no deterministic body');
+        reason: 'exact READY bypasses restore only with no deterministic body',
+      );
     expect(session.residentIngressDeferred, isTrue);
     expect(session.residentReplayAccessMode, 'saf');
     expect(session.contentKind, ContentKind.fallback,
-        reason: 'READY binding must preserve its bounded metadata prefix');
+        reason: 'READY binding must preserve its bounded metadata prefix',
+      );
     expect(store.readerOpenCalls, 1);
     expect(activeWhileOpening, 1,
-        reason: 'descriptor open must run inside the local-read scheduler');
+        reason: 'descriptor open must run inside the local-read scheduler',
+      );
     expect(activeWhileReading, 1,
-        reason: 'binding reads only the bounded metadata prefix');
+        reason: 'binding reads only the bounded metadata prefix',
+      );
     final firstReplayKey = session.residentReplayGenerationToken;
     expect(firstReplayKey, isNotNull);
 
@@ -2386,23 +2594,28 @@ void main() {
     expect(secondBytes, orderedEquals(bytes.sublist(128, 256)));
     expect(store.readerOpenCalls, 1);
     expect(store.readerReadCalls, 3,
-        reason: 'one metadata read precedes the two decoder-demanded ranges');
+        reason: 'one metadata read precedes the two decoder-demanded ranges',
+      );
 
     await session.reset(removeCacheRecord: false);
     expect(store.readerCloseCalls, 0,
-        reason: 'reset releases only this session lease; the sealed descriptor stays pooled');
+        reason: 'reset releases only this session lease; the sealed descriptor stays pooled',
+      );
     expect(session.residentReplayRangeChunks, isNull);
 
     await handoff.restoreInto(session);
     expect(session.residentReplayGenerationToken, firstReplayKey,
-        reason: 'the same sealed physical generation should expose one stable replay acceleration key across session rebinds');
+        reason: 'the same sealed physical generation should expose one stable replay acceleration key across session rebinds',
+      );
     expect(store.readerOpenCalls, 1,
-        reason: 'rebind must lease the already-validated descriptor');
+        reason: 'rebind must lease the already-validated descriptor',
+      );
     await session.reset(removeCacheRecord: false);
     expect(store.readerCloseCalls, 0);
     await handoff.close();
     expect(store.readerCloseCalls, 1);
-  });
+  },
+  );
 
 }
 
@@ -2461,16 +2674,18 @@ final class _CountingArtifactBackend implements ArtifactCacheBackend {
       delegate.invalidateArtifact(id);
 }
 
-final class _ReadyBoundStore implements PartialDownloadStore {
+final class _ReadyBoundStore implements PartialDownloadStore, PartialDownloadMetadataStore {
   _ReadyBoundStore({
     required this.id,
     required this.bytes,
+    this.directFilePath,
     this.onReaderOpen,
     this.onReaderRead,
   });
 
   final DownloadId id;
   final Uint8List bytes;
+  final String? directFilePath;
   final void Function()? onReaderOpen;
   final void Function()? onReaderRead;
   String sealedChecksum = 'deadbeef';
@@ -2478,10 +2693,24 @@ final class _ReadyBoundStore implements PartialDownloadStore {
   int readerReadCalls = 0;
   int readerCloseCalls = 0;
   int bodyOpenCalls = 0;
+  int metadataCalls = 0;
   final List<DownloadId> openRequests = <DownloadId>[];
 
   @override
-  Future<PartialDownloadEntry?> openPartialDownload(DownloadId requested) async {
+  Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(
+    DownloadId requested,
+  ) async {
+    metadataCalls++;
+    if (requested != id) return null;
+    return PartialDownloadMetadata(
+      length: bytes.lengthInBytes,
+      exactDurableFinal: true,
+    );
+  }
+
+  @override
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId requested,
+  ) async {
     openRequests.add(requested);
     if (requested != id) return null;
     return PartialDownloadEntry(
@@ -2504,6 +2733,7 @@ final class _ReadyBoundStore implements PartialDownloadStore {
         readerOpenCalls++;
         return (
           accessMode: 'saf',
+          directFilePath: directFilePath,
           readRange: (int start, int endExclusive) async {
             onReaderRead?.call();
             readerReadCalls++;

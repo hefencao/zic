@@ -155,6 +155,7 @@ final class DownloadIngressProjection {
     required SourceEpoch epoch,
     required Stream<List<int>> chunks,
     required bool sealed,
+    TaskControl? control,
   }) async {
     _resetWebpAnimationEvidence();
     final before = snapshot;
@@ -165,8 +166,32 @@ final class DownloadIngressProjection {
         return chunk;
       }),
       sealed: sealed,
+      control: control,
     );
     _notify(before, snapshot);
+  }
+
+  Future<bool> rebuildFromDirectFile({
+    required SourceEpoch epoch,
+    required List<int> metadataPrefix,
+    required String path,
+    required int endExclusive,
+    required bool sealed,
+    TaskControl? control,
+  }) async {
+    _resetWebpAnimationEvidence();
+    _observeWebpAnimationEvidence(metadataPrefix);
+    final before = snapshot;
+    final rebuilt = await ingress.rebuildFromDirectFile(
+      epoch: epoch,
+      metadataPrefix: metadataPrefix,
+      path: path,
+      endExclusive: endExclusive,
+      sealed: sealed,
+      control: control,
+    );
+    _notify(before, snapshot);
+    return rebuilt;
   }
 
   void fail(Failure failure) {

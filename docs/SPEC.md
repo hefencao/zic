@@ -2179,6 +2179,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     三者均不存在时 MUST依次退休 idle upload/decode/native cursor、detach ingress并移除 SourcePool entry。
     `DownloadIngressProjectionRegistry` 只拥有有界 replay operation queue（默认最多2个）与实时 priority 排序，
     MUST NOT再实现 `>=1000 / 780..999 / <780` role gate或独立 memory-pressure eligibility。
+    其 scheduler-owned `TaskControl` MUST贯穿 background Ingress/source execution；native source-write worker MAY并行执行已接纳的 reserve/copy/direct-file range，但 pending queue MUST消费同一动态 priority/cancellation，MUST NOT退化为独立FIFO scheduler，且取消后的in-flight native operation MUST真实退出后才释放worker capacity。
+    native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；background SQLite artifact authority read MUST在一个read transaction中返回object/replica/root一致snapshot，worker故障不得成为durable artifact不可读的原因。详见 ADR 0328。
     FrameBudgeter/memory pressure 只裁决native decoded/upload residency与media资源释放，
     MUST NOT再调整encoded/network flow credit；
     实际 persistent replay byte bandwidth 继续由共享 `ArtifactCacheReadScheduler` 拥有。

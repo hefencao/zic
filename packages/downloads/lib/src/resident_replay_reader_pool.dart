@@ -121,6 +121,7 @@ final class ResidentReplayReaderPool {
       reused: reused,
       reader: (
         accessMode: leasedEntry.reader.accessMode,
+        directFilePath: leasedEntry.reader.directFilePath,
         readRange: (int start, int endExclusive) async {
           try {
             return await leasedEntry.reader.readRange(start, endExclusive);

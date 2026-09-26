@@ -392,6 +392,48 @@ void main() {
     expect(runtime.registry.findExact(newId), same(newCarrier));
   });
 
+  test('promoted exact body bypasses equivalent discovery on reacquire',
+      () async {
+    final exactId = _id('promoted-exact');
+    final equivalentId = _id('promoted-equivalent');
+    var equivalentLookups = 0;
+    final authority = VersionPageAuthority()
+      ..replaceScope('exact-equivalent', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          equivalentLookups++;
+          if (id == exactId) yield equivalentId;
+        },
+      });
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final exact = runtime.registry.get(exactId);
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    await exact.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+    );
+    final writer = exact.acquireWriter();
+    await exact.append(writer, 0, bytes);
+    await exact.seal(writer, expectedLength: bytes.lengthInBytes);
+    await exact.promote();
+
+    equivalentLookups = 0;
+    expect(runtime.owner.resolveTransferId(exactId), exactId);
+    expect(runtime.sessionFor(exactId), same(exact));
+    expect(
+      equivalentLookups,
+      0,
+      reason:
+          'a complete exact body is already sufficient physical authority',
+    );
+  });
+
   test('demanded exact session does not switch to an equivalent carrier', () async {
     final oldId = _id('demanded-old');
     final newId = _id('demanded-new');

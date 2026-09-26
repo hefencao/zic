@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 import 'package:test/test.dart';
@@ -16,8 +18,7 @@ void main() {
     ingress.append(
       epoch: epoch,
       offset: 4,
-      bytes: '....WEBPpayload'.codeUnits,
-    );
+      bytes: '....WEBPpayload'.codeUnits);
     expect(factory.created, hasLength(1));
     expect(factory.created.single.bytes, 'RIFF....WEBPpayload'.codeUnits);
     expect(ingress.snapshot.kind, ContentKind.webp);
@@ -68,8 +69,7 @@ void main() {
     ingress.append(
       epoch: epoch,
       offset: 4,
-      bytes: '....WEBPframe'.codeUnits,
-    );
+      bytes: '....WEBPframe'.codeUnits);
     final ready = ingress.snapshot.revision;
     ingress.append(
       epoch: epoch,
@@ -129,6 +129,71 @@ void main() {
     expect(ingress.snapshot.length, bytes.length);
   });
 
+  test(
+    'rebuild publishes a background source only after materialization',
+    () async {
+      final release = Completer<void>();
+      final factory = _BackgroundFactory(release.future);
+      final ingress = Ingress(factory: factory, maxBytes: 1024);
+      final bytes = 'RIFF....WEBPbackground'.codeUnits;
+      ingress.expectLength(bytes.length);
+
+      final rebuilding = ingress.rebuild(
+        epoch: const SourceEpoch(7),
+        chunks: Stream<List<int>>.value(bytes),
+        sealed: true,
+      );
+      for (var i = 0; i < 20 && factory.created.isEmpty; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final source = factory.created.single;
+      for (var i = 0; i < 20 && source.backgroundAppendCalls == 0; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(source.backgroundAppendCalls, 1);
+      expect(source.syncAppendCalls, 0);
+      expect(
+        ingress.snapshot.sourceReady,
+        isFalse,
+        reason: 'native bytes are not authoritative until worker completion',
+      );
+      expect(ingress.source, isNull);
+
+      release.complete();
+      await rebuilding;
+      expect(source.bytes, bytes);
+      expect(source.backgroundReserveCalls, 1);
+      expect(ingress.snapshot.sourceReady, isTrue);
+      expect(ingress.snapshot.sealed, isTrue);
+    },
+  );
+
+  test('rebuild keeps scheduler control on background source work', () async {
+    final release = Completer<void>();
+    final factory = _BackgroundFactory(release.future);
+    final ingress = Ingress(factory: factory, maxBytes: 1024);
+    final control = _TestControl(priority: 820);
+    final bytes = 'RIFF....WEBPcontrolled'.codeUnits;
+
+    final rebuilding = ingress.rebuild(
+      epoch: const SourceEpoch(8),
+      chunks: Stream<List<int>>.value(bytes),
+      sealed: true,
+      control: control,
+    );
+    for (var i = 0; i < 20 && factory.created.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    final source = factory.created.single;
+    for (var i = 0; i < 20 && source.backgroundAppendCalls == 0; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(source.lastControl, same(control));
+
+    release.complete();
+    await rebuilding;
+  });
+
   test('source creation failure degrades without failing download ingress', () {
     final ingress = Ingress(factory: _ThrowingFactory(), maxBytes: 1024);
     final bytes = 'RIFF....WEBPpayload'.codeUnits;
@@ -136,8 +201,7 @@ void main() {
     ingress.append(
       epoch: const SourceEpoch(0),
       offset: 0,
-      bytes: bytes,
-    );
+      bytes: bytes);
 
     expect(ingress.snapshot.length, bytes.length);
     expect(ingress.snapshot.kind, ContentKind.webp);
@@ -153,14 +217,14 @@ void main() {
     ingress.append(
       epoch: const SourceEpoch(0),
       offset: 0,
-      bytes: bytes,
-    );
+      bytes: bytes);
 
     expect(ingress.snapshot.kind, ContentKind.webp);
     expect(ingress.snapshot.length, bytes.length);
     expect(ingress.snapshot.sourceReady, isFalse);
     expect(ingress.snapshot.failure?.code, ErrorCode.memoryBudgetExceeded);
-  });
+  },
+  );
 
   test('rejects stale epochs and non-contiguous offsets', () {
     final ingress = Ingress(factory: _Factory(), maxBytes: 1024);
@@ -198,6 +262,134 @@ final class _Factory implements SourceFactory {
     created.add(source);
     return source;
   }
+}
+
+final class _BackgroundFactory implements SourceFactory {
+  _BackgroundFactory(this.release);
+
+  final Future<void> release;
+  final List<_BackgroundSource> created = <_BackgroundSource>[];
+
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) {
+    final source = _BackgroundSource(
+      epoch: epoch,
+      maxBytes: maxBytes,
+      release: release,
+    );
+    created.add(source);
+    return source;
+  }
+}
+
+final class _BackgroundSource
+    implements
+        EncodedSource,
+        ExpectedLengthEncodedSource,
+        BackgroundWritableEncodedSource {
+  _BackgroundSource({
+    required this.epoch,
+    required this.maxBytes,
+    required this.release,
+  });
+
+  @override
+  int epoch;
+  final int maxBytes;
+  final Future<void> release;
+  final List<int> bytes = <int>[];
+  bool disposed = false;
+  int syncAppendCalls = 0;
+  int backgroundAppendCalls = 0;
+  int backgroundReserveCalls = 0;
+  TaskControl? lastControl;
+
+  @override
+  int get length => bytes.length;
+
+  @override
+  bool sealed = false;
+
+  @override
+  SourceKind get kind =>
+      bytes.length >= 12 ? SourceKind.webp : SourceKind.unknown;
+
+  @override
+  SourceStatus reserveExpectedLength({
+    required int epoch,
+    required int length,
+  }) => SourceStatus.ok;
+
+  @override
+  Future<SourceStatus> reserveExpectedLengthInBackground({
+    required int epoch,
+    required int length,
+    TaskControl? control,
+  }) async {
+    lastControl = control;
+    backgroundReserveCalls++;
+    return length <= maxBytes ? SourceStatus.ok : SourceStatus.budget;
+  }
+
+  @override
+  SourceStatus append({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+  }) {
+    syncAppendCalls++;
+    return SourceStatus.failed;
+  }
+
+  @override
+  Future<SourceStatus> appendInBackground({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+    TaskControl? control,
+  }) async {
+    lastControl = control;
+    backgroundAppendCalls++;
+    await release;
+    if (epoch != this.epoch) return SourceStatus.staleEpoch;
+    if (offset != this.bytes.length) return SourceStatus.invalidOffset;
+    this.bytes.addAll(bytes);
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus reset(int epoch) {
+    this.epoch = epoch;
+    bytes.clear();
+    sealed = false;
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus seal(int epoch) {
+    if (epoch != this.epoch) return SourceStatus.staleEpoch;
+    sealed = true;
+    return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}
+
+final class _TestControl implements TaskControl {
+  _TestControl({required this.priority});
+
+  @override
+  final int priority;
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
 }
 
 final class _Source implements EncodedSource, ExpectedLengthEncodedSource {

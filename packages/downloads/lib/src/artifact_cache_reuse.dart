@@ -5,6 +5,8 @@ import 'package:storage/storage.dart' show CacheRec;
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';
 
+final RegExp _uriContentHashPattern = RegExp(r'[a-fA-F0-9]{32,64}');
+
 typedef VerifiedPageReuseIdentityResolver =
     Future<String?> Function(PageAsset page);
 
@@ -53,9 +55,27 @@ final class CanonicalMediaChapterAuthority {
     this.projection,
     Iterable<CanonicalMediaActiveRange> activeProjectionRanges =
         const <CanonicalMediaActiveRange>[],
-  }) : activeProjectionRanges =
+  }) : exactKey = canonicalMediaExactChapterKey(
+         sourceId: manifest.sourceId,
+         comicId: manifest.comicId,
+         chapterId: manifest.chapter.chapterId,
+         sourceRevision: manifest.chapter.sourceRevision,
+       ),
+       activeProjectionRanges =
            List<CanonicalMediaActiveRange>.unmodifiable(
              _normalizeCanonicalMediaActiveRanges(activeProjectionRanges),
+       ),
+       _stablePhysicalMediaByPage =
+           Map<int, PhysicalMediaId>.unmodifiable(
+         <int, PhysicalMediaId>{
+           for (final page in manifest.pages)
+             if (verifiedPhysicalMediaId(
+                   sourceId: manifest.sourceId,
+                   page: page,
+                 )
+                 case final physical?)
+               page.index: physical,
+         },
            ) {
     final projection = this.projection;
     if (projection != null &&
@@ -71,13 +91,12 @@ final class CanonicalMediaChapterAuthority {
   final ChapterManifest manifest;
   final VersionChapterCanonicalProjection? projection;
   final List<CanonicalMediaActiveRange> activeProjectionRanges;
+  final String exactKey;
+  final Map<int, PhysicalMediaId> _stablePhysicalMediaByPage;
 
-  String get exactKey => canonicalMediaExactChapterKey(
-        sourceId: manifest.sourceId,
-        comicId: manifest.comicId,
-        chapterId: manifest.chapter.chapterId,
-        sourceRevision: manifest.chapter.sourceRevision,
-      );
+  bool get hasResolvablePhysicalMedia =>
+      _stablePhysicalMediaByPage.isNotEmpty ||
+      (projection != null && activeProjectionRanges.isNotEmpty);
 
   PhysicalMediaId? resolve(DownloadId id) {
     if (canonicalMediaExactChapterKeyForDownload(id) != exactKey) return null;
@@ -97,10 +116,7 @@ final class CanonicalMediaChapterAuthority {
         return PhysicalMediaId.canonical(coordinate.stableKey);
       }
     }
-    return verifiedPhysicalMediaId(
-      sourceId: manifest.sourceId,
-      page: page,
-    );
+    return _stablePhysicalMediaByPage[index];
   }
 }
 
@@ -840,9 +856,8 @@ Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
       yield 'eh:$imageKey';
     }
   }
-  final hash = RegExp(
-    r'[a-fA-F0-9]{32,64}',
-  ).firstMatch(page.uri.toString())?.group(0)?.toLowerCase();
+  final hash = _uriContentHashPattern
+      .firstMatch(page.uri.toString())?.group(0)?.toLowerCase();
   if (hash != null) {
     yield 'hash:$hash';
   }
@@ -860,13 +875,22 @@ String? verifiedPageIdentity(PageAsset page) =>
 /// enriched after a page first materializes. Letting such enrichment rename a
 /// physical owner would recreate the rebind problem canonical media removes.
 String? stablePhysicalPageIdentity(PageAsset page) {
-  final identities = verifiedPageIdentities(page).toList(growable: false);
-  for (final prefix in const <String>['eh:', 'hash:']) {
-    for (final identity in identities) {
-      if (identity.startsWith(prefix)) return identity;
-    }
+  // Physical ownership deliberately ignores checksum metadata because that
+  // metadata may be enriched after a page first materializes. Do not route
+  // through [verifiedPageIdentities]: doing so normalizes an identity we must
+  // discard and also evaluates the URI hash even after an E-Hentai locator is
+  // already sufficient.
+  final segments = page.uri.pathSegments;
+  final marker = segments.indexOf('s');
+  if (marker >= 0 && marker + 1 < segments.length) {
+    final imageKey = segments[marker + 1].trim().toLowerCase();
+    if (imageKey.isNotEmpty) return 'eh:$imageKey';
   }
-  return null;
+  final hash = _uriContentHashPattern
+      .firstMatch(page.uri.toString())
+      ?.group(0)
+      ?.toLowerCase();
+  return hash == null ? null : 'hash:$hash';
 }
 
 PhysicalMediaId? verifiedPhysicalMediaId({

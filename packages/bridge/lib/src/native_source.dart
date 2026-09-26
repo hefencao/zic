@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -11,6 +12,7 @@ import 'native_lib.dart';
 
 part 'native_cursor.dart';
 part 'native_decode_pool.dart';
+part 'native_source_write_pool.dart';
 
 final class _Source extends Opaque {}
 
@@ -24,6 +26,12 @@ final class _Source extends Opaque {}
 Future<void> prewarmNativeDecodeWorkers({String? libPath}) =>
     _NativeDecodeWorkerPool.forLibrary(libPath).prewarm();
 
+/// Prewarms native encoded-source mutation workers owned by the App
+/// composition. These workers execute already-admitted local source writes;
+/// they do not own Reader demand, transport admission or replay priority.
+Future<void> prewarmNativeSourceWriteWorkers({String? libPath}) =>
+    _NativeSourceWriteWorkerPool.forLibrary(libPath).prewarm();
+
 /// Shuts down the decode workers owned by the current Dart/App composition.
 ///
 /// The pool entry is removed before shutdown, so a later composition in the
@@ -32,6 +40,9 @@ Future<void> prewarmNativeDecodeWorkers({String? libPath}) =>
 Future<void> shutdownNativeDecodeWorkers({String? libPath}) =>
     _NativeDecodeWorkerPool.shutdownForLibrary(libPath);
 
+Future<void> shutdownNativeSourceWriteWorkers({String? libPath}) =>
+    _NativeSourceWriteWorkerPool.shutdownForLibrary(libPath);
+
 typedef _CreateNative = Pointer<_Source> Function(Uint64 epoch, UintPtr maxBytes);
 typedef _CreateDart = Pointer<_Source> Function(int epoch, int maxBytes);
 typedef _FreeNative = Void Function(Pointer<_Source> source);
@@ -39,13 +50,11 @@ typedef _FreeDart = void Function(Pointer<_Source> source);
 typedef _ReserveCapacityNative = Uint32 Function(
   Pointer<_Source> source,
   Uint64 epoch,
-  UintPtr capacity,
-);
+  UintPtr capacity);
 typedef _ReserveCapacityDart = int Function(
   Pointer<_Source> source,
   int epoch,
-  int capacity,
-);
+  int capacity);
 typedef _ReserveNative = Uint32 Function(
   Pointer<_Source> source,
   Uint64 epoch,
@@ -70,8 +79,7 @@ typedef _CommitDart = int Function(
   Pointer<_Source> source,
   int epoch,
   int offset,
-  int length,
-);
+  int length);
 typedef _AppendNative = Uint32 Function(
   Pointer<_Source> source,
   Uint64 epoch,
@@ -95,6 +103,13 @@ typedef _EpochDart = int Function(Pointer<_Source> source);
 typedef _U32Native = Uint32 Function(Pointer<_Source> source);
 typedef _U32Dart = int Function(Pointer<_Source> source);
 
+final Map<String, _SourceApi> _sourceApis = <String, _SourceApi>{};
+
+_SourceApi _sourceApiFor(String? libPath) {
+  final key = nativeLibraryCacheKey(libPath);
+  return _sourceApis.putIfAbsent(key, () => _SourceApi(openNativeLib(libPath)));
+}
+
 final class NativeSourceFactory implements SourceFactory {
   const NativeSourceFactory({this.libPath});
 
@@ -110,8 +125,10 @@ final class NativeSourceFactory implements SourceFactory {
   }
 }
 
-final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource {
-  NativeSource._(this._ptr, this._api);
+final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource,
+        BackgroundWritableEncodedSource,
+        BackgroundFileRangeWritableEncodedSource {
+  NativeSource._(this._ptr, this._api, this._libPath);
 
   factory NativeSource.create({
     required int epoch,
@@ -121,16 +138,19 @@ final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource {
     if (epoch < 0 || maxBytes < 0) {
       throw ArgumentError('epoch and maxBytes must be non-negative');
     }
-    final api = _SourceApi(openNativeLib(libPath));
+    final api = _sourceApiFor(libPath);
     final ptr = api.create(epoch, maxBytes);
     if (ptr == nullptr) {
       throw StateError('native source allocation failed');
     }
-    return NativeSource._(ptr, api);
+    return NativeSource._(ptr, api, libPath);
   }
 
   Pointer<_Source> _ptr;
   final _SourceApi _api;
+  final String? _libPath;
+  int _backgroundWrites = 0;
+  Pointer<_Source>? _deferredFree;
 
   bool get disposed => _ptr == nullptr;
   @override
@@ -149,6 +169,59 @@ final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource {
   }) => SourceStatus.values[
         _api.reserveCapacity(_requirePtr(), epoch, length)
       ];
+
+  @override
+  Future<SourceStatus> reserveExpectedLengthInBackground({
+    required int epoch,
+    required int length,
+    TaskControl? control,
+  }) => _runBackgroundWrite(
+    (address) => _NativeSourceWriteWorkerPool.forLibrary(
+      _libPath,
+    ).reserveCapacity(
+      sourceAddress: address,
+      epoch: epoch,
+      length: length,
+      control: control,
+    ),
+  );
+
+  @override
+  Future<SourceStatus> appendInBackground({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+    TaskControl? control,
+  }) => _runBackgroundWrite(
+    (address) => _NativeSourceWriteWorkerPool.forLibrary(_libPath).append(
+      sourceAddress: address,
+      epoch: epoch,
+      offset: offset,
+      bytes: bytes,
+      control: control,
+    ),
+  );
+
+  @override
+  Future<SourceStatus> appendFileRangeInBackground({
+    required int epoch,
+    required int offset,
+    required String path,
+    required int fileOffset,
+    required int length,
+    TaskControl? control,
+  }) => _runBackgroundWrite(
+    (address) =>
+        _NativeSourceWriteWorkerPool.forLibrary(_libPath).appendFileRange(
+          sourceAddress: address,
+          epoch: epoch,
+          offset: offset,
+          path: path,
+          fileOffset: fileOffset,
+          length: length,
+          control: control,
+        ),
+  );
 
   @override
   SourceStatus append({
@@ -192,11 +265,33 @@ final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource {
   @override
   void dispose() {
     final ptr = _ptr;
-    if (ptr == nullptr) {
-      return;
-    }
+    if (ptr == nullptr) return;
     _ptr = nullptr;
-    _api.free(ptr);
+    if (_backgroundWrites == 0) {
+      _api.free(ptr);
+    } else {
+      _deferredFree = ptr;
+    }
+  }
+
+  Future<SourceStatus> _runBackgroundWrite(
+    Future<int> Function(int sourceAddress) operation,
+  ) async {
+    final ptr = _requirePtr();
+    _backgroundWrites++;
+    try {
+      final status = await operation(ptr.address);
+      return SourceStatus.values[status];
+    } finally {
+      _backgroundWrites--;
+      if (_backgroundWrites == 0) {
+        final deferred = _deferredFree;
+        _deferredFree = null;
+        if (deferred != null && deferred != nullptr) {
+          _api.free(deferred);
+        }
+      }
+    }
   }
 
   Pointer<_Source> _requirePtr() {
@@ -216,7 +311,8 @@ final class _SourceApi {
         reserveCapacity = lib.lookupFunction<
             _ReserveCapacityNative,
             _ReserveCapacityDart
-          >('zic_source_reserve_capacity'),
+          >('zic_source_reserve_capacity',
+          ),
         reserve = lib.lookupFunction<_ReserveNative, _ReserveDart>(
           'zic_source_reserve',
         ),
@@ -234,8 +330,7 @@ final class _SourceApi {
         ),
         length = lib.lookupFunction<_LenNative, _LenDart>('zic_source_len'),
         epoch = lib.lookupFunction<_EpochNative, _EpochDart>(
-          'zic_source_epoch',
-        ),
+          'zic_source_epoch'),
         isSealed = lib.lookupFunction<_U32Native, _U32Dart>(
           'zic_source_is_sealed',
         ),

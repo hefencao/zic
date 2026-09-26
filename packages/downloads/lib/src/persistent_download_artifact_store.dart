@@ -61,6 +61,9 @@ final class _PersistentBoundRangeReader
   String get accessMode => _primary?.accessMode ?? 'fallback';
 
   @override
+  String? get directFilePath => _primary?.directFilePath;
+
+  @override
   Future<Uint8List> readRange(int start, int endExclusive) {
     final result = Completer<Uint8List>();
     final previous = _tail;
@@ -2809,6 +2812,16 @@ final class PersistentDownloadArtifactStore
     DownloadId id,
   ) async {
     _requireOpen();
+    // This query uses touched_us as the carrier preference order. Ordinary
+    // artifact opens deliberately schedule recency maintenance without waiting
+    // for storage-write capacity, but a recency-sensitive query must observe
+    // touches that were already admitted before the query started. Wait only
+    // for matching logical-page drains; do not turn every cache hit into a
+    // storage barrier or add a second in-memory ordering authority.
+    await _settleExactArtifactTouchesFor(
+      content: id.content,
+      sourceRevision: id.sourceRevision,
+    );
     final records = await _index.listLogicalBindings(
       content: id.content,
       sourceRevision: id.sourceRevision,
@@ -2832,6 +2845,38 @@ final class PersistentDownloadArtifactStore
       readyRecordCount: usable.length,
       signatureCount: signatures.length,
     );
+  }
+
+  Future<void> _settleExactArtifactTouchesFor({
+    required ContentId content,
+    required String sourceRevision,
+  }) async {
+    final ids = <DownloadId>{
+      for (final id in _exactArtifactTouchDrains.keys)
+        if (id.content == content && id.sourceRevision == sourceRevision) id,
+      for (final id in _pendingExactArtifactTouches.keys)
+        if (id.content == content && id.sourceRevision == sourceRevision) id,
+    };
+    for (final id in ids) {
+      while (!_closed) {
+        final drain = _exactArtifactTouchDrains[id];
+        if (drain == null) {
+          if (!_pendingExactArtifactTouches.containsKey(id)) break;
+          _startExactArtifactTouchDrain(id);
+          continue;
+        }
+        try {
+          await drain;
+        } on Object {
+          // Recency is best-effort. A failed touch must not make an otherwise
+          // valid historical carrier unreadable.
+        }
+        if (!_exactArtifactTouchDrains.containsKey(id) &&
+            !_pendingExactArtifactTouches.containsKey(id)) {
+          break;
+        }
+      }
+    }
   }
 
   @override
@@ -3120,23 +3165,19 @@ final class PersistentDownloadArtifactStore
     while (!_closed && !_deferredRecencyTouchControl.cancelled) {
       var pending = _pendingExactArtifactTouches.remove(id);
       if (pending == null) return;
+      final latest = _pendingExactArtifactTouches.remove(id);
+      if (latest != null) pending = latest;
       StorageWriteLease? lease;
       try {
         lease = await _storageWriteScheduler.acquireQuantum(
           control: _deferredRecencyTouchControl,
         );
         if (_closed || _deferredRecencyTouchControl.cancelled) return;
-        final latest = _pendingExactArtifactTouches.remove(id);
-        if (latest != null) pending = latest;
-        await _index.touchIfArtifact(
+        await _index.touchIfArtifactInBackground(
           key: id.key,
           expectedArtifactId: pending.artifactId,
           touchedUs: pending.touchedUs,
         );
-      } on Failure catch (error) {
-        if (error.code != ErrorCode.cancelled) {
-          // Recency metadata is best-effort and never part of artifact authority.
-        }
       } on Object {
         // Recency metadata is best-effort and never part of artifact authority.
       } finally {
@@ -3647,10 +3688,13 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<List<_ArtifactAccessRecord>> _resolveArtifactReplicas(
-    CacheRec record,
+    CacheRec record, {
+    ArtifactAuthorityReadSnapshot? authority,
+  }
   ) async {
     final fallback = _ArtifactAccessRecord.fromBinding(record);
-    final object = await _index.getArtifactObject(record.effectiveArtifactId);
+    final object = authority?.object ??
+        await _index.getArtifactObject(record.effectiveArtifactId);
     if (object == null ||
         object.artifactId != record.effectiveArtifactId ||
         object.bytes != record.bytes ||
@@ -3660,7 +3704,8 @@ final class PersistentDownloadArtifactStore
             record.checksumAlgorithm.trim().toLowerCase()) {
       return <_ArtifactAccessRecord>[fallback];
     }
-    final replicas = await _index.listArtifactReplicas(object.artifactId);
+    final replicas = authority?.replicas ??
+        await _index.listArtifactReplicas(object.artifactId);
     if (replicas.isEmpty) {
       // Schema 8 backfills every pre-existing object. An empty replica set
       // therefore means that all physical copies were explicitly retired;
@@ -3684,7 +3729,9 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<bool> _artifactReplicaIsAccessible(
-    _ArtifactAccessRecord access,
+    _ArtifactAccessRecord access, {
+    ArtifactAuthorityReadSnapshot? authority,
+  }
   ) async {
     final parsed = parseSafRecordPath(access.accessLocator);
     if (parsed == null) {
@@ -3696,7 +3743,12 @@ final class PersistentDownloadArtifactStore
     final currentSaf = safTreeUri;
     if (currentSaf == null) return false;
     if (parsed.treeUri == currentSaf) return true;
-    final root = await _index.getStorageRoot(access.storageRootId);
+    final root = authority == null
+        ? await _index.getStorageRoot(access.storageRootId)
+        : _storageRootFromAuthoritySnapshot(
+            authority,
+            access.storageRootId,
+          );
     return root?.accessLocators.any(
           (locator) =>
               locator.kind == StorageAccessLocatorKind.saf &&
@@ -3706,11 +3758,18 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<List<_ArtifactAccessCandidate>> _artifactAccessCandidates(
-    _ArtifactAccessRecord base,
-  ) async {
+    _ArtifactAccessRecord base, {
+    ArtifactAuthorityReadSnapshot? authority,
+  }) async {
     final parsed = parseSafRecordPath(base.accessLocator);
     final rootIdentity = parsed?.treeUri ?? base.storageRootId;
-    final root = await _index.getStorageRoot(rootIdentity);
+    final root = authority == null
+        ? await _index.getStorageRoot(rootIdentity)
+        : _storageRootFromAuthoritySnapshot(
+            authority,
+            rootIdentity,
+            fallbackRootId: base.storageRootId,
+          );
     if (root == null || root.accessLocators.isEmpty) {
       return <_ArtifactAccessCandidate>[_ArtifactAccessCandidate(access: base)];
     }
@@ -3799,6 +3858,25 @@ final class PersistentDownloadArtifactStore
     return candidates.isEmpty
         ? <_ArtifactAccessCandidate>[_ArtifactAccessCandidate(access: base)]
         : candidates;
+  }
+
+  StorageRootRecord? _storageRootFromAuthoritySnapshot(
+    ArtifactAuthorityReadSnapshot authority,
+    String identity, {
+    String? fallbackRootId,
+  }) {
+    final direct = authority.storageRootsByIdentity[identity] ??
+        (fallbackRootId == null
+            ? null
+            : authority.storageRootsByIdentity[fallbackRootId]);
+    if (direct != null) return direct;
+    for (final root in authority.storageRootsByIdentity.values) {
+      if (root.rootId == identity ||
+          root.accessLocators.any((locator) => locator.locator == identity)) {
+        return root;
+      }
+    }
+    return null;
   }
 
   StorageAccessLocatorRecord? _matchingRootAccess(
@@ -4534,7 +4612,12 @@ final class PersistentDownloadArtifactStore
     if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
       return null;
     }
-    final replicas = await _resolveArtifactReplicas(record);
+    final authority = await _index.readArtifactAuthorityInBackground(
+      record.effectiveArtifactId,
+    );
+    final replicas = await _resolveArtifactReplicas(record,
+      authority: authority,
+    );
     if (replicas.isEmpty) {
       await _forgetIndexedBinding(id, record: record);
       return null;
@@ -4546,8 +4629,14 @@ final class PersistentDownloadArtifactStore
 
     ArtifactReadFailure? lastFailure;
     for (final replica in replicas) {
-      if (!await _artifactReplicaIsAccessible(replica)) continue;
-      final candidates = await _artifactAccessCandidates(replica);
+      if (!await _artifactReplicaIsAccessible(replica,
+        authority: authority,
+      )) {
+        continue;
+      }
+      final candidates = await _artifactAccessCandidates(replica,
+        authority: authority,
+      );
       late final ({_ArtifactAccessCandidate candidate, int length}) selected;
       try {
         selected = await _selectReadableArtifactAccess(
@@ -5650,7 +5739,12 @@ final class PersistentDownloadArtifactStore
     DownloadId id,
     CacheRec record,
   ) async {
-    final replicas = await _resolveArtifactReplicas(record);
+    final authority = await _index.readArtifactAuthorityInBackground(
+      record.effectiveArtifactId,
+    );
+    final replicas = await _resolveArtifactReplicas(record,
+      authority: authority,
+    );
     if (replicas.isEmpty) {
       await _forgetIndexedBinding(id, record: record);
       return null;
@@ -5664,7 +5758,11 @@ final class PersistentDownloadArtifactStore
           })
         >[];
     for (final replica in replicas) {
-      if (!await _artifactReplicaIsAccessible(replica)) continue;
+      if (!await _artifactReplicaIsAccessible(replica,
+        authority: authority,
+      )) {
+        continue;
+      }
       if (replica.checksumAlgorithm.trim().toLowerCase() != 'crc32') {
         await _retireArtifactReplica(
           replica.artifactId,
@@ -5673,7 +5771,9 @@ final class PersistentDownloadArtifactStore
         );
         continue;
       }
-      final candidates = await _artifactAccessCandidates(replica);
+      final candidates = await _artifactAccessCandidates(replica,
+        authority: authority,
+      );
       if (candidates.isNotEmpty) {
         groups.add((replica: replica, candidates: candidates));
       }
@@ -5718,6 +5818,7 @@ final class PersistentDownloadArtifactStore
           );
           return (
             accessMode: reader.accessMode,
+            directFilePath: reader.directFilePath,
             readRange: reader.readRange,
             close: reader.close,
           );

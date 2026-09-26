@@ -30,12 +30,13 @@
   6-screen bootstrap、`current±7` KeepAlive和有界recenter目前也保留。2026-09-24 已确认 source-canvas ratio live feed 会把 pending-only/future geometry 事实放大成 whole-Reader rebuild；
   现改为 pending-only 零 rebuild、真实 extent 变化只重建 vertical ListView geometry subtree，Pipeline policy 不变；逐帧displacement又把finger-down drag与ballistic拆开：无resampling平均相邻速度摆动9.9%–18.3%、最高255%，built-in resampling降到0个>20% jump、max<=0.0171%。
   ADR 0325恢复`reader_runtime` scoped ref-counted lease；旧dev.310 ballistic cadence否证仍有效，禁止调`samplingOffset`或自定义插值。下一真机同时验视觉平滑和touch latency；功耗继续先量化warm task cadence，不缩窗口/禁warm。
-
+- 2026-09-25 后台执行链按 ADR 0328 再次收紧：并非所有 hot-path 工作都值得 worker 化。
+  version candidate `Isolate.run` + prepared-demand two-phase commit、以及 source-ready 的额外 deferred queue 已撤销，恢复同步 owner-local control；Reader observation 只在同一 UI isolate 上按 frame/event-turn 让行。
+  保留的 worker 都有阻塞证据：resident source hydration 旧trace median 5.835ms / p90 10.519ms / max 14.803ms，因此 native reserve/copy/file-range 继续离开 UI isolate；source-write pending queue消费原 ingress rank/cancel，decode/source-write lifecycle分离。
+  SQLite authority read/touch仍由 SqliteIndex 拥有，read为单事务snapshot，touch先过既有 StorageWriteScheduler。
+  后续若再“放后台”，先区分 async scheduling 与真正 multithread/isolate：网络等待继续用 Future+NetLane；只有 CPU/同步FFI/磁盘调用会实际占 frame budget时才新增 worker，且不得复制 owner/retry/eligibility/state。
 ## 4. 下一步命令
-- `python3 tool/check_repo.py`
-- `python3 tool/check_documentation.py`
-- `tool/check.sh`
-
+- `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`
 ## 5. 不可改变的稳定边界
 - 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint，
   以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，

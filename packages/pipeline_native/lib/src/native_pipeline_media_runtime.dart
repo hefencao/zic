@@ -55,14 +55,15 @@ final class NativePipelineMediaRuntimeFactory
 
   Future<void> prewarm() => _prewarmFuture ??= Future.wait<void>(<Future<void>>[
         prewarmNativeDecodeWorkers(),
+        prewarmNativeSourceWriteWorkers(),
         if (_texturePresenter != null) _texturePresenter!.prewarm(),
       ]);
 
   /// Releases process resources retained intentionally across Reader sessions.
   ///
-  /// Normal Reader back/re-entry must not call this: keeping the two decode
-  /// workers and a bounded idle texture pool avoids repaying startup. The App
-  /// composition calls it only after every Reader media session is disposed
+  /// Normal Reader back/re-entry must not call this: keeping the decode/source
+  /// worker pools and a bounded idle texture pool avoids repaying startup. The
+  /// App composition calls it only after every Reader media session is disposed
   /// and immediately before its FlutterEngine is destroyed while Android keeps
   /// the process alive.
   Future<void> shutdownComposition() async {
@@ -77,6 +78,7 @@ final class NativePipelineMediaRuntimeFactory
     }
     await _texturePool?.releaseIdle();
     await shutdownNativeDecodeWorkers();
+    await shutdownNativeSourceWriteWorkers();
     _prewarmFuture = null;
   }
 

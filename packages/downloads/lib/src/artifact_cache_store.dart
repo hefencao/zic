@@ -21,6 +21,7 @@ enum ArtifactReadIntegrityBasis {
 
 abstract interface class ArtifactCacheBoundRangeReader {
   String get accessMode;
+  String? get directFilePath;
 
   Future<Uint8List> readRange(int start, int endExclusive);
 
