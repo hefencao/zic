@@ -1137,8 +1137,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   Reader-owned scrub navigation MUST使用有界latest-wins节流（当前50ms/最多约20Hz），
   窗口内只提交最新整数页，不得为滑杆跨过的每个中间页制造navigationRevision/PageView jump/Pipeline reconcile。整数页量化 MUST由scrubber自身完成；
   长章节的Flutter `Slider` MUST NOT以`pages-1` divisions/ticks把每一页物化为RenderSlider/semantics离散刻度。
-  首个目标 MAY立即推进viewport，`onChangeEnd` MUST取消pending并立即精确提交最终页、结束`Interaction.scrubbing`并恢复正常完整窗口。
-  scrub期间Pipeline计划只能包含当前页foreground download/decode/upload，不得逐格展开7/3 prefetch窗口；
+  首个目标 MAY立即推进viewport，`onChangeEnd` MUST取消pending并立即精确提交最终页、结束`Interaction.scrubbing`。
+  scrub MUST NOT拥有current-only/visible-only资源窗口；Pipeline membership MUST继续由真实current与viewport coverage解析正常7/3工作集。
+  相邻preview移动 SHOULD只产生实际窗口差集（稳定profile中通常为一项far退出/一项far进入），不得每50ms批量detach再在松手后重建。
+  `Interaction.scrubbing` MAY用于方向学习抑制、UI和诊断，但 MUST NOT单独改变download/decode/upload membership。
   viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade enqueue `ReadingProgress`，普通翻页 MUST NOT等待 SQLite；
   persistent SQLite progress isolate尚未ready或启动失败时，enqueue MUST只在内存latest-wins缓冲并低频重试writer，
@@ -1162,8 +1164,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   双击与长按 MUST 继续由既有缩放手势 owner 解释，不得因为增加单击九宫格而经过同一 action map；
   后续若开放双击/长按九宫格，必须作为 `gestureActions` 下独立 sibling profile 增加，不能复用或覆盖 `singleTap`。
   PageHost MUST 先完成单击/双击/长按消歧，只把最终确认的 single-tap 屏幕坐标交给 Runtime。
-  单击产生的上一页/下一页 MAY 独立启用短切页动画；该 animation intent MUST 只附着于这一次 ReaderController page request，
-  滑动、拖动、scrub、恢复位置与其它导航命令不得继承。
+  单击产生的上一页/下一页 MAY 独立启用短切页动画；paged MUST 保持相邻 page-index 语义，continuous MUST 解释为相对 viewport-step 而不是图片 index，默认保留 10% 当前屏幕并滚动 90%，保留比例可按 mode 调整。viewport-step MUST直接使用 ScrollController 的目标 offset，不得伪造 pointer/drag/velocity。
+  该 animation intent MUST 只附着于这一次 ReaderController page/viewport request；滑动、拖动、scrub、恢复位置与其它导航命令不得继承。scrollbar scrub/跳页 MUST继续保持绝对 page-index 语义，continuous 将 index 映射到对应图片的纵向 anchor 后直接定位，不得通过重复 viewport-step 模拟跳转。
 - Reader 顶部控制栏 MUST 保留“强制重新加载当前页”的直接按钮，便于恢复与设备测试；不得把它藏入杂项菜单。
   “本漫画阅读设置” MUST 位于底部控制栏并使用阅读设置图标。右上角杂项菜单用于低频入口，当前包括全局阅读设置、点击区域设置、
   来源 WebView 打开和系统浏览器打开；Web 入口只在 App composition 能给出合法 HTTP(S) 漫画页 capability 时提供。

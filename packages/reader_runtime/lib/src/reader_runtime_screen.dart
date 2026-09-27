@@ -1339,10 +1339,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 /// Reader page scrub control.
 ///
 /// The thumb and Reader navigation move together while dragging so page number
-/// and viewport remain live. The pipeline distinguishes the resulting
-/// `Interaction.scrubbing` observations and keeps only foreground-current
-/// demand until the gesture ends, avoiding a full prefetch-window replan for
-/// every intermediate index.
+/// and viewport remain live. `Interaction.scrubbing` describes the input
+/// lifecycle and suppresses direction learning, but it does not own a separate
+/// resource window: Pipeline demand continues to follow the same real
+/// current/visible viewport window used by ordinary Reader navigation.
 final class _ReaderPageScrubber extends StatefulWidget {
   const _ReaderPageScrubber({
     required this.pages,

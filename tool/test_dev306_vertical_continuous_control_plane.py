@@ -47,8 +47,13 @@ require(binding_test,
         'vertical coverage-only motion does not resync playback control',
         'continuous playback regression')
 require(pipeline_test,
-        'far visible metadata does not create an empty scheduler revision',
-        'empty semantic window regression')
+        'every reported vertical visible page changes foreground demand',
+        'vertical visible foreground regression')
+require(
+    read('docs/adr/0329-reader-navigation-resource-window-ownership.md'),
+    'vertical 中所有真实 `visibleCoverages.fraction > 0` 的非 current 页统一提升为 `PageRole.transition`',
+    'ADR 0329 visible foreground ownership',
+)
 
 # Continuous visual geometry must not be moved into another resource window or
 # changed by the new boundary.

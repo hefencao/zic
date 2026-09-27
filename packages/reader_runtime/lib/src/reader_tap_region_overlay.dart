@@ -194,9 +194,17 @@ final class _ReaderTapRegionOverlayState
                   top: false,
                   child: _EditorFooter(
                     pageAnimation: _draft.singleTapPageAnimation,
+                    screenRetainFraction:
+                        _draft.effectiveSingleTapScreenRetainFraction,
+                    showScreenStep: widget.mode == ReaderMode.continuous,
                     onAnimationChanged: (value) => setState(
                       () => _draft = _draft.copyWith(
                         singleTapPageAnimation: value,
+                      ),
+                    ),
+                    onScreenRetainChanged: (value) => setState(
+                      () => _draft = _draft.copyWith(
+                        singleTapScreenRetainFraction: value,
                       ),
                     ),
                   ),
@@ -410,11 +418,17 @@ final class _EditorToolbar extends StatelessWidget {
 final class _EditorFooter extends StatelessWidget {
   const _EditorFooter({
     required this.pageAnimation,
+    required this.screenRetainFraction,
+    required this.showScreenStep,
     required this.onAnimationChanged,
+    required this.onScreenRetainChanged,
   });
 
   final bool pageAnimation;
+  final double screenRetainFraction;
+  final bool showScreenStep;
   final ValueChanged<bool> onAnimationChanged;
+  final ValueChanged<double> onScreenRetainChanged;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -424,25 +438,64 @@ final class _EditorFooter extends StatelessWidget {
           color: Colors.black.withValues(alpha: 0.72),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Expanded(
-              child: Text(
-                '点区域修改动作；拖动白线调整实际命中范围',
-                maxLines: 2,
-                style: TextStyle(color: Colors.white),
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Text(
+                    '点区域修改动作；拖动白线调整实际命中范围',
+                    maxLines: 2,
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '切页动画',
+                  style: TextStyle(color: Colors.white),
+                ),
+                Switch(
+                  key: readerTapRegionAnimationKey,
+                  value: pageAnimation,
+                  onChanged: onAnimationChanged,
+                ),
+              ],
+            ),
+            if (showScreenStep) ...<Widget>[
+              const SizedBox(height: 2),
+              Row(
+                children: <Widget>[
+                  SizedBox(
+                    width: 92,
+                    child: Text(
+                      '翻屏保留 ${(screenRetainFraction * 100).round()}%',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      key: const ValueKey<String>(
+                        'reader-tap-region-screen-retain',
+                      ),
+                      min: 0,
+                      max: 0.5,
+                      divisions: 10,
+                      value: screenRetainFraction,
+                      onChanged: onScreenRetainChanged,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 76,
+                    child: Text(
+                      '滚动 ${((1 - screenRetainFraction) * 100).round()}%',
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              '切页动画',
-              style: TextStyle(color: Colors.white),
-            ),
-            Switch(
-              key: readerTapRegionAnimationKey,
-              value: pageAnimation,
-              onChanged: onAnimationChanged,
-            ),
+            ],
           ],
         ),
       );

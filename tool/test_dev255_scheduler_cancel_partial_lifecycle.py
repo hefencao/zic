@@ -25,6 +25,7 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 255:
     raise SystemExit('App build must be >=255')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
+build = int(m.group(1))
 
 require(
     'packages/sessions/lib/src/download_session.dart',
@@ -73,12 +74,24 @@ require('docs/ARCHITECTURE.md', 'scheduler/consumer typed `ErrorCode.cancelled`'
 require('docs/SPEC.md', 'MUST NOT写成`DownloadState.failed / Failure(cancelled)`')
 require('tool/check.sh', 'test_dev255_scheduler_cancel_partial_lifecycle.py')
 
-# This round must not change the scheduling/window constants to hide the lifecycle bug.
-require(
-    'packages/pipeline/lib/src/role_window.dart',
-    'if (observation.interaction == Interaction.scrubbing)',
-    'return RoleWindow(roles);',
-)
+# The current Reader ownership supersedes the old scrub-current-only rule:
+# scrub remains an input lifecycle, while physical viewport/current membership
+# uses the same stable window as every other Reader navigation path.
+if build >= 328:
+    reject(
+        'packages/pipeline/lib/src/role_window.dart',
+        'if (observation.interaction == Interaction.scrubbing)',
+    )
+    require(
+        'packages/pipeline/test/pipeline_test.dart',
+        'adjacent scrub moves the 7/3 download window incrementally',
+    )
+else:
+    require(
+        'packages/pipeline/lib/src/role_window.dart',
+        'if (observation.interaction == Interaction.scrubbing)',
+        'return RoleWindow(roles);',
+    )
 require(
     'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
     'networkConcurrency: 5',

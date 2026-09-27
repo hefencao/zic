@@ -1,7 +1,9 @@
 # ADR 0203：Live Reader scrub 与 foreground demand 边界
 
-- Status: Accepted
+- Status: Superseded in part by ADR 0329
 - Version: 0.31.0-dev.222
+
+> ADR 0329 supersedes only the `scrubbing -> current-only RoleWindow` membership rule. The live scrub lifecycle and latest-wins navigation seam remain accepted.
 
 ## Context
 

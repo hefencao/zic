@@ -802,9 +802,10 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   首次呈现、animated frame、identity/frame变化或lease resize/release仍走正常present。
   SurfaceProducer cleanup/recreate后的重画继续由texture_bridge平台callback owner完成。
   slider scrub的thumb/页码实时跟手，但Reader viewport采用Controller-owned 50ms latest-wins coalescing：
-  首个目标可立即推进，时间窗内只保留最后整数页，避免每跨一页都生成navigationRevision/PageView jump与整套Pipeline control churn；
-  scrub中间态显式标记`Interaction.scrubbing`且Pipeline只允许当前页foreground download/decode/upload、
-  不展开7/3 prefetch窗口，gesture end取消pending并在最终页立即发布非scrub observation恢复完整窗口。
+  首个目标可立即推进，时间窗内只保留最后整数页，避免每跨一页都生成navigationRevision/PageView jump与整套Pipeline control churn。
+  `Interaction.scrubbing`只描述输入生命周期并禁止把这些中间页学习成阅读方向；它不得拥有另一套resource membership。
+  Pipeline始终由真实current + vertical visible coverages解析同一7/3工作窗；相邻scrub只能按真实窗口差集增量迁移，
+  不得把稳定11-page transport window压成current-only/visible-only后再在松手时重建。
   observation到pipeline必须经过enqueue/latest-wins ordinary-event-turn边界；
   不得用microtask让plan/reconcile/lane-pump在当前frame结束后抢占platform/input/vsync事件，
   pipeline reconcile异常不得反向unwind ScrollNotification/page request；
@@ -924,8 +925,8 @@ Reader 内打开点击区域设置时直接在当前页面上覆盖全屏编辑�
 因此只提供 action map/动画表单，并明确实际区域尺寸需在 Reader 覆层调整。
 当前只有 single-tap profile 可编辑和消费；`ReaderPageHost` 继续唯一拥有单击/双击/长按消歧，只有确认不是双击/长按后的
 `onSingleTap(globalPosition)` 才跨到 `reader_runtime`。Runtime 只负责用上述可调 3×3 layout 把坐标映射到区域并发出 typed
-`ReaderGestureAction`；上一/下一页仍通过 `ReaderController.requestPage`，章节动作复用既有 chapter-boundary callback。
-单击切页动画是该 page request 的一次性 intent，由 `ReaderView` 消费；scrub、拖动和恢复定位保持即时命令。
+`ReaderGestureAction`；paged 的上一/下一页仍通过 `ReaderController.requestPage(index±1)`，continuous 则通过 `requestViewportStep` 移动一个可配置的 viewport 比例，默认保留 10% 上下文、滚动 90% 屏幕；两者都只是程序化 Reader command，不伪造 pointer/drag/velocity。章节动作复用既有 chapter-boundary callback。
+单击切页动画只决定对应 command 使用 `animateTo/animateToPage` 还是 `jumpTo/jumpToPage`。scrollbar scrub/跳页是独立的绝对 page-index 命令：continuous 把目标图片映射到其纵向 centered offset 后定位，不用多次 viewport-step 逼近；scrub、拖动和恢复定位不继承 single-tap animation intent。
 以后若增加双击/长按九宫格，必须在 `gestureActions` 下新增独立 sibling，并先由 PageHost 对应 gesture owner 显式上送，
 不得让 single-tap action map 抢占当前 zoom/long-press 语义。
 Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.systemStatusBarMode` 只读投影全局三态偏好：

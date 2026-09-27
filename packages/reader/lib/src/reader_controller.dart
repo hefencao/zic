@@ -32,6 +32,7 @@ final class ReaderController extends ChangeNotifier {
   int _stableIndex;
   ReadingDirection _direction;
   int? _requestedIndex;
+  double? _requestedViewportFraction;
   bool _requestedPageAnimated = false;
   static const Duration _scrubDispatchInterval = Duration(milliseconds: 50);
 
@@ -53,6 +54,7 @@ final class ReaderController extends ChangeNotifier {
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
   int? get requestedIndex => _requestedIndex;
+  double? get requestedViewportFraction => _requestedViewportFraction;
   bool get requestedPageAnimated => _requestedPageAnimated;
   bool get pageScrubbing => _pageScrubbing;
   int get navigationRevision => _navigationRevision;
@@ -84,6 +86,29 @@ final class ReaderController extends ChangeNotifier {
     _cancelScrubDispatch();
     _pageScrubbing = false;
     _requestPage(index, forceRevision: false, animated: animated);
+  }
+
+  void requestViewportStep(
+    double signedViewportFraction, {
+    bool animated = false,
+  }) {
+    if (!signedViewportFraction.isFinite ||
+        signedViewportFraction == 0 ||
+        signedViewportFraction.abs() > 1) {
+      throw RangeError.range(
+        signedViewportFraction,
+        -1,
+        1,
+        'signedViewportFraction',
+      );
+    }
+    _cancelScrubDispatch();
+    _pageScrubbing = false;
+    _requestedIndex = null;
+    _requestedViewportFraction = signedViewportFraction;
+    _requestedPageAnimated = animated;
+    _navigationRevision++;
+    notifyListeners();
   }
 
   void beginPageScrub() {
@@ -141,10 +166,13 @@ final class ReaderController extends ChangeNotifier {
       throw RangeError.range(index, 0, chapter.pages.length - 1, 'index');
     }
     if (_currentIndex == index) {
-      if (_requestedIndex == null && !forceRevision) {
+      if (_requestedIndex == null &&
+          _requestedViewportFraction == null &&
+          !forceRevision) {
         return;
       }
       _requestedIndex = null;
+      _requestedViewportFraction = null;
       _requestedPageAnimated = false;
       _navigationRevision++;
       notifyListeners();
@@ -154,16 +182,19 @@ final class ReaderController extends ChangeNotifier {
       return;
     }
     _requestedIndex = index;
+    _requestedViewportFraction = null;
     _requestedPageAnimated = animated;
     _navigationRevision++;
     notifyListeners();
   }
 
   void acknowledgePageRequest(int revision) {
-    if (revision != _navigationRevision || _requestedIndex == null) {
+    if (revision != _navigationRevision ||
+        (_requestedIndex == null && _requestedViewportFraction == null)) {
       return;
     }
     _requestedIndex = null;
+    _requestedViewportFraction = null;
     _requestedPageAnimated = false;
   }
 

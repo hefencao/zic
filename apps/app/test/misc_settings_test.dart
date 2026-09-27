@@ -867,6 +867,7 @@ void main() {
             'gestureActions': <String, Object?>{
               'singleTap': <String, Object?>{
                 'pageAnimation': false,
+                'screenRetainFraction': 0.2,
                 'zones': <String>[
                   'previousPage',
                   'defaultBehavior',
@@ -910,6 +911,10 @@ void main() {
     expect(controller.pagedReaderSettings.zoomDecodeBoost, isFalse);
     expect(controller.pagedReaderSettings.singleTapPageAnimation, isFalse);
     expect(
+      controller.pagedReaderSettings.singleTapScreenRetainFraction,
+      0.2,
+    );
+    expect(
       controller.pagedReaderSettings.singleTapActionAt(0),
       ReaderGestureAction.previousPage,
     );
@@ -938,6 +943,7 @@ void main() {
         crossChapterReading: true,
         zoomStages: const <double>[2.5, 4.0],
         singleTapPageAnimation: false,
+        singleTapScreenRetainFraction: 0.15,
         singleTapZones: const <ReaderGestureAction>[
           ReaderGestureAction.defaultBehavior,
           ReaderGestureAction.defaultBehavior,
@@ -970,6 +976,7 @@ void main() {
     final gestureActions = continuous['gestureActions']! as Map;
     final singleTap = gestureActions['singleTap']! as Map;
     expect(singleTap['pageAnimation'], isFalse);
+    expect(singleTap['screenRetainFraction'], 0.15);
     expect(
       singleTap['zones'],
       <String>[

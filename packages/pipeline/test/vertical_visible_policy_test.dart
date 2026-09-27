@@ -88,17 +88,17 @@ void main() {
     );
 
     expect(window.roleOf(1), PageRole.transition);
-    expect(window.roleOf(3), PageRole.next);
+    expect(window.roleOf(3), PageRole.transition);
     final visiblePage = plan.uploads.entries.singleWhere(
       (entry) => entry.key.download.content.pageId == 'p3',
     );
-    expect(visiblePage.value.reason, 'heuristic:static-visible:next');
+    expect(visiblePage.value.reason, 'heuristic:transition');
     expect(visiblePage.value.priority, greaterThanOrEqualTo(880));
     expect(visiblePage.value.retainOutput, isTrue);
     expect(visiblePage.value.viewportVisible, isTrue);
     expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
-  test('far visible metadata does not create an empty scheduler revision', () {
+  test('every reported vertical visible page changes foreground demand', () {
     final chapter = ChapterManifest(
       sourceId: 'local',
       comicId: 'comic',
@@ -170,8 +170,14 @@ void main() {
     final updateCount = updates.length;
     controller.accept(observation(includeFarVisible: true));
 
-    expect(controller.revision, revision);
-    expect(updates, hasLength(updateCount));
+    expect(controller.revision, greaterThan(revision));
+    expect(updates, hasLength(updateCount + 1));
+    expect(updates.last.window.roleOf(19), PageRole.transition);
+    expect(
+      updates.last.plan.downloads.keys
+          .map((identity) => identity.pageIndexHint),
+      contains(19),
+    );
   });
 
 }

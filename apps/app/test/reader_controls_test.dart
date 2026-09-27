@@ -683,6 +683,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(readerTapRegionAnimationKey));
     await tester.pump();
+    tester
+        .widget<Slider>(
+          find.byKey(
+            const ValueKey<String>('reader-tap-region-screen-retain'),
+          ),
+        )
+        .onChanged!(0.2);
+    await tester.pump();
     await tester.drag(
       find.byKey(const ValueKey<String>('reader-tap-region-column-0')),
       const Offset(60, 0),
@@ -694,6 +702,7 @@ void main() {
     expect(savedMode, ReaderMode.continuous);
     expect(savedSettings, isNotNull);
     expect(savedSettings!.singleTapPageAnimation, isFalse);
+    expect(savedSettings!.singleTapScreenRetainFraction, 0.2);
     expect(savedSettings!.singleTapActionAt(4), ReaderGestureAction.nextPage);
     expect(
       savedSettings!.singleTapGridLayout.firstColumnEnd,

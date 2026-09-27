@@ -20,6 +20,182 @@ Future<void> _pumpUntilFound(
 
 
 void main() {
+  testWidgets(
+    'continuous single tap does not publish drag motion before tap resolves',
+    (tester) async {
+      final base = _chapter(pageCount: 4);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-single-tap-no-drag',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      var taps = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              onSingleTap: (_) => taps++,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      observations.clear();
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('reader-vertical-list')),
+      );
+      await tester.pump(const Duration(milliseconds: 320));
+
+      expect(taps, 1);
+      expect(
+        observations.where(
+          (item) =>
+              item.interaction == Interaction.dragging ||
+              item.interaction == Interaction.scrolling,
+        ),
+        isEmpty,
+        reason:
+            'tap/long-press disambiguation must not become Pipeline motion',
+      );
+    },
+  );
+
+  testWidgets(
+    'continuous page command finishes with a stable planning observation',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-command-planning-window',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      observations.clear();
+
+      controller.requestPage(2, animated: true);
+      await tester.pumpAndSettle();
+
+      expect(controller.currentIndex, 2);
+      expect(observations, isNotEmpty);
+      expect(
+        observations.last.interaction,
+        Interaction.idle,
+        reason:
+            'completed page commands must restore the normal near-page window',
+      );
+    },
+  );
+
+  testWidgets(
+    'continuous viewport command scrolls by a fraction of the visible screen',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-viewport-step',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final list =
+          find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      final before = position.pixels;
+      final viewport = position.viewportDimension;
+      observations.clear();
+
+      controller.requestViewportStep(0.5, animated: true);
+      await tester.pumpAndSettle();
+
+      expect(position.pixels, closeTo(before + viewport * 0.5, 0.5));
+      expect(controller.requestedViewportFraction, isNull);
+      expect(observations, isNotEmpty);
+      expect(
+        observations.where(
+          (item) =>
+              item.interaction == Interaction.jumping ||
+              item.interaction == Interaction.settling,
+        ),
+        isEmpty,
+        reason:
+            'viewport commands are execution details; Pipeline demand must '
+            'follow real ScrollMetrics rather than synthetic jump states',
+      );
+      expect(observations.last.interaction, Interaction.idle);
+    },
+  );
+
   testWidgets('controller page requests are consumed by ReaderView', (
     tester,
   ) async {

@@ -51,21 +51,28 @@ for token in (
 ):
     require(runtime, token, 'slider-to-Reader scrub seam')
 forbid(runtime, 'onChanged: reader.requestPage', 'slider bypass of scrub seam')
-for token in (
+forbid(
+    window,
     'if (observation.interaction == Interaction.scrubbing)',
-    'return RoleWindow(roles);',
+    'interaction-owned scrub resource window',
+)
+for token in (
+    'if (observation.direction == ReadingDirection.vertical)',
+    'for (final coverage in observation.visibleCoverages)',
 ):
-    require(window, token, 'foreground-only scrub role window')
+    require(window, token, 'viewport-owned visible foreground role')
 require(pipeline, "'interaction': observation.interaction.name", 'scrub planning observability')
 for token in (
     'void enqueueObservation(ReaderObs observation)',
     '_pendingObservation = observation;',
 ):
     require(pipeline_session, token, 'latest-wins Reader-to-Pipeline coalescing seam')
-require(policy_test, 'slider scrub keeps only foreground-current resource demand', 'foreground-only demand regression')
-require(policy_test, 'expect(plan.downloads, hasLength(1));', 'single scrub download assertion')
-require(policy_test, 'expect(plan.decodes, hasLength(1));', 'single scrub decode assertion')
-require(policy_test, 'expect(plan.uploads, hasLength(1));', 'single scrub upload assertion')
+require(policy_test, 'slider scrub keeps the normal resource window', 'stable scrub demand regression')
+require(
+    policy_test,
+    'adjacent scrub moves the 7/3 download window incrementally',
+    'incremental scrub-window diff regression',
+)
 require(nav_test, 'page scrub updates navigation live and ends with a planning revision', 'Reader scrub lifecycle regression')
 require(controls_test, 'Slider dragging is live Reader navigation', 'gesture live-navigation regression')
 
@@ -90,4 +97,4 @@ if version_code < 317:
     require(pipeline_session, 'scheduleMicrotask(() => _drainObservation(generation));', 'historical latest-wins microtask seam')
 else:
     require(pipeline_session, 'Timer.run(() => _drainObservation(generation));', 'dev.317+ latest-wins ordinary-event-turn seam')
-print('dev.222 live Reader scrub / foreground demand boundary: OK')
+print('dev.222 live Reader scrub / viewport-owned demand boundary: OK')

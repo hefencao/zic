@@ -67,7 +67,8 @@ require(
 )
 require(
     'packages/pipeline/test/vertical_visible_policy_test.dart',
-    'heuristic:static-visible:next',
+    'every vertically visible static page receives authoritative demand',
+    "expect(visiblePage.value.reason, 'heuristic:transition');",
 )
 
 require(

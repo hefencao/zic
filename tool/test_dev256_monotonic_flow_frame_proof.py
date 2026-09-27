@@ -114,13 +114,23 @@ else:
     )
 require('tool/check.sh', 'test_dev256_monotonic_flow_frame_proof.py')
 
-# This round is intentionally flow-memory only: do not hide reopen churn by
-# changing window/watermark/concurrency policy.
-require(
-    'packages/pipeline/lib/src/role_window.dart',
-    'if (observation.interaction == Interaction.scrubbing)',
-    'return RoleWindow(roles);',
-)
+# The later Reader ownership correction removes the scrub-current-only
+# membership rule. Flow-frame proof remains independent from that change.
+if build >= 328:
+    reject(
+        'packages/pipeline/lib/src/role_window.dart',
+        'if (observation.interaction == Interaction.scrubbing)',
+    )
+    require(
+        'packages/pipeline/test/pipeline_test.dart',
+        'adjacent scrub moves the 7/3 download window incrementally',
+    )
+else:
+    require(
+        'packages/pipeline/lib/src/role_window.dart',
+        'if (observation.interaction == Interaction.scrubbing)',
+        'return RoleWindow(roles);',
+    )
 require(
     'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
     'networkConcurrency: 5',

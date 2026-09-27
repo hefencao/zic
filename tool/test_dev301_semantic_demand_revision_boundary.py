@@ -46,8 +46,11 @@ require('packages/sessions/lib/src/coordinator.dart',
         '..addAll(update.plan.decodes)',
         '..addAll(update.plan.uploads)')
 require('packages/pipeline/test/vertical_visible_policy_test.dart',
-        'far visible metadata does not create an empty scheduler revision',
-        'expect(controller.revision, revision);')
+        'every reported vertical visible page changes foreground demand',
+        'expect(controller.revision, greaterThan(revision));')
+require('docs/adr/0329-reader-navigation-resource-window-ownership.md',
+        'vertical 中所有真实 `visibleCoverages.fraction > 0` 的非 current 页统一提升为 `PageRole.transition`',
+        'MUST NOT 单独缩小 download/decode/upload window')
 require('packages/pipeline/test/animated_prefetch_policy_test.dart',
         'offscreen runtime WebP evidence changes the one-frame static plan',
         'expect(controller.revision, revision + 1);',

@@ -90,6 +90,11 @@ App build：0.31.0+328
   每个 worker 独占 WebView/Bitmap namespace。历史 uncached Profile 中 origin completion 常以约 105–226ms 间隔成簇，与
   100–224ms 的 JM bitmap transform 时长重叠，因此原单 transform gate 存在真实排队窗口；两槽 gate/worker 的并发契约已通过
   runtime adapter 测试。单次非破坏 fresh-reload 实机样本因网络完成错开未形成重叠，故不宣称 2× 实机吞吐。
+  2026-09-27 后续 Trace 又定位出 UI navigation 越权影响 demand lifetime：旧 slider scrub 会把稳定 11-download 工作窗压成
+  3 个 visible/current demand，再在松手时恢复 11，已加载/预热邻页因此被正常 plan diff 主动 detach。现在
+  `Interaction.scrubbing/jumping/settling` 不再拥有独立 resource membership；vertical 所有真实 visible coverage 统一作为
+  transition foreground，7/3 window 始终由真实 viewport/current 解析。最终 Profile scrub 47/47 个 policy decision 均保持
+  downloads=11，整份 Trace 的 download-count 集合只有 `[11]`、`taskFailed=0`；相邻 scrub 单测固定要求 1-in/1-out。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

@@ -7,6 +7,8 @@ const readerSingleTapAnimationKey =
     ValueKey<String>('reader-single-tap-page-animation');
 const readerSingleTapGridKey =
     ValueKey<String>('reader-single-tap-zone-grid');
+const readerSingleTapScreenRetainKey =
+    ValueKey<String>('reader-single-tap-screen-retain');
 
 Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
   BuildContext context, {
@@ -60,6 +62,33 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                     ),
                   ),
                 ),
+                if (mode == ReaderMode.continuous) ...<Widget>[
+                  const SizedBox(height: 4),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('翻屏保留比例'),
+                    subtitle: Text(
+                      '上一屏/下一屏每次滚动 '
+                      '${((1 - draft.effectiveSingleTapScreenRetainFraction) * 100).round()}%，'
+                      '保留 ${(draft.effectiveSingleTapScreenRetainFraction * 100).round()}% '
+                      '作为视觉锚点。',
+                    ),
+                  ),
+                  Slider(
+                    key: readerSingleTapScreenRetainKey,
+                    min: 0,
+                    max: 0.5,
+                    divisions: 10,
+                    label:
+                        '${(draft.effectiveSingleTapScreenRetainFraction * 100).round()}%',
+                    value: draft.effectiveSingleTapScreenRetainFraction,
+                    onChanged: (value) => setSheetState(
+                      () => draft = draft.copyWith(
+                        singleTapScreenRetainFraction: value,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Text(
                   '单击区域',
@@ -159,6 +188,7 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                       onPressed: () => setSheetState(
                         () => draft = draft.copyWith(
                           singleTapPageAnimation: true,
+                          singleTapScreenRetainFraction: 0.10,
                           singleTapZones: readerDefaultGestureZones,
                           singleTapGridLayout:
                               readerDefaultGestureGridLayout,

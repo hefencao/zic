@@ -1145,6 +1145,12 @@ ReaderModeSettings _decodeReaderModeSettings(
       singleTapValues['pageAnimation'],
       fallback.singleTapPageAnimation,
     ),
+    singleTapScreenRetainFraction: _doubleValue(
+      singleTapValues['screenRetainFraction'],
+      fallback.singleTapScreenRetainFraction,
+      min: 0,
+      max: 0.5,
+    ),
     singleTapZones: _decodeReaderGestureZones(
       singleTapValues['zones'],
       fallback.singleTapZones,
@@ -1173,6 +1179,8 @@ Map<String, Object?> _encodeReaderModeSettings(ReaderModeSettings settings) =>
       'gestureActions': <String, Object?>{
         'singleTap': <String, Object?>{
           'pageAnimation': settings.singleTapPageAnimation,
+          'screenRetainFraction':
+              settings.effectiveSingleTapScreenRetainFraction,
           'zones': settings.singleTapZones
               .map((action) => action.name)
               .toList(growable: false),

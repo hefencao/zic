@@ -151,6 +151,7 @@ final class ReaderModeSettings {
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.zoomDecodeBoost = true,
     this.singleTapPageAnimation = true,
+    this.singleTapScreenRetainFraction = 0.10,
     this.singleTapZones = readerDefaultGestureZones,
     this.singleTapGridLayout = readerDefaultGestureGridLayout,
   });
@@ -167,6 +168,7 @@ final class ReaderModeSettings {
         doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
         zoomDecodeBoost = true,
         singleTapPageAnimation = true,
+        singleTapScreenRetainFraction = 0.10,
         singleTapZones = readerDefaultGestureZones,
         singleTapGridLayout = readerDefaultGestureGridLayout;
 
@@ -185,6 +187,7 @@ final class ReaderModeSettings {
   /// gesture owners and may gain independent region maps later; they must not
   /// reuse this list implicitly.
   final bool singleTapPageAnimation;
+  final double singleTapScreenRetainFraction;
   final List<ReaderGestureAction> singleTapZones;
   final ReaderGestureGridLayout singleTapGridLayout;
 
@@ -196,6 +199,10 @@ final class ReaderModeSettings {
   double get effectiveLongPressZoomScale => longPressZoomScale.isFinite
       ? longPressZoomScale.clamp(1.1, 8).toDouble()
       : 2.0;
+  double get effectiveSingleTapScreenRetainFraction =>
+      singleTapScreenRetainFraction.isFinite
+          ? singleTapScreenRetainFraction.clamp(0.0, 0.5).toDouble()
+          : 0.10;
 
   ReaderModeSettings copyWith({
     bool? crossChapterReading,
@@ -209,6 +216,7 @@ final class ReaderModeSettings {
     ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
     bool? zoomDecodeBoost,
     bool? singleTapPageAnimation,
+    double? singleTapScreenRetainFraction,
     List<ReaderGestureAction>? singleTapZones,
     ReaderGestureGridLayout? singleTapGridLayout,
   }) =>
@@ -232,6 +240,8 @@ final class ReaderModeSettings {
         zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
         singleTapPageAnimation:
             singleTapPageAnimation ?? this.singleTapPageAnimation,
+        singleTapScreenRetainFraction: singleTapScreenRetainFraction ??
+            this.singleTapScreenRetainFraction,
         singleTapZones: singleTapZones ?? this.singleTapZones,
         singleTapGridLayout:
             singleTapGridLayout ?? this.singleTapGridLayout,
@@ -259,6 +269,8 @@ final class ReaderModeSettings {
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
           zoomDecodeBoost == other.zoomDecodeBoost &&
           singleTapPageAnimation == other.singleTapPageAnimation &&
+          singleTapScreenRetainFraction ==
+              other.singleTapScreenRetainFraction &&
           _sameGestureZones(singleTapZones, other.singleTapZones) &&
           singleTapGridLayout == other.singleTapGridLayout;
 
@@ -275,6 +287,7 @@ final class ReaderModeSettings {
         doubleTapZoomOrigin,
         zoomDecodeBoost,
         singleTapPageAnimation,
+        singleTapScreenRetainFraction,
         Object.hashAll(singleTapZones),
         singleTapGridLayout,
       ]);

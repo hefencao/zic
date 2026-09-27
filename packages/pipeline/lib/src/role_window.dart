@@ -60,15 +60,18 @@ final class RoleResolver {
         .clamp(0, chapter.pages.length - 1)
         .toInt();
     _setRole(roles, current, PageRole.current);
-    if (observation.interaction == Interaction.scrubbing) {
-      // A slider scrub is real Reader navigation, but its intermediate pages
-      // are not stable prefetch anchors. Keep only the visible foreground page
-      // demanded while the gesture is moving; the committed observation that
-      // follows scrub end restores the normal encoded/decode windows.
-      return RoleWindow(roles);
-    }
-    if (observation.interaction == Interaction.jumping) {
-      return RoleWindow(roles);
+    if (observation.direction == ReadingDirection.vertical) {
+      for (final coverage in observation.visibleCoverages) {
+        if (coverage.fraction <= 0 ||
+            coverage.pageIndex < 0 ||
+            coverage.pageIndex >= chapter.pages.length ||
+            coverage.pageIndex == current) {
+          continue;
+        }
+        // Physical visibility is authoritative foreground state regardless of
+        // whether the viewport got here by drag, tap-step, jump or scrub.
+        _setRole(roles, coverage.pageIndex, PageRole.transition);
+      }
     }
     final retainedIndex = previousCurrentIndex != null &&
         previousCurrentIndex >= 0 &&

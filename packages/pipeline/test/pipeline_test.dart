@@ -118,7 +118,7 @@ void main() {
     );
   });
 
-  test('slider scrub keeps only foreground-current resource demand', () {
+  test('slider scrub keeps the normal resource window', () {
     final obs = ReaderObs(
       sessionId: 'scrub',
       currentIndex: 4,
@@ -152,17 +152,184 @@ void main() {
       ),
     );
 
-    expect(window.roles, <int, PageRole>{4: PageRole.current});
-    expect(window.retainedIndex, isNull);
-    expect(plan.downloads, hasLength(1));
+    expect(
+      window.roles,
+      <int, PageRole>{
+        1: PageRole.near,
+        2: PageRole.near,
+        3: PageRole.previous,
+        4: PageRole.current,
+        5: PageRole.next,
+      },
+    );
+    expect(window.retainedIndex, 2);
+    expect(plan.downloads, hasLength(5));
     expect(plan.decodes, hasLength(1));
-    expect(plan.uploads, hasLength(1));
-    expect(plan.downloads.values.single.priority, 1000);
+    expect(plan.uploads, hasLength(2));
+    expect(
+      plan.downloads.values
+          .singleWhere((value) => value.role == PageRole.current)
+          .priority,
+      1000,
+    );
     expect(plan.decodes.values.single.priority, 1000);
-    expect(plan.uploads.values.single.priority, 1000);
+    expect(
+      plan.uploads.values
+          .singleWhere((value) => value.role == PageRole.current)
+          .priority,
+      1000,
+    );
   });
 
-  test('page jump keeps only foreground-current resource demand', () {
+  test('continuous scrub preserves every page actually visible in viewport', () {
+    final obs = ReaderObs(
+      sessionId: 'scrub-visible',
+      currentIndex: 4,
+      stableIndex: 4,
+      interaction: Interaction.scrubbing,
+      logicalPosition: 4,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 4,
+        assetKey: 'chapter/p4',
+        fraction: 0.7,
+      ),
+      visibleCoverages: const <Coverage>[
+        Coverage(pageIndex: 3, assetKey: 'chapter/p3', fraction: 0.2),
+        Coverage(pageIndex: 4, assetKey: 'chapter/p4', fraction: 0.7),
+        Coverage(pageIndex: 5, assetKey: 'chapter/p5', fraction: 0.1),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 11),
+      monotonicMicros: 2,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+    ).resolve(chapter, obs, previousCurrentIndex: 2);
+    final plan = const HeuristicPolicy().createPlan(
+      revision: 2,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+    );
+
+    expect(
+      window.roles,
+      <int, PageRole>{
+        1: PageRole.near,
+        2: PageRole.near,
+        3: PageRole.transition,
+        4: PageRole.current,
+        5: PageRole.transition,
+      },
+    );
+    expect(window.retainedIndex, 2);
+    expect(plan.downloads, hasLength(5));
+    expect(plan.decodes, hasLength(3));
+    expect(plan.uploads, hasLength(4));
+  });
+
+  test('adjacent scrub moves the 7/3 download window incrementally', () {
+    final longChapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'scrub-window',
+        comicId: 'comic',
+        title: 'Scrub window',
+        sequence: 1,
+        pageCount: 30,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        30,
+        (index) => PageAsset(
+          pageId: 's$index',
+          chapterId: 'scrub-window',
+          index: index,
+          uri: Uri.parse('asset:///s$index.png'),
+          contentKindHint: ContentKindHint.png,
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    ReaderObs observation(int current, Interaction interaction) => ReaderObs(
+          sessionId: 'scrub-window',
+          currentIndex: current,
+          stableIndex: current,
+          interaction: interaction,
+          logicalPosition: current.toDouble(),
+          velocity: 0,
+          currentCoverage: Coverage(
+            pageIndex: current,
+            assetKey: longChapter.pages[current].assetKey,
+            fraction: 0.6,
+          ),
+          visibleCoverages: <Coverage>[
+            Coverage(
+              pageIndex: current - 1,
+              assetKey: longChapter.pages[current - 1].assetKey,
+              fraction: 0.2,
+            ),
+            Coverage(
+              pageIndex: current,
+              assetKey: longChapter.pages[current].assetKey,
+              fraction: 0.6,
+            ),
+            Coverage(
+              pageIndex: current + 1,
+              assetKey: longChapter.pages[current + 1].assetKey,
+              fraction: 0.2,
+            ),
+          ],
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026, 9, 27),
+          monotonicMicros: current,
+        );
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: longChapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _FakeClock(),
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      guard: const PolicyGuard(maxDownloadDemands: 11),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation(12, Interaction.idle));
+    expect(controller.currentPlan.downloads, hasLength(11));
+    controller.accept(observation(13, Interaction.scrubbing));
+
+    final delta = updates.last;
+    expect(delta.plan.downloads, hasLength(11));
+    expect(
+      delta.diff.downloads.removed,
+      hasLength(1),
+      reason:
+          'scrub navigation must not collapse the stable transport window',
+    );
+    expect(delta.diff.downloads.added, hasLength(1));
+  });
+
+  test('page jump keeps the normal resource window', () {
     final obs = ReaderObs(
       sessionId: 'jump',
       currentIndex: 5,
@@ -196,14 +363,32 @@ void main() {
       ),
     );
 
-    expect(window.roles, <int, PageRole>{5: PageRole.current});
-    expect(window.retainedIndex, isNull);
-    expect(plan.downloads, hasLength(1));
+    expect(
+      window.roles,
+      <int, PageRole>{
+        2: PageRole.near,
+        3: PageRole.near,
+        4: PageRole.previous,
+        5: PageRole.current,
+      },
+    );
+    expect(window.retainedIndex, 1);
+    expect(plan.downloads, hasLength(4));
     expect(plan.decodes, hasLength(1));
-    expect(plan.uploads, hasLength(1));
-    expect(plan.downloads.values.single.priority, 1000);
+    expect(plan.uploads, hasLength(2));
+    expect(
+      plan.downloads.values
+          .singleWhere((value) => value.role == PageRole.current)
+          .priority,
+      1000,
+    );
     expect(plan.decodes.values.single.priority, 1000);
-    expect(plan.uploads.values.single.priority, 1000);
+    expect(
+      plan.uploads.values
+          .singleWhere((value) => value.role == PageRole.current)
+          .priority,
+      1000,
+    );
   });
 
   test('source streaming profile keeps far pages download-only', () {
@@ -761,9 +946,11 @@ void main() {
             'active vertical motion still defers far speculative native static upload',
       );
       expect(
-        activePlan.uploads.values.where((demand) => demand.role == PageRole.next),
+        activePlan.uploads.values
+            .where((demand) => demand.role == PageRole.transition),
         isNotEmpty,
-        reason: 'a truly visible immediate next page still uploads',
+        reason:
+            'a truly visible immediate next page is foreground transition work',
       );
 
       final hiddenNextObservation = ReaderObs(

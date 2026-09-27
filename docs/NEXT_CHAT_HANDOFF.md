@@ -1,5 +1,4 @@
 # Next Chat Handoff
-
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`。
 - 历史阶段基线验证覆盖：dev.196, dev.197, dev.198, dev.199, dev.203 bounded 抢占基准。
@@ -52,10 +51,11 @@
   2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
   loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
+  最新 Profile 已关闭 navigation-state→resource-window 耦合：scrub/jump 不再把 7/3 window 压成 current/visible-only；vertical visible coverage 始终为 foreground transition。实机 slider 47/47 个 scrubbing policy decision 均保持 11 downloads，旧 11→3→11 churn 消失，`taskFailed=0`。
+  continuous 单击上一/下一页为 viewport-step（默认滚90%、保留10%），scrollbar 仍是绝对 page-index→vertical anchor，不模拟多次滚动。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
-- 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
-- 逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 的残余水位，不额外扩窗；同一 lease 随页推进伸缩，priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。
+- 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）；逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 残余水位，不额外扩窗，同一 lease 随页推进伸缩且 priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture。
 - 传输租约竞争采用 ranked-transport-lease-reclaim；支持 active current-class demotion 与 新current waiter 的 40分 差值抢占。
 - 物理准备限制在 max2 并设立 post-local network-admission rank barrier，在任何 NetLane task 启动前执行 physical-local-prepare，0-byte victim 自动重排 local prepare。

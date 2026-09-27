@@ -56,6 +56,53 @@ void main() {
     expect(controller.requestedPageAnimated, isFalse);
   });
 
+  test('viewport-step intent is one navigation command', () {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 2,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'p0',
+          chapterId: 'chapter',
+          index: 0,
+          uri: Uri.parse('assets/p0.png'),
+        ),
+        PageAsset(
+          pageId: 'p1',
+          chapterId: 'chapter',
+          index: 1,
+          uri: Uri.parse('assets/p1.png'),
+        ),
+      ],
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'viewport-command',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: _Clock(),
+    );
+    addTearDown(controller.dispose);
+
+    controller.requestViewportStep(0.9, animated: true);
+    expect(controller.requestedIndex, isNull);
+    expect(controller.requestedViewportFraction, 0.9);
+    expect(controller.requestedPageAnimated, isTrue);
+    final revision = controller.navigationRevision;
+
+    controller.acknowledgePageRequest(revision);
+    expect(controller.requestedViewportFraction, isNull);
+    expect(controller.requestedPageAnimated, isFalse);
+  });
+
   test('controller forwards observations without rebuilding on every scroll', () {
     final chapter = ChapterManifest(
       sourceId: 'local',

@@ -41,6 +41,11 @@ extension _ReaderRuntimeGestureActions on _ReaderRuntimeScreenState {
           'zone': zone,
           'action': action.name,
           'pageIndex': reader.currentIndex,
+          if (mode == ReaderMode.continuous &&
+              (action == ReaderGestureAction.previousPage ||
+                  action == ReaderGestureAction.nextPage))
+            'screenRetainFraction':
+                settings.effectiveSingleTapScreenRetainFraction,
         },
       ),
     );
@@ -49,21 +54,35 @@ extension _ReaderRuntimeGestureActions on _ReaderRuntimeScreenState {
         _toggleControls();
         return;
       case ReaderGestureAction.previousPage:
-        final target = reader.currentIndex - 1;
-        if (target >= 0) {
-          reader.requestPage(
-            target,
+        if (mode == ReaderMode.continuous) {
+          reader.requestViewportStep(
+            -(1 - settings.effectiveSingleTapScreenRetainFraction),
             animated: settings.singleTapPageAnimation,
           );
+        } else {
+          final target = reader.currentIndex - 1;
+          if (target >= 0) {
+            reader.requestPage(
+              target,
+              animated: settings.singleTapPageAnimation,
+            );
+          }
         }
         return;
       case ReaderGestureAction.nextPage:
-        final target = reader.currentIndex + 1;
-        if (target < widget.chapter.pages.length) {
-          reader.requestPage(
-            target,
+        if (mode == ReaderMode.continuous) {
+          reader.requestViewportStep(
+            1 - settings.effectiveSingleTapScreenRetainFraction,
             animated: settings.singleTapPageAnimation,
           );
+        } else {
+          final target = reader.currentIndex + 1;
+          if (target < widget.chapter.pages.length) {
+            reader.requestPage(
+              target,
+              animated: settings.singleTapPageAnimation,
+            );
+          }
         }
         return;
       case ReaderGestureAction.previousChapter:

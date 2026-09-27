@@ -248,6 +248,8 @@ final class _ReaderViewState extends State<ReaderView>
   bool _chapterBoundaryVisualRefreshScheduled = false;
   ReaderChapterBoundary? _chapterBoundaryPointerBoundary;
   Offset? _chapterBoundaryPointerAnchor;
+  Offset? _verticalScrollPointerAnchor;
+  bool _verticalScrollGestureMoved = false;
   static const double _chapterBoundaryThreshold = 32;
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
@@ -1452,10 +1454,14 @@ final class _ReaderViewState extends State<ReaderView>
   void _handleStripPointerDown(PointerDownEvent event) {
     _stripPointerPositions[event.pointer] = event.position;
     if (_stripPointerPositions.length == 1) {
+      _verticalScrollPointerAnchor = event.position;
+      _verticalScrollGestureMoved = false;
       _beginVerticalChapterBoundaryPointerTracking(event);
       _beginStripHorizontalPanTracking(event.position);
     }
     if (_stripPointerPositions.length == 2) {
+      _verticalScrollPointerAnchor = null;
+      _verticalScrollGestureMoved = false;
       _cancelVerticalChapterBoundaryPointerTracking();
       _resetStripHorizontalPanTracking();
       _completeStripZoomAnimationInstantly();
@@ -1476,6 +1482,27 @@ final class _ReaderViewState extends State<ReaderView>
   void _handleStripPointerMove(PointerMoveEvent event) {
     if (!_stripPointerPositions.containsKey(event.pointer)) return;
     _stripPointerPositions[event.pointer] = event.position;
+    final scrollAnchor = _verticalScrollPointerAnchor;
+    if (_stripPointerPositions.length == 1 &&
+        scrollAnchor != null &&
+        (event.position.dy - scrollAnchor.dy).abs() > kTouchSlop) {
+      final firstMotion = !_verticalScrollGestureMoved;
+      _verticalScrollGestureMoved = true;
+      if (firstMotion &&
+          widget.controller.direction == ReadingDirection.vertical &&
+          !widget.controller.pageScrubbing &&
+          _verticalController.hasClients &&
+          _verticalController.position.hasContentDimensions) {
+        _lastVerticalTravelDirection =
+            event.position.dy > scrollAnchor.dy ? -1 : 1;
+        _interaction = Interaction.dragging;
+        _startVerticalSceneMotionProbe();
+        _emitFromVerticalMetrics(
+          _verticalController.position,
+          forceLayoutSnapshot: true,
+        );
+      }
+    }
     _trackVerticalChapterBoundaryPointer(event);
     if (_stripPinchActive &&
         _stripPointerPositions.length >= 2 &&
@@ -1525,6 +1552,8 @@ final class _ReaderViewState extends State<ReaderView>
     _chapterBoundaryPointerAnchor = null;
     _stripPointerPositions.remove(event.pointer);
     if (_stripPointerPositions.isEmpty) {
+      _verticalScrollPointerAnchor = null;
+      _verticalScrollGestureMoved = false;
       if (boundaryReady) {
         _completeChapterBoundaryOverscroll();
       } else {
@@ -1547,6 +1576,10 @@ final class _ReaderViewState extends State<ReaderView>
     _chapterBoundaryPointerBoundary = null;
     _chapterBoundaryPointerAnchor = null;
     _stripPointerPositions.remove(event.pointer);
+    if (_stripPointerPositions.isEmpty) {
+      _verticalScrollPointerAnchor = null;
+      _verticalScrollGestureMoved = false;
+    }
     _clearChapterBoundaryOverscrollUi();
     if (_stripPinchActive && _stripPointerPositions.length < 2) {
       _finishStripPinch();
@@ -1983,6 +2016,49 @@ final class _ReaderViewState extends State<ReaderView>
     }
     final revision = controller.navigationRevision;
     if (revision == _handledNavigationRevision) return;
+    final viewportFraction = controller.requestedViewportFraction;
+    if (viewportFraction != null) {
+      if (controller.direction != ReadingDirection.vertical) {
+        _handledNavigationRevision = revision;
+        controller.acknowledgePageRequest(revision);
+        return;
+      }
+      if (!_verticalController.hasClients ||
+          _viewport == Size.zero ||
+          !_verticalController.position.hasContentDimensions) {
+        _scheduleControllerCommand();
+        return;
+      }
+      _handledNavigationRevision = revision;
+      final animated = controller.requestedPageAnimated;
+      final position = _verticalController.position;
+      final target = (position.pixels +
+              position.viewportDimension * viewportFraction)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if ((target - position.pixels).abs() <= 0.01) {
+        _completeVerticalViewportRequest(revision, viewportFraction);
+      } else if (animated) {
+        unawaited(
+          _verticalController
+              .animateTo(
+                target,
+                duration: _singleTapPageAnimationDuration,
+                curve: Curves.easeOutCubic,
+              )
+              .whenComplete(
+                () => _completeVerticalViewportRequest(
+                  revision,
+                  viewportFraction,
+                ),
+              ),
+        );
+      } else {
+        _verticalController.jumpTo(target);
+        _completeVerticalViewportRequest(revision, viewportFraction);
+      }
+      return;
+    }
     final requested = controller.requestedIndex;
     if (requested == null) {
       _handledNavigationRevision = revision;
@@ -2013,11 +2089,9 @@ final class _ReaderViewState extends State<ReaderView>
       _handledNavigationRevision = revision;
       final animated =
           controller.requestedPageAnimated && !controller.pageScrubbing;
-      _interaction = controller.pageScrubbing
-          ? Interaction.scrubbing
-          : animated
-              ? Interaction.settling
-              : Interaction.jumping;
+      if (controller.pageScrubbing) {
+        _interaction = Interaction.scrubbing;
+      }
       _zoomedPage = null;
       // Strip zoom intentionally survives page jumps: scrolling stays
       // enabled while zoomed, so navigation must not reset it either.
@@ -2088,6 +2162,31 @@ final class _ReaderViewState extends State<ReaderView>
     });
   }
 
+  void _completeVerticalViewportRequest(
+    int revision,
+    double viewportFraction,
+  ) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          widget.controller.navigationRevision != revision ||
+          widget.controller.requestedViewportFraction != viewportFraction) {
+        return;
+      }
+      if (!_verticalController.hasClients ||
+          !_verticalController.position.hasContentDimensions) {
+        _completeVerticalViewportRequest(revision, viewportFraction);
+        return;
+      }
+      _interaction = Interaction.idle;
+      _emitFromVerticalMetrics(
+        _verticalController.position,
+        forceLayoutSnapshot: true,
+      );
+      widget.controller.acknowledgePageRequest(revision);
+    });
+  }
+
   void _completeVerticalPageRequest(int revision, int requested) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
@@ -2119,16 +2218,11 @@ final class _ReaderViewState extends State<ReaderView>
       _verticalKeepAliveCenter.value = requested;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
-          : Interaction.jumping;
-      _emitObservation(
-        requested.toDouble(),
-        0,
-        stableIndex: requested,
+          : Interaction.idle;
+      _emitFromVerticalMetrics(
+        position,
+        forceLayoutSnapshot: true,
       );
-      if (_lastReportedVerticalPage != requested) {
-        _lastReportedVerticalPage = requested;
-        _recordPageCurrent(requested);
-      }
       widget.controller.acknowledgePageRequest(revision);
     });
   }
@@ -2481,14 +2575,27 @@ final class _ReaderViewState extends State<ReaderView>
     if (notification is ScrollStartNotification) {
       _resetChapterBoundaryOverscroll();
       _pendingVerticalAnchor = null;
-      _interaction = widget.controller.pageScrubbing
-          ? Interaction.scrubbing
-          : notification.dragDetails == null
-              ? Interaction.scrolling
-              : Interaction.dragging;
-      _emitFromPageMetrics(notification.metrics);
+      if (widget.controller.pageScrubbing) {
+        _interaction = Interaction.scrubbing;
+      } else if (notification.dragDetails == null) {
+        _interaction = Interaction.scrolling;
+        _emitFromPageMetrics(notification.metrics);
+      } else if (notification.metrics is PageMetrics) {
+        final metrics = notification.metrics as PageMetrics;
+        final page = metrics.page;
+        if (page != null && (page - _lastLogicalPosition).abs() > 0.001) {
+          _interaction = Interaction.dragging;
+          _emitFromPageMetrics(metrics);
+        }
+      }
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
+      final delta = notification.scrollDelta;
+      if (notification.dragDetails != null &&
+          delta != null &&
+          delta.abs() <= 0.01) {
+        return false;
+      }
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : notification.dragDetails == null
@@ -2516,23 +2623,24 @@ final class _ReaderViewState extends State<ReaderView>
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
       _resetVerticalScrollCadenceSummary(widget.clock.nowMicros());
-      _interaction = widget.controller.pageScrubbing
-          ? Interaction.scrubbing
-          : notification.dragDetails == null
-              ? Interaction.scrolling
-              : Interaction.dragging;
-      _startVerticalSceneMotionProbe();
-      if (notification.dragDetails == null) {
+      if (widget.controller.pageScrubbing) {
+        _interaction = Interaction.scrubbing;
+        _startVerticalSceneMotionProbe();
+      } else if (notification.dragDetails == null) {
+        _interaction = Interaction.scrolling;
+        _startVerticalSceneMotionProbe();
         _scheduleVerticalObservationRefreshAfterLayout();
-      } else {
-        _emitFromVerticalMetrics(
-          notification.metrics,
-          forceLayoutSnapshot: true,
-        );
       }
+      // A pointer-owned drag is promoted only after raw movement crosses
+      // touch slop in _handleStripPointerMove. ScrollStart alone is not
+      // Reader motion: taps and long-presses can produce it too.
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
       final dragDriven = notification.dragDetails != null;
+      final delta = notification.scrollDelta;
+      if (dragDriven && delta != null && delta.abs() <= 0.01) {
+        return false;
+      }
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : dragDriven
