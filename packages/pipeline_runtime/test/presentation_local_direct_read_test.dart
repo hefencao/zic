@@ -667,11 +667,14 @@ void main() {
         await store.promotedStoreStarted.future.timeout(const Duration(seconds: 5));
         expect(cache.requiresFreshSource(id), isTrue,
             reason: 'fresh-source fence remains until durable store completes');
-        promotedStoreGate.complete();
         final recovered = await reader
             .loadBytes(asset, MediaLoadToken())
-            .timeout(const Duration(seconds: 5));
+            .timeout(const Duration(milliseconds: 500));
         expect(recovered, Uint8List.fromList(fresh));
+        expect(promotedStoreGate.isCompleted, isFalse,
+            reason:
+                'foreground presentation must not wait for durable handoff once the fresh promoted generation is hot');
+        promotedStoreGate.complete();
         expect(sourceOpens, 1);
         expect(store.invalidations, 1);
         await _waitForCondition(

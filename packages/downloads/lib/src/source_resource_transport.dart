@@ -714,13 +714,16 @@ final class _SourceResourceTransport
     }
 
     late final ByteResponse rawResponse;
+    final rawOpenWatch = Stopwatch()..start();
     try {
       rawResponse = await _openDirect(
         locator,
         request,
         control: control,
       );
+      rawOpenWatch.stop();
     } on Failure catch (error) {
+      rawOpenWatch.stop();
       if (!_requiresSourceClientState(error)) rethrow;
       return (
         response: await _openRuntimeFallback(
@@ -746,10 +749,12 @@ final class _SourceResourceTransport
         openPath: '${pathPrefix}runtime-transform-large-fallback',
       );
     }
+    final rawCollectWatch = Stopwatch()..start();
     final rawBytes = await _collectRuntimeTransformInput(
       rawResponse,
       control: control,
     );
+    rawCollectWatch.stop();
     if (rawBytes == null) {
       return (
         response: await _openRuntimeFallback(
@@ -763,6 +768,7 @@ final class _SourceResourceTransport
     }
     _throwIfTaskCancelled(control);
     late final Uint8List transformed;
+    final transformWatch = Stopwatch()..start();
     try {
       transformed = controlled != null
           ? await controlled.transformResourceControlled(
@@ -771,7 +777,9 @@ final class _SourceResourceTransport
               control: control,
             )
           : await transforming!.transformResource(locator, rawBytes);
+      transformWatch.stop();
     } on Object catch (error, stackTrace) {
+      transformWatch.stop();
       _throwIfTaskCancelled(control);
       Error.throwWithStackTrace(
         Failure(
@@ -796,6 +804,11 @@ final class _SourceResourceTransport
         validators: validators,
         semanticRetryExhausted: false,
         rejectionDetailKey: 'runtimeTransformImageSignatureRejected',
+        diagnostics: <String, Object?>{
+          'sourceRawOpenMicros': rawOpenWatch.elapsedMicroseconds,
+          'sourceRawCollectMicros': rawCollectWatch.elapsedMicroseconds,
+          'sourceRuntimeTransformMicros': transformWatch.elapsedMicroseconds,
+        },
       ),
       openPath: '${pathPrefix}host-fetch-runtime-transform',
     );
@@ -1009,6 +1022,7 @@ final class _SourceResourceTransport
     Validators? validators,
     required bool semanticRetryExhausted,
     required String rejectionDetailKey,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
   }) {
     if (!hasSupportedEncodedImageSignature(bytes)) {
       _invalidate(uri);
@@ -1043,6 +1057,7 @@ final class _SourceResourceTransport
       validators: current,
       rangeSupported: true,
       flowControl: ByteResponseFlowControl.consumerPacing,
+      diagnostics: diagnostics,
     );
   }
 

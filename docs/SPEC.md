@@ -689,9 +689,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   Trace MUST区分`sealedMetadataLength`与`crc32Verified`且 MUST NOT据此形成调度策略。
   source-resident promotion MAY保持session artifact为空且不得因Reader展示自动持久化；
   显式durable command完成前 MUST通过composition replay authority验证boundary/validators并materialize到唯一ArtifactCacheManager/store且确认durable artifact可读。
-  promoted session 的presentation read若仅因同exact identity durable handoff推进ArtifactCacheManager generation而收到内部cancelled，
-  且caller TaskControl仍active，MUST等待mutation barrier后重新选择当前generation authority；
-  caller自身取消 MUST保持终局且 MUST NOT重试。
+  promoted session 的 active presentation read 与同 exact identity durable handoff 交叠时，若当前 generation 已发布 exact promoted hot bytes，
+  MUST 直接消费该 projection，且在 store commit 前保持 `durable=false`；它 MUST NOT建立 durable lookup/cache-management authority。
+  只有当前 generation 无 exact hot bytes 时，仍 active 的 caller 才 MUST 等待 mutation barrier 后重新选择 authority；
+  caller 自身取消 MUST保持终局且 MUST NOT重试。
   每个Reader仍 MUST通过自己的`DownloadIngressProjection`消费encoded prefix，decode/upload/presentation保持局部；
   Reader route 的短期 re-entry retention MAY以TTL 2分钟、LRU最多2个media-empty exact session保留章节级控制与可重建transfer/encoded authority；
   第三个不同key MUST淘汰最旧会话；无论是否进入retention，route退出时都 MUST立即释放全部 Reader-local DecodeSession/UploadSession、
@@ -1153,13 +1154,18 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 阅读设置中同时适用于 paged 与 continuous 的 presentation/gesture 项 MUST 按 mode 独立持久化，不能共享同一可变值；当前至少包括“连续阅读”、双击倍率/锚点、长按启用/倍率/移动/拖动边界与 zoom decode boost。只适用于单一 mode 的分页方向、纵向拼接仍保持各自单一 owner；系统栏等真正全局 UI policy 不得复制成两份。
 - Reader 的点击动作配置 MUST 同样按当前实际 mode 独立持久化。九宫格必须按手势类型分层，当前 production 只消费 `singleTap`：
   单击每格可选默认行为/上一页/下一页/上一章/下一章，其中默认行为保持呼出/隐藏控制栏。
+  single-tap profile MUST 同时持久化两条横向与两条纵向的归一化分隔坐标，并保证最小 cell 尺寸；实际 hit test 与可视化编辑器
+  MUST 消费同一个 layout authority，不能保留固定三等分的第二套命中规则。
+  Reader 内的点击区域入口 MUST 直接覆盖在当前 Reader 页面上并临时隐藏 Reader controls 与系统栏，使用户看到实际 viewport 上的命中区域。
+  编辑覆层 MUST 截获输入，底层 ReaderView 不得收到拖线/点格操作；高频 divider drag draft SHOULD 保持在覆层本地状态，
+  不得因每个 pointer move 重建 Reader/Pipeline，只有保存时才提交 mode settings。
   双击与长按 MUST 继续由既有缩放手势 owner 解释，不得因为增加单击九宫格而经过同一 action map；
   后续若开放双击/长按九宫格，必须作为 `gestureActions` 下独立 sibling profile 增加，不能复用或覆盖 `singleTap`。
   PageHost MUST 先完成单击/双击/长按消歧，只把最终确认的 single-tap 屏幕坐标交给 Runtime。
   单击产生的上一页/下一页 MAY 独立启用短切页动画；该 animation intent MUST 只附着于这一次 ReaderController page request，
   滑动、拖动、scrub、恢复位置与其它导航命令不得继承。
 - Reader 顶部控制栏 MUST 保留“强制重新加载当前页”的直接按钮，便于恢复与设备测试；不得把它藏入杂项菜单。
-  “本漫画阅读设置” MUST 位于底部控制栏并使用阅读设置图标。右上角杂项菜单用于低频入口，当前包括全局阅读设置、点击设置、
+  “本漫画阅读设置” MUST 位于底部控制栏并使用阅读设置图标。右上角杂项菜单用于低频入口，当前包括全局阅读设置、点击区域设置、
   来源 WebView 打开和系统浏览器打开；Web 入口只在 App composition 能给出合法 HTTP(S) 漫画页 capability 时提供。
 - 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并在 paged/continuous 各自保存。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
@@ -1956,6 +1962,9 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   source 明确返回、且静态/动态资格均证明不读取 `onResponse`、source/global/browser/network 可变状态的纯 `modifyImage` MAY进入独立 image-only execution plane；
   该 plane MUST不加载 source script，MUST只暴露 `Image` primitive，
   MUST不暴露 `Network`、Cookie、settings、source data 或其它 browser state。
+  image-only plane MAY 有界并行最多 2 个 transform；每个并行 worker MUST 独占 WebView 与 Bitmap namespace，
+  MUST NOT共享 request-local image handle 或 `disposeAll`。Dart transform admission 与 native worker capacity MUST保持同一上限，
+  MUST NOT再建立独立 FIFO queue/scheduler。
   资格失败或运行时发现缺失 source global MUST返回 incompatible 并重新经过 canonical source gate；
   `onResponse` MUST始终只在 canonical context 执行。
   image-only plane 不得在其 transform gate 内调用 canonical WebView，也不得成为第二 source-state owner。

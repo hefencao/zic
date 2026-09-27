@@ -852,7 +852,8 @@ void main() {
     expect(manager.lookupMemory(id), <int>[7, 8, 9]);
   });
 
-  test('reads do not serve stale memory while a promoted store is pending',
+  test(
+      'pending promoted store exposes only the new non-durable hot projection',
       () async {
     final id = _id('store-barrier');
     final backend = _Backend(
@@ -867,18 +868,51 @@ void main() {
       bytes: Uint8List.fromList(<int>[4, 5, 6]),
     );
     await Future<void>.delayed(Duration.zero);
-    expect(manager.lookupMemory(id), isNull);
+
+    final hot = manager.lookupMemoryWithAuthority(id);
+    expect(hot, isNotNull);
+    expect(hot!.bytes, <int>[4, 5, 6]);
+    expect(hot.durable, isFalse);
 
     final lookup = manager.lookup(id);
     await Future<void>.delayed(Duration.zero);
     expect(backend.openCalls, 0,
-        reason: 'backend lookup must wait for the serialized store');
+        reason: 'durable lookup must still wait for the serialized store');
 
     backend.storeGate!.complete();
     await store;
     final resolved = await lookup;
     expect(resolved, isNotNull);
+    final durableHot = manager.lookupMemoryWithAuthority(id);
+    expect(durableHot, isNotNull);
+    expect(durableHot!.bytes, <int>[4, 5, 6]);
+    expect(durableHot.durable, isTrue);
     expect((await manager.readForeground(id))?.bytes, <int>[4, 5, 6]);
+  });
+
+  test('failed promoted store withdraws its non-durable hot projection',
+      () async {
+    final id = _id('store-hot-failure');
+    final gate = Completer<void>();
+    final backend = _Backend(
+      <DownloadId, Uint8List>{},
+      storeGate: gate,
+    );
+    final manager = ArtifactCacheManager(backend: backend);
+    final store = manager.storePromotedArtifact(
+      id: id,
+      bytes: Uint8List.fromList(<int>[4, 5, 6]),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final pending = manager.lookupMemoryWithAuthority(id);
+    expect(pending, isNotNull);
+    expect(pending!.bytes, <int>[4, 5, 6]);
+    expect(pending.durable, isFalse);
+
+    gate.completeError(StateError('store failed'));
+    await expectLater(store, throwsStateError);
+    expect(manager.lookupMemoryWithAuthority(id), isNull);
   });
 
   test('generation-scoped invalidation never deletes a newer artifact',
@@ -906,10 +940,14 @@ void main() {
     expect(current.generation, isNot(rejected.generation));
   });
 
-  test('session read reselects promoted bytes after generation handoff',
+  test('session read reselects exact hot promotion before durability handoff',
       () async {
     final id = _id('session-read-generation-handoff');
-    final backend = _Backend(<DownloadId, Uint8List>{});
+    final storeGate = Completer<void>();
+    final backend = _Backend(
+      <DownloadId, Uint8List>{},
+      storeGate: storeGate,
+    );
     final manager = ArtifactCacheManager(backend: backend);
     final oldReadGate = Completer<Uint8List>();
     final promoted = Uint8List.fromList(<int>[4, 5, 6]);
@@ -924,14 +962,25 @@ void main() {
       completion(
         isA<ArtifactCacheRead>()
             .having((value) => value.bytes, 'bytes', promoted)
-            .having((value) => value.durable, 'durable', isTrue),
+            .having((value) => value.durable, 'durable', isFalse),
       ),
     );
     await Future<void>.delayed(Duration.zero);
 
-    await manager.storePromotedArtifact(id: id, bytes: promoted);
+    final store = manager.storePromotedArtifact(id: id, bytes: promoted);
+    await Future<void>.delayed(Duration.zero);
     await readExpectation;
+    expect(backend.values[id], isNull);
+    final hot = manager.lookupMemoryWithAuthority(id)!;
+    expect(hot.bytes, promoted);
+    expect(hot.durable, isFalse);
+
+    storeGate.complete();
+    await store;
     expect(backend.values[id], promoted);
+    final durable = manager.lookupMemoryWithAuthority(id)!;
+    expect(durable.bytes, promoted);
+    expect(durable.durable, isTrue);
   });
 
   test('session read does not retry cancellation without generation change',

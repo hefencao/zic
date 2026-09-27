@@ -106,6 +106,8 @@ String? _canonicalVeneraComicIdentity({
   return uri == null ? null : _canonicalWebIdentity(uri);
 }
 
+const _veneraIsolatedTransformConcurrency = 2;
+
 /// Adapts one isolated-runtime connection to ordinary zic catalog sources.
 ///
 /// This is the only layer that understands both the serialized runtime schema
@@ -136,15 +138,15 @@ final class ExternalPluginRuntimeSession
         ),
         _transformGate = _RuntimeInvocationGate(
           limits,
-          maxConcurrentInvocations: 1,
-          controlledPreemptionPriorityFloor:
+          // Isolated modifyImage work has no source state and maps to an
+          // independent native worker pool. Keep the canonical source gate
+          // single-context while allowing two image transforms to overlap.
+          maxConcurrentInvocations:
               plugin.format == ExternalComicPluginFormat.veneraJavaScript
-                  ? 780
-                  : 1 << 30,
-          dynamicPreemptionPriorityThreshold:
-              plugin.format == ExternalComicPluginFormat.veneraJavaScript
-                  ? 1000
-                  : 1 << 30,
+                  ? _veneraIsolatedTransformConcurrency
+                  : 1,
+          controlledPreemptionPriorityFloor: 1 << 30,
+          dynamicPreemptionPriorityThreshold: 1 << 30,
           preemptionThreshold: 40,
         ) {
     limits.validate();

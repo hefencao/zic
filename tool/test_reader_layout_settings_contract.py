@@ -236,8 +236,9 @@ def main() -> None:
         "crossChapterReading: modeSettings.crossChapterReading",
         "_settings.resolveSystemStatusBarVisible(_controlsVisible)",
         "_readerSystemUi.apply(",
+        "final editingTapRegions = _tapRegionDraft != null",
         "showStatusBar:",
-        "showNavigationBar: _controlsVisible",
+        "showNavigationBar: editingTapRegions ? false : _controlsVisible",
         "_systemUiTransitionGate.applyNow();",
     )
     require(

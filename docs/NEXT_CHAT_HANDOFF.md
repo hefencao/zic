@@ -4,8 +4,7 @@
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`。
 - 历史阶段基线验证覆盖：dev.196, dev.197, dev.198, dev.199, dev.203 bounded 抢占基准。
 - 当前主任务：Home 生产组合已由 `DemoHome` 收口为 `HomeShell`，并把 durable service adoption/cache-generation commit 抽到非 UI `HomeServiceAdoptionCoordinator`；后续 Home 改动继续沿现有 owner 边界拆分，禁止把 service/Reader/source authority 收回 Widget State。
-- 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；
-  2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
+- 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；
 2. `AGENTS.md`：架构边界与无修改/最小修改规则；
@@ -43,15 +42,16 @@
   model v8 的页面几何最多采样 3 张并包含第一页；达到目标样本数后只判一次，后续页面不得重算 profile。
   `0.65 < h/w < 1.20` 的异常/transport-slice 比例不得形成页漫票，因此 720×700、720×500 不能仅凭尺寸被判成页漫。
   真机肉漫屋《要成為男子漢》已验证：50% 来源置信 + `韓國` + 异常切片得到 vertical 70.83%、samples=3、modelVersion=8，持续停留后 samples 不增长。
-  漫画级显式方向只覆盖方向，不能阻止 profile 继续驱动其它行为；
-  当前长按放大按“漫画显式覆盖 > adaptive 类型建议 > 模式默认”解析，条漫默认关、页漫/动图默认开。
+  漫画级显式方向只覆盖方向，不能阻止 profile 继续驱动其它行为；当前长按放大按“漫画显式覆盖 > adaptive 类型建议 > 模式默认”解析，条漫默认关、页漫/动图默认开。
   全局/漫画级 adaptive 开关独立于手动 override master；Reader 不得复制来源设置 authority，也不得借 adaptive 接管 Pipeline 调度。
 - 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。
   旧 plugin-scoped trust 的 source 迁移只有在 installed record 能证明 source 集完整时才退休 plugin fallback；runtime discovery 不完整时必须继续保留。
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
-  每漫画“使用自适应设置”是独立开关；手动阅读方向只有跟随/LTR/RTL/纵向，“启用本漫画覆盖”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override，开启后 adaptive 入口仍保留；清除手动覆盖不得清 adaptive policy/profile。
-  全局分页方向为 LTR/RTL/跟随来源且默认 LTR；阅读设置现按 `ReaderModeSettings` 分成 paged / continuous 两套 mode profile，相同 presentation/gesture 项允许不同值。双击一级/二级倍率都使用 slider，长按倍率独立于双击倍率并默认 2.0x。
-  点击设置按当前 mode 保存，当前只开放 `gestureActions.singleTap` 3×3 action map/切页动画；PageHost 唯一负责单/双击和长按消歧，未来双击/长按必须各自新增 sibling。Reader 顶部保留强制重载直达，本漫画设置在底栏；右上杂项含全局阅读设置、点击设置、WebView 与系统浏览器。
+  每漫画“使用自适应设置”独立于手动 override master，清除手动覆盖不清 adaptive policy/profile。全局分页方向默认 LTR；`ReaderModeSettings` 分 paged/continuous，双击两级 slider 与独立长按倍率按 mode 保存。
+  点击区域按当前 mode 保存；Reader 内用当前页面沉浸覆层编辑，可拖两横两竖线；grid 与真实 hit-test 共用 authority，覆层 cell 覆盖完整 viewport 截获编辑输入且不改变 ReaderView ancestry，drag 只更新 overlay-local State。PageHost 仍唯一负责手势消歧；顶部强制重载、本漫画底栏设置及杂项 Web 入口不变。
+  2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
+  loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
+  canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。

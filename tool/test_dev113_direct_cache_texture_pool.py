@@ -35,7 +35,9 @@ for token in (
 for token in (
     "final Set<_ArtifactByteKey> _durableMemory",
     "durable: _durableMemory.contains(key)",
-    "remember(id: id, bytes: bytes, durable: true)",
+    "_rememberExact(id: id, bytes: ownedBytes, durable: false)",
+    "await backend.storePromotedArtifact(id: id, bytes: ownedBytes);",
+    "_rememberExact(id: id, bytes: ownedBytes, durable: true)",
 ):
     require(cache, token, "artifact cache durability projection")
 for token in (

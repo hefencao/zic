@@ -15,7 +15,10 @@ def forbid(text: str, token: str, owner: str) -> None:
     if token in text:
         raise SystemExit(f'{owner} retains obsolete dev.147 path: {token}')
 
-reader = read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
+reader = (
+    read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
+    + read('packages/reader_runtime/lib/src/reader_runtime_misc_actions.dart')
+)
 details = read('apps/app/lib/comic_details.dart') + read('apps/app/lib/comic_details_interactions.dart')
 source_test = read('apps/app/test/source_browser_test.dart')
 reader_test = read('apps/app/test/reader_controls_test.dart')
@@ -40,7 +43,9 @@ for token in (
     'while (_pendingProgress != null)',
     'Future<bool> _flushProgressBeforePop() async',
     'while (_pendingProgress != null || _progressDrain != null)',
-    'onWillPop: _flushProgressBeforePop',
+    'onWillPop: _handleReaderBack',
+    'Future<bool> _handleReaderBack() async',
+    'return _flushProgressBeforePop();',
     'AppLifecycleState.inactive',
     'AppLifecycleState.paused',
     'AppLifecycleState.detached',

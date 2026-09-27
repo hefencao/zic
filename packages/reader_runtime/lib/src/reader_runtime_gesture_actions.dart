@@ -1,26 +1,33 @@
 part of 'reader_runtime_screen.dart';
 
 extension _ReaderRuntimeGestureActions on _ReaderRuntimeScreenState {
-  int _tapZoneIndex(Offset globalPosition) {
+  int _tapZoneIndex(
+    Offset globalPosition,
+    ReaderGestureGridLayout layout,
+  ) {
     final renderObject = context.findRenderObject();
     final box = renderObject is RenderBox ? renderObject : null;
     final local =
         box == null ? globalPosition : box.globalToLocal(globalPosition);
     final size = box?.size ?? MediaQuery.sizeOf(context);
     if (size.width <= 0 || size.height <= 0) return 4;
-    final column =
-        ((local.dx / size.width) * 3).floor().clamp(0, 2).toInt();
-    final row =
-        ((local.dy / size.height) * 3).floor().clamp(0, 2).toInt();
+    final x = (local.dx / size.width).clamp(0.0, 1.0).toDouble();
+    final y = (local.dy / size.height).clamp(0.0, 1.0).toDouble();
+    final column = layout.columnFor(x);
+    final row = layout.rowFor(y);
     return row * 3 + column;
   }
 
   void _handleReaderSingleTap(Offset globalPosition) {
     final reader = _reader;
     if (reader == null) return;
+    if (_tapRegionDraft != null) return;
     final mode = _readerMode(reader.direction);
     final settings = _settings.modeSettingsFor(mode);
-    final zone = _tapZoneIndex(globalPosition);
+    final zone = _tapZoneIndex(
+      globalPosition,
+      settings.singleTapGridLayout,
+    );
     final action = settings.singleTapActionAt(zone);
     _pipeline.trace.record(
       traceEvent(

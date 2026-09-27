@@ -37,6 +37,103 @@ const List<ReaderGestureAction> readerDefaultGestureZones =
   ReaderGestureAction.defaultBehavior,
 ];
 
+@immutable
+final class ReaderGestureGridLayout {
+  const ReaderGestureGridLayout({
+    this.firstColumnEnd = 1 / 3,
+    this.secondColumnEnd = 2 / 3,
+    this.firstRowEnd = 1 / 3,
+    this.secondRowEnd = 2 / 3,
+  });
+
+  static const double minimumCellFraction = 0.12;
+
+  final double firstColumnEnd;
+  final double secondColumnEnd;
+  final double firstRowEnd;
+  final double secondRowEnd;
+
+  static bool validBreaks(double first, double second) =>
+      first.isFinite &&
+      second.isFinite &&
+      first >= minimumCellFraction &&
+      second <= 1 - minimumCellFraction &&
+      second - first >= minimumCellFraction;
+
+  ReaderGestureGridLayout moveColumn(int divider, double normalized) {
+    if (divider == 0) {
+      return copyWith(
+        firstColumnEnd: normalized.clamp(
+          minimumCellFraction,
+          secondColumnEnd - minimumCellFraction,
+        ).toDouble(),
+      );
+    }
+    return copyWith(
+      secondColumnEnd: normalized.clamp(
+        firstColumnEnd + minimumCellFraction,
+        1 - minimumCellFraction,
+      ).toDouble(),
+    );
+  }
+
+  ReaderGestureGridLayout moveRow(int divider, double normalized) {
+    if (divider == 0) {
+      return copyWith(
+        firstRowEnd: normalized.clamp(
+          minimumCellFraction,
+          secondRowEnd - minimumCellFraction,
+        ).toDouble(),
+      );
+    }
+    return copyWith(
+      secondRowEnd: normalized.clamp(
+        firstRowEnd + minimumCellFraction,
+        1 - minimumCellFraction,
+      ).toDouble(),
+    );
+  }
+
+  ReaderGestureGridLayout copyWith({
+    double? firstColumnEnd,
+    double? secondColumnEnd,
+    double? firstRowEnd,
+    double? secondRowEnd,
+  }) =>
+      ReaderGestureGridLayout(
+        firstColumnEnd: firstColumnEnd ?? this.firstColumnEnd,
+        secondColumnEnd: secondColumnEnd ?? this.secondColumnEnd,
+        firstRowEnd: firstRowEnd ?? this.firstRowEnd,
+        secondRowEnd: secondRowEnd ?? this.secondRowEnd,
+      );
+
+  int columnFor(double fraction) =>
+      fraction < firstColumnEnd ? 0 : fraction < secondColumnEnd ? 1 : 2;
+
+  int rowFor(double fraction) =>
+      fraction < firstRowEnd ? 0 : fraction < secondRowEnd ? 1 : 2;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReaderGestureGridLayout &&
+          firstColumnEnd == other.firstColumnEnd &&
+          secondColumnEnd == other.secondColumnEnd &&
+          firstRowEnd == other.firstRowEnd &&
+          secondRowEnd == other.secondRowEnd;
+
+  @override
+  int get hashCode => Object.hash(
+        firstColumnEnd,
+        secondColumnEnd,
+        firstRowEnd,
+        secondRowEnd,
+      );
+}
+
+const ReaderGestureGridLayout readerDefaultGestureGridLayout =
+    ReaderGestureGridLayout();
+
 /// User-facing behavior that is intentionally scoped to one Reader layout
 /// mode. Paged and continuous reading keep separate instances so changing a
 /// gesture/zoom choice in one mode cannot silently rewrite the other.
@@ -55,6 +152,7 @@ final class ReaderModeSettings {
     this.zoomDecodeBoost = true,
     this.singleTapPageAnimation = true,
     this.singleTapZones = readerDefaultGestureZones,
+    this.singleTapGridLayout = readerDefaultGestureGridLayout,
   });
 
   const ReaderModeSettings.continuousDefaults()
@@ -69,7 +167,8 @@ final class ReaderModeSettings {
         doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
         zoomDecodeBoost = true,
         singleTapPageAnimation = true,
-        singleTapZones = readerDefaultGestureZones;
+        singleTapZones = readerDefaultGestureZones,
+        singleTapGridLayout = readerDefaultGestureGridLayout;
 
   final bool crossChapterReading;
   final List<double> zoomStages;
@@ -87,6 +186,7 @@ final class ReaderModeSettings {
   /// reuse this list implicitly.
   final bool singleTapPageAnimation;
   final List<ReaderGestureAction> singleTapZones;
+  final ReaderGestureGridLayout singleTapGridLayout;
 
   double get zoomStageFirst =>
       zoomStages.isNotEmpty ? _clampReaderStage(zoomStages[0], 1.1) : 1.5;
@@ -110,6 +210,7 @@ final class ReaderModeSettings {
     bool? zoomDecodeBoost,
     bool? singleTapPageAnimation,
     List<ReaderGestureAction>? singleTapZones,
+    ReaderGestureGridLayout? singleTapGridLayout,
   }) =>
       ReaderModeSettings(
         crossChapterReading:
@@ -132,6 +233,8 @@ final class ReaderModeSettings {
         singleTapPageAnimation:
             singleTapPageAnimation ?? this.singleTapPageAnimation,
         singleTapZones: singleTapZones ?? this.singleTapZones,
+        singleTapGridLayout:
+            singleTapGridLayout ?? this.singleTapGridLayout,
       );
 
   ReaderGestureAction singleTapActionAt(int index) =>
@@ -156,7 +259,8 @@ final class ReaderModeSettings {
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
           zoomDecodeBoost == other.zoomDecodeBoost &&
           singleTapPageAnimation == other.singleTapPageAnimation &&
-          _sameGestureZones(singleTapZones, other.singleTapZones);
+          _sameGestureZones(singleTapZones, other.singleTapZones) &&
+          singleTapGridLayout == other.singleTapGridLayout;
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -172,6 +276,7 @@ final class ReaderModeSettings {
         zoomDecodeBoost,
         singleTapPageAnimation,
         Object.hashAll(singleTapZones),
+        singleTapGridLayout,
       ]);
 }
 

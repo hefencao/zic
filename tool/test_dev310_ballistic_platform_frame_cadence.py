@@ -22,7 +22,10 @@ if not re.search(rf'^versionCode={version}$', props, re.M):
 
 native = read('packages/reader_runtime/android/src/main/kotlin/dev/zic/readerruntime/ReaderRuntimePlugin.kt')
 adapter = read('packages/reader_runtime/lib/src/flutter_reader_platform_frame_cadence.dart')
-runtime = read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
+runtime = (
+    read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
+    + read('packages/reader_runtime/lib/src/reader_runtime_misc_actions.dart')
+)
 view = read('packages/reader/lib/src/reader_view.dart')
 trace = read('packages/telemetry/lib/src/trace.dart')
 debug = read('apps/app/lib/debug_trace.dart')

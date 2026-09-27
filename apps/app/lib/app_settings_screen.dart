@@ -1394,7 +1394,7 @@ List<Widget> _readerModeSettingsTiles(
     ),
     ListTile(
       leading: const Icon(Icons.grid_3x3_outlined),
-      title: const Text('点击设置'),
+      title: const Text('点击区域设置'),
       subtitle: Text(
         settings.singleTapPageAnimation
             ? '单击九宫格 · 切页动画开启'

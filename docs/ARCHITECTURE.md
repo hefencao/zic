@@ -916,8 +916,14 @@ idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺�
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
 留边轴保持图片居中（契约见 SPEC 2.3）；这些是 UI 设置，不改变 demand/prefetch/texture 所有权或 NetLane 调度。strip 缩放是视口空间视觉层：
 点击区域配置也留在同一 mode profile，但 persistence 以 `gestureActions -> singleTap` 分层，而不是一个无手势类型的九宫格。
+single-tap profile 除 9 个 action 外还保存归一化的两条横向/两条纵向分隔坐标；同一个
+`ReaderGestureGridLayout` 同时是实际 hit-test authority 和编辑覆层的几何 authority，禁止 UI 预览与真实命中各算一份。
+Reader 内打开点击区域设置时直接在当前页面上覆盖全屏编辑层并临时进入沉浸显示。编辑层的 9 个 cell 覆盖完整 viewport 并拥有命中，
+所以拖线/选动作不能下穿成为翻页、缩放或滚动；底层 ReaderView 的 widget ancestry 不因进入/退出编辑而改变。分隔线拖动的 draft 只在 overlay-local State 中更新，
+不逐 move 重建 Reader/Pipeline；保存时才一次性写回当前 mode profile。全局阅读设置没有真实 Reader viewport，
+因此只提供 action map/动画表单，并明确实际区域尺寸需在 Reader 覆层调整。
 当前只有 single-tap profile 可编辑和消费；`ReaderPageHost` 继续唯一拥有单击/双击/长按消歧，只有确认不是双击/长按后的
-`onSingleTap(globalPosition)` 才跨到 `reader_runtime`。Runtime 只负责把坐标映射到 3×3 区域并发出 typed
+`onSingleTap(globalPosition)` 才跨到 `reader_runtime`。Runtime 只负责用上述可调 3×3 layout 把坐标映射到区域并发出 typed
 `ReaderGestureAction`；上一/下一页仍通过 `ReaderController.requestPage`，章节动作复用既有 chapter-boundary callback。
 单击切页动画是该 page request 的一次性 intent，由 `ReaderView` 消费；scrub、拖动和恢复定位保持即时命令。
 以后若增加双击/长按九宫格，必须在 `gestureActions` 下新增独立 sibling，并先由 PageHost 对应 gesture owner 显式上送，
@@ -1316,8 +1322,9 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   artifact-cache durable body确认authority后必须释放NetLane network body-read permit，
   后续本地body带宽只由`ArtifactCacheReadScheduler`拥有；
   source-resident promotion不会自动持久化，显式durable completion才通过composition consumer/source authority校验length/validators并materialize到唯一ArtifactCacheManager/store。
-  promoted session 的非durable presentation read若仅因同exact identity的durable handoff推进ArtifactCacheManager generation而被撤销，
-  active consumer必须等待mutation barrier并重新选择当前generation authority；consumer自身TaskControl/MediaLoadToken取消仍是终局。
+  promoted session 的 active presentation read 若与同 exact identity 的 durable handoff 交叠，必须先消费当前 generation 已发布的 exact promoted hot projection；
+  该 projection 在 persistent store commit 前保持 `durable=false`，只能作为已持有 DownloadSession 的 presentation 加速，不能升级为 durable/cache-management authority。
+  只有当前 generation 没有 exact hot bytes 时，active consumer 才等待 mutation barrier 并重新选择 authority；consumer 自身 TaskControl/MediaLoadToken 取消仍是终局。
   任何已有active PageStream的页面在transport kind暂为null/unknown时都只等待Pipeline authoritative classification，
   不得因manifest/文件名同样unknown而让LocalImagePlayer并行启动loadBytes整页物化；WebP分类后继续streaming native output；
   明确gif/fallback分类只证明external presentation capability，
@@ -2141,6 +2148,9 @@ Venera 的 canonical source WebView 继续是唯一 stateful JavaScript invocati
 不能为了图片变换吞吐把整个 source runtime 并发调高。source request plan 若显式导出可隔离的纯 `modifyImage`，且脚本不依赖 `onResponse`、
 source/browser/network 可变状态，则可进入独立 image-only transform context；
 该 context 不加载 source script，只暴露 `Image` bitmap primitive，不拥有 `Network`、Cookie、settings 或 source data。
+image-only plane MAY 使用最多 2 个 bounded worker 以重叠独立页面的 decode/bitmap transform/encode；
+每个 worker MUST 独占自己的 WebView 与 Bitmap namespace，request-local `disposeAll` 不得作用于其它 worker。
+Dart transform gate 与 native worker capacity MUST 一致，不能靠第二 scheduler 或无界 native queue 扩吞吐。
 静态资格不成立或运行时发现缺失 source global 时返回 incompatible 并重新经过 canonical source gate；
 `onResponse` 始终只在 canonical context 执行。image-only context 因此是 CPU transform execution plane，
 不是第二个 source owner，也不得在 transform gate 下偷偷调用 canonical WebView。

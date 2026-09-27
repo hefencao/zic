@@ -65,6 +65,11 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                   '单击区域',
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  '这里的九宫格只用于选择各区域动作；实际区域大小请在 Reader 内打开点击设置，直接在页面覆层上拖动分隔线调整。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 8),
                 GridView.builder(
                   key: readerSingleTapGridKey,
@@ -155,6 +160,8 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                         () => draft = draft.copyWith(
                           singleTapPageAnimation: true,
                           singleTapZones: readerDefaultGestureZones,
+                          singleTapGridLayout:
+                              readerDefaultGestureGridLayout,
                         ),
                       ),
                       child: const Text('恢复默认'),

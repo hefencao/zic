@@ -71,12 +71,25 @@ App build：0.31.0+328
   全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接等只属于单一布局的选项仍保持单 owner。
   阅读设置现由独立 `ReaderModeSettings` 分别保存 paged / continuous：连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界、zoom decode boost 可在两种布局中分别取值；旧扁平偏好会迁移进 mode profiles。
   点击设置也已按当前实际 mode 独立：当前只消费 single tap，3×3 每格可选默认/上一页/下一页/上一章/下一章，单击切页动画可独立关闭。
+  Reader 内入口现改为当前页面上的沉浸式覆层：两条横线/两条竖线可直接拖动，归一化 layout 与真实 hit-test 共用同一 authority；
+  编辑层 9 个 cell 覆盖完整 viewport 并截获 pointer，底层 ReaderView ancestry 始终保持不变；divider draft 只重建覆层自身，保存后才一次提交当前 mode。
   preference 使用 `gestureActions.singleTap` 分层；PageHost 仍负责单击/双击/长按消歧，双击与长按没有被九宫格接管，为后续各自独立九宫格保留边界。
   Reader 顶部保留强制重载直达按钮；本漫画阅读设置已移到底栏阅读设置图标，右上杂项收纳全局阅读设置、点击设置、来源 WebView 与系统浏览器入口。
   Reader 新增按 mode 独立的“连续阅读”：只控制章节边界 UI traversal，不控制预加载。章节仍一章一个 immutable manifest/session；实际跨章前 flush progress 并通过 HomeLibrarySession 持久确立目标章。
   章节 logical previous/next 现按 sequence 升序定义，不再继承详情/source chapter 的展示顺序。continuous 以真实 ScrollPosition 首/尾作为边界 authority，边界后的单指 pointer pull 决定是否提交；短末页时 coverage-current 仍为倒数第二页也不会阻断 next。
   layout/ballistic ScrollNotification 不再同步写 UI ValueNotifier；沿既有 post-frame observation owner 发布，已消除实机跨章时 `Build scheduled during frame` → `_dependents.isEmpty` 连锁红屏。
   相邻章 preparation 的 null/error 不再永久留在 route coalescing cache，瞬时 Venera/source 失败可在后续 pull 重试。实机 `venera:jm`“唬爛也冇關係”已验证列表 6→1 显示时第5话底部仍进入 logical next 第6话；Trace 为 sequence 4→5 且无 chapter taskFailed。
+  2026-09-27 对当前 Reader 用 native-release Profile 重新复核滑动：连续模式 120Hz scroll cadence 大多数窗口均值约 8.4ms、窗口最大约 14.8–15.8ms；
+  分页模式 8 次快速横滑 gfxinfo 为 92 frames / 0 janky / p95 6ms / p99 9ms。此前设备最终残留的是 Debug build，
+  因此该次“滑动卡顿”不能归因为 scroll physics/Pipeline；性能复核必须继续以 Profile/Release 为准，不以修改阻尼、刷新率或预取水位掩盖。
+  加载侧已与 frame cadence 分开归因：fresh JM 静态页观测到 source open 约 261–798ms，分解后 raw open 约 58–481ms、raw collect 44–74ms、
+  isolated `modifyImage` 约 158–174ms；UI/render 同轮未出现 gfx jank。promoted exact bytes 在 durable store 期间先以 non-durable hot projection
+  供持有该 DownloadSession 的 presentation 使用；最终 Profile 两次 force reload 均在 store 前完成 presentation read，分别提前约 63ms/57ms，
+  first-frame 也均早于 store commit。store 失败/新 generation 会撤销 projection，普通 durable lookup/cache-management 仍不会把它误认成持久化完成。
+  Venera canonical source WebView 仍严格单 invocation；只有静态/动态资格都通过的 isolated `modifyImage` plane 有界为 2 worker，
+  每个 worker 独占 WebView/Bitmap namespace。历史 uncached Profile 中 origin completion 常以约 105–226ms 间隔成簇，与
+  100–224ms 的 JM bitmap transform 时长重叠，因此原单 transform gate 存在真实排队窗口；两槽 gate/worker 的并发契约已通过
+  runtime adapter 测试。单次非破坏 fresh-reload 实机样本因网络完成错开未形成重叠，故不宣称 2× 实机吞吐。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

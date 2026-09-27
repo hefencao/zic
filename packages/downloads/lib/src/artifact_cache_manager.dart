@@ -878,6 +878,26 @@ final class ArtifactCacheManager {
     // Caller cancellation remains terminal and is never retried.
     for (var attempt = 0; attempt < 3; attempt++) {
       final generation = generationFor(id);
+      // This API is entered only by the active DownloadSession that already
+      // owns the exact artifact body. A promotion handoff may have advanced
+      // the same exact generation and published those immutable bytes to the
+      // memory tier while its durable store is still pending. Consume that
+      // current-generation projection directly instead of joining an older
+      // session read that will be cancelled by the handoff and then wait
+      // behind the persistence mutation barrier.
+      final hotBytes = _lookupMemoryExact(id, length: length);
+      if (hotBytes != null) {
+        final key = _ArtifactByteKey(id, hotBytes.lengthInBytes);
+        return ArtifactCacheRead(
+          bytes: hotBytes,
+          storageId: id,
+          generation: generation,
+          memoryHit: true,
+          joined: false,
+          durable: _durableMemory.contains(key),
+          integrityBasis: ArtifactReadIntegrityBasis.memoryResident,
+        );
+      }
       try {
         return await _readJoined(
           id: id,
@@ -970,15 +990,29 @@ final class ArtifactCacheManager {
         _armedFreshSourceRecoveryGroups.contains(recoveryGroupAtStart);
     final generation = _advanceMutationGeneration(id);
     _invalidateMemoryExact(id);
-    await _serializeMutation(id, () async {
-      await backend.storePromotedArtifact(id: id, bytes: ownedBytes);
-    });
+    // The promoted bytes are already the new exact immutable generation.
+    // Keep that generation available as a non-durable hot projection while
+    // the backend store runs so foreground presentation does not wait behind
+    // persistence I/O. Any later mutation advances the generation and
+    // withdraws this projection synchronously.
+    _rememberExact(id: id, bytes: ownedBytes, durable: false);
+    try {
+      await _serializeMutation(id, () async {
+        await backend.storePromotedArtifact(id: id, bytes: ownedBytes);
+      });
+    } on Object {
+      if (generationFor(id) == generation) {
+        _invalidateMemoryExact(id);
+      }
+      rethrow;
+    }
     if (generationFor(id) == generation) {
       if (recoveryArmedAtStart &&
           _freshSourceRecoveryGroups[id] == recoveryGroupAtStart) {
         _completeFreshSourceRecovery(id);
       }
-      // Retain durable memory projection: remember(id: id, bytes: bytes, durable: true)
+      // The exact byte value did not change; only its durability provenance
+      // advances after the persistent store commits.
       _rememberExact(id: id, bytes: ownedBytes, durable: true);
     }
   }

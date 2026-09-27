@@ -668,32 +668,37 @@ void main() {
     await tester.tap(find.byKey(readerTapSettingsKey));
     await tester.pumpAndSettle();
 
-    expect(find.text('连续模式 · 点击设置'), findsOneWidget);
-    expect(find.byKey(readerSingleTapGridKey), findsOneWidget);
+    expect(find.text('连续模式 · 单击区域'), findsOneWidget);
+    expect(find.byKey(readerTapRegionOverlayKey), findsOneWidget);
     expect(
-      tester
-          .widget<SwitchListTile>(find.byKey(readerSingleTapAnimationKey))
-          .value,
+      tester.widget<Switch>(find.byKey(readerTapRegionAnimationKey)).value,
       isTrue,
     );
 
     await tester.tap(
-      find.byKey(const ValueKey<String>('reader-tap-zone-4')),
+      find.byKey(const ValueKey<String>('reader-tap-region-cell-4')),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('下一页').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(readerSingleTapAnimationKey));
+    await tester.tap(find.byKey(readerTapRegionAnimationKey));
     await tester.pump();
-    await tester.ensureVisible(find.text('保存'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('保存'));
+    await tester.drag(
+      find.byKey(const ValueKey<String>('reader-tap-region-column-0')),
+      const Offset(60, 0),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(readerTapRegionSaveKey));
     await tester.pumpAndSettle();
 
     expect(savedMode, ReaderMode.continuous);
     expect(savedSettings, isNotNull);
     expect(savedSettings!.singleTapPageAnimation, isFalse);
     expect(savedSettings!.singleTapActionAt(4), ReaderGestureAction.nextPage);
+    expect(
+      savedSettings!.singleTapGridLayout.firstColumnEnd,
+      greaterThan(1 / 3),
+    );
     await _disposePipelineReader(tester);
   });
 
@@ -747,6 +752,71 @@ void main() {
     );
 
     expect(progress, isNotEmpty);
+    expect(progress.last.pageIndex, 1);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('custom tap grid boundaries drive the actual Reader hit region',
+      (tester) async {
+    final progress = <ReadingProgress>[];
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            screenKey: _screenKey,
+            initiallyImmersive: true,
+            initialSettings: const ReaderSessionSettings(
+              paged: ReaderModeSettings(
+                singleTapGridLayout: ReaderGestureGridLayout(
+                  firstColumnEnd: 0.6,
+                  secondColumnEnd: 0.8,
+                  firstRowEnd: 0.3,
+                  secondRowEnd: 0.7,
+                ),
+                singleTapZones: <ReaderGestureAction>[
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.nextPage,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                ],
+              ),
+            ),
+            onProgressChanged: progress.add,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final screen = tester.getRect(find.byKey(_screenKey));
+    await tester.tapAt(
+      Offset(
+        screen.left + screen.width * 0.5,
+        screen.top + screen.height * 0.5,
+      ),
+    );
+    await _pumpUntilCondition(
+      tester,
+      () => progress.any((item) => item.pageIndex == 1),
+      description: 'custom first-column tap region to reach page 1',
+    );
+
     expect(progress.last.pageIndex, 1);
     await _disposePipelineReader(tester);
   });

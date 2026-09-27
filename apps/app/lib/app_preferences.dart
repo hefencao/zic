@@ -1149,6 +1149,10 @@ ReaderModeSettings _decodeReaderModeSettings(
       singleTapValues['zones'],
       fallback.singleTapZones,
     ),
+    singleTapGridLayout: _decodeReaderGestureGridLayout(
+      singleTapValues['grid'],
+      fallback.singleTapGridLayout,
+    ),
   );
 }
 
@@ -1172,6 +1176,16 @@ Map<String, Object?> _encodeReaderModeSettings(ReaderModeSettings settings) =>
           'zones': settings.singleTapZones
               .map((action) => action.name)
               .toList(growable: false),
+          'grid': <String, Object?>{
+            'columns': <double>[
+              settings.singleTapGridLayout.firstColumnEnd,
+              settings.singleTapGridLayout.secondColumnEnd,
+            ],
+            'rows': <double>[
+              settings.singleTapGridLayout.firstRowEnd,
+              settings.singleTapGridLayout.secondRowEnd,
+            ],
+          },
         },
       },
     };
@@ -1195,6 +1209,46 @@ List<ReaderGestureAction> _decodeReaderGestureZones(
     decoded.add(action);
   }
   return List<ReaderGestureAction>.unmodifiable(decoded);
+}
+
+ReaderGestureGridLayout _decodeReaderGestureGridLayout(
+  Object? raw,
+  ReaderGestureGridLayout fallback,
+) {
+  if (raw is! Map) return fallback;
+  final values = raw.cast<Object?, Object?>();
+  final columns = values['columns'];
+  final rows = values['rows'];
+  if (columns is! List ||
+      columns.length != 2 ||
+      rows is! List ||
+      rows.length != 2) {
+    return fallback;
+  }
+  final firstColumn = columns[0];
+  final secondColumn = columns[1];
+  final firstRow = rows[0];
+  final secondRow = rows[1];
+  if (firstColumn is! num ||
+      secondColumn is! num ||
+      firstRow is! num ||
+      secondRow is! num) {
+    return fallback;
+  }
+  final column0 = firstColumn.toDouble();
+  final column1 = secondColumn.toDouble();
+  final row0 = firstRow.toDouble();
+  final row1 = secondRow.toDouble();
+  if (!ReaderGestureGridLayout.validBreaks(column0, column1) ||
+      !ReaderGestureGridLayout.validBreaks(row0, row1)) {
+    return fallback;
+  }
+  return ReaderGestureGridLayout(
+    firstColumnEnd: column0,
+    secondColumnEnd: column1,
+    firstRowEnd: row0,
+    secondRowEnd: row1,
+  );
 }
 
 double _doubleValue(

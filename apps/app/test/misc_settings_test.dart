@@ -878,6 +878,10 @@ void main() {
                   'defaultBehavior',
                   'defaultBehavior',
                 ],
+                'grid': <String, Object?>{
+                  'columns': <double>[0.25, 0.7],
+                  'rows': <double>[0.2, 0.75],
+                },
               },
             },
           },
@@ -913,6 +917,15 @@ void main() {
       controller.pagedReaderSettings.singleTapActionAt(5),
       ReaderGestureAction.nextChapter,
     );
+    expect(
+      controller.pagedReaderSettings.singleTapGridLayout,
+      const ReaderGestureGridLayout(
+        firstColumnEnd: 0.25,
+        secondColumnEnd: 0.7,
+        firstRowEnd: 0.2,
+        secondRowEnd: 0.75,
+      ),
+    );
     expect(controller.continuousReaderSettings.crossChapterReading, isFalse);
     expect(controller.continuousReaderSettings.zoomStageFirst, 2.25);
     expect(controller.continuousReaderSettings.longPressZoomScale, 3.0);
@@ -936,6 +949,12 @@ void main() {
           ReaderGestureAction.defaultBehavior,
           ReaderGestureAction.defaultBehavior,
         ],
+        singleTapGridLayout: const ReaderGestureGridLayout(
+          firstColumnEnd: 0.4,
+          secondColumnEnd: 0.8,
+          firstRowEnd: 0.3,
+          secondRowEnd: 0.65,
+        ),
       ),
     );
     await controller.flush();
@@ -964,6 +983,13 @@ void main() {
         'defaultBehavior',
         'defaultBehavior',
       ],
+    );
+    expect(
+      singleTap['grid'],
+      <String, Object?>{
+        'columns': <double>[0.4, 0.8],
+        'rows': <double>[0.3, 0.65],
+      },
     );
   });
 

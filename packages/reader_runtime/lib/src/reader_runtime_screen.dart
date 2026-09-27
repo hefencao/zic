@@ -18,9 +18,9 @@ import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
 import 'reader_route_transition_gate.dart';
 import 'reader_session_settings.dart';
-import 'reader_tap_settings_sheet.dart';
-import 'reader_zoom_decode.dart';
+import 'reader_tap_region_overlay.dart';
 import 'reader_transfer_progress_indicator.dart';
+import 'reader_zoom_decode.dart';
 
 part 'reader_runtime_gesture_actions.dart';
 part 'reader_runtime_misc_actions.dart';
@@ -207,6 +207,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   bool _downloading = false;
   bool _downloaded = false;
   bool _tapChapterRequestInFlight = false;
+  ReaderMode? _tapRegionMode;
+  ReaderModeSettings? _tapRegionDraft;
+  bool _tapRegionRestoreControlsVisible = false;
+  bool _tapRegionSaveInFlight = false;
   bool _reportedFirstPresentationFrame = false;
   late ReaderSessionSettings _settings;
   late AdaptiveReaderClassifier _adaptiveClassifier;
@@ -253,11 +257,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   }
 
   void _applyReaderSystemUi() {
+    final editingTapRegions = _tapRegionDraft != null;
     unawaited(
       _readerSystemUi.apply(
-        showStatusBar:
-            _settings.resolveSystemStatusBarVisible(_controlsVisible),
-        showNavigationBar: _controlsVisible,
+        showStatusBar: editingTapRegions
+            ? false
+            : _settings.resolveSystemStatusBarVisible(_controlsVisible),
+        showNavigationBar: editingTapRegions ? false : _controlsVisible,
       ),
     );
   }
@@ -942,31 +948,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
-  void _replaceModeSettings(
-    ReaderMode mode,
-    ReaderModeSettings settings,
-  ) {
-    setState(() {
-      _settings = mode == ReaderMode.continuous
-          ? _settings.copyWith(continuous: settings)
-          : _settings.copyWith(paged: settings);
-    });
-  }
-
-  void _adoptSettingsSnapshot(ReaderSessionSettings settings) {
-    setState(() {
-      _settings = settings;
-      _adaptiveProfile = _initialAdaptiveProfile(_settings);
-      if (_settings.effectiveAdaptiveEnabled &&
-          _adaptiveProfile != _settings.adaptiveProfile) {
-        _settings = _settings.copyWith(adaptiveProfile: _adaptiveProfile);
-      }
-    });
-    _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
-    _syncExternalPresentationFit();
-    _syncTouchResampling();
-    _syncPlatformFrameCadenceProbe();
-  }
+  void _updateRuntimeState(VoidCallback update) => setState(update);
 
   Widget _topControls(
     BuildContext context,
@@ -1061,7 +1043,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                               value: _ReaderMiscCommand.tapSettings,
                               child: ListTile(
                                 leading: Icon(Icons.grid_3x3_outlined),
-                                title: Text('点击设置'),
+                                title: Text('点击区域设置'),
                                 contentPadding: EdgeInsets.zero,
                               ),
                             ),
@@ -1270,7 +1252,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
           };
     final modeSettings = _settings.modeSettingsForDirection(reader.direction);
     return WillPopScope(
-      onWillPop: _flushProgressBeforePop,
+      onWillPop: _handleReaderBack,
       child: Scaffold(
         key: widget.screenKey,
         backgroundColor: Colors.black,
@@ -1346,6 +1328,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                 ),
               ),
             ),
+            if (_tapRegionDraft != null) _buildTapRegionOverlay(),
           ],
         ),
       ),

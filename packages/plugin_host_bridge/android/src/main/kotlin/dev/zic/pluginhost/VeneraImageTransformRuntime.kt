@@ -86,6 +86,116 @@ internal fun isolatedModifyImageScript(request: Map<String, Any?>): String? {
 }
 
 /**
+ * Small pool for source-independent Venera image transforms.
+ *
+ * The canonical source WebView remains strictly single-invocation. Only
+ * scripts already proven isolated-compatible enter this pool. Each worker owns
+ * an independent WebView and Bitmap namespace, so one request's disposeAll
+ * cannot invalidate another request's image handles.
+ */
+internal class VeneraImageTransformRuntime(
+    context: Context,
+    private val driverId: String,
+    maxResponseBytes: Int,
+) : Closeable {
+    private val workers = List(MAX_CONCURRENT_TRANSFORMS) { index ->
+        VeneraImageTransformWorker(
+            context = context,
+            driverId = "$driverId:$index",
+            maxResponseBytes = maxResponseBytes,
+        )
+    }
+    private val assignmentLock = Any()
+    private val assignments =
+        ConcurrentHashMap<String, VeneraImageTransformWorker>()
+    private val busyWorkers =
+        ConcurrentHashMap.newKeySet<VeneraImageTransformWorker>()
+    private val prewarmCount = AtomicInteger(0)
+    private val closed = AtomicBoolean(false)
+
+    fun prewarm() {
+        if (closed.get()) return
+        val index = prewarmCount.getAndIncrement().coerceAtMost(workers.lastIndex)
+        workers[index].prewarm()
+    }
+
+    fun invoke(
+        requestId: String,
+        script: String,
+        bytes: ByteArray,
+        result: NativeDriverResult,
+    ) {
+        if (closed.get()) {
+            result.error("runtime-closing", "Venera image transform runtime is closing")
+            return
+        }
+        val worker = synchronized(assignmentLock) {
+            workers.firstOrNull { candidate ->
+                !busyWorkers.contains(candidate)
+            }?.also {
+                busyWorkers.add(it)
+                assignments[requestId] = it
+            }
+        }
+        if (worker == null) {
+            result.error(
+                "venera-isolated-transform-unavailable",
+                "Venera isolated transform worker pool is saturated",
+            )
+            return
+        }
+        worker.invoke(
+            requestId = requestId,
+            script = script,
+            bytes = bytes,
+            result = object : NativeDriverResult {
+                override fun success(value: Any) {
+                    release(requestId, worker)
+                    result.success(value)
+                }
+
+                override fun error(
+                    code: String,
+                    message: String,
+                    retryable: Boolean,
+                    details: Map<String, Any?>,
+                ) {
+                    release(requestId, worker)
+                    result.error(code, message, retryable, details)
+                }
+            },
+        )
+    }
+
+    fun cancel(requestId: String) {
+        assignments[requestId]?.cancel(requestId)
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        workers.forEach(VeneraImageTransformWorker::close)
+        synchronized(assignmentLock) {
+            assignments.clear()
+            busyWorkers.clear()
+        }
+    }
+
+    private fun release(
+        requestId: String,
+        worker: VeneraImageTransformWorker,
+    ) {
+        synchronized(assignmentLock) {
+            assignments.remove(requestId, worker)
+            busyWorkers.remove(worker)
+        }
+    }
+
+    companion object {
+        const val MAX_CONCURRENT_TRANSFORMS = 2
+    }
+}
+
+/**
  * UI-less image-only JavaScript context for source-provided Venera
  * `modifyImage` programs.
  *
@@ -94,7 +204,7 @@ internal fun isolatedModifyImageScript(request: Map<String, Any?>): String? {
  * physically single-invocation; this context only lets CPU-heavy bitmap
  * transforms overlap request-plan resolution without changing source state.
  */
-internal class VeneraImageTransformRuntime(
+private class VeneraImageTransformWorker(
     context: Context,
     private val driverId: String,
     private val maxResponseBytes: Int,

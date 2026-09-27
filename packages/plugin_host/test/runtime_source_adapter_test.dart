@@ -746,6 +746,46 @@ void main() {
     expect(await transform, Uint8List.fromList(<int>[1, 2, 3, 4]));
   });
 
+  test('isolated Venera modifyImage admits two independent transforms',
+      () async {
+    final connection = _IsolatedTransformConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final resolver = source as ControlledResolvableComicResourceSource;
+    final transformer = source as ControlledTransformingComicResourceSource;
+    final firstUri = Uri.parse('venera-resource:isolated-transform-a');
+    final secondUri = Uri.parse('venera-resource:isolated-transform-b');
+
+    await resolver.resolveResourceControlled(firstUri);
+    await resolver.resolveResourceControlled(secondUri);
+    final first = transformer.transformResourceControlled(
+      firstUri,
+      Uint8List.fromList(<int>[1, 2, 3]),
+      control: _MutableTaskControl(priority: 700),
+    );
+    final second = transformer.transformResourceControlled(
+      secondUri,
+      Uint8List.fromList(<int>[4, 5, 6]),
+      control: _MutableTaskControl(priority: 710),
+    );
+    for (var spin = 0;
+        spin < 20 && connection.isolatedTransformAttempts < 2;
+        spin++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(connection.isolatedTransformAttempts, 2);
+    expect(connection.maxActive, 2);
+    connection.releaseTransform.complete();
+    expect(await first, Uint8List.fromList(<int>[1, 2, 3]));
+    expect(await second, Uint8List.fromList(<int>[4, 5, 6]));
+  });
+
   test('incompatible isolated Venera modifyImage falls back through source gate',
       () async {
     final connection = _IsolatedTransformConnection(
