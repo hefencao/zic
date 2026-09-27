@@ -10,6 +10,52 @@ final class _Clock implements MonoClock {
 }
 
 void main() {
+  test('page animation intent belongs to one navigation request', () {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 2,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'p0',
+          chapterId: 'chapter',
+          index: 0,
+          uri: Uri.parse('assets/p0.png'),
+        ),
+        PageAsset(
+          pageId: 'p1',
+          chapterId: 'chapter',
+          index: 1,
+          uri: Uri.parse('assets/p1.png'),
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+    final controller = ReaderController(
+      sessionId: 'animated-command',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: _Clock(),
+    );
+    addTearDown(controller.dispose);
+
+    controller.requestPage(1, animated: true);
+    expect(controller.requestedIndex, 1);
+    expect(controller.requestedPageAnimated, isTrue);
+    final revision = controller.navigationRevision;
+
+    controller.acknowledgePageRequest(revision);
+    expect(controller.requestedIndex, isNull);
+    expect(controller.requestedPageAnimated, isFalse);
+  });
+
   test('controller forwards observations without rebuilding on every scroll', () {
     final chapter = ChapterManifest(
       sourceId: 'local',

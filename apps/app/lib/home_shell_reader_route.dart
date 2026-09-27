@@ -340,6 +340,12 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
             updatedAt: DateTime.now().toUtc(),
           );
     final versionSource = _sourceForId(current.chapter.sourceId);
+    final comicWebUri = versionSource == null
+        ? null
+        : _sourceComicWebUri(
+            versionSource,
+            current.chapter.comicId,
+          );
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
       adaptiveMetadata: versionSource == null
@@ -378,6 +384,30 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
         current.chapter.comicId,
         settings,
       ),
+      onReaderModeSettingsChanged: (mode, settings) =>
+          widget.preferences.setReaderModeSettings(mode, settings),
+      onOpenGlobalReadingSettings: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ReadingSettingsScreen(
+              preferences: widget.preferences,
+            ),
+          ),
+        );
+        return widget.preferences.readerSessionSettingsFor(
+          current.chapter.sourceId,
+          current.chapter.comicId,
+        );
+      },
+      onOpenSourceWebView: versionSource == null || comicWebUri == null
+          ? null
+          : () => _openSourceWebView(versionSource, comicWebUri),
+      onOpenExternalBrowser: comicWebUri == null
+          ? null
+          : () async {
+              await attachAndroidPlugin('network_bridge');
+              await widget.networkBridge.openExternalBrowser(comicWebUri);
+            },
       traceSink: widget.debugTrace,
       onDownloadRequested: () => _downloadChapter(current),
       onFirstPresentationFrame: versionSource == null

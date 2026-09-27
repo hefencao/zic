@@ -1104,7 +1104,7 @@ void main() {
               clock: _FakeClock(),
               zoomStageFirst: 2.5,
               zoomStageSecond: 4.0,
-              onTap: () => controlToggles++,
+              onSingleTap: (_) => controlToggles++,
               pageBuilder: (context, asset, reportFirstFrame) =>
                   ColoredBox(color: Colors.black),
             ),

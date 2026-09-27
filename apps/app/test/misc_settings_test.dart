@@ -864,6 +864,22 @@ void main() {
             'longPressZoomLimitToViewport': true,
             'doubleTapZoomOrigin': 'snap',
             'zoomDecodeBoost': false,
+            'gestureActions': <String, Object?>{
+              'singleTap': <String, Object?>{
+                'pageAnimation': false,
+                'zones': <String>[
+                  'previousPage',
+                  'defaultBehavior',
+                  'nextPage',
+                  'previousChapter',
+                  'defaultBehavior',
+                  'nextChapter',
+                  'defaultBehavior',
+                  'defaultBehavior',
+                  'defaultBehavior',
+                ],
+              },
+            },
           },
           'continuous': <String, Object?>{
             'crossChapterReading': false,
@@ -888,6 +904,15 @@ void main() {
     expect(controller.pagedReaderSettings.doubleTapZoomOrigin,
         ReaderDoubleTapZoomOrigin.snap);
     expect(controller.pagedReaderSettings.zoomDecodeBoost, isFalse);
+    expect(controller.pagedReaderSettings.singleTapPageAnimation, isFalse);
+    expect(
+      controller.pagedReaderSettings.singleTapActionAt(0),
+      ReaderGestureAction.previousPage,
+    );
+    expect(
+      controller.pagedReaderSettings.singleTapActionAt(5),
+      ReaderGestureAction.nextChapter,
+    );
     expect(controller.continuousReaderSettings.crossChapterReading, isFalse);
     expect(controller.continuousReaderSettings.zoomStageFirst, 2.25);
     expect(controller.continuousReaderSettings.longPressZoomScale, 3.0);
@@ -899,6 +924,18 @@ void main() {
       controller.continuousReaderSettings.copyWith(
         crossChapterReading: true,
         zoomStages: const <double>[2.5, 4.0],
+        singleTapPageAnimation: false,
+        singleTapZones: const <ReaderGestureAction>[
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.previousPage,
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.nextPage,
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.defaultBehavior,
+          ReaderGestureAction.defaultBehavior,
+        ],
       ),
     );
     await controller.flush();
@@ -911,6 +948,23 @@ void main() {
     expect(continuous['crossChapterReading'], isTrue);
     expect(continuous['zoomStage1'], 2.5);
     expect(continuous['zoomStage2'], 4.0);
+    final gestureActions = continuous['gestureActions']! as Map;
+    final singleTap = gestureActions['singleTap']! as Map;
+    expect(singleTap['pageAnimation'], isFalse);
+    expect(
+      singleTap['zones'],
+      <String>[
+        'defaultBehavior',
+        'defaultBehavior',
+        'defaultBehavior',
+        'previousPage',
+        'defaultBehavior',
+        'nextPage',
+        'defaultBehavior',
+        'defaultBehavior',
+        'defaultBehavior',
+      ],
+    );
   });
 
   test('reading defaults match the product baseline', () {

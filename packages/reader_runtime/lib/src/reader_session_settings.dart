@@ -16,6 +16,27 @@ enum ReaderSystemStatusBarMode {
   followControls,
 }
 
+enum ReaderGestureAction {
+  defaultBehavior,
+  previousPage,
+  nextPage,
+  previousChapter,
+  nextChapter,
+}
+
+const List<ReaderGestureAction> readerDefaultGestureZones =
+    <ReaderGestureAction>[
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+  ReaderGestureAction.defaultBehavior,
+];
+
 /// User-facing behavior that is intentionally scoped to one Reader layout
 /// mode. Paged and continuous reading keep separate instances so changing a
 /// gesture/zoom choice in one mode cannot silently rewrite the other.
@@ -32,6 +53,8 @@ final class ReaderModeSettings {
     this.longPressZoomLimitToViewport = true,
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.zoomDecodeBoost = true,
+    this.singleTapPageAnimation = true,
+    this.singleTapZones = readerDefaultGestureZones,
   });
 
   const ReaderModeSettings.continuousDefaults()
@@ -44,7 +67,9 @@ final class ReaderModeSettings {
         longPressZoomPanRatio = 1.0,
         longPressZoomLimitToViewport = true,
         doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
-        zoomDecodeBoost = true;
+        zoomDecodeBoost = true,
+        singleTapPageAnimation = true,
+        singleTapZones = readerDefaultGestureZones;
 
   final bool crossChapterReading;
   final List<double> zoomStages;
@@ -56,6 +81,12 @@ final class ReaderModeSettings {
   final bool longPressZoomLimitToViewport;
   final ReaderDoubleTapZoomOrigin doubleTapZoomOrigin;
   final bool zoomDecodeBoost;
+
+  /// Single-tap action map. Double-tap and long-press keep their existing
+  /// gesture owners and may gain independent region maps later; they must not
+  /// reuse this list implicitly.
+  final bool singleTapPageAnimation;
+  final List<ReaderGestureAction> singleTapZones;
 
   double get zoomStageFirst =>
       zoomStages.isNotEmpty ? _clampReaderStage(zoomStages[0], 1.1) : 1.5;
@@ -77,6 +108,8 @@ final class ReaderModeSettings {
     bool? longPressZoomLimitToViewport,
     ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
     bool? zoomDecodeBoost,
+    bool? singleTapPageAnimation,
+    List<ReaderGestureAction>? singleTapZones,
   }) =>
       ReaderModeSettings(
         crossChapterReading:
@@ -96,7 +129,15 @@ final class ReaderModeSettings {
         doubleTapZoomOrigin:
             doubleTapZoomOrigin ?? this.doubleTapZoomOrigin,
         zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
+        singleTapPageAnimation:
+            singleTapPageAnimation ?? this.singleTapPageAnimation,
+        singleTapZones: singleTapZones ?? this.singleTapZones,
       );
+
+  ReaderGestureAction singleTapActionAt(int index) =>
+      index >= 0 && index < singleTapZones.length
+          ? singleTapZones[index]
+          : ReaderGestureAction.defaultBehavior;
 
   @override
   bool operator ==(Object other) =>
@@ -113,7 +154,9 @@ final class ReaderModeSettings {
           longPressZoomLimitToViewport ==
               other.longPressZoomLimitToViewport &&
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
-          zoomDecodeBoost == other.zoomDecodeBoost;
+          zoomDecodeBoost == other.zoomDecodeBoost &&
+          singleTapPageAnimation == other.singleTapPageAnimation &&
+          _sameGestureZones(singleTapZones, other.singleTapZones);
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -127,6 +170,8 @@ final class ReaderModeSettings {
         longPressZoomLimitToViewport,
         doubleTapZoomOrigin,
         zoomDecodeBoost,
+        singleTapPageAnimation,
+        Object.hashAll(singleTapZones),
       ]);
 }
 
@@ -316,6 +361,14 @@ final class ReaderSessionSettings {
 }
 
 bool _sameReaderStages(List<double> a, List<double> b) {
+  if (a.length != b.length) return false;
+  for (var index = 0; index < a.length; index++) {
+    if (a[index] != b[index]) return false;
+  }
+  return true;
+}
+
+bool _sameGestureZones(List<ReaderGestureAction> a, List<ReaderGestureAction> b) {
   if (a.length != b.length) return false;
   for (var index = 0; index < a.length; index++) {
     if (a[index] != b[index]) return false;

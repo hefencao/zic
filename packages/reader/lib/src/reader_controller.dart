@@ -32,6 +32,7 @@ final class ReaderController extends ChangeNotifier {
   int _stableIndex;
   ReadingDirection _direction;
   int? _requestedIndex;
+  bool _requestedPageAnimated = false;
   static const Duration _scrubDispatchInterval = Duration(milliseconds: 50);
 
   bool _pageScrubbing = false;
@@ -52,6 +53,7 @@ final class ReaderController extends ChangeNotifier {
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
   int? get requestedIndex => _requestedIndex;
+  bool get requestedPageAnimated => _requestedPageAnimated;
   bool get pageScrubbing => _pageScrubbing;
   int get navigationRevision => _navigationRevision;
   int get rotationQuarterTurns => _rotationQuarterTurns;
@@ -78,10 +80,10 @@ final class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void requestPage(int index) {
+  void requestPage(int index, {bool animated = false}) {
     _cancelScrubDispatch();
     _pageScrubbing = false;
-    _requestPage(index, forceRevision: false);
+    _requestPage(index, forceRevision: false, animated: animated);
   }
 
   void beginPageScrub() {
@@ -100,7 +102,7 @@ final class ReaderController extends ChangeNotifier {
 
   void _dispatchScrubPage(int index) {
     _pendingScrubIndex = null;
-    _requestPage(index, forceRevision: false);
+    _requestPage(index, forceRevision: false, animated: false);
     _scrubDispatchTimer = Timer(_scrubDispatchInterval, () {
       _scrubDispatchTimer = null;
       if (!_pageScrubbing) {
@@ -121,7 +123,7 @@ final class ReaderController extends ChangeNotifier {
     // acknowledged the final visible page. Force one navigation revision so
     // the view can publish a non-scrub observation and restore the normal
     // encoded/decode/upload windows without another page jump.
-    _requestPage(index, forceRevision: true);
+    _requestPage(index, forceRevision: true, animated: false);
   }
 
   void _cancelScrubDispatch() {
@@ -130,7 +132,11 @@ final class ReaderController extends ChangeNotifier {
     _pendingScrubIndex = null;
   }
 
-  void _requestPage(int index, {required bool forceRevision}) {
+  void _requestPage(
+    int index, {
+    required bool forceRevision,
+    required bool animated,
+  }) {
     if (index < 0 || index >= chapter.pages.length) {
       throw RangeError.range(index, 0, chapter.pages.length - 1, 'index');
     }
@@ -139,6 +145,7 @@ final class ReaderController extends ChangeNotifier {
         return;
       }
       _requestedIndex = null;
+      _requestedPageAnimated = false;
       _navigationRevision++;
       notifyListeners();
       return;
@@ -147,6 +154,7 @@ final class ReaderController extends ChangeNotifier {
       return;
     }
     _requestedIndex = index;
+    _requestedPageAnimated = animated;
     _navigationRevision++;
     notifyListeners();
   }
@@ -156,6 +164,7 @@ final class ReaderController extends ChangeNotifier {
       return;
     }
     _requestedIndex = null;
+    _requestedPageAnimated = false;
   }
 
   void report(ReaderObs observation) {

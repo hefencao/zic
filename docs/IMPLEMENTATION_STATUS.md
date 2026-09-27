@@ -70,6 +70,9 @@ App build：0.31.0+328
   阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
   全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接等只属于单一布局的选项仍保持单 owner。
   阅读设置现由独立 `ReaderModeSettings` 分别保存 paged / continuous：连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界、zoom decode boost 可在两种布局中分别取值；旧扁平偏好会迁移进 mode profiles。
+  点击设置也已按当前实际 mode 独立：当前只消费 single tap，3×3 每格可选默认/上一页/下一页/上一章/下一章，单击切页动画可独立关闭。
+  preference 使用 `gestureActions.singleTap` 分层；PageHost 仍负责单击/双击/长按消歧，双击与长按没有被九宫格接管，为后续各自独立九宫格保留边界。
+  Reader 顶部保留强制重载直达按钮；本漫画阅读设置已移到底栏阅读设置图标，右上杂项收纳全局阅读设置、点击设置、来源 WebView 与系统浏览器入口。
   Reader 新增按 mode 独立的“连续阅读”：只控制章节边界 UI traversal，不控制预加载。章节仍一章一个 immutable manifest/session；实际跨章前 flush progress 并通过 HomeLibrarySession 持久确立目标章。
   章节 logical previous/next 现按 sequence 升序定义，不再继承详情/source chapter 的展示顺序。continuous 以真实 ScrollPosition 首/尾作为边界 authority，边界后的单指 pointer pull 决定是否提交；短末页时 coverage-current 仍为倒数第二页也不会阻断 next。
   layout/ballistic ScrollNotification 不再同步写 UI ValueNotifier；沿既有 post-frame observation owner 发布，已消除实机跨章时 `Build scheduled during frame` → `_dependents.isEmpty` 连锁红屏。

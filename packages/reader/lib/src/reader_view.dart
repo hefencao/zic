@@ -125,7 +125,7 @@ final class ReaderView extends StatefulWidget {
     this.pageBuilder,
     this.pagePresentationRevisions = const <String, int>{},
     this.demandRevision,
-    this.onTap,
+    this.onSingleTap,
     this.verticalStitch = false,
     this.pageAspectRatios = const <String, double>{},
     this.pageAspectRatiosListenable,
@@ -158,7 +158,10 @@ final class ReaderView extends StatefulWidget {
   /// recreating ReaderController, navigation state, or unrelated page slots.
   final Map<String, int> pagePresentationRevisions;
   final int Function()? demandRevision;
-  final VoidCallback? onTap;
+
+  /// Receives only a confirmed single tap after double-tap/long-press
+  /// disambiguation. Other gestures keep independent owners.
+  final ValueChanged<Offset>? onSingleTap;
 
   /// Removes the visual gap between pages in continuous vertical mode.
   ///
@@ -384,6 +387,8 @@ final class _ReaderViewState extends State<ReaderView>
   double? _stripAnimationTargetScale;
   AnimationController? _stripZoomAnimation;
   static const int _verticalInitialCacheScreens = 6;
+  static const Duration _singleTapPageAnimationDuration =
+      Duration(milliseconds: 160);
   static const int _frameTimingBudgetMicros = 16667;
   static const int _frameTimingMissedVsyncMicros = 20000;
   static const int _frameTimingSummaryWindowMicros = 1000000;
@@ -858,7 +863,7 @@ final class _ReaderViewState extends State<ReaderView>
       traceSink: widget.traceSink,
       pageBuilder: widget.pageBuilder,
       demandRevision: widget.demandRevision,
-      onTap: widget.onTap,
+      onSingleTap: widget.onSingleTap,
       onZoomChanged: (zoomed) {
         final next = zoomed ? index : null;
         if (_zoomedPage == next) return;
@@ -2006,17 +2011,35 @@ final class _ReaderViewState extends State<ReaderView>
         return;
       }
       _handledNavigationRevision = revision;
+      final animated =
+          controller.requestedPageAnimated && !controller.pageScrubbing;
       _interaction = controller.pageScrubbing
           ? Interaction.scrubbing
-          : Interaction.jumping;
+          : animated
+              ? Interaction.settling
+              : Interaction.jumping;
       _zoomedPage = null;
       // Strip zoom intentionally survives page jumps: scrolling stays
       // enabled while zoomed, so navigation must not reset it either.
       final maxExtent = _verticalController.position.maxScrollExtent;
-      _verticalController.jumpTo(
-        _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
-      );
-      _completeVerticalPageRequest(revision, requested);
+      final target =
+          _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble();
+      if (animated) {
+        unawaited(
+          _verticalController
+              .animateTo(
+                target,
+                duration: _singleTapPageAnimationDuration,
+                curve: Curves.easeOutCubic,
+              )
+              .whenComplete(
+                () => _completeVerticalPageRequest(revision, requested),
+              ),
+        );
+      } else {
+        _verticalController.jumpTo(target);
+        _completeVerticalPageRequest(revision, requested);
+      }
       return;
     }
     if (!_pageController.hasClients ||
@@ -2025,12 +2048,35 @@ final class _ReaderViewState extends State<ReaderView>
       return;
     }
     _handledNavigationRevision = revision;
+    final animated =
+        controller.requestedPageAnimated && !controller.pageScrubbing;
     _interaction = controller.pageScrubbing
         ? Interaction.scrubbing
-        : Interaction.jumping;
+        : animated
+            ? Interaction.settling
+            : Interaction.jumping;
     _zoomedPage = null;
-    _pageController.jumpToPage(requested);
-    controller.acknowledgePageRequest(revision);
+    if (animated) {
+      unawaited(
+        _pageController
+            .animateToPage(
+              requested,
+              duration: _singleTapPageAnimationDuration,
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(() {
+          if (!mounted ||
+              controller.navigationRevision != revision ||
+              controller.requestedIndex != requested) {
+            return;
+          }
+          controller.acknowledgePageRequest(revision);
+        }),
+      );
+    } else {
+      _pageController.jumpToPage(requested);
+      controller.acknowledgePageRequest(revision);
+    }
   }
 
   void _scheduleControllerCommand() {

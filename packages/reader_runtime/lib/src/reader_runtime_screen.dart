@@ -18,8 +18,12 @@ import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
 import 'reader_route_transition_gate.dart';
 import 'reader_session_settings.dart';
+import 'reader_tap_settings_sheet.dart';
 import 'reader_zoom_decode.dart';
 import 'reader_transfer_progress_indicator.dart';
+
+part 'reader_runtime_gesture_actions.dart';
+part 'reader_runtime_misc_actions.dart';
 
 SnackBar _copyableReaderErrorSnackBar(String message) => SnackBar(
       content: Text(message),
@@ -39,6 +43,12 @@ const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
 const readerComicSettingsKey = ValueKey<String>('reader-comic-settings');
+const readerMiscMenuKey = ValueKey<String>('reader-misc-menu');
+const readerGlobalSettingsKey =
+    ValueKey<String>('reader-global-settings');
+const readerTapSettingsKey = ValueKey<String>('reader-tap-settings');
+const readerOpenWebViewKey = ValueKey<String>('reader-open-webview');
+const readerOpenBrowserKey = ValueKey<String>('reader-open-browser');
 const readerChapterTitleKey = ValueKey<String>('reader-chapter-title');
 const readerPageSubtitleKey = ValueKey<String>('reader-page-subtitle');
 const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
@@ -103,6 +113,20 @@ typedef ReaderProgressFlush = FutureOr<void> Function();
 typedef ReaderSessionSettingsWriter = FutureOr<void> Function(
   ReaderSessionSettings settings,
 );
+typedef ReaderModeSettingsWriter = FutureOr<void> Function(
+  ReaderMode mode,
+  ReaderModeSettings settings,
+);
+typedef ReaderGlobalSettingsOpener =
+    FutureOr<ReaderSessionSettings?> Function();
+typedef ReaderExternalAction = FutureOr<void> Function();
+
+enum _ReaderMiscCommand {
+  globalSettings,
+  tapSettings,
+  openWebView,
+  openBrowser,
+}
 
 final class ReaderRuntimeScreen extends StatefulWidget {
   const ReaderRuntimeScreen({
@@ -121,6 +145,10 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.initiallyImmersive = true,
     this.initialSettings = const ReaderSessionSettings(),
     this.onSettingsChanged,
+    this.onModeSettingsChanged,
+    this.onOpenGlobalReadingSettings,
+    this.onOpenSourceWebView,
+    this.onOpenExternalBrowser,
     this.canReadPreviousChapter = false,
     this.canReadNextChapter = false,
     this.onChapterBoundaryRequested,
@@ -143,6 +171,10 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final bool initiallyImmersive;
   final ReaderSessionSettings initialSettings;
   final ReaderSessionSettingsWriter? onSettingsChanged;
+  final ReaderModeSettingsWriter? onModeSettingsChanged;
+  final ReaderGlobalSettingsOpener? onOpenGlobalReadingSettings;
+  final ReaderExternalAction? onOpenSourceWebView;
+  final ReaderExternalAction? onOpenExternalBrowser;
   final bool canReadPreviousChapter;
   final bool canReadNextChapter;
   final ReaderChapterBoundaryCallback? onChapterBoundaryRequested;
@@ -174,6 +206,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late bool _controlsVisible;
   bool _downloading = false;
   bool _downloaded = false;
+  bool _tapChapterRequestInFlight = false;
   bool _reportedFirstPresentationFrame = false;
   late ReaderSessionSettings _settings;
   late AdaptiveReaderClassifier _adaptiveClassifier;
@@ -909,15 +942,20 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
-  Future<void> _editComicSettings() async {
-    final saved = await showReaderComicSettingsSheet(
-      context,
-      initialSettings: _settings,
-      adaptiveProfile: _adaptiveProfile,
-    );
-    if (saved == null || !mounted) return;
+  void _replaceModeSettings(
+    ReaderMode mode,
+    ReaderModeSettings settings,
+  ) {
     setState(() {
-      _settings = saved;
+      _settings = mode == ReaderMode.continuous
+          ? _settings.copyWith(continuous: settings)
+          : _settings.copyWith(paged: settings);
+    });
+  }
+
+  void _adoptSettingsSnapshot(ReaderSessionSettings settings) {
+    setState(() {
+      _settings = settings;
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
       if (_settings.effectiveAdaptiveEnabled &&
           _adaptiveProfile != _settings.adaptiveProfile) {
@@ -928,18 +966,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _syncExternalPresentationFit();
     _syncTouchResampling();
     _syncPlatformFrameCadenceProbe();
-    final writer = widget.onSettingsChanged;
-    if (writer != null) {
-      try {
-        await Future<void>.sync(() => writer(_settings));
-      } on Object catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            _copyableReaderErrorSnackBar('保存本漫画阅读设置失败：$error'),
-          );
-        }
-      }
-    }
   }
 
   Widget _topControls(
@@ -1012,13 +1038,55 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                             unawaited(_forceReloadCurrentPage(reader)),
                         icon: const Icon(Icons.refresh),
                       ),
-                      if (widget.onSettingsChanged != null)
-                        IconButton(
-                          key: readerComicSettingsKey,
-                          tooltip: '本漫画阅读设置',
-                          onPressed: () => unawaited(_editComicSettings()),
-                          icon: const Icon(Icons.tune),
-                        ),
+                      PopupMenuButton<_ReaderMiscCommand>(
+                        key: readerMiscMenuKey,
+                        tooltip: '杂项',
+                        icon: const Icon(Icons.more_vert),
+                        onSelected: (command) =>
+                            unawaited(_handleMiscCommand(command, reader)),
+                        itemBuilder: (_) => <PopupMenuEntry<_ReaderMiscCommand>>[
+                          if (widget.onOpenGlobalReadingSettings != null)
+                            const PopupMenuItem<_ReaderMiscCommand>(
+                              key: readerGlobalSettingsKey,
+                              value: _ReaderMiscCommand.globalSettings,
+                              child: ListTile(
+                                leading: Icon(Icons.settings_outlined),
+                                title: Text('全局阅读设置'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          if (widget.onModeSettingsChanged != null)
+                            const PopupMenuItem<_ReaderMiscCommand>(
+                              key: readerTapSettingsKey,
+                              value: _ReaderMiscCommand.tapSettings,
+                              child: ListTile(
+                                leading: Icon(Icons.grid_3x3_outlined),
+                                title: Text('点击设置'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          if (widget.onOpenSourceWebView != null)
+                            const PopupMenuItem<_ReaderMiscCommand>(
+                              key: readerOpenWebViewKey,
+                              value: _ReaderMiscCommand.openWebView,
+                              child: ListTile(
+                                leading: Icon(Icons.web_outlined),
+                                title: Text('在 WebView 中打开'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          if (widget.onOpenExternalBrowser != null)
+                            const PopupMenuItem<_ReaderMiscCommand>(
+                              key: readerOpenBrowserKey,
+                              value: _ReaderMiscCommand.openBrowser,
+                              child: ListTile(
+                                leading: Icon(Icons.open_in_browser),
+                                title: Text('在浏览器中打开'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -1091,6 +1159,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                         onPressed: reader.rotateClockwise,
                         icon: const Icon(Icons.rotate_right),
                       ),
+                      if (widget.onSettingsChanged != null)
+                        IconButton(
+                          key: readerComicSettingsKey,
+                          tooltip: '本漫画阅读设置',
+                          onPressed: () => unawaited(_editComicSettings()),
+                          icon: const Icon(Icons.chrome_reader_mode_outlined),
+                        ),
                       IconButton(
                         key: readerFavoriteKey,
                         tooltip: _favorite ? '取消收藏' : '收藏',
@@ -1211,7 +1286,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               pagePresentationRevisions:
                   Map<String, int>.unmodifiable(_presentationReloadRevisions),
               demandRevision: () => _pipeline.revision,
-              onTap: _toggleControls,
+              onSingleTap: _handleReaderSingleTap,
               verticalStitch: _settings.effectiveVerticalStitch,
               pageAspectRatiosListenable: _pageAspectRatios,
               zoomStageFirst: modeSettings.zoomStageFirst,

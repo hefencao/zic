@@ -1081,6 +1081,12 @@ ReaderModeSettings _decodeReaderModeSettings(
 ) {
   if (raw is! Map) return fallback;
   final values = raw.cast<Object?, Object?>();
+  final gestureActions = values['gestureActions'];
+  final singleTap =
+      gestureActions is Map ? gestureActions['singleTap'] : null;
+  final singleTapValues = singleTap is Map
+      ? singleTap.cast<Object?, Object?>()
+      : const <Object?, Object?>{};
   final first = _doubleValue(
     values['zoomStage1'],
     fallback.zoomStageFirst,
@@ -1135,6 +1141,14 @@ ReaderModeSettings _decodeReaderModeSettings(
     ),
     zoomDecodeBoost:
         _boolValue(values['zoomDecodeBoost'], fallback.zoomDecodeBoost),
+    singleTapPageAnimation: _boolValue(
+      singleTapValues['pageAnimation'],
+      fallback.singleTapPageAnimation,
+    ),
+    singleTapZones: _decodeReaderGestureZones(
+      singleTapValues['zones'],
+      fallback.singleTapZones,
+    ),
   );
 }
 
@@ -1152,7 +1166,36 @@ Map<String, Object?> _encodeReaderModeSettings(ReaderModeSettings settings) =>
       'longPressZoomLimitToViewport': settings.longPressZoomLimitToViewport,
       'doubleTapZoomOrigin': settings.doubleTapZoomOrigin.name,
       'zoomDecodeBoost': settings.zoomDecodeBoost,
+      'gestureActions': <String, Object?>{
+        'singleTap': <String, Object?>{
+          'pageAnimation': settings.singleTapPageAnimation,
+          'zones': settings.singleTapZones
+              .map((action) => action.name)
+              .toList(growable: false),
+        },
+      },
     };
+
+List<ReaderGestureAction> _decodeReaderGestureZones(
+  Object? raw,
+  List<ReaderGestureAction> fallback,
+) {
+  if (raw is! List || raw.length != 9) return fallback;
+  final decoded = <ReaderGestureAction>[];
+  for (final value in raw) {
+    if (value is! String) return fallback;
+    ReaderGestureAction? action;
+    for (final candidate in ReaderGestureAction.values) {
+      if (candidate.name == value) {
+        action = candidate;
+        break;
+      }
+    }
+    if (action == null) return fallback;
+    decoded.add(action);
+  }
+  return List<ReaderGestureAction>.unmodifiable(decoded);
+}
 
 double _doubleValue(
   Object? raw,

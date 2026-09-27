@@ -31,8 +31,13 @@ export 'package:reader_runtime/reader_runtime.dart'
     show
         MediaLoadToken,
         PipelineReaderSessionFactory,
+        ReaderExternalAction,
+        ReaderGlobalSettingsOpener,
+        ReaderModeSettings,
+        ReaderModeSettingsWriter,
         ReaderSessionSettings,
-        ReaderSessionSettingsWriter;
+        ReaderSessionSettingsWriter,
+        ReaderGestureAction;
 
 part 'src/models_and_preview.dart';
 part 'src/catalog_and_codec.dart';

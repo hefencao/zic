@@ -3,6 +3,7 @@ package dev.zic.network
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -63,6 +64,7 @@ class NetworkBridgePlugin :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "openBrowser" -> openBrowser(call, result)
+            "openExternalBrowser" -> openExternalBrowser(call, result)
             "readBrowserSnapshot" -> readBrowserSnapshot(call, result)
             else -> result.notImplemented()
         }
@@ -141,6 +143,31 @@ class NetworkBridgePlugin :
     ) {
         val url = call.httpUrlOrError(result) ?: return
         result.success(NetworkBrowserSnapshotStore.read(context, url))
+    }
+
+    private fun openExternalBrowser(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val url = call.httpUrlOrError(result) ?: return
+        val activity = activityBinding?.activity
+        if (activity == null) {
+            result.error(
+                "external-browser-unavailable",
+                "external browser requires an attached Activity",
+                null,
+            )
+            return
+        }
+        runCatching {
+            activity.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)),
+            )
+        }.onSuccess {
+            result.success(null)
+        }.onFailure { error ->
+            result.error("external-browser-failed", error.message, null)
+        }
     }
 
     private fun failPendingBrowser(message: String) {

@@ -1392,6 +1392,24 @@ List<Widget> _readerModeSettingsTiles(
       onChanged: (value) =>
           update(settings.copyWith(crossChapterReading: value)),
     ),
+    ListTile(
+      leading: const Icon(Icons.grid_3x3_outlined),
+      title: const Text('点击设置'),
+      subtitle: Text(
+        settings.singleTapPageAnimation
+            ? '单击九宫格 · 切页动画开启'
+            : '单击九宫格 · 切页动画关闭',
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => unawaited(
+        _editReaderTapSettings(
+          context,
+          preferences,
+          mode,
+          settings,
+        ),
+      ),
+    ),
     if (continuous)
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1621,6 +1639,21 @@ List<Widget> _readerModeSettingsTiles(
           update(settings.copyWith(zoomDecodeBoost: value)),
     ),
   ];
+}
+
+Future<void> _editReaderTapSettings(
+  BuildContext context,
+  AppPreferencesController preferences,
+  ReaderMode mode,
+  ReaderModeSettings settings,
+) async {
+  final saved = await showReaderGestureSettingsSheet(
+    context,
+    mode: mode,
+    initialSettings: settings,
+  );
+  if (saved == null) return;
+  preferences.setReaderModeSettings(mode, saved);
 }
 
 Widget _readerScaleSlider({

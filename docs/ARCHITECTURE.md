@@ -915,6 +915,13 @@ idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺�
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
 留边轴保持图片居中（契约见 SPEC 2.3）；这些是 UI 设置，不改变 demand/prefetch/texture 所有权或 NetLane 调度。strip 缩放是视口空间视觉层：
+点击区域配置也留在同一 mode profile，但 persistence 以 `gestureActions -> singleTap` 分层，而不是一个无手势类型的九宫格。
+当前只有 single-tap profile 可编辑和消费；`ReaderPageHost` 继续唯一拥有单击/双击/长按消歧，只有确认不是双击/长按后的
+`onSingleTap(globalPosition)` 才跨到 `reader_runtime`。Runtime 只负责把坐标映射到 3×3 区域并发出 typed
+`ReaderGestureAction`；上一/下一页仍通过 `ReaderController.requestPage`，章节动作复用既有 chapter-boundary callback。
+单击切页动画是该 page request 的一次性 intent，由 `ReaderView` 消费；scrub、拖动和恢复定位保持即时命令。
+以后若增加双击/长按九宫格，必须在 `gestureActions` 下新增独立 sibling，并先由 PageHost 对应 gesture owner 显式上送，
+不得让 single-tap action map 抢占当前 zoom/long-press 语义。
 Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.systemStatusBarMode` 只读投影全局三态偏好：
 `show / hide / followControls`。前两者独立于 Reader 控制栏；`followControls` 只复用 Reader 已有 `_controlsVisible` presentation fact，不新建可见性 owner。
 系统 navigation bar 仍跟随 Reader 控制栏显示。Android targetSdk 36 使用 reader_runtime plugin 的 `WindowInsetsController` 作为真实 show/hide owner，

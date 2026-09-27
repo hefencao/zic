@@ -67,6 +67,24 @@ void main() {
     });
   });
 
+  test('opens an HTTP location in the external browser', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+
+    await const AndroidNetworkBridge(channel: channel).openExternalBrowser(
+      Uri.parse('https://example.test/comic/42'),
+    );
+
+    expect(received?.method, 'openExternalBrowser');
+    expect(received?.arguments, <String, Object?>{
+      'url': 'https://example.test/comic/42',
+    });
+  });
+
   test('maps a bounded browser snapshot', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (_) async => <String, Object?>{

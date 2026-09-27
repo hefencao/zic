@@ -204,6 +204,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
+    this.onReaderModeSettingsChanged,
+    this.onOpenGlobalReadingSettings,
+    this.onOpenSourceWebView,
+    this.onOpenExternalBrowser,
     this.canReadPreviousChapter = false,
     this.canReadNextChapter = false,
     this.onChapterBoundaryRequested,
@@ -228,6 +232,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
+  final ReaderModeSettingsWriter? onReaderModeSettingsChanged;
+  final ReaderGlobalSettingsOpener? onOpenGlobalReadingSettings;
+  final ReaderExternalAction? onOpenSourceWebView;
+  final ReaderExternalAction? onOpenExternalBrowser;
   final bool canReadPreviousChapter;
   final bool canReadNextChapter;
   final ReaderChapterBoundaryCallback? onChapterBoundaryRequested;
@@ -273,6 +281,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         initiallyImmersive: initiallyImmersive,
         initialSettings: initialReaderSettings,
         onSettingsChanged: onReaderSettingsChanged,
+        onModeSettingsChanged: onReaderModeSettingsChanged,
+        onOpenGlobalReadingSettings: onOpenGlobalReadingSettings,
+        onOpenSourceWebView: onOpenSourceWebView,
+        onOpenExternalBrowser: onOpenExternalBrowser,
         canReadPreviousChapter: canReadPreviousChapter,
         canReadNextChapter: canReadNextChapter,
         onChapterBoundaryRequested: onChapterBoundaryRequested,

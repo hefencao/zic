@@ -21,7 +21,7 @@ final class _ReaderPageShell extends StatefulWidget {
     required this.longPressZoomLimitToViewport,
     required this.doubleTapZoomOrigin,
     required this.pageAspectRatio,
-    this.onTap,
+    this.onSingleTap,
     this.onScaleChanged,
     this.onStripLensStart,
     this.onStripPanHoldStart,
@@ -55,7 +55,7 @@ final class _ReaderPageShell extends StatefulWidget {
   /// Resolves this page's current display ratio (height/width) for the
   /// image-rect based boundary constraints.
   final double? Function() pageAspectRatio;
-  final VoidCallback? onTap;
+  final ValueChanged<Offset>? onSingleTap;
   final ValueChanged<double>? onScaleChanged;
   final VoidCallback? onStripLensStart;
   final VoidCallback? onStripPanHoldStart;
@@ -167,7 +167,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
       key: ValueKey<String>('zoom:${widget.asset.assetKey}'),
       active: _activeNotifier,
       clock: widget.clock,
-      onTap: widget.onTap,
+      onSingleTap: widget.onSingleTap,
       onZoomChanged: widget.onZoomChanged,
       interactive:
           widget.controller.direction != ReadingDirection.vertical,
@@ -214,7 +214,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
     required this.active,
     required this.clock,
     required this.onZoomChanged,
-    this.onTap,
+    this.onSingleTap,
     this.interactive = true,
     this.zoomStageFirst = 1.5,
     this.zoomStageSecond = 2.0,
@@ -239,10 +239,10 @@ final class _ZoomableReaderPage extends StatefulWidget {
   final ValueListenable<bool> active;
   final MonoClock clock;
   final ValueChanged<bool> onZoomChanged;
-  final VoidCallback? onTap;
+  final ValueChanged<Offset>? onSingleTap;
 
   /// False inside continuous strips where the whole-strip zoom owns all
-  /// magnification gestures; the page only keeps tap-to-toggle-controls.
+  /// magnification gestures; the page only reports confirmed single taps.
   final bool interactive;
   final double zoomStageFirst;
   final double zoomStageSecond;
@@ -821,14 +821,15 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
       _cycleStages(position);
       return;
     }
+    final globalPosition = event.position;
     _lastTapAtMicros = nowMicros;
-    _lastTapPosition = event.position;
+    _lastTapPosition = globalPosition;
     _singleTapTimer?.cancel();
     _singleTapTimer = Timer(const Duration(milliseconds: 280), () {
       _singleTapTimer = null;
       _lastTapAtMicros = null;
       _lastTapPosition = null;
-      widget.onTap?.call();
+      widget.onSingleTap?.call(globalPosition);
     });
   }
 

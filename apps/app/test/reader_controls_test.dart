@@ -84,6 +84,19 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+Future<void> _pumpUntilCondition(
+  WidgetTester tester,
+  bool Function() condition, {
+  required String description,
+  int maxFrames = 40,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump(_frameStep);
+    if (condition()) return;
+  }
+  throw TestFailure('Timed out waiting for $description');
+}
+
 Widget _pipelineReader({
   required ChapterManifest chapter,
   required ReaderRuntimeScreen Function(PipelineReaderSession pipeline) build,
@@ -553,6 +566,11 @@ void main() {
             pipeline: pipeline,
             initiallyImmersive: false,
             onSettingsChanged: (_) {},
+            onModeSettingsChanged: (_, __) {},
+            onOpenGlobalReadingSettings: () =>
+                const ReaderSessionSettings(),
+            onOpenSourceWebView: () {},
+            onOpenExternalBrowser: () {},
             artifactPageBuilder: (
               context,
               asset,
@@ -583,9 +601,211 @@ void main() {
       find.descendant(of: top, matching: find.byIcon(Icons.swap_horiz)),
       findsNothing,
     );
-    expect(find.byKey(readerForceReloadKey), findsOneWidget);
-    expect(find.byKey(readerComicSettingsKey), findsOneWidget);
+    final bottom = find.byKey(readerBottomControlsKey);
+    expect(find.byKey(readerMiscMenuKey), findsOneWidget);
+    expect(
+      find.descendant(of: top, matching: find.byKey(readerForceReloadKey)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: top, matching: find.byKey(readerComicSettingsKey)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: bottom, matching: find.byKey(readerComicSettingsKey)),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.chrome_reader_mode_outlined), findsOneWidget);
     expect(find.byKey(readerPageSliderKey), findsOneWidget);
+
+    await tester.tap(find.byKey(readerMiscMenuKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(readerForceReloadKey), findsOneWidget);
+    expect(find.byKey(readerGlobalSettingsKey), findsOneWidget);
+    expect(find.byKey(readerTapSettingsKey), findsOneWidget);
+    expect(find.byKey(readerOpenWebViewKey), findsOneWidget);
+    expect(find.byKey(readerOpenBrowserKey), findsOneWidget);
+    await tester.tapAt(const Offset(8, 8));
+    await tester.pumpAndSettle();
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('tap settings edit only the active Reader mode', (tester) async {
+    ReaderMode? savedMode;
+    ReaderModeSettings? savedSettings;
+    final chapter = _chapter(direction: ReadingDirection.vertical);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              comicSpecificEnabled: true,
+              directionOverride: ReadingDirection.vertical,
+            ),
+            onModeSettingsChanged: (mode, settings) {
+              savedMode = mode;
+              savedSettings = settings;
+            },
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(readerMiscMenuKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(readerTapSettingsKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('连续模式 · 点击设置'), findsOneWidget);
+    expect(find.byKey(readerSingleTapGridKey), findsOneWidget);
+    expect(
+      tester
+          .widget<SwitchListTile>(find.byKey(readerSingleTapAnimationKey))
+          .value,
+      isTrue,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('reader-tap-zone-4')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下一页').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(readerSingleTapAnimationKey));
+    await tester.pump();
+    await tester.ensureVisible(find.text('保存'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(savedMode, ReaderMode.continuous);
+    expect(savedSettings, isNotNull);
+    expect(savedSettings!.singleTapPageAnimation, isFalse);
+    expect(savedSettings!.singleTapActionAt(4), ReaderGestureAction.nextPage);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('configured center tap navigates through the Reader command',
+      (tester) async {
+    final progress = <ReadingProgress>[];
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            screenKey: _screenKey,
+            initiallyImmersive: true,
+            initialSettings: const ReaderSessionSettings(
+              paged: ReaderModeSettings(
+                singleTapZones: <ReaderGestureAction>[
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.nextPage,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                ],
+              ),
+            ),
+            onProgressChanged: progress.add,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tapAt(tester.getCenter(find.byKey(_screenKey)));
+    await _pumpUntilCondition(
+      tester,
+      () => progress.any((item) => item.pageIndex == 1),
+      description: 'single-tap page command to reach page 1',
+    );
+
+    expect(progress, isNotEmpty);
+    expect(progress.last.pageIndex, 1);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('tap chapter action reuses the chapter boundary callback',
+      (tester) async {
+    final requested = <ReaderChapterBoundary>[];
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            screenKey: _screenKey,
+            initiallyImmersive: true,
+            initialSettings: const ReaderSessionSettings(
+              paged: ReaderModeSettings(
+                crossChapterReading: false,
+                singleTapZones: <ReaderGestureAction>[
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.nextChapter,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                  ReaderGestureAction.defaultBehavior,
+                ],
+              ),
+            ),
+            canReadNextChapter: true,
+            onChapterBoundaryRequested: requested.add,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tapAt(tester.getCenter(find.byKey(_screenKey)));
+    await _pumpUntilCondition(
+      tester,
+      () => requested.isNotEmpty,
+      description: 'single-tap chapter command',
+    );
+
+    expect(
+      requested,
+      <ReaderChapterBoundary>[ReaderChapterBoundary.next],
+    );
     await _disposePipelineReader(tester);
   });
 

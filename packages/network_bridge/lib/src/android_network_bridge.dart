@@ -46,6 +46,14 @@ final class AndroidNetworkBridge {
     );
   }
 
+  Future<void> openExternalBrowser(Uri url) async {
+    _requireHttpUrl(url);
+    await _channel.invokeMethod<void>(
+      'openExternalBrowser',
+      <String, Object?>{'url': url.toString()},
+    );
+  }
+
   Future<NetworkBrowserSnapshot?> readBrowserSnapshot(Uri url) async {
     _requireHttpUrl(url);
     final value = await _channel.invokeMapMethod<String, Object?>(

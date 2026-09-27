@@ -1151,6 +1151,16 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 - 阅读设置中同时适用于 paged 与 continuous 的 presentation/gesture 项 MUST 按 mode 独立持久化，不能共享同一可变值；当前至少包括“连续阅读”、双击倍率/锚点、长按启用/倍率/移动/拖动边界与 zoom decode boost。只适用于单一 mode 的分页方向、纵向拼接仍保持各自单一 owner；系统栏等真正全局 UI policy 不得复制成两份。
+- Reader 的点击动作配置 MUST 同样按当前实际 mode 独立持久化。九宫格必须按手势类型分层，当前 production 只消费 `singleTap`：
+  单击每格可选默认行为/上一页/下一页/上一章/下一章，其中默认行为保持呼出/隐藏控制栏。
+  双击与长按 MUST 继续由既有缩放手势 owner 解释，不得因为增加单击九宫格而经过同一 action map；
+  后续若开放双击/长按九宫格，必须作为 `gestureActions` 下独立 sibling profile 增加，不能复用或覆盖 `singleTap`。
+  PageHost MUST 先完成单击/双击/长按消歧，只把最终确认的 single-tap 屏幕坐标交给 Runtime。
+  单击产生的上一页/下一页 MAY 独立启用短切页动画；该 animation intent MUST 只附着于这一次 ReaderController page request，
+  滑动、拖动、scrub、恢复位置与其它导航命令不得继承。
+- Reader 顶部控制栏 MUST 保留“强制重新加载当前页”的直接按钮，便于恢复与设备测试；不得把它藏入杂项菜单。
+  “本漫画阅读设置” MUST 位于底部控制栏并使用阅读设置图标。右上角杂项菜单用于低频入口，当前包括全局阅读设置、点击设置、
+  来源 WebView 打开和系统浏览器打开；Web 入口只在 App composition 能给出合法 HTTP(S) 漫画页 capability 时提供。
 - 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并在 paged/continuous 各自保存。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
 - 长按放大移动方式 MUST 可设置为拖动或聚焦。拖动模式内容位移 = 手指累计位移 × 拖动比率（默认 1.0，即按放大后分辨率 1:1 跟随；

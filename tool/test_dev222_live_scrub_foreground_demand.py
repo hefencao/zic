@@ -32,7 +32,7 @@ for token in (
     'void beginPageScrub()',
     'void scrubToPage(int index)',
     'void endPageScrub(int index)',
-    '_requestPage(index, forceRevision: true);',
+    '_requestPage(index, forceRevision: true, animated: false);',
 ):
     require(controller, token, 'Reader-owned scrub navigation state')
 for token in (
