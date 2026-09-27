@@ -809,6 +809,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   但membership不等于execution depth：Pipeline把interaction粗投影为`stable/motion/transientPreview` resource phase。
   scrub期间当前/transition/真实visible DownloadDemand保持同一claim但降为`localOnly`，只允许复用/恢复本地authoritative bytes；
   其余3/7 hidden claim为`retained`，不新增remote source work；baseline DecodeDemand/UploadDemand identity同样保留，
+  `localOnly -> retained`同时撤销尚未退出的durable local preparation：`retained`是identity-only，旧viewport的restore不得继续占用两个bounded local-operation slot；取消只发信号，writer/descriptor/Future实际退出前slot仍不释放。
   visible/current decode最多一帧、hidden decode使用`targetWatermark=0`，hidden upload使用`prepareOutput=false`。
   phase回到stable即使current/visible membership未变化也必须replan，并在同一claim/task上恢复正常full execution；
   已admit physical transport只park为NetLane `demanded=false`/rank0，不得为scrub cancel/reopen。

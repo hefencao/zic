@@ -1083,9 +1083,36 @@ final class DownloadTransferOwner {
     TransferDemand demand,
   ) {
     final workMode = _effectiveWorkMode(id);
-    _localPreparationControls[id]?.updatePriority(
+    final localPreparationControl = _localPreparationControls[id];
+    localPreparationControl?.updatePriority(
       _localPreparationPriority(id, session),
     );
+    if (workMode == TransferWorkMode.retained &&
+        localPreparationControl != null &&
+        !localPreparationControl.cancelled) {
+      // `retained` is identity-only execution. Once the final local/full
+      // claim is downgraded, a durable restore still running from the old
+      // viewport has no owner. Letting it finish consumes one of the two
+      // bounded local-preparation slots and makes the next actually-visible
+      // cached page wait behind stale scrub work.
+      //
+      // Cancellation never frees the slot early: the tracked Future remains
+      // active until the restore unwinds, preserving descriptor/writer
+      // lifetime. It only revokes obsolete execution immediately instead of
+      // routing a no-longer-authorized operation through priority grace.
+      localPreparationControl.cancel();
+      _record(
+        _preferredClaim(id),
+        kind: TraceEventKind.policyDecision,
+        id: id,
+        payload: <String, Object?>{
+          'stage': 'local-preparation-revoked',
+          'reason': 'encoded-work-retained',
+          'active': _activeLocalPreparations.contains(id),
+          'committedLength': session.committedLength,
+        },
+      );
+    }
     _speculativeEncodedReadAccounts[id]?.setBypassed(_requiresCompletion(id));
     _pumpLocalPreparations();
     final taskKey = _networkTaskKeys[id];

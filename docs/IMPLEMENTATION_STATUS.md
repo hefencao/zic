@@ -99,9 +99,13 @@ App build：0.31.0+328
   scrub时current/transition/真实visible encoded demand保持claim但仅`localOnly`，hidden 3/7 claim为`retained`；decode demand保留identity但hidden target为0，upload demand保留identity但hidden `prepareOutput=false`。
   松手回stable即使window未变也会因resource phase变化重新投影，并在同一physical task上恢复full work；active transport降级只park为NetLane demanded=false/rank0，不cancel/reopen。
   physical alias聚合先按执行资格、再按同层priority选provider/rank，禁止高优先级retained identity把exact provider或rank捐给full work。
-  focused Pipeline/DownloadTransferOwner/LiveCoordinator tests现为99/99，覆盖scrub→idle原位恢复、retained/localOnly不打开network、同一task key升降级以及同/跨consumer alias。
+  focused Pipeline/DownloadTransferOwner/LiveCoordinator tests现为100/100，覆盖scrub→idle原位恢复、retained/localOnly不打开network、同一task key升降级、同/跨consumer alias，以及localOnly→retained立即撤销旧local preparation。
   2026-09-27 Profile真机slider从112/153快速拖到152/153：31个scrubbing policy decision全部保持11个logical Download claim；执行投影仅出现8–10 retained + 1–3 localOnly、0 full。
   hidden decode target=0为8–10、upload prepare disabled为9–11；松手stable后章尾合法窗口全部恢复full，`taskFailed=0`。该样本无network start，physical park/revive由上述单测验证。
+  后续15-26-08真机Trace确认visible并未误判，3个visible页对应3个`localOnly`；真正问题是durable restore只有2个operation slot，旧页降为`retained/priority0`后active restore仍继续占slot。
+  首轮4.3s scrub有8个restore以effectivePriority=0退休，active最长71.98ms、total最长113.809ms；artifact-cache整图read多为3–15ms。现已收口为retained即撤销旧local execution，slot仍待Future真实退出。
+  修复后15-41-33 Profile复测50个scrubbing decision仍保持11个Download claim且`taskFailed=0`；local preparation不再有effectivePriority=0退休，active最长降至27.40ms。
+  残余首帧延迟主要是presentation raster：sampled visible从durable artifact开始读约10–35ms，PNG首帧decode/present再约30–60ms，而快速slider约50ms即切换。“已缓存”仅证明encoded bytes本地可得，不等价于已有decoded raster；不得因此恢复hidden全窗口预解码。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

@@ -2184,6 +2184,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     physical owner MAY复用唯一 NetLane 的数值 high-priority/preemption margin 与同一 preemption-candidate grace；
     只有该 high-rank candidate 稳定越过 grace 后才可取消至多一个明显更低 rank 的 active local preparation，
     candidate/victim 改变 MUST重置 grace，且一次只能有一个该类 cancellation in-flight。
+    上述 grace 只适用于仍拥有 local/full execution permission 的相对 priority 抢占；当 physical effective work mode 降为 `retained` 时，
+    local preparation 的执行资格已经被撤销，owner MUST立即向 pending/active preparation 发 cancellation，不得让 priority=0 的旧 scrub restore继续占 slot。
     取消 MUST等待旧 writer/descriptor/operation Future 实际退出后才释放 operation slot，
     MUST NOT让并发数瞬时超过 2，也 MUST NOT删除 durable partial 或撤销 logical demand；
     scheduler-owned local preparation若已进入generic `Artifact.restore`/whole-file CRC，
