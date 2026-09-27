@@ -91,7 +91,9 @@ for token in (
     'runtimeLocalStaticPages: const <int>{6, 7}',
     'localPresentationReady: true',
     'vertical active scroll preuploads native static deadline roles but defers far',
-    'active vertical motion still defers far speculative native static upload',
+    ('active motion retains far upload identity but must not start speculative presentation work'
+     if version >= 327
+     else 'active vertical motion still defers far speculative native static upload'),
     'reverse vertical motion must not wait for the 3/7 direction classifier to flip before previous is ready',
 ):
     require(pipeline_test, token, 'local/static policy regression')

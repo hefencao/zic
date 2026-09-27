@@ -64,6 +64,7 @@ final class PipelineController {
   ReaderObs? _lastObservation;
   Set<int>? _previousVisibleIndexes;
   bool? _previousVerticalActive;
+  ResourceInteractionPhase? _previousResourceInteractionPhase;
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
@@ -214,10 +215,14 @@ final class PipelineController {
     final verticalActive = observation.direction == ReadingDirection.vertical &&
         isPresentationMotionInteraction(observation.interaction);
     final verticalActiveChanged = _previousVerticalActive != verticalActive;
+    final interactionPhase = resourceInteractionPhase(observation.interaction);
+    final interactionPhaseChanged =
+        _previousResourceInteractionPhase != interactionPhase;
     final windowChanged =
         !_sameRoles(_previousRoles, window.roles) ||
         visibleChanged ||
         verticalActiveChanged ||
+        interactionPhaseChanged ||
         _previousRetainedIndex != window.retainedIndex;
     if (!force && !_decodeTargetDirty && !windowChanged) {
       return;
@@ -267,6 +272,7 @@ final class PipelineController {
       _previousRetainedIndex = window.retainedIndex;
       _previousVisibleIndexes = currentVisibleIndexes;
       _previousVerticalActive = verticalActive;
+      _previousResourceInteractionPhase = interactionPhase;
       _previousPlannedCurrentIndex = observation.currentIndex;
       return;
     }
@@ -276,6 +282,7 @@ final class PipelineController {
     _previousRetainedIndex = window.retainedIndex;
     _previousVisibleIndexes = currentVisibleIndexes;
     _previousVerticalActive = verticalActive;
+    _previousResourceInteractionPhase = interactionPhase;
     _previousPlannedCurrentIndex = observation.currentIndex;
     _previous = plan;
     _decodeTargetDirty = false;
@@ -297,6 +304,18 @@ final class PipelineController {
           'downloadBridgeSchedulingRetained': bridged.schedulingRetained,
           'decodes': plan.decodes.length,
           'uploads': plan.uploads.length,
+          'encodedWorkModes': <String, int>{
+            for (final mode in EncodedWorkMode.values)
+              mode.name: plan.downloads.values
+                  .where((demand) => demand.encodedWorkMode == mode)
+                  .length,
+          },
+          'decodeTargetZero': plan.decodes.values
+              .where((demand) => demand.targetWatermark == 0)
+              .length,
+          'uploadPrepareDisabled': plan.uploads.values
+              .where((demand) => !demand.prepareOutput)
+              .length,
           'staticWarmDecodes': plan.decodes.values
               .where((demand) => demand.reason.startsWith('heuristic:static-warm'))
               .length,
@@ -323,6 +342,7 @@ final class PipelineController {
           'targetIndex': observation.targetCoverage?.pageIndex,
           'retainedIndex': window.retainedIndex,
           'interaction': observation.interaction.name,
+          'resourceInteractionPhase': interactionPhase.name,
         },
       ),
     );
@@ -530,6 +550,7 @@ final class PipelineController {
         reason: 'heuristic:active-download-bridge-retained',
         expirationRevision: desiredRevision + 1,
         flowTargetFrames: 0,
+        encodedWorkMode: EncodedWorkMode.retained,
       );
     }
     return DownloadDemand(
@@ -538,6 +559,7 @@ final class PipelineController {
       reason: previous.reason,
       expirationRevision: desiredRevision + 1,
       flowTargetFrames: previous.flowTargetFrames,
+      encodedWorkMode: previous.encodedWorkMode,
       decisionId: previous.decisionId,
     );
   }

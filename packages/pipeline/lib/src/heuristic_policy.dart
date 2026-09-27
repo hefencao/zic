@@ -39,6 +39,9 @@ final class HeuristicPolicy {
         .map((coverage) => coverage.pageIndex)
         .toSet();
     visibleIndexes.add(observation.currentIndex);
+    final interactionPhase = resourceInteractionPhase(observation.interaction);
+    final transientPreview =
+        interactionPhase == ResourceInteractionPhase.transientPreview;
     final staticWarmPages = _staticWarmPages(
       chapter: chapter,
       window: window,
@@ -76,6 +79,9 @@ final class HeuristicPolicy {
         currentIndex: observation.currentIndex,
         readDirection: readDirection,
       );
+      final foregroundResource = role == PageRole.current ||
+          role == PageRole.transition ||
+          visibleIndexes.contains(entry.key);
       if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
           role: role,
@@ -83,14 +89,24 @@ final class HeuristicPolicy {
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
+          encodedWorkMode: transientPreview
+              ? foregroundResource
+                  ? EncodedWorkMode.localOnly
+                  : EncodedWorkMode.retained
+              : EncodedWorkMode.full,
         );
         keep.add(ResourceId.download(download));
       }
 
       final staticWarm = staticWarmPages.contains(entry.key);
       final visibleStatic = staticWarm && visibleIndexes.contains(entry.key);
-      final decodeWatermark = staticWarm ? 1 : _decodeWatermark(role);
-      if (decodeWatermark > 0) {
+      final normalDecodeWatermark = staticWarm ? 1 : _decodeWatermark(role);
+      final decodeWatermark = transientPreview
+          ? foregroundResource && normalDecodeWatermark > 0
+              ? 1
+              : 0
+          : normalDecodeWatermark;
+      if (normalDecodeWatermark > 0) {
         decodes[decode] = DecodeDemand(
           role: role,
           priority: staticWarm
@@ -140,8 +156,7 @@ final class HeuristicPolicy {
               !localStaticReady &&
               !externalStatic &&
               isPresentationMotionInteraction(observation.interaction);
-      if ((primaryUpload || staticWarm || pagedTargetPreupload) &&
-          !deferHiddenVerticalNativeStaticUpload) {
+      if (primaryUpload || staticWarm || pagedTargetPreupload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -179,6 +194,8 @@ final class HeuristicPolicy {
           retainOutput:
               visibleStatic || localStaticReady || deadlineStaticPreupload,
           viewportVisible: primaryUpload || visibleStatic,
+          prepareOutput: !deferHiddenVerticalNativeStaticUpload &&
+              (!transientPreview || foregroundResource),
         );
       }
     }
@@ -218,6 +235,8 @@ final class HeuristicPolicy {
         reason: 'heuristic:last-output-retained',
         expirationRevision: revision + 1,
         viewportVisible: visibleIndexes.contains(retainedIndex),
+        prepareOutput: !transientPreview ||
+            visibleIndexes.contains(retainedIndex),
       );
     }
 

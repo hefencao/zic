@@ -28,11 +28,29 @@ enum TransferCompletionIntent {
   required,
 }
 
+enum TransferWorkMode {
+  retained,
+  localOnly,
+  full,
+}
+
+TransferWorkMode _strongerTransferWorkMode(
+  TransferWorkMode left,
+  TransferWorkMode right,
+) =>
+    left.index >= right.index ? left : right;
+
+int _transferExecutionStrength(TransferDemand demand) =>
+    demand.completionIntent == TransferCompletionIntent.required
+        ? TransferWorkMode.full.index
+        : demand.workMode.index;
+
 final class TransferDemand {
   const TransferDemand({
     required this.priority,
     required this.reason,
     this.flowTargetFrames = 0,
+    this.workMode = TransferWorkMode.full,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
@@ -41,6 +59,7 @@ final class TransferDemand {
   final int priority;
   final String reason;
   final int flowTargetFrames;
+  final TransferWorkMode workMode;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -50,6 +69,7 @@ final class TransferDemand {
       priority == other.priority &&
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
+      workMode == other.workMode &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -58,6 +78,7 @@ final class TransferDemand {
         priority,
         reason,
         flowTargetFrames,
+        workMode,
         expectedChecksum,
         completionIntent,
       );
@@ -863,6 +884,7 @@ final class DownloadTransferOwner {
             priority: rawDemand.priority,
             reason: rawDemand.reason,
             flowTargetFrames: rawDemand.flowTargetFrames,
+            workMode: rawDemand.workMode,
             expectedChecksum:
                 _normalizeExpectedChecksum(rawDemand.expectedChecksum),
             completionIntent: rawDemand.completionIntent,
@@ -884,20 +906,31 @@ final class DownloadTransferOwner {
             '$leftChecksum != $rightChecksum',
           );
         }
-        final selected = candidate.demand.priority > aggregate.demand.priority
-            ? candidate
-            : aggregate;
+        final aggregateStrength = _transferExecutionStrength(aggregate.demand);
+        final candidateStrength = _transferExecutionStrength(candidate.demand);
+        final selected = candidateStrength != aggregateStrength
+            ? candidateStrength > aggregateStrength
+                ? candidate
+                : aggregate
+            : candidate.demand.priority > aggregate.demand.priority
+                ? candidate
+                : aggregate;
         final required =
             aggregate.demand.completionIntent ==
                 TransferCompletionIntent.required ||
             candidate.demand.completionIntent ==
                 TransferCompletionIntent.required;
+        final workMode = _strongerTransferWorkMode(
+          aggregate.demand.workMode,
+          candidate.demand.workMode,
+        );
         aggregate = _ConsumerPhysicalDemand(
           exactId: selected.exactId,
           demand: TransferDemand(
             priority: selected.demand.priority,
             reason: selected.demand.reason,
             flowTargetFrames: selected.demand.flowTargetFrames,
+            workMode: required ? TransferWorkMode.full : workMode,
             expectedChecksum: leftChecksum ?? rightChecksum,
             completionIntent: required
                 ? TransferCompletionIntent.required
@@ -1049,7 +1082,10 @@ final class DownloadTransferOwner {
     DownloadSession session,
     TransferDemand demand,
   ) {
-    _localPreparationControls[id]?.updatePriority(session.effectivePriority);
+    final workMode = _effectiveWorkMode(id);
+    _localPreparationControls[id]?.updatePriority(
+      _localPreparationPriority(id, session),
+    );
     _speculativeEncodedReadAccounts[id]?.setBypassed(_requiresCompletion(id));
     _pumpLocalPreparations();
     final taskKey = _networkTaskKeys[id];
@@ -1087,18 +1123,23 @@ final class DownloadTransferOwner {
       }
     }
     if (taskKey != null) {
+      final networkDemanded = workMode == TransferWorkMode.full;
       final wasInactive = net.demandedOf(taskKey) == false;
       final inactiveDiagnostics = wasInactive
           ? _netTaskDiagnosticPayload(taskKey)
           : const <String, Object?>{};
-      net.updateDemanded(taskKey, true);
+      net.updateDemanded(taskKey, networkDemanded);
       _migrateDownloadPriority(
         id,
         taskKey,
-        session.effectivePriority,
-        reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
+        networkDemanded ? _networkPriority(id, session) : 0,
+        reason: networkDemanded
+            ? session.demandCount > 1
+                ? 'consumer-aggregate'
+                : 'demand-role'
+            : 'encoded-work-${workMode.name}',
       );
-      if (wasInactive) {
+      if (networkDemanded && wasInactive) {
         _record(
           _preferredClaim(id),
           kind: TraceEventKind.policyDecision,
@@ -1140,13 +1181,25 @@ final class DownloadTransferOwner {
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
     if (session != null && session.demanded && taskKey != null) {
-      net.updateDemanded(taskKey, true);
-      _migrateDownloadPriority(
-        id,
-        taskKey,
-        session.effectivePriority,
-        reason: 'remaining-consumer',
-      );
+      final networkDemanded =
+          _effectiveWorkMode(id) == TransferWorkMode.full;
+      if (networkDemanded) {
+        net.updateDemanded(taskKey, true);
+        _migrateDownloadPriority(
+          id,
+          taskKey,
+          _networkPriority(id, session),
+          reason: 'remaining-consumer',
+        );
+      } else {
+        net.updateDemanded(taskKey, false);
+        _migrateDownloadPriority(
+          id,
+          taskKey,
+          0,
+          reason: 'remaining-consumer-work-parked',
+        );
+      }
     } else if (taskKey != null && taskIsActive) {
       // Working-set membership and physical transport lifetime are separate.
       // Losing the final Reader/other consumer claim never cancels an already
@@ -1307,14 +1360,22 @@ final class DownloadTransferOwner {
       for (final id in ids) {
         final session = registry.find(id);
         if (session == null) continue;
+        final workMode = _effectiveWorkMode(id);
+        if (workMode != TransferWorkMode.full) {
+          if (_localPreparations.containsKey(id)) {
+            pending = true;
+            break;
+          }
+          continue;
+        }
         final deferredForCurrentClaims =
             _downloadDeferredAtLength[id] == session.committedLength &&
                 !_allowsCostlyFullBodyCatchup(
                   id: id,
-                  priority: session.effectivePriority,
+                  priority: _networkPriority(id, session),
                   preservedLength: session.committedLength,
                 );
-        final preferred = _preferredClaim(id);
+        final preferred = _preferredClaimForWork(id, TransferWorkMode.full);
         final flowSatisfiedForCurrentClaims = preferred != null &&
             _flowProofSatisfies(
               preferred.demand.flowTargetFrames,
@@ -1382,7 +1443,7 @@ final class DownloadTransferOwner {
           snapshot.firstFrameRequiredSourceLength,
     );
     if (!changed || !session.demanded) return;
-    final claim = _preferredClaim(session.id);
+    final claim = _preferredClaimForWork(session.id, TransferWorkMode.full);
     if (claim == null) return;
     if (!_flowProofSatisfies(
       claim.demand.flowTargetFrames,
@@ -1393,10 +1454,14 @@ final class DownloadTransferOwner {
 
   void _ensureDownloadTask(DownloadId id, DownloadSession session) {
     if (_presentationArtifactRecoveries.contains(id)) return;
-    final claim = _preferredClaim(id);
-    if (claim == null || !session.demanded) return;
-    claim.lease.updatePriority(claim.demand.priority);
-    final effectivePriority = session.effectivePriority;
+    final logicalClaim = _preferredClaim(id);
+    if (logicalClaim == null || !session.demanded) return;
+    logicalClaim.lease.updatePriority(logicalClaim.demand.priority);
+    final effectivePriority = _networkPriority(id, session);
+    final workMode = _effectiveWorkMode(id);
+    final executionClaim = workMode == TransferWorkMode.full
+        ? _preferredClaimForWork(id, TransferWorkMode.full)
+        : _preferredClaimForWork(id, TransferWorkMode.localOnly);
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
       // A DownloadId has one physical task identity while that task is queued
@@ -1407,12 +1472,17 @@ final class DownloadTransferOwner {
           _waitForTaskRetirement(id, session, existingTaskKey);
           return;
         }
-        net.updateDemanded(existingTaskKey, true);
+        final networkDemanded = workMode == TransferWorkMode.full;
+        net.updateDemanded(existingTaskKey, networkDemanded);
         _migrateDownloadPriority(
           id,
           existingTaskKey,
-          effectivePriority,
-          reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
+          networkDemanded ? effectivePriority : 0,
+          reason: networkDemanded
+              ? session.demandCount > 1
+                  ? 'consumer-aggregate'
+                  : 'demand-role'
+              : 'encoded-work-${workMode.name}',
         );
         return;
       }
@@ -1422,8 +1492,11 @@ final class DownloadTransferOwner {
         _networkTaskKeys.remove(id);
       }
     }
+    if (workMode == TransferWorkMode.retained) {
+      return;
+    }
     if (_flowProofSatisfies(
-      claim.demand.flowTargetFrames,
+      (executionClaim ?? logicalClaim).demand.flowTargetFrames,
       session)) {
       _preparedNetworkAdmissions.remove(id);
       _preparedAdmissionDeferrals.remove(id);
@@ -1440,7 +1513,7 @@ final class DownloadTransferOwner {
       if (_ensureSkipReasons[id] != reason) {
         _ensureSkipReasons[id] = reason;
         _record(
-          claim,
+          executionClaim ?? logicalClaim,
           kind: TraceEventKind.policyDecision,
           id: id,
           payload: <String, Object?>{
@@ -1490,7 +1563,7 @@ final class DownloadTransferOwner {
       if (_ensureSkipReasons[id] != reasons) {
         _ensureSkipReasons[id] = reasons;
         _record(
-          claim,
+          executionClaim ?? logicalClaim,
           kind: TraceEventKind.policyDecision,
           id: id,
           payload: <String, Object?>{
@@ -1517,6 +1590,17 @@ final class DownloadTransferOwner {
       );
       return;
     }
+    if (workMode != TransferWorkMode.full) {
+      return;
+    }
+    final claim = _preferredClaimForWork(id, TransferWorkMode.full);
+    if (claim == null) {
+      // A foreign/direct demand can keep an already-admitted physical task
+      // alive, but only a full TransferClaim supplies a provider for a fresh
+      // network admission. Never borrow transport authority from a retained
+      // or local-only Reader claim.
+      return;
+    }
     final taskKey = 'transfer:${++_taskSequence}:${id.key}';
     _networkTaskKeys[id] = taskKey;
     net.submitRanked(
@@ -1536,13 +1620,18 @@ final class DownloadTransferOwner {
     required TransferPrepare? prepare,
     required TransferPrepareWithControl? prepareWithControl,
   }) {
+    if (_effectiveWorkMode(id) == TransferWorkMode.retained) {
+      return;
+    }
     if (_localPreparations.containsKey(id) ||
         _pendingLocalPreparations.containsKey(id)) {
       return;
     }
-    final initialClaim = _preferredClaim(id);
+    final initialClaim =
+        _preferredClaimForWork(id, TransferWorkMode.localOnly) ??
+        _preferredClaim(id);
     final control = _LocalPreparationControl(
-      priority: session.effectivePriority,
+      priority: _localPreparationPriority(id, session),
     );
     _localPreparationControls[id] = control;
     final startedAtMicros = clock.nowMicros();
@@ -1571,7 +1660,8 @@ final class DownloadTransferOwner {
     _pendingLocalPreparations.removeWhere((id, pending) {
       if (pending.control.cancelled ||
           !identical(registry.findExact(id), pending.session) ||
-          !pending.session.demanded) {
+          !pending.session.demanded ||
+          _effectiveWorkMode(id) == TransferWorkMode.retained) {
         if (!pending.slot.isCompleted) pending.slot.complete();
         _localPreparations.remove(id);
         _localPreparationControls.remove(id);
@@ -1593,14 +1683,17 @@ final class DownloadTransferOwner {
     while (_activeLocalPreparations.length < _maxActiveLocalPreparations) {
       final candidates = _pendingLocalPreparations.values.toList(growable: false)
         ..sort((left, right) {
-          final priority = right.session.effectivePriority
-              .compareTo(left.session.effectivePriority,
-              );
+          final priority = _localPreparationPriority(right.id, right.session)
+              .compareTo(_localPreparationPriority(left.id, left.session));
           if (priority != 0) return priority;
           final leftSequence =
-              _preferredClaim(left.id)?.sequence ?? (1 << 62);
+              _preferredClaimForWork(left.id, TransferWorkMode.localOnly)
+                      ?.sequence ??
+                  (1 << 62);
           final rightSequence =
-              _preferredClaim(right.id)?.sequence ?? (1 << 62);
+              _preferredClaimForWork(right.id, TransferWorkMode.localOnly)
+                      ?.sequence ??
+                  (1 << 62);
           return leftSequence.compareTo(rightSequence);
         });
       if (candidates.isEmpty) break;
@@ -1611,13 +1704,15 @@ final class DownloadTransferOwner {
       _activeLocalPreparations.add(target.id);
       final admittedAtMicros = clock.nowMicros();
       _record(
-        _preferredClaim(target.id) ?? target.initialClaim,
+        _preferredClaimForWork(target.id, TransferWorkMode.localOnly) ??
+            target.initialClaim,
         kind: TraceEventKind.policyDecision,
         id: target.id,
         payload: <String, Object?>{
           'stage': 'local-preparation-lifecycle',
           'action': 'admitted',
-          'effectivePriority': target.session.effectivePriority,
+          'effectivePriority':
+              _localPreparationPriority(target.id, target.session),
           'queueWaitMicros': (admittedAtMicros - target.startedAtMicros)
               .clamp(0, 1 << 62)
               .toInt(),
@@ -1648,14 +1743,15 @@ final class DownloadTransferOwner {
           _localPreparationControls.remove(id);
         }
         _record(
-          _preferredClaim(id) ?? target.initialClaim,
+          _preferredClaimForWork(id, TransferWorkMode.localOnly) ??
+              target.initialClaim,
           kind: TraceEventKind.policyDecision,
           id: id,
           payload: <String, Object?>{
             'stage': 'local-preparation-lifecycle',
             'action': 'retired',
             'cancelled': control.cancelled,
-            'effectivePriority': session.effectivePriority,
+            'effectivePriority': _localPreparationPriority(id, session),
             'activeMicros': (clock.nowMicros() - admittedAtMicros)
                 .clamp(0, 1 << 62)
                 .toInt(),
@@ -1708,14 +1804,17 @@ final class DownloadTransferOwner {
 
     final pending = _pendingLocalPreparations.values.toList(growable: false)
       ..sort((left, right) {
-        final priority = right.session.effectivePriority
-            .compareTo(left.session.effectivePriority,
-        );
+        final priority = _localPreparationPriority(right.id, right.session)
+            .compareTo(_localPreparationPriority(left.id, left.session));
         if (priority != 0) return priority;
         final leftSequence =
-            _preferredClaim(left.id)?.sequence ?? (1 << 62);
+            _preferredClaimForWork(left.id, TransferWorkMode.localOnly)
+                    ?.sequence ??
+                (1 << 62);
         final rightSequence =
-            _preferredClaim(right.id)?.sequence ?? (1 << 62);
+            _preferredClaimForWork(right.id, TransferWorkMode.localOnly)
+                    ?.sequence ??
+                (1 << 62);
         return leftSequence.compareTo(rightSequence);
       });
     if (pending.isEmpty) {
@@ -1723,7 +1822,8 @@ final class DownloadTransferOwner {
       return false;
     }
     final incoming = pending.first;
-    final incomingPriority = incoming.session.effectivePriority;
+    final incomingPriority =
+        _localPreparationPriority(incoming.id, incoming.session);
 
     DownloadId? victimId;
     DownloadSession? victimSession;
@@ -1737,14 +1837,15 @@ final class DownloadTransferOwner {
           !session.demanded ||
           !net.highPriorityOutranks(
             incomingPriority,
-            incumbentPriority: session.effectivePriority,
+            incumbentPriority: _localPreparationPriority(id, session),
           )) {
         continue;
       }
-      if (victimId == null || session.effectivePriority < victimPriority) {
+      final sessionPriority = _localPreparationPriority(id, session);
+      if (victimId == null || sessionPriority < victimPriority) {
         victimId = id;
         victimSession = session;
-        victimPriority = session.effectivePriority;
+        victimPriority = sessionPriority;
       }
     }
     if (victimId == null || victimSession == null) {
@@ -1763,7 +1864,7 @@ final class DownloadTransferOwner {
     final control = _localPreparationControls[victimId]!;
     control.cancel();
     _record(
-      _preferredClaim(victimId),
+      _preferredClaimForWork(victimId, TransferWorkMode.localOnly),
       kind: TraceEventKind.policyDecision,
       id: victimId,
       payload: <String, Object?>{
@@ -1832,27 +1933,34 @@ final class DownloadTransferOwner {
       final candidates = _preparedNetworkAdmissions.entries
           .where((entry) =>
               identical(registry.findExact(entry.key), entry.value) &&
-              entry.value.demanded,
+              entry.value.demanded &&
+              _effectiveWorkMode(entry.key) == TransferWorkMode.full,
               )
           .toList(growable: false)
         ..sort((left, right) {
-          final priority = right.value.effectivePriority
-              .compareTo(left.value.effectivePriority,
-              );
+          final priority = _networkPriority(right.key, right.value)
+              .compareTo(_networkPriority(left.key, left.value));
           if (priority != 0) return priority;
-          final leftSequence = _preferredClaim(left.key)?.sequence ?? (1 << 62);
+          final leftSequence =
+              _preferredClaimForWork(left.key, TransferWorkMode.full)
+                      ?.sequence ??
+                  (1 << 62);
           final rightSequence =
-              _preferredClaim(right.key)?.sequence ?? (1 << 62);
+              _preferredClaimForWork(right.key, TransferWorkMode.full)
+                      ?.sequence ??
+                  (1 << 62);
           return leftSequence.compareTo(rightSequence);
         });
       if (candidates.isEmpty) {
         _preparedNetworkAdmissions.removeWhere((id, session) =>
-            !identical(registry.findExact(id), session) || !session.demanded,
+            !identical(registry.findExact(id), session) ||
+            !session.demanded ||
+            _effectiveWorkMode(id) != TransferWorkMode.full,
         );
         return;
       }
       final candidate = candidates.first;
-      final priority = candidate.value.effectivePriority;
+      final priority = _networkPriority(candidate.key, candidate.value);
       DownloadId? blockerId;
       var blockerPriority = -1;
       for (final entry in _localPreparations.entries) {
@@ -1860,7 +1968,8 @@ final class DownloadTransferOwner {
         if (blockingSession == null || !blockingSession.demanded) {
           continue;
         }
-        final blockingPriority = blockingSession.effectivePriority;
+        final blockingPriority =
+            _localPreparationPriority(entry.key, blockingSession);
         if (blockingPriority > priority && blockingPriority > blockerPriority) {
           blockerId = entry.key;
           blockerPriority = blockingPriority;
@@ -1869,7 +1978,7 @@ final class DownloadTransferOwner {
       if (blockerId != null) {
         if (_preparedAdmissionDeferrals.add(candidate.key)) {
           _record(
-            _preferredClaim(candidate.key),
+            _preferredClaimForWork(candidate.key, TransferWorkMode.full),
             kind: TraceEventKind.artifactSource,
             id: candidate.key,
             payload: <String, Object?>{
@@ -1929,7 +2038,8 @@ final class DownloadTransferOwner {
       return;
     }
     _locallyPreparedSessions[id] = preparationEpoch;
-    final claim = _preferredClaim(id) ?? initialClaim;
+    final claim =
+        _preferredClaimForWork(id, TransferWorkMode.localOnly) ?? initialClaim;
     if (prepareError != null) {
       _record(
         claim,
@@ -2046,7 +2156,7 @@ final class DownloadTransferOwner {
     // second run against the authoritative DownloadSession.
     if (_networkTaskKeys[id] != taskKey) return;
     final taskEpoch = session.epoch;
-    var claim = _preferredClaim(id);
+    var claim = _preferredClaimForWork(id, TransferWorkMode.full);
     if (claim == null) {
       _cancelDownloadRetry(id, resetBudget: false);
       if (_networkTaskKeys[id] == taskKey) {
@@ -2096,8 +2206,11 @@ final class DownloadTransferOwner {
       if (session.epoch != taskEpoch) return;
       token.throwIfCancelled();
       final currentClaim = _preferredClaim(id);
-      if (currentClaim == null || !session.demanded) return;
-      claim = currentClaim;
+      final networkClaim = _preferredClaimForWork(id, TransferWorkMode.full);
+      if (currentClaim == null || networkClaim == null || !session.demanded) {
+        return;
+      }
+      claim = networkClaim;
       final provider = claim.consumer;
       final sourceId = claim.exactId;
       final retainedTransport =
@@ -2120,7 +2233,7 @@ final class DownloadTransferOwner {
         kind: TraceEventKind.downloadStarted,
         id: id,
         payload: <String, Object?>{
-          'priority': session.effectivePriority,
+          'priority': token.priority,
           'bucket': bucket,
           'bucketLimit': bucketLimit,
           'globalRunning': net.running,
@@ -2181,7 +2294,7 @@ final class DownloadTransferOwner {
           return;
         } on DownloadCatchupDeferred {
           final remainingPriority =
-              session.demanded ? session.effectivePriority : null;
+              session.demanded ? _networkPriority(id, session) : null;
           if (remainingPriority != null &&
               _allowsCostlyFullBodyCatchup(
                 id: id,
@@ -2340,7 +2453,8 @@ final class DownloadTransferOwner {
         }
       }
     } on Object catch (error, stackTrace) {
-      final failedClaim = _preferredClaim(id) ?? claim;
+      final failedClaim =
+          _preferredClaimForWork(id, TransferWorkMode.full) ?? claim;
       final failure = error is Failure
           ? error
           : Failure(
@@ -2412,7 +2526,7 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     if (_disposed || _downloadRetryPending.contains(id) || !session.demanded) {
       return false;
     }
-    final claim = _preferredClaim(id);
+    final claim = _preferredClaimForWork(id, TransferWorkMode.full);
     if (claim == null) return false;
     final round = (_downloadRetryRounds[id] ?? 0) + 1;
     if (round > _maxDownloadRetryRounds) {
@@ -2566,7 +2680,7 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     int priority, {
     required String reason,
   }) {
-    final claim = _preferredClaim(id);
+    final claim = _preferredClaimForWork(id, TransferWorkMode.full);
     if (claim != null) {
       net.updateFlowTargetFrames(taskKey, claim.demand.flowTargetFrames);
     }
@@ -2578,7 +2692,7 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
       return;
     }
     _record(
-      _preferredClaim(id),
+      _preferredClaimForWork(id, TransferWorkMode.full) ?? _preferredClaim(id),
       kind: TraceEventKind.downloadPriorityChanged,
       id: id,
       payload: <String, Object?>{
@@ -2648,11 +2762,84 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     });
   }
 
+  _TransferClaim? _preferredClaimForWork(
+    DownloadId id,
+    TransferWorkMode minimum,
+  ) {
+    final values = _claims[id]?.values.where((claim) {
+      if (claim.demand.completionIntent == TransferCompletionIntent.required) {
+        return true;
+      }
+      return claim.demand.workMode.index >= minimum.index;
+    }).toList(growable: false);
+    if (values == null || values.isEmpty) return null;
+    return values.reduce((left, right) {
+      final priorityOrder = left.demand.priority.compareTo(right.demand.priority);
+      if (priorityOrder != 0) {
+        return priorityOrder > 0 ? left : right;
+      }
+      return left.sequence <= right.sequence ? left : right;
+    });
+  }
+
   bool _requiresCompletion(DownloadId id) =>
       (_claims[id]?.values ?? const <_TransferClaim>[]).any(
         (claim) =>
             claim.demand.completionIntent == TransferCompletionIntent.required,
       );
+
+  int _externalDemandPriority(DownloadId id, DownloadSession session) =>
+      session.effectivePriorityOutsideScopes(
+        _claims[id]?.keys ?? const <String>[],
+      );
+
+  int _networkPriority(DownloadId id, DownloadSession session) {
+    var priority = _externalDemandPriority(id, session);
+    for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
+      if (claim.demand.completionIntent == TransferCompletionIntent.required ||
+          claim.demand.workMode == TransferWorkMode.full) {
+        if (claim.demand.priority > priority) priority = claim.demand.priority;
+      }
+    }
+    return priority;
+  }
+
+  int _localPreparationPriority(DownloadId id, DownloadSession session) {
+    var priority = _externalDemandPriority(id, session);
+    for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
+      if (claim.demand.completionIntent == TransferCompletionIntent.required ||
+          claim.demand.workMode != TransferWorkMode.retained) {
+        if (claim.demand.priority > priority) priority = claim.demand.priority;
+      }
+    }
+    return priority;
+  }
+
+  TransferWorkMode _effectiveWorkMode(DownloadId id) {
+    final claims = _claims[id]?.values;
+    final session = registry.find(id);
+    final ownerClaimCount = claims?.length ?? 0;
+    if (session != null && session.demandCount > ownerClaimCount) {
+      return TransferWorkMode.full;
+    }
+    if (claims == null || claims.isEmpty) {
+      // Legacy/direct DownloadDemandLease users have no TransferClaim-level
+      // execution projection. Preserve their historical meaning: an extant
+      // direct lease is a full encoded-work request, while a truly unclaimed
+      // physical session is only retained state.
+      return session?.demanded == true
+          ? TransferWorkMode.full
+          : TransferWorkMode.retained;
+    }
+    var mode = TransferWorkMode.retained;
+    for (final claim in claims) {
+      if (claim.demand.completionIntent == TransferCompletionIntent.required) {
+        return TransferWorkMode.full;
+      }
+      mode = _strongerTransferWorkMode(mode, claim.demand.workMode);
+    }
+    return mode;
+  }
 
   bool _allowsCostlyFullBodyCatchup({
     required DownloadId id,
@@ -2709,7 +2896,8 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     final preemption = token.preemptionSnapshot;
     final eviction = token.retentionEvictionSnapshot;
     if (preemption == null && eviction == null) return;
-    final effectiveClaim = _preferredClaim(id) ?? claim;
+    final effectiveClaim =
+        _preferredClaimForWork(id, TransferWorkMode.full) ?? claim;
     if (preemption != null) {
       _record(
         effectiveClaim,

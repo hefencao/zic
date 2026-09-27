@@ -69,7 +69,7 @@ require(
     'packages/pipeline/test/pipeline_test.dart',
     "'vertical active scroll preuploads native static deadline roles but defers far'",
     "'the existing next2 decode deadline must also own one prepared static output during active scroll'",
-    "'active vertical motion still defers far speculative native static upload'",
+    "'active motion retains far upload identity but must not start speculative presentation work'" if current_dev >= 327 else "'active vertical motion still defers far speculative native static upload'",
     "'an exact external-static next page must retain staged first-frame work while the viewport is moving'",
 )
 require(

@@ -554,6 +554,23 @@ final class DownloadSession {
     return _demandPriorities.values.reduce((left, right) =>
         left >= right ? left : right);
   }
+
+  /// Highest attached demand priority outside [excludedScopes].
+  ///
+  /// Transfer composition uses this to keep direct/foreign consumers visible
+  /// while projecting its own typed work modes without letting a retained
+  /// logical claim donate rank to another consumer's full network work.
+  int effectivePriorityOutsideScopes(Iterable<String> excludedScopes) {
+    final excluded = excludedScopes is Set<String>
+        ? excludedScopes
+        : excludedScopes.toSet();
+    var priority = 0;
+    for (final entry in _demandPriorities.entries) {
+      if (excluded.contains(entry.key)) continue;
+      if (entry.value > priority) priority = entry.value;
+    }
+    return priority;
+  }
   bool get activeRun => _run != null;
   bool get canEvict =>
       _writer == null &&

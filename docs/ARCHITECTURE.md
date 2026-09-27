@@ -769,7 +769,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `LocalImagePlayer`收到后作为authoritative presentation dimensions；
   output/surface decoded raster只做pixel carrier，不得形成第二套aspect owner。
   dev.297基于subpixel量级的bounded-fill/pixel-snap已被设备幅度证据否证并回滚；真实/暂态parent aspect差始终走aspect-preserving fit。
-  UploadDemand只拥有新的upload/present调度资格；
+  UploadDemand membership只拥有presentation claim/retention identity；新的upload/present执行资格由`prepareOutput=true`表达；
   已成功authoritative static projection的方向无关连续性可在current±2 presentation envelope内跨directional decode-plan gap保留，
   但不得创建decode/upload/present或改变2/1 decode policy，不拥有既有静态UI projection生命周期：
   authoritative static surface在upload-demand gap中只有当同一DecodeId仍存在于既有decode plan且仍有presentation listener时才可保留；
@@ -780,7 +780,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   真实visible页ratio仍冻结到idle。
   idle采用其余新ratio时top-pixel offset仍必须通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
   不得先换extent再以`jumpTo`制造可观察中间页。
-  Pipeline在vertical active presentation期间只defer generic/unresolved以及仍走native texture的non-visible `far/near` speculative static upload；
+  Pipeline在vertical active presentation期间对generic/unresolved以及仍走native texture的non-visible `far/near` speculative static output只defer新presentation work；对应UploadDemand identity继续保留，但`prepareOutput=false`，已有resident output/retention bookkeeping不被当成需要重建的资源；
   既有2/1 decode deadline窗口中的`next/next2/previous`在静态一帧已经decode-ready后必须允许提前进入UploadLane/present，并以`retainOutput`交给FrameBudgeter保留到viewport消费，避免把RGBA→SurfaceProducer首拷贝推迟到visible/transition seam。
   该deadline preupload不扩大2/1 decode或3/7 encoded窗口，仍受UploadLane并发/优先级/抢占与FrameBudgeter约束；更远页仍只在idle阶段恢复普通speculative upload。两个有更强证据的例外仍可在既有3/7 one-frame static intent envelope内提前UploadDemand/present：
   其一是decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页；
@@ -806,6 +806,13 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `Interaction.scrubbing`只描述输入生命周期并禁止把这些中间页学习成阅读方向；它不得拥有另一套resource membership。
   Pipeline始终由真实current + vertical visible coverages解析同一7/3工作窗；相邻scrub只能按真实窗口差集增量迁移，
   不得把稳定11-page transport window压成current-only/visible-only后再在松手时重建。
+  但membership不等于execution depth：Pipeline把interaction粗投影为`stable/motion/transientPreview` resource phase。
+  scrub期间当前/transition/真实visible DownloadDemand保持同一claim但降为`localOnly`，只允许复用/恢复本地authoritative bytes；
+  其余3/7 hidden claim为`retained`，不新增remote source work；baseline DecodeDemand/UploadDemand identity同样保留，
+  visible/current decode最多一帧、hidden decode使用`targetWatermark=0`，hidden upload使用`prepareOutput=false`。
+  phase回到stable即使current/visible membership未变化也必须replan，并在同一claim/task上恢复正常full execution；
+  已admit physical transport只park为NetLane `demanded=false`/rank0，不得为scrub cancel/reopen。
+  velocity/logicalPosition等连续事实不得直接压成跨lane单一权重；encoded I/O、decode depth、presentation prepare、retention与rank必须保留typed projection边界。
   observation到pipeline必须经过enqueue/latest-wins ordinary-event-turn边界；
   不得用microtask让plan/reconcile/lane-pump在当前frame结束后抢占platform/input/vsync事件，
   pipeline reconcile异常不得反向unwind ScrollNotification/page request；

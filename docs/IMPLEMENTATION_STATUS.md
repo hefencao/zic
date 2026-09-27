@@ -95,6 +95,13 @@ App build：0.31.0+328
   `Interaction.scrubbing/jumping/settling` 不再拥有独立 resource membership；vertical 所有真实 visible coverage 统一作为
   transition foreground，7/3 window 始终由真实 viewport/current 解析。最终 Profile scrub 47/47 个 policy decision 均保持
   downloads=11，整份 Trace 的 download-count 集合只有 `[11]`、`taskFailed=0`；相邻 scrub 单测固定要求 1-in/1-out。
+  在此基础上，ADR 0330继续拆开membership与execution depth：50ms latest-wins只限制viewport提交频率，不再被误当成预取预算。
+  scrub时current/transition/真实visible encoded demand保持claim但仅`localOnly`，hidden 3/7 claim为`retained`；decode demand保留identity但hidden target为0，upload demand保留identity但hidden `prepareOutput=false`。
+  松手回stable即使window未变也会因resource phase变化重新投影，并在同一physical task上恢复full work；active transport降级只park为NetLane demanded=false/rank0，不cancel/reopen。
+  physical alias聚合先按执行资格、再按同层priority选provider/rank，禁止高优先级retained identity把exact provider或rank捐给full work。
+  focused Pipeline/DownloadTransferOwner/LiveCoordinator tests现为99/99，覆盖scrub→idle原位恢复、retained/localOnly不打开network、同一task key升降级以及同/跨consumer alias。
+  2026-09-27 Profile真机slider从112/153快速拖到152/153：31个scrubbing policy decision全部保持11个logical Download claim；执行投影仅出现8–10 retained + 1–3 localOnly、0 full。
+  hidden decode target=0为8–10、upload prepare disabled为9–11；松手stable后章尾合法窗口全部恢复full，`taskFailed=0`。该样本无network start，physical park/revive由上述单测验证。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

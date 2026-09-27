@@ -98,8 +98,8 @@ if int(m.group(1)) >= 327:
         'isPresentationMotionInteraction(observation.interaction)',
         'observation.targetCoverage?.pageIndex == entry.key',
         '(role == PageRole.next || role == PageRole.previous)',
-        'if ((primaryUpload || staticWarm || pagedTargetPreupload) &&',
-        '!deferHiddenVerticalNativeStaticUpload',
+        'if (primaryUpload || staticWarm || pagedTargetPreupload) {',
+        'prepareOutput: !deferHiddenVerticalNativeStaticUpload &&',
     )
 elif int(m.group(1)) == 315:
     policy_markers = (
@@ -139,12 +139,25 @@ else:
     )
 for marker in policy_markers:
     req(marker in policy, f'vertical active static upload deferral missing: {marker}')
-for marker in (
-    'bool isPresentationMotionInteraction(Interaction interaction)',
-    'Interaction.dragging ||',
-    'Interaction.scrolling ||',
-    'Interaction.settling => true,',
-):
+interaction_markers = (
+    (
+        'enum ResourceInteractionPhase',
+        'ResourceInteractionPhase resourceInteractionPhase(Interaction interaction)',
+        'Interaction.dragging ||',
+        'Interaction.scrolling ||',
+        'Interaction.settling => ResourceInteractionPhase.motion,',
+        'bool isPresentationMotionInteraction(Interaction interaction)',
+        'ResourceInteractionPhase.motion;',
+    )
+    if int(m.group(1)) >= 327
+    else (
+        'bool isPresentationMotionInteraction(Interaction interaction)',
+        'Interaction.dragging ||',
+        'Interaction.scrolling ||',
+        'Interaction.settling => true,',
+    )
+)
+for marker in interaction_markers:
     req(marker in interaction_policy, f'presentation-motion vocabulary missing: {marker}')
 
 require(
@@ -159,7 +172,7 @@ if int(m.group(1)) >= 327:
         'vertical active scroll preuploads native static deadline roles but defers far',
         'active vertical scrolling must keep next2 decode warm',
         'the existing next2 decode deadline must also own one prepared static output during active scroll',
-        'active vertical motion still defers far speculative native static upload',
+        'active motion retains far upload identity but must not start speculative presentation work',
         'an exact external-static next page must retain staged first-frame work while the viewport is moving',
         'far speculative texture warming expands only after the vertical viewport is idle',
     )
@@ -182,7 +195,8 @@ if int(m.group(1)) >= 327:
     require(
         'docs/ARCHITECTURE.md',
         'layout-time scroll correction',
-        'non-visible `far/near` speculative static upload',
+        'non-visible `far/near` speculative static output',
+        '`prepareOutput=false`',
         '`next/next2/previous`',
         'UploadLane',
         'external-static',
@@ -190,7 +204,8 @@ if int(m.group(1)) >= 327:
     require(
         'docs/SPEC.md',
         'layout-time correction',
-        '`far/near` speculative role defer native texture upload',
+        '`far/near` speculative role defer新的native presentation work',
+        '`prepareOutput=false`',
         '`next/next2/previous`',
         'FrameBudgeter',
     )

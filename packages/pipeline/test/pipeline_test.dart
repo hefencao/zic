@@ -169,6 +169,26 @@ void main() {
     expect(
       plan.downloads.values
           .singleWhere((value) => value.role == PageRole.current)
+          .encodedWorkMode,
+      EncodedWorkMode.localOnly,
+    );
+    expect(
+      plan.downloads.values
+          .where((value) => value.role != PageRole.current)
+          .every((value) => value.encodedWorkMode == EncodedWorkMode.retained),
+      isTrue,
+      reason: 'scrub neighbors keep claims without starting encoded prefetch',
+    );
+    expect(plan.decodes.values.single.targetWatermark, 1);
+    expect(
+      plan.uploads.values
+          .where((value) => value.role != PageRole.current)
+          .every((value) => !value.prepareOutput),
+      isTrue,
+    );
+    expect(
+      plan.downloads.values
+          .singleWhere((value) => value.role == PageRole.current)
           .priority,
       1000,
     );
@@ -234,6 +254,35 @@ void main() {
     expect(plan.downloads, hasLength(5));
     expect(plan.decodes, hasLength(3));
     expect(plan.uploads, hasLength(4));
+    expect(
+      plan.downloads.values
+          .where((demand) =>
+              demand.role == PageRole.current ||
+              demand.role == PageRole.transition)
+          .every(
+            (demand) => demand.encodedWorkMode == EncodedWorkMode.localOnly,
+          ),
+      isTrue,
+    );
+    expect(
+      plan.downloads.values
+          .where((demand) => demand.role == PageRole.near)
+          .every(
+            (demand) => demand.encodedWorkMode == EncodedWorkMode.retained,
+          ),
+      isTrue,
+    );
+    expect(
+      plan.decodes.values.every((demand) => demand.targetWatermark == 1),
+      isTrue,
+      reason: 'only actually visible scrub pages may decode a preview frame',
+    );
+    expect(
+      plan.uploads.values
+          .where((demand) => !demand.viewportVisible)
+          .every((demand) => !demand.prepareOutput),
+      isTrue,
+    );
   });
 
   test('adjacent scrub moves the 7/3 download window incrementally', () {
@@ -327,6 +376,19 @@ void main() {
           'scrub navigation must not collapse the stable transport window',
     );
     expect(delta.diff.downloads.added, hasLength(1));
+
+    controller.accept(observation(13, Interaction.idle));
+    final settled = updates.last;
+    expect(settled.diff.downloads.added, isEmpty);
+    expect(settled.diff.downloads.removed, isEmpty);
+    expect(settled.diff.downloads.changed, hasLength(11));
+    expect(
+      settled.plan.downloads.values
+          .every((demand) => demand.encodedWorkMode == EncodedWorkMode.full),
+      isTrue,
+      reason:
+          'scrub release must restore execution depth on the same 7/3 claims',
+    );
   });
 
   test('page jump keeps the normal resource window', () {
@@ -939,11 +1001,15 @@ void main() {
         reason:
             'the existing next2 decode deadline must also own one prepared static output during active scroll',
       );
+      final activeFarUploads = activePlan.uploads.values.where(
+        (demand) => demand.role == PageRole.far,
+      );
+      expect(activeFarUploads, isNotEmpty);
       expect(
-        activePlan.uploads.values.where((demand) => demand.role == PageRole.far),
-        isEmpty,
+        activeFarUploads.every((demand) => !demand.prepareOutput),
+        isTrue,
         reason:
-            'active vertical motion still defers far speculative native static upload',
+            'active motion retains far upload identity but must not start speculative presentation work',
       );
       expect(
         activePlan.uploads.values
@@ -1011,9 +1077,13 @@ void main() {
             'reverse vertical motion must not wait for the 3/7 direction classifier to flip before previous is ready',
       );
       expect(hiddenDeadlineUploads.every((demand) => demand.retainOutput), isTrue);
+      final hiddenFarUploads = hiddenNextPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.far,
+      );
+      expect(hiddenFarUploads, isNotEmpty);
       expect(
-        hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.far),
-        isEmpty,
+        hiddenFarUploads.every((demand) => !demand.prepareOutput),
+        isTrue,
       );
 
       final externalStaticPlan = policy.createPlan(

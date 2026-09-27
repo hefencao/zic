@@ -9,7 +9,7 @@ Accepted，设备效果待dev.298真机证伪。该决策只修正Reader-local p
 `PipelinePageOutputStream._present()`对同一identity/frame且`snapshot.replacing=false`本来会直接返回，因此这些same-frame再次presentation意味着中间发生过output projection rebind。旧`_bind(null)`把`surface`发布为null并释放PresentClaim；`LocalImagePlayer`在`surface == null`时直接显示loading indicator。故UploadDemand的暂时撤销不仅停止调度，还错误地销毁了已经显示的静态UI projection；后续重新进入current/transition/visible时再把同一resident texture挂回。该行为的视觉量级可远大于subpixel seam。
 
 ## 决策
-1. UploadDemand只拥有新的upload/present调度资格，不拥有已成功静态Presentation的可见生命周期。
+1. UploadDemand membership只拥有presentation claim/retention identity，不拥有已成功静态Presentation的可见生命周期；ADR 0330进一步把新的upload/present执行资格显式收口到`prepareOutput=true`。
 2. 当upload identity暂时为null时，只有同时满足以下条件才保留既有surface/PresentClaim：页面仍有presentation listener；surface已是authoritative static；`surfaceIdentity`与当前Pipeline plan中该DownloadId对应的同一`DecodeId`一致。
 3. retention严格绑定既有decode previous1/next2 window；它不得创建DecodeDemand/UploadDemand、不得扩大3/7或2/1、不得主动调用present，也不得形成独立page-distance/role窗口。
 4. 相同upload identity恢复时，如果surface仍是同一authoritative static projection，保持`ready/replacing=false`，随后same-frame `_present()`应直接短路，不再产生resident re-present。

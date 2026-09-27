@@ -565,6 +565,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             priority: entry.value.priority,
             reason: entry.value.reason,
             flowTargetFrames: entry.value.flowTargetFrames,
+            workMode: switch (entry.value.encodedWorkMode) {
+              EncodedWorkMode.retained => TransferWorkMode.retained,
+              EncodedWorkMode.localOnly => TransferWorkMode.localOnly,
+              EncodedWorkMode.full => TransferWorkMode.full,
+            },
           ),
       };
 
@@ -1023,6 +1028,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   }) {
     final demand = _decodes[id];
     if (demand == null || (onDecode == null && decodes == null)) {
+      return;
+    }
+    if (demand.targetWatermark <= 0) {
+      decode.cancelQueued(id.key);
       return;
     }
     if (demand.role == PageRole.current) {
@@ -1562,6 +1571,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     required bool sourceWake,
     required bool force,
   }) {
+    if (demand.targetWatermark <= 0) {
+      return false;
+    }
     if (snapshot == null) {
       return true;
     }
@@ -1656,6 +1668,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           revision: demandRevision,
         );
       }
+      final uploadRegistry = uploads;
+      if (!entry.value.prepareOutput) {
+        upload.updatePriority(entry.key.key, entry.value.priority);
+        upload.cancelQueued(entry.key.key);
+        if (uploadRegistry != null) {
+          final rebound = uploadRegistry.reusePreparedStaticForDemand(
+                entry.key,
+                entry.value,
+                revision: demandRevision,
+              ) ||
+              uploadRegistry.rebindResidentAnimatedForDemand(
+                entry.key,
+                entry.value,
+                revision: demandRevision,
+              );
+          if (entry.value.role == PageRole.last) {
+            uploadRegistry.find(entry.key)?.freezePlayback();
+          }
+          if (rebound && changed) _metadataOnlyUploadChanges++;
+        }
+        continue;
+      }
       if (changed &&
           priorUploadDemand != null &&
           priorUploadDemand.role == entry.value.role &&
@@ -1671,7 +1705,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _rankOnlyUploadChanges++;
         continue;
       }
-      final uploadRegistry = uploads;
       if (changed &&
           uploadRegistry != null &&
           uploadRegistry.reusePreparedStaticForDemand(
@@ -1855,7 +1888,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   void _wakeUpload(String sessionId, DecodeId id) {
     final demand = _uploads[id];
-    if (demand == null || (onUpload == null && uploads == null)) {
+    if (demand == null ||
+        !demand.prepareOutput ||
+        (onUpload == null && uploads == null)) {
       return;
     }
     _submitUpload(
@@ -1874,6 +1909,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     bool follow = false,
     required int demandRevision,
   }) {
+    if (!demand.prepareOutput) {
+      upload.cancelQueued(id.key);
+      return;
+    }
     final submit = follow ? upload.follow : upload.submit;
     final submittedAtMicros = clock.nowMicros();
     submit(
@@ -1881,7 +1920,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       priority: demand.priority,
       task: (token) async {
         final current = _uploads[id];
-        if (current == null || current.expirationRevision < _revision) {
+        if (current == null ||
+            !current.prepareOutput ||
+            current.expirationRevision < _revision) {
           return;
         }
         final uploadLaneQueueMicros = (clock.nowMicros() - submittedAtMicros)

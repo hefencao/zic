@@ -42,7 +42,7 @@ final class PolicyGuard {
         role: entry.value.role,
         priority: entry.value.priority,
         targetWatermark: entry.value.targetWatermark
-            .clamp(1, maxFrameWatermark)
+            .clamp(0, maxFrameWatermark)
             .toInt(),
         reason: entry.value.reason,
         expirationRevision: entry.value.expirationRevision,

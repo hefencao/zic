@@ -1697,6 +1697,270 @@ void main() {
   },
   );
 
+  test('encoded work mode changes preserve one logical claim and physical task',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_work_mode_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('work-mode');
+    final transport = _BlockedControlledTransport();
+    final reader = owner.attachConsumer(
+      scopeId: 'reader-work-mode',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    reader.replaceDemands(
+      'reader-work-mode',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 700,
+          reason: 'scrub-hidden',
+          workMode: TransferWorkMode.retained,
+        ),
+      },
+    );
+    await reader.idle().timeout(const Duration(seconds: 1));
+    expect(registry.get(id).demanded, isTrue);
+    expect(owner.taskKeyFor(id), isNull);
+    expect(transport.opened.isCompleted, isFalse);
+
+    reader.replaceDemands(
+      'reader-work-mode',
+      2,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'scrub-visible',
+          workMode: TransferWorkMode.localOnly,
+        ),
+      },
+    );
+    await reader.idle().timeout(const Duration(seconds: 1));
+    expect(registry.get(id).demandCount, 1);
+    expect(owner.taskKeyFor(id), isNull);
+    expect(transport.opened.isCompleted, isFalse);
+
+    reader.replaceDemands(
+      'reader-work-mode',
+      3,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'settled-current',
+        ),
+      },
+    );
+    await transport.opened.future.timeout(const Duration(seconds: 1));
+    final taskKey = owner.taskKeyFor(id)!;
+    expect(net.demandedOf(taskKey), isTrue);
+    expect(net.priorityOf(taskKey), 1000);
+
+    reader.replaceDemands(
+      'reader-work-mode',
+      4,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'scrub-visible',
+          workMode: TransferWorkMode.localOnly,
+        ),
+      },
+    );
+    expect(owner.taskKeyFor(id), taskKey);
+    expect(net.demandedOf(taskKey), isFalse);
+    expect(net.priorityOf(taskKey), 0);
+    expect(transport.cancelled.isCompleted, isFalse);
+
+    reader.replaceDemands(
+      'reader-work-mode',
+      5,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'settled-current',
+        ),
+      },
+    );
+    expect(owner.taskKeyFor(id), taskKey);
+    expect(net.demandedOf(taskKey), isTrue);
+    expect(net.priorityOf(taskKey), 1000);
+    expect(transport.cancelled.isCompleted, isFalse);
+
+    await reader.dispose();
+    await transport.cancelled.future.timeout(const Duration(seconds: 1));
+  });
+
+  test('retained claim cannot donate rank or provider to shared full work',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_typed_shared_rank_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('typed-shared-physical');
+    final retainedLogical = _id('typed-shared-retained');
+    final fullLogical = _id('typed-shared-full');
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+      resolveTransferId: (_) => physical,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final retainedTransport = _BlockedControlledTransport();
+    final fullTransport = _BlockedControlledTransport();
+    final retained = owner.attachConsumer(
+      scopeId: 'reader-retained-high',
+      transportFor: (_) => retainedTransport,
+      traceSink: const NoopTraceSink(),
+    );
+    final full = owner.attachConsumer(
+      scopeId: 'reader-full-low',
+      transportFor: (_) => fullTransport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    retained.replaceDemands(
+      'reader-retained-high',
+      1,
+      <DownloadId, TransferDemand>{
+        retainedLogical: const TransferDemand(
+          priority: 1000,
+          reason: 'scrub-hidden-high',
+          workMode: TransferWorkMode.retained,
+        ),
+      },
+    );
+    expect(owner.taskKeyFor(physical), isNull);
+    expect(retainedTransport.opened.isCompleted, isFalse);
+
+    full.replaceDemands(
+      'reader-full-low',
+      1,
+      <DownloadId, TransferDemand>{
+        fullLogical: const TransferDemand(
+          priority: 700,
+          reason: 'stable-full-low',
+        ),
+      },
+    );
+    await fullTransport.opened.future.timeout(const Duration(seconds: 1));
+
+    final taskKey = owner.taskKeyFor(physical)!;
+    expect(
+      net.priorityOf(taskKey),
+      700,
+      reason:
+          'a higher retained claim must not donate its rank to another full claim',
+    );
+    expect(
+      retainedTransport.opened.isCompleted,
+      isFalse,
+      reason:
+          'network provider authority must come from a full-capable claim',
+    );
+    expect(net.demandedOf(taskKey), isTrue);
+
+    await retained.dispose();
+    await full.dispose();
+    await fullTransport.cancelled.future.timeout(const Duration(seconds: 1));
+  });
+
+  test('same-consumer alias selects provider from the strongest work mode',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_typed_alias_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('typed-alias-physical');
+    final retainedLogical = _id('typed-alias-retained');
+    final fullLogical = _id('typed-alias-full');
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+      resolveTransferId: (_) => physical,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final transport = _BlockedControlledTransport();
+    Uri? openedUri;
+    final reader = owner.attachConsumer(
+      scopeId: 'reader-typed-alias',
+      transportFor: (uri) {
+        openedUri = uri;
+        return transport;
+      },
+      traceSink: const NoopTraceSink(),
+    );
+
+    reader.replaceDemands(
+      'reader-typed-alias',
+      1,
+      <DownloadId, TransferDemand>{
+        retainedLogical: const TransferDemand(
+          priority: 1000,
+          reason: 'scrub-hidden-high',
+          workMode: TransferWorkMode.retained,
+        ),
+        fullLogical: const TransferDemand(
+          priority: 700,
+          reason: 'stable-full-low',
+        ),
+      },
+    );
+    await transport.opened.future.timeout(const Duration(seconds: 1));
+
+    final taskKey = owner.taskKeyFor(physical)!;
+    expect(net.priorityOf(taskKey), 700);
+    expect(
+      openedUri,
+      fullLogical.canonicalUri,
+      reason:
+          'a retained alias must not donate exact provider identity to full work',
+    );
+
+    await reader.dispose();
+    await transport.cancelled.future.timeout(const Duration(seconds: 1));
+  });
+
   test('scheduler preemption preserves committed partial as idle state', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_preempt_partial_',

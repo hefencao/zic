@@ -1140,7 +1140,12 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   首个目标 MAY立即推进viewport，`onChangeEnd` MUST取消pending并立即精确提交最终页、结束`Interaction.scrubbing`。
   scrub MUST NOT拥有current-only/visible-only资源窗口；Pipeline membership MUST继续由真实current与viewport coverage解析正常7/3工作集。
   相邻preview移动 SHOULD只产生实际窗口差集（稳定profile中通常为一项far退出/一项far进入），不得每50ms批量detach再在松手后重建。
-  `Interaction.scrubbing` MAY用于方向学习抑制、UI和诊断，但 MUST NOT单独改变download/decode/upload membership。
+  `Interaction.scrubbing` MAY用于方向学习抑制、UI、诊断与resource execution projection，但 MUST NOT单独改变download/decode/upload membership。
+  Pipeline MUST把scrub作为transient preview而不是stable prefetch：current/transition/真实visible DownloadDemand保持同一claim并限制为local-only encoded work；同一3/7中的hidden DownloadDemand MUST只retain identity而不得新增remote source work。
+  baseline DecodeDemand/UploadDemand identity MUST保持；visible/current decode MAY只请求一帧，hidden decode MUST允许`targetWatermark=0`表示无新执行，hidden upload MUST以`prepareOutput=false`禁止新presentation prepare而不是删除demand。
+  scrub结束后即使current、visible membership与role均未变化，resource control phase变化也 MUST触发重新投影；normal work MUST在同一claim/physical task上恢复，不得detach/reacquire或cancel/reopen。
+  operation、coverage、direction与media-cost等事实 SHOULD投影到各自typed resource配置；MUST NOT把velocity/logicalPosition等pointer-rate连续事实压成一个跨network/decode/upload通用标量权重并形成第二scheduler。
+  多consumer映射到同一physical body时，priority与provider MUST按执行资格聚合：retained/local-only claim不得提升另一个full claim的network rank，也不得为其提供remote transport authority。
   viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade enqueue `ReadingProgress`，普通翻页 MUST NOT等待 SQLite；
   persistent SQLite progress isolate尚未ready或启动失败时，enqueue MUST只在内存latest-wins缓冲并低频重试writer，
@@ -1884,8 +1889,8 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   但MUST NOT在sourceCanvas已知后覆盖presentation aspect。
   dev.297的`<=0.5 physical pixel` bounded fill与external-texture paint snap已被设备幅度证据否证并MUST保持回滚；
   Presentation MUST继续aspect-preserving fit。
-  UploadDemand MUST只表示新的upload/present调度资格，MUST NOT清空一个已成功authoritative static UI projection。
-  generic/network/unresolved hidden static在vertical active期间 MUST只对`far/near` speculative role defer native texture upload；
+  UploadDemand membership MUST表示presentation claim/retention identity；只有`prepareOutput=true`才表示新的upload/present执行资格，`prepareOutput=false`不得清空已成功authoritative static UI projection。
+  generic/network/unresolved hidden static在vertical active期间 MUST只对`far/near` speculative role defer新的native presentation work；对应UploadDemand identity MUST保留并设置`prepareOutput=false`；
   既有2/1 decode deadline窗口中的`next/next2/previous`静态一帧 MUST可在进入viewport前提前UploadDemand/present并retain output，且 MUST继续受UploadLane并发/优先级/抢占与FrameBudgeter约束，不得因此扩大2/1或3/7窗口；
   decoder已authoritative判定`animated=false`且encoded body由direct immutable local URI或`residentBodyBacked` immutable authority持有的stable static页 MAY在既有3/7 one-frame static intent envelope内提前UploadDemand/present并retain output，
   以保证进入transition前presentation-ready；

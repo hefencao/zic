@@ -2,6 +2,18 @@ import 'package:domain/domain.dart';
 
 import 'role_window.dart';
 
+/// How deeply an admitted Reader download claim may acquire encoded bytes.
+///
+/// This is deliberately orthogonal to logical demand membership. A retained
+/// claim keeps its identity/session relationship without starting new encoded
+/// work; localOnly may reuse/restore local authoritative bytes but may not grow
+/// the remote source; full is the ordinary Reader acquisition path.
+enum EncodedWorkMode {
+  retained,
+  localOnly,
+  full,
+}
+
 final class DownloadDemand {
   const DownloadDemand({
     required this.role,
@@ -9,6 +21,7 @@ final class DownloadDemand {
     required this.reason,
     required this.expirationRevision,
     this.flowTargetFrames = 0,
+    this.encodedWorkMode = EncodedWorkMode.full,
     this.decisionId,
   }) : assert(flowTargetFrames >= 0);
 
@@ -22,6 +35,8 @@ final class DownloadDemand {
   /// unlimited. This is scheduling metadata, not animation truth.
   final int flowTargetFrames;
 
+  final EncodedWorkMode encodedWorkMode;
+
   final String? decisionId;
 
   /// Scheduling identity excludes [expirationRevision]. Expiration is liveness
@@ -32,6 +47,7 @@ final class DownloadDemand {
       priority == other.priority &&
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
+      encodedWorkMode == other.encodedWorkMode &&
       decisionId == other.decisionId;
 
   @override
@@ -43,6 +59,7 @@ final class DownloadDemand {
           reason == other.reason &&
           expirationRevision == other.expirationRevision &&
           flowTargetFrames == other.flowTargetFrames &&
+          encodedWorkMode == other.encodedWorkMode &&
           decisionId == other.decisionId;
 
   @override
@@ -52,6 +69,7 @@ final class DownloadDemand {
         reason,
         expirationRevision,
         flowTargetFrames,
+        encodedWorkMode,
         decisionId,
       );
 }
@@ -111,6 +129,7 @@ final class UploadDemand {
     required this.expirationRevision,
     this.retainOutput = false,
     this.viewportVisible = false,
+    this.prepareOutput = true,
     this.decisionId,
   });
 
@@ -131,6 +150,13 @@ final class UploadDemand {
   /// scheduling [role] remains next/previous. Presentation staging uses this
   /// fact to keep truly visible work from waiting behind speculative output.
   final bool viewportVisible;
+
+  /// Whether this demand may start new presentation preparation work.
+  ///
+  /// A false value keeps the output claim/retention identity intact so an
+  /// already prepared frame can remain reusable, while preventing transient
+  /// navigation from manufacturing fresh speculative presentation work.
+  final bool prepareOutput;
   final String? decisionId;
 
   /// Scheduling identity excludes [expirationRevision]; see [DownloadDemand].
@@ -140,6 +166,7 @@ final class UploadDemand {
       reason == other.reason &&
       retainOutput == other.retainOutput &&
       viewportVisible == other.viewportVisible &&
+      prepareOutput == other.prepareOutput &&
       decisionId == other.decisionId;
 
   @override
@@ -152,6 +179,7 @@ final class UploadDemand {
           expirationRevision == other.expirationRevision &&
           retainOutput == other.retainOutput &&
           viewportVisible == other.viewportVisible &&
+          prepareOutput == other.prepareOutput &&
           decisionId == other.decisionId;
 
   @override
@@ -163,6 +191,7 @@ final class UploadDemand {
         expirationRevision,
         retainOutput,
         viewportVisible,
+        prepareOutput,
         decisionId,
       );
 }
