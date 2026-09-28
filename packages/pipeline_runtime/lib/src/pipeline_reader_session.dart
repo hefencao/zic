@@ -860,8 +860,6 @@ final class PipelineReaderSession {
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
   final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
-  final Set<DownloadId> _automaticPresentationRasterRecoveries =
-      <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
   final Set<DecodeId> _externalPresentationRequests = <DecodeId>{};
   final Set<DecodeId> _externalPresentationReady = <DecodeId>{};
@@ -2321,11 +2319,10 @@ final class PipelineReaderSession {
   }
 
   /// Presentation reports semantic decode/format rejection back to the
-  /// composition owner. A failure of an already-resident managed raster has
-  /// no artifact authority and therefore retires only the volatile
-  /// presentation generation. A failure carrying exact artifact authority may
-  /// invalidate that durable generation. Each automatic tier is bounded once
-  /// per page/Reader session; explicit user retry may request fresh bytes.
+  /// composition owner. Automatic recovery is allowed only when the rejected
+  /// encoded body carries the exact artifact mutation authority that produced
+  /// it; a missing authority is not evidence that durable bytes are bad.
+  /// Explicit user retry may still request a fresh generation.
   Future<bool> recoverPresentationFailure(
     PageAsset asset,
     Object error, {
@@ -2336,17 +2333,7 @@ final class PipelineReaderSession {
     final id = readerPageDownloadId(chapter, asset);
     final authority = rejectedAuthority;
     if (!userInitiated) {
-      if (authority == null) {
-        if (!_automaticPresentationRasterRecoveries.add(id)) return false;
-        final recovered = _recoverExternalPresentationRasterGeneration(
-          id,
-          error,
-        );
-        if (!recovered) {
-          _automaticPresentationRasterRecoveries.remove(id);
-        }
-        return recovered;
-      }
+      if (authority == null) return false;
       if (!_automaticPresentationRecoveries.add(id)) return false;
     }
     final recovered = await _transferRuntime.recoverPresentationArtifact(
@@ -2373,7 +2360,6 @@ final class PipelineReaderSession {
     );
     if (recovered) {
       _automaticPresentationRecoveries.remove(id);
-      _automaticPresentationRasterRecoveries.remove(id);
       _rotateExternalPresentationCacheIdentity(id);
       _downloadTransfer.refreshScheduling();
     }
@@ -2995,76 +2981,6 @@ final class PipelineReaderSession {
       _externalPresentationCacheIdentities[id] = next;
       _syncExternalPresentationCacheClaimFor(id, next);
     }
-  }
-
-  bool _recoverExternalPresentationRasterGeneration(
-    DownloadId download,
-    Object error,
-  ) {
-    final authority = _presentationCacheAuthority;
-    if (authority == null) return false;
-    final identities = <DecodeId>{
-      ..._externalPresentationCacheIdentities.keys.where(
-        (identity) => identity.download == download,
-      ),
-      ..._coordinator.decodeDemands.keys.where(
-        (identity) => identity.download == download,
-      ),
-    };
-    var recovered = false;
-    for (final identity in identities) {
-      if (!_coordinator.decodeDemands.containsKey(identity)) continue;
-      final previous = _externalPresentationCacheIdentities[identity];
-      if (previous == null) continue;
-
-      // A resident-raster fault is not evidence that encoded bytes are bad.
-      // Publish the replacement generation before evicting the rejected
-      // raster so its synchronous invalidation callback cannot reinterpret
-      // this explicit fault as an ordinary same-generation budget eviction.
-      final replacement = Object();
-      _externalPresentationCacheIdentities[identity] = replacement;
-      _syncExternalPresentationCacheClaimFor(identity, replacement);
-      authority.invalidatePresentationIdentity(previous);
-
-      _externalPresentationPrewarmTokens.remove(identity)?.cancel();
-      _externalPresentationRequests.remove(identity);
-      _externalPresentationReady.remove(identity);
-      _externalPresentationPrewarmFailures.remove(identity);
-      _externalPresentationVisibleFrames.remove(identity);
-
-      final output = _pageOutputs[download.key];
-      if (output != null && output._identity == identity) {
-        output._setExternalPresentationCacheIdentity(replacement);
-        output._setExternalPresentationRequested(false);
-        output._setExternalPresentationReady(false);
-      }
-      _coordinator.invalidateExternalPresentation(sessionId, identity);
-      _coordinator.updateExternalPresentationAvailability(
-        sessionId,
-        identity,
-        available: _externalPresentationAvailable(identity),
-      );
-      recovered = true;
-      trace.record(
-        traceEvent(
-          clock: clock,
-          sessionId: sessionId,
-          kind: TraceEventKind.policyDecision,
-          identityHash: identity.key,
-          revision: revision,
-          payload: <String, Object?>{
-            'stage': 'presentation-raster-generation-recovery',
-            'action': 'automatic-redecode',
-            'errorType': error.runtimeType.toString(),
-            'durableArtifactInvalidated': false,
-          },
-        ),
-      );
-    }
-    if (recovered && _lastControlCurrentDownload == download) {
-      _syncTransferProgressPresentationSatisfaction(download);
-    }
-    return recovered;
   }
 
   void _handlePresentationCacheInvalidated(Object presentationIdentity) {

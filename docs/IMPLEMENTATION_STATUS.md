@@ -22,8 +22,10 @@ App build：0.31.0+328
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
-- presentation recovery 已拆成两层 authority：resident managed-raster failure 只轮换 volatile presentation generation，并复用既有 encoded artifact；
-  只有携带 exact `storageId + generation` authority 的 rejection 才允许 `DownloadTransferOwner` 失效 durable generation。两层 automatic recovery 各自有界一次，强制重载仍是最终 fresh-byte 手段。
+- external-static 状态治理已把 presentation generation 与 raster residency 拆开：Pipeline 保持 same-generation identity，`PipelinePresentationRasterCache`独占 decoded raster residency；
+  mounted adapter 在 eviction/revoke 时清掉本地 attempt/provider 并允许 same-identity regrant，detached resident provider 不再被二次 resize/cache wrap。
+- 只有携带 exact `storageId + ArtifactCache mutation generation` authority 的 presentation rejection 才允许 `DownloadTransferOwner` 失效 durable body；
+  无 authority 的错误不再自动制造新的 presentation/source generation。widget/page-output 的本地异步 fence 已分别命名为 `loadEpoch` / `bindingEpoch`。
 
 ### Home 组合与服务代际
 - 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。

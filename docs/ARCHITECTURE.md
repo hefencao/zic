@@ -741,10 +741,11 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   较新的 identity 可借既有 local load generation guard 淘汰旧 in-flight 结果，但不得因此产生新的 retry/transport/policy owner。
   每次artifact-cache presentation read同时产生不可变`storageId + generation` authority；file lease/bytes与该authority属于同一次读取结果，
   presentation decode失败必须回传原authority，禁止按page id查询“最近一次读取”的generation后再失效缓存。manual force reload没有旧read token时才由cache owner解析当前authority。
-  resident managed-raster handoff没有artifact authority；这类presentation fault先由`PipelineReaderSession`旋转volatile cache identity、失效旧raster/first-frame proof并重新grant staged presentation，
-  不得借故reset physical generation或删除durable bytes。只有带exact artifact authority的失败才进入`DownloadTransferOwner` destructive artifact recovery；两层automatic recovery各自每页/Reader session有界一次。
+  external-static 的 presentation generation 与 raster residency 必须分离：`PipelineReaderSession`拥有 DecodeId/source/fit 对应的 opaque presentation identity，
+  `PipelinePresentationRasterCache`独占 decoded raster 的 residency/LRU/keepAlive。ordinary eviction/demand loss 不旋转 identity；mounted adapter 必须撤销本地 attempt/provider 后允许同 identity regrant，且 detached resident provider 必须直接 handoff、禁止再次 resize/providerFor。
+  没有 exact artifact authority 的 presentation error 不得据此 reset durable/source generation；只有带原 read `storageId + mutation generation` 的拒绝才进入 `DownloadTransferOwner` destructive artifact recovery。
   `PipelineReaderSession.dispose()`必须与retention共用claim释放边界，并额外注销composition presentation-cache invalidation listener；全局cache不得因已销毁session遗留listener/claim而保活Reader。
-  `LocalImagePlayer`取得file lease后立即进入finally保护，late cancellation不能漏lease；automatic recovery/retry绑定启动时load generation/token，旧任务不得重启替换后的图片。
+  `LocalImagePlayer`取得file lease后立即进入finally保护，late cancellation不能漏lease；widget async load 只使用本地 `loadEpoch + token` 作为 race fence，禁止把它解释成 source/artifact/presentation generation。
   GIF的Flutter codec由单一串行frame-fetch生命周期拥有；pause/resume只能改变循环输入，不得并发调用同一codec的`getNextFrame()`，loading→ready也不得通过widget key变化重建codec。
   实际首帧回报才满足该 watermark；通用LiveCoordinator的speculative external grant缺省仍为1，
   Reader profile显式允许最多3个offscreen external-static first-frame并行pending，

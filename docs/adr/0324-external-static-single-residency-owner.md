@@ -39,12 +39,12 @@ Accepted。
 - 用 presentation identity rotation 模拟普通 cache eviction / demand gap；
 - Pipeline 轮询 Flutter `ImageCache` 或用角色提升做被动 cache revalidation。
 
-以下状态继续保留，因为它们不是 residency 补丁：
+以下状态继续保留，因为它们不是第二个 residency owner（ADR 0336 收紧了第一项语义）：
 
-- `_externalPresentationLoadIdentity`：presentation generation 去重，防止同 widget 生命周期压掉真实 generation rebind；
+- `_externalPresentationAttemptIdentity`：仅去重当前 residency grant attempt；cache-owner revocation 必须清空，因此 same generation 可再次 grant；
 - `_externalPresentationPrewarmFailures`：当前 generation 的失败隔离，防止坏 provider/codec 热循环；
 - `_externalPresentationVisibleFrames`：首个 visible frame trace/投影去重；
-- `externalPresentationRequested/Ready`：Pipeline exact permission 与当前 residency proof，两者不等于 generation identity。
+- `externalPresentationRequested/Ready`：Pipeline exact permission 与 scheduler satisfaction fact；不是 byte proof、mutation authority 或 residency owner。
 
 ## 回归要求
 

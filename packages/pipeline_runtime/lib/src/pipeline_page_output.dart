@@ -96,7 +96,7 @@ final class PipelinePageOutputStream {
   DecodeId? _presentingIdentity;
   int? _presentingFrameIndex;
   bool _presentationPending = false;
-  int _generation = 0;
+  int _bindingEpoch = 0;
   bool _disposed = false;
 
   PipelinePageOutputSnapshot get snapshot => _snapshot;
@@ -120,10 +120,10 @@ final class PipelinePageOutputStream {
     }
   }
 
-  /// Read-only proof that the composition's existing external image cache has
-  /// already decoded the first static raster for this exact DecodeId. The
-  /// visible adapter still owns the actual widget/presentation; this flag only
-  /// lets it attach to the prepared cache entry without waiting for a new grant.
+  /// Read-only scheduler satisfaction fact: the composition cache reported
+  /// a first static raster ready for this exact DecodeId/presentation identity.
+  /// It is not byte-integrity proof and does not own raster residency; cache
+  /// invalidation clears it before a later same-generation grant can refill.
   void _setExternalPresentationReady(bool ready) {
     _requireOpen();
     if (_externalPresentationReady == ready) return;
@@ -234,7 +234,7 @@ final class PipelinePageOutputStream {
     if (hasConsumer && identity != null) {
       _onExternalPresentationConsumerChanged?.call(identity, true);
     }
-    _generation++;
+    _bindingEpoch++;
     _presentationAfterFrameScheduled = false;
     _presentingIdentity = null;
     _presentingFrameIndex = null;
@@ -472,12 +472,12 @@ final class PipelinePageOutputStream {
   void _schedulePresentationAfterFrame(DecodeId identity) {
     if (_presentationAfterFrameScheduled) return;
     _presentationAfterFrameScheduled = true;
-    final generation = _generation;
+    final bindingEpoch = _bindingEpoch;
     _frameScheduler.afterFrame(() {
-      if (generation == _generation) {
+      if (bindingEpoch == _bindingEpoch) {
         _presentationAfterFrameScheduled = false;
       }
-      if (_disposed || generation != _generation || _identity != identity) {
+      if (_disposed || bindingEpoch != _bindingEpoch || _identity != identity) {
         return;
       }
       final latest = _uploads.find(identity)?.snapshot;
@@ -500,7 +500,7 @@ final class PipelinePageOutputStream {
             _presentingFrameIndex == upload.frameIndex)) {
       return;
     }
-    final generation = _generation;
+    final bindingEpoch = _bindingEpoch;
     _presentingIdentity = identity;
     _presentingFrameIndex = upload.frameIndex;
     final claim = _uploads.claimPresent(identity);
@@ -508,7 +508,7 @@ final class PipelinePageOutputStream {
       _finishPresentation(
         identity: identity,
         frameIndex: upload.frameIndex,
-        generation: generation,
+        bindingEpoch: bindingEpoch,
       );
       return;
     }
@@ -518,7 +518,7 @@ final class PipelinePageOutputStream {
         await _uploads.present(identity, claim);
       }
       if (_disposed ||
-          generation != _generation ||
+          bindingEpoch != _bindingEpoch ||
           _identity != identity) {
         claim.release();
         return;
@@ -560,7 +560,7 @@ final class PipelinePageOutputStream {
       }
     } on Object catch (error) {
       claim.release();
-      if (_disposed || generation != _generation || _identity != identity) {
+      if (_disposed || bindingEpoch != _bindingEpoch || _identity != identity) {
         return;
       }
       final failure = error is Failure
@@ -599,7 +599,7 @@ final class PipelinePageOutputStream {
       _finishPresentation(
         identity: identity,
         frameIndex: upload.frameIndex,
-        generation: generation,
+        bindingEpoch: bindingEpoch,
       );
     }
   }
@@ -607,9 +607,9 @@ final class PipelinePageOutputStream {
   void _finishPresentation({
     required DecodeId identity,
     required int? frameIndex,
-    required int generation,
+    required int bindingEpoch,
   }) {
-    if (generation != _generation ||
+    if (bindingEpoch != _bindingEpoch ||
         _presentingIdentity != identity ||
         _presentingFrameIndex != frameIndex) {
       return;
@@ -642,7 +642,7 @@ final class PipelinePageOutputStream {
     if (_listeners.isNotEmpty) {
       _onExternalPresentationConsumerChanged?.call(_identity, false);
     }
-    _generation++;
+    _bindingEpoch++;
     _presentingIdentity = null;
     _presentingFrameIndex = null;
     _presentationPending = false;

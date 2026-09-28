@@ -85,14 +85,23 @@ for token in (
     "output.externalPresentationRequested",
     "output.externalPresentationReady",
     "output.externalPresentationCacheIdentity",
-    "_externalPresentationLoadIdentity",
+    "_externalPresentationAttemptIdentity",
+    "_retireExternalPresentationBinding()",
     "identical(",
 ):
-    require(player, token, "LocalImagePlayer generation-scoped external presentation gate")
+    require(player, token, "LocalImagePlayer revocable external presentation gate")
+generation_test = read(
+    "packages/local_media_ui/test/external_presentation_generation_test.dart"
+)
 require(
-    read("packages/local_media_ui/test/external_presentation_generation_test.dart"),
+    generation_test,
     "mounted external static reloads when Pipeline presentation generation changes",
-    "generation-scoped external presentation regression",
+    "generation-change external presentation regression",
+)
+require(
+    generation_test,
+    "same generation regrants after eviction",
+    "same-generation residency regrant regression",
 )
 for token in (
     "pipelinePresentationRasterMaximumBytes",

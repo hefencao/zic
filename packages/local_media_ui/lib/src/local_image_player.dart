@@ -72,8 +72,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   Uint8List? _bytes;
   ImageProvider<Object>? _imageProvider;
   PipelineEncodedPresentationFileLease? _presentationFileLease;
-  int _generation = 0;
-  int _scheduledStaticFrameGeneration = -1;
+  int _loadEpoch = 0;
+  int _scheduledStaticFrameLoadEpoch = -1;
   late MediaLoadToken _loadToken;
   bool _reportedFirstFrame = false;
   PipelinePageStreamListener? _pageStreamingListener;
@@ -85,7 +85,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedLength = 0;
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
-  Object? _externalPresentationLoadIdentity;
+  Object? _externalPresentationAttemptIdentity;
   PipelinePresentationArtifactAuthority? _presentationRecoveryAuthority;
   bool _recoveryInFlight = false;
   Size? _reportedDimensions;
@@ -145,11 +145,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         oldWidget.image.format != widget.image.format ||
         oldWidget.pageStream != widget.pageStream ||
         oldWidget.pageOutput != widget.pageOutput) {
-      _generation++;
+      _loadEpoch++;
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
       _reportedFirstFrame = false;
-      _scheduledStaticFrameGeneration = -1;
+      _scheduledStaticFrameLoadEpoch = -1;
       _releasePresentationFileLease();
       _bytes = null;
       _imageProvider = null;
@@ -161,7 +161,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
-      _externalPresentationLoadIdentity = null;
+      _externalPresentationAttemptIdentity = null;
       final oldStreaming = oldWidget.pageStream;
       final oldListener = _pageStreamingListener;
       if (oldStreaming != null && oldListener != null) {
@@ -338,16 +338,17 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           !identical(prior.failure, snapshot.failure);
       _pageOutputSnapshot = snapshot;
       _maybeStartExternalPresentationLoad(output);
-      // Pipeline owns external-static presentation residency. A cache-owner
-      // revocation must remove the mounted raster consumer as well; otherwise
-      // Flutter's Image widget can retain a live completer after the owner has
-      // declared the speculative raster evicted. Keep the encoded provider so
-      // a later exact grant reuses source bytes, but reopen the one-frame
-      // presentation lifecycle for trace/state projection.
+      // Raster residency can end while the immutable presentation generation
+      // remains valid. Retire only this widget's binding/attempt state so a
+      // later grant for the SAME presentation identity can attach or decode
+      // again. Keeping the attempt identity across this boundary used to turn
+      // one ordinary cache eviction into a permanent per-widget tombstone.
+      if (externalPresentationRevoked && !_detectedFormat.isWebp) {
+        _retireExternalPresentationBinding();
+      }
       if (visualChanged && prior != null) {
         setState(() {
           if (externalPresentationRevoked && !_detectedFormat.isWebp) {
-            _scheduledStaticFrameGeneration = -1;
             _state = ImagePreviewState.loading(_detectedFormat);
           }
         });
@@ -393,6 +394,18 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     output.addListener(listener);
   }
 
+  void _retireExternalPresentationBinding() {
+    _loadEpoch++;
+    _loadToken.cancel();
+    _loadToken = MediaLoadToken();
+    _releasePresentationFileLease();
+    _bytes = null;
+    _imageProvider = null;
+    _presentationRecoveryAuthority = null;
+    _externalPresentationAttemptIdentity = null;
+    _scheduledStaticFrameLoadEpoch = -1;
+  }
+
   void _maybeStartExternalPresentationLoad(PipelinePageOutputStream output) {
     if (_recoveryInFlight ||
         (!output.externalPresentationRequested &&
@@ -401,7 +414,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     final presentationIdentity = output.externalPresentationCacheIdentity;
     if (presentationIdentity == null ||
-        identical(_externalPresentationLoadIdentity, presentationIdentity)) {
+        identical(_externalPresentationAttemptIdentity, presentationIdentity)) {
       return;
     }
     // The Pipeline grant is generation-scoped. A PageOutput can stay attached
@@ -409,12 +422,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     // rebound; widget lifetime is therefore not a valid "already loaded"
     // proof. Consume each exact presentation-cache identity at most once and
     // let a newer identity supersede any older in-flight result through the
-    // existing [_generation] guard in [_load].
-    _externalPresentationLoadIdentity = presentationIdentity;
+    // existing [_loadEpoch] guard in [_load].
+    _externalPresentationAttemptIdentity = presentationIdentity;
     final resident = pipelinePresentationRasterCache
         .residentProviderForIdentity(presentationIdentity);
     if (resident != null) {
-      _generation++;
+      _loadEpoch++;
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
       _releasePresentationFileLease();
@@ -428,7 +441,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   Future<void> _load() async {
-    final generation = ++_generation;
+    final loadEpoch = ++_loadEpoch;
     final token = _loadToken;
     _releasePresentationFileLease();
     try {
@@ -449,7 +462,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           var retained = false;
           try {
             token.throwIfCancelled();
-            if (!mounted || generation != _generation || token != _loadToken) {
+            if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
               return;
             }
             final provider = encodedResourceImageProvider(
@@ -485,7 +498,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           }
         } else {
           token.throwIfCancelled();
-          if (!mounted || generation != _generation || token != _loadToken) {
+          if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
             return;
           }
         }
@@ -505,7 +518,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         if (provider == null) {
           throw StateError('local file provider is unavailable');
         }
-        if (!mounted || generation != _generation || token != _loadToken) {
+        if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
           return;
         }
         _presentationRecoveryAuthority = null;
@@ -524,7 +537,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
                   ? await widget.image.readAsBytes()
                   : await loader(widget.image);
       token.throwIfCancelled();
-      if (!mounted || generation != _generation || token != _loadToken) {
+      if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
         return;
       }
       _presentationRecoveryAuthority = presentationRead?.authority;
@@ -546,7 +559,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         await decodeProbe(bytes);
         token.throwIfCancelled();
         if (!mounted ||
-            generation != _generation ||
+            loadEpoch != _loadEpoch ||
             token != _loadToken ||
             token.isCancelled) {
           return;
@@ -571,7 +584,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       }
     } catch (error) {
       if (!mounted ||
-          generation != _generation ||
+          loadEpoch != _loadEpoch ||
           token != _loadToken ||
           token.isCancelled) {
         return;
@@ -580,7 +593,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         return;
       }
       if (!mounted ||
-          generation != _generation ||
+          loadEpoch != _loadEpoch ||
           token != _loadToken ||
           token.isCancelled) {
         return;
@@ -593,11 +606,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     PipelinePageStream stream,
     Object error,
   ) async {
-    final generation = _generation;
+    final loadEpoch = _loadEpoch;
     final recovered = await _tryAutomaticRecovery(error, restartLoad: false);
     if (recovered ||
         !mounted ||
-        generation != _generation ||
+        loadEpoch != _loadEpoch ||
         widget.pageStream != stream ||
         stream.snapshot.state != PipelinePageTransferState.failed) {
       return;
@@ -611,13 +624,13 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }) async {
     final recover = widget.onRecoverPresentationFailure;
     if (recover == null || _recoveryInFlight) return false;
-    final generation = _generation;
+    final loadEpoch = _loadEpoch;
     final token = _loadToken;
     _recoveryInFlight = true;
     try {
       final recovered = await recover(error, _presentationRecoveryAuthority);
       if (!mounted ||
-          generation != _generation ||
+          loadEpoch != _loadEpoch ||
           token != _loadToken ||
           !recovered) {
         return false;
@@ -638,7 +651,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final retryWithError = widget.onRetryWithError;
     if ((retry == null && retryWithError == null) || _recoveryInFlight) return;
     final prior = _state;
-    final generation = _generation;
+    final loadEpoch = _loadEpoch;
     final token = _loadToken;
     _recoveryInFlight = true;
     _publish(ImagePreviewState.loading(_detectedFormat));
@@ -646,7 +659,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       final recovered = retryWithError != null
           ? await retryWithError(prior.error)
           : await retry!();
-      if (!mounted || generation != _generation || token != _loadToken) {
+      if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
         return;
       }
       if (recovered) {
@@ -660,7 +673,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } on Object catch (error) {
-      if (mounted && generation == _generation && token == _loadToken) {
+      if (mounted && loadEpoch == _loadEpoch && token == _loadToken) {
         _publish(ImagePreviewState.invalid(prior.format, error));
       }
     } finally {
@@ -670,20 +683,20 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   void _restartLoadAfterRecovery() {
     if (!mounted) return;
-    _generation++;
+    _loadEpoch++;
     _loadToken.cancel();
     _loadToken = MediaLoadToken();
     _releasePresentationFileLease();
     _bytes = null;
     _imageProvider = null;
     _presentationRecoveryAuthority = null;
-    _scheduledStaticFrameGeneration = -1;
+    _scheduledStaticFrameLoadEpoch = -1;
     _reportedDimensions = null;
     _reportedDimensionsAuthoritative = false;
     _reportedPlaybackCapability = null;
     _reportedPlaybackCapabilityCallback = null;
     _detectedFormat = widget.image.format;
-    _externalPresentationLoadIdentity =
+    _externalPresentationAttemptIdentity =
         widget.pageOutput?.externalPresentationCacheIdentity;
     _publish(ImagePreviewState.loading(_detectedFormat));
     unawaited(_load());
@@ -702,7 +715,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       output.removeListener(outputListener);
     }
 
-    _generation++;
+    _loadEpoch++;
     _loadToken.cancel();
     _releasePresentationFileLease();
     super.dispose();
@@ -770,12 +783,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _scheduleStaticFramePresented(
-    int generation,
+    int loadEpoch,
     LocalImageFormat format, {
     required bool synchronouslyLoaded,
   }) {
     if (_state.phase == ImagePreviewPhase.ready ||
-        _scheduledStaticFrameGeneration == generation) {
+        _scheduledStaticFrameLoadEpoch == loadEpoch) {
       return;
     }
     final clock = widget.traceClock;
@@ -798,9 +811,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     }
-    _scheduledStaticFrameGeneration = generation;
+    _scheduledStaticFrameLoadEpoch = loadEpoch;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || generation != _generation || _imageProvider == null) {
+      if (!mounted || loadEpoch != _loadEpoch || _imageProvider == null) {
         return;
       }
       _publish(ImagePreviewState.ready(format));
@@ -1108,7 +1121,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (frame != null || wasSynchronouslyLoaded) {
             _scheduleStaticFramePresented(
-              _generation,
+              _loadEpoch,
               _detectedFormat,
               synchronouslyLoaded: wasSynchronouslyLoaded,
             );
@@ -1125,7 +1138,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ? content
         : KeyedSubtree(
             key: ValueKey<String>(
-              'image-folder-preview-generation:$_generation',
+              'image-folder-preview-load-epoch:$_loadEpoch',
             ),
             child: content,
           );
@@ -1163,7 +1176,14 @@ final class MediaRasterImage extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         ImageProvider<Object> provider = image;
-        if (source != null &&
+        final residentManagedRaster =
+            image is _ResidentPresentationImageProvider;
+        // A detached resident provider already names the exact resized raster
+        // admitted by PipelinePresentationRasterCache. Reapplying resize and
+        // providerFor here manufactures a nested cache key for the same
+        // identity and silently moves residency ownership during handoff.
+        if (!residentManagedRaster &&
+            source != null &&
             source.width > 0 &&
             source.height > 0 &&
             constraints.hasBoundedWidth &&
@@ -1193,7 +1213,7 @@ final class MediaRasterImage extends StatelessWidget {
           );
         }
         final managedIdentity = presentationIdentity;
-        if (managedIdentity != null) {
+        if (managedIdentity != null && !residentManagedRaster) {
           provider = pipelinePresentationRasterCache.providerFor(
             provider: provider,
             presentationIdentity: managedIdentity,

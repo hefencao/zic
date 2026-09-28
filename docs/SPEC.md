@@ -802,10 +802,11 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   READY/sealed artifact的exact-length proof不受此规则放宽。
 - Reader presentation 对实际取得的页面正文发生文件头、decode 或 presentation 语义拒绝时 MUST 把失败报告回 Pipeline，而不是只在 UI 显示错误；
   `ContentKind.fallback` 或“不是 WebP/GIF”本身 MUST NOT 被当作 artifact 损坏证据。
-  已由 `PipelinePresentationRasterCache` resident handoff 的 raster failure 若没有 artifact authority，
-  MUST先被解释为 volatile presentation-generation failure：Pipeline MAY 每页每 Reader session 至多自动旋转一次 exact presentation cache identity，
-  只失效该 managed raster 与 external first-frame satisfaction，再从既有 encoded authority 重新获得 staged presentation grant；
-  此路径 MUST NOT 删除 durable artifact、reset SourceEpoch/physical DownloadSession、打开 NetLane task 或自行创建第二 retry owner。
+  `PipelinePresentationRasterCache` 的 ordinary residency eviction / demand loss MUST NOT 旋转 presentation identity；
+  Pipeline 只撤销该 identity 的 external-presentation request/ready satisfaction，mounted adapter MUST 释放本地 resident binding/attempt，
+  并允许 later same-identity staged grant 重新 attach/decode。detached resident provider 已是 exact managed raster，mounted 路径 MUST NOT 再次 resize 或 `providerFor`。
+  raster residency 消失本身不是 encoded-body failure，也不是 SourceEpoch / ArtifactCache mutation-generation change；
+  无 exact artifact authority 的 presentation error MUST NOT 自动 reset durable/source generation。
   只有当失败携带该次 presentation read 的 exact `ArtifactCacheManager` authority 时，Pipeline MAY 每页每 Reader session 至多自动执行一次 durable artifact 自愈；
   显式用户“重试” MAY 在自动尝试之后再次请求 fresh bytes。durable 自愈 MUST 由 composition `DownloadTransferOwner` 原子协调：
   先阻止该 physical id 新 admission，取消/等待 cold local preparation 与既有 NetLane task 退出，

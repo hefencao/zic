@@ -115,7 +115,7 @@ void main() {
   );
 
   testWidgets(
-    'mounted external static reuses detached resident raster without reopening encoded source',
+    'detached resident raster mounts exactly and same generation regrants after eviction',
     (tester) async {
       pipelinePresentationRasterCache.clearPresentationRasters();
       addTearDown(() {
@@ -126,7 +126,7 @@ void main() {
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
         'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
       );
-      final chapter = _chapterWithPages(5);
+      final chapter = _chapterWithPages(12);
       final session = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _RuntimeFactory(),
         pageDownloadLane: NetLane(maxActive: 5),
@@ -156,6 +156,14 @@ void main() {
       expect(
         pipelinePresentationRasterCache.inspectPresentationRasters().entries,
         greaterThan(0),
+      );
+      final presentationIdentity =
+          output.externalPresentationCacheIdentity!;
+      final residentBeforeMount = pipelinePresentationRasterCache
+          .residentProviderForIdentity(presentationIdentity);
+      expect(residentBeforeMount, isNotNull);
+      final residentKeyBeforeMount = await residentBeforeMount!.obtainKey(
+        ImageConfiguration.empty,
       );
 
       var presentationFileOpens = 0;
@@ -204,7 +212,53 @@ void main() {
             'identity, so mounted binding must not reopen encoded storage',
       );
       expect(byteLoads, 0);
+      final residentAfterMount = pipelinePresentationRasterCache
+          .residentProviderForIdentity(presentationIdentity);
+      expect(residentAfterMount, isNotNull);
+      expect(
+        await residentAfterMount!.obtainKey(ImageConfiguration.empty),
+        residentKeyBeforeMount,
+        reason:
+            'mounting an exact detached raster must not wrap it in another '
+            'managed/resize key and silently move cache ownership',
+      );
 
+      session.accept(_observationAt(chapter, 11, 2));
+      await _pumpUntil(
+        tester,
+        () =>
+            !output.externalPresentationRequested &&
+            !output.externalPresentationReady,
+      );
+      await tester.pump();
+      expect(find.byKey(imageFolderFlutterPreviewKey), findsNothing);
+      pipelinePresentationRasterCache.clearPresentationRasters();
+
+      session.accept(_observationAt(chapter, 2, 3));
+      await _pumpUntil(
+        tester,
+        () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
+      );
+      expect(
+        identical(
+          presentationIdentity,
+          output.externalPresentationCacheIdentity,
+        ),
+        isTrue,
+        reason:
+            'ordinary raster eviction and later regrant must keep the '
+            'immutable presentation generation stable',
+      );
+      expect(
+        presentationFileOpens + byteLoads,
+        greaterThan(0),
+        reason:
+            'after the detached raster residency is actually gone, the '
+            'mounted consumer must re-enter encoded presentation instead of '
+            'reusing a stale resident-only completer',
+      );
+
+      await session.dispose();
       await tester.pumpWidget(const SizedBox.shrink());
       pipelinePresentationRasterCache.clearPresentationRasters();
       for (var turn = 0; turn < 2; turn++) {
@@ -324,9 +378,14 @@ void main() {
         reason:
             'ordinary residency/demand loss must not rotate immutable presentation generation',
       );
-      expect(loads, 1,
-          reason:
-              'reacquiring residency must reuse the retained encoded provider instead of rereading bytes');
+      expect(
+        loads,
+        2,
+        reason:
+            'once raster residency is explicitly invalidated, the widget must '
+            'not act as a second encoded/raster cache; the same presentation '
+            'generation re-enters its authoritative encoded loader once',
+      );
       await session.dispose();
       await tester.pump(const Duration(milliseconds: 150));
     },

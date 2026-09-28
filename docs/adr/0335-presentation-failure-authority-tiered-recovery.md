@@ -1,6 +1,13 @@
 # ADR 0335：Presentation failure 按 volatile raster 与 durable artifact 分层恢复
 
-状态：Accepted
+状态：Superseded by ADR 0336
+
+> 2026-09-28 fresh failure trace showed this ADR diagnosed an explicit-error
+> path that the reproduced failure never entered. Its durable artifact rule
+> remains valid, but the authority-less raster-generation recovery introduced
+> here is removed by ADR 0336. Ordinary raster eviction/revisit must keep the
+> presentation generation stable and repair the detached/mounted residency
+> handoff instead.
 
 ## Context
 
