@@ -930,7 +930,24 @@ final class _ReaderViewState extends State<ReaderView>
       return;
     }
     var layoutChanged = false;
-    if (_verticalScrollActive || _stripZoomed || _stripLensActive) {
+    if (_interaction == Interaction.scrubbing &&
+        !_stripZoomed &&
+        !_stripLensActive) {
+      // Slider scrubbing is not a finger-owned content drag. Its target page
+      // is an explicit absolute navigation anchor, so freezing a newly
+      // measured ratio at the visible tail can deadlock vertical visibility:
+      // an unresolved page keeps its provisional one-viewport extent, the
+      // next page is therefore never considered visible, and transientPreview
+      // correctly keeps that next page's decode/upload disabled forever.
+      //
+      // Adopt only ratios for the currently visible scrub viewport and keep
+      // the selected page centered across the extent change. Newly exposed
+      // pages then become visible facts and receive the existing typed
+      // localOnly/decode-one-frame execution; hidden 3/7 work remains frozen.
+      layoutChanged = _adoptScrubViewportVerticalRatios(latest);
+      _pendingVerticalLayoutRatios =
+          _sameVerticalRatios(_verticalLayoutRatios, latest) ? null : latest;
+    } else if (_verticalScrollActive || _stripZoomed || _stripLensActive) {
       // Ratios for pages strictly beyond the current viewport cannot change
       // the prefix or extents of anything being painted now. Adopt those
       // decode-ahead facts immediately so they are stable before the page
@@ -958,6 +975,71 @@ final class _ReaderViewState extends State<ReaderView>
     if (rebuild && mounted && layoutChanged) {
       _verticalLayoutRevision.value++;
     }
+  }
+
+  bool _adoptScrubViewportVerticalRatios(Map<String, double> latest) {
+    final pages = widget.controller.chapter.pages;
+    if (pages.isEmpty) return false;
+    final visibleMin = (_lastVerticalVisibleMinIndex ??
+            widget.controller.currentIndex)
+        .clamp(0, pages.length - 1)
+        .toInt();
+    final visibleMax = (_lastVerticalVisibleMaxIndex ??
+            widget.controller.currentIndex)
+        .clamp(0, pages.length - 1)
+        .toInt();
+    final scrubAnchor = widget.controller.currentIndex
+        .clamp(0, pages.length - 1)
+        .toInt();
+    Map<String, double>? merged;
+    final adopted = <int>[];
+
+    void adopt(int index) {
+      final key = pages[index].assetKey;
+      final ratio = latest[key];
+      if (ratio == null || _verticalLayoutRatios[key] == ratio) return;
+      merged ??= <String, double>{..._verticalLayoutRatios};
+      merged![key] = ratio;
+      adopted.add(index);
+    }
+
+    for (var index = visibleMin; index <= visibleMax; index++) {
+      adopt(index);
+    }
+    // Defensive race closure: Reader current is authoritative for slider
+    // navigation even if the prior provisional geometry has not yet included
+    // it in the last visible range.
+    if (scrubAnchor < visibleMin || scrubAnchor > visibleMax) {
+      adopt(scrubAnchor);
+    }
+    if (merged == null) return false;
+
+    final nextRatios = Map<String, double>.unmodifiable(merged!);
+    final nextGeometry = _verticalGeometry(ratios: nextRatios);
+    _pendingVerticalGeometryCorrection =
+        nextGeometry.centeredOffsetFor(scrubAnchor);
+    _scheduleVerticalGeometryCorrectionClear();
+    _verticalLayoutRatios = nextRatios;
+    _invalidateVerticalGeometryCache();
+    _scheduleVerticalObservationRefreshAfterLayout();
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.pageGeometryPrepared,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          'pageIndexes': adopted,
+          'visibleMinIndex': visibleMin,
+          'visibleMaxIndex': visibleMax,
+          'scrubAnchorIndex': scrubAnchor,
+          'geometryCorrectionTarget': _pendingVerticalGeometryCorrection,
+          'interaction': _interaction.name,
+          'source': 'scrub-visible-ratio',
+        },
+      ),
+    );
+    return true;
   }
 
   bool _adoptFutureVerticalRatios(Map<String, double> latest) {

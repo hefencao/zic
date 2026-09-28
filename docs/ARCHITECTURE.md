@@ -774,10 +774,12 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   但不得创建decode/upload/present或改变2/1 decode policy，不拥有既有静态UI projection生命周期：
   authoritative static surface在upload-demand gap中只有当同一DecodeId仍存在于既有decode plan且仍有presentation listener时才可保留；
   该保留不得创建upload/present/decode工作，离开decode plan、identity/generation改变、真实dispose或最后listener移除必须释放。
-  纵向异步ratio在active scroll期间使用scroll-stable snapshot：沿higher-index方向，仅严格高于visibleMax的future ratio可直接提前采用；
+  纵向异步ratio在finger-owned drag/ballistic/settling期间使用scroll-stable snapshot：沿higher-index方向，仅严格高于visibleMax的future ratio可直接提前采用；
   沿lower-index方向，仅严格低于visibleMin的incoming ratio可提前采用，
   且因其改变viewport prefix必须在同一次layout以top-anchor `geometryCorrectionTarget`原子修正ScrollPosition；
-  真实visible页ratio仍冻结到idle。
+  真实visible页ratio通常冻结到idle；slider scrub是例外，因为它是绝对page-index导航而不是finger-owned content drag。
+  scrub中当前真实visible页的新source ratio必须可立即进入layout，并以slider-selected current的centered offset作为layout-time correction；
+  ratio提交后必须立即重发真实visible coverage，使因当前页缩短而新暴露的相邻页获得既有localOnly/one-frame资格，不得靠pointer-up/full execution打破geometry bootstrap。
   idle采用其余新ratio时top-pixel offset仍必须通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
   不得先换extent再以`jumpTo`制造可观察中间页。
   Pipeline在vertical active presentation期间对generic/unresolved以及仍走native texture的non-visible `far/near` speculative static output只defer新presentation work；对应UploadDemand identity继续保留，但`prepareOutput=false`，已有resident output/retention bookkeeping不被当成需要重建的资源；
@@ -1219,8 +1221,10 @@ Pipeline通过框架无关的只读`PipelinePageDimensionsFeed`发布`pageIndex 
 LocalImagePlayer的output/surface raster只属于presentation，不得经`onDimensionsChanged`反向污染Reader geometry。
 该feed只允许订阅/退订并在attach时重放retained facts，publish/clear保持Pipeline library-private；
 公共边界不得暴露Flutter `ValueNotifier`/`ValueListenable`。
-一次drag/ballistic/settling/scrub期间，`ReaderVerticalGeometry`与`ListView.itemExtentBuilder`继续绑定scroll-stable layout snapshot；
+一次finger-owned drag/ballistic/settling期间，`ReaderVerticalGeometry`与`ListView.itemExtentBuilder`继续绑定scroll-stable layout snapshot；
 会改变当前真实viewport前缀的ratio（visible tail及之前）只做latest-wins pending。
+slider scrub不属于该冻结边界：当前已visible页的authoritative source ratio MAY立即提交，并以slider-selected current为center anchor做layout-time correction后重发visible coverage；
+否则unknown ratio的一屏provisional extent会让相邻已挂载页永远无法成为visible，从而与transientPreview的hidden decode/upload gate形成闭环。
 只有严格位于真实visible tail之后、尚未可见的future page source ratio MAY在active scroll中提前合入layout snapshot；
 进入idle后其余pending ratio仍由dev.281 top-pixel layout correction一次提交。
 不得恢复dev.286的独立visual presentation extent/OverflowBox裁切workaround，也不得以扩大decode 2/1替代geometry authority修复；

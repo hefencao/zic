@@ -105,7 +105,9 @@ App build：0.31.0+328
   后续15-26-08真机Trace确认visible并未误判，3个visible页对应3个`localOnly`；真正问题是durable restore只有2个operation slot，旧页降为`retained/priority0`后active restore仍继续占slot。
   首轮4.3s scrub有8个restore以effectivePriority=0退休，active最长71.98ms、total最长113.809ms；artifact-cache整图read多为3–15ms。现已收口为retained即撤销旧local execution，slot仍待Future真实退出。
   修复后15-41-33 Profile复测50个scrubbing decision仍保持11个Download claim且`taskFailed=0`；local preparation不再有effectivePriority=0退休，active最长降至27.40ms。
-  残余首帧延迟主要是presentation raster：sampled visible从durable artifact开始读约10–35ms，PNG首帧decode/present再约30–60ms，而快速slider约50ms即切换。“已缓存”仅证明encoded bytes本地可得，不等价于已有decoded raster；不得因此恢复hidden全窗口预解码。
+  后续held-slider复现推翻“剩余只是raster延迟”的归因：pointer保持4s时current=144一直只有visible=[144]，而145/146 PageHost已挂载却直到UP后才拿尺寸/首帧。
+  根因是unknown vertical ratio会先占至少一屏，而scrubbing被错误纳入scroll-stable geometry冻结；current短页720x700的新ratio无法缩短extent，相邻页因此永远不能成为visible，transientPreview又正确把它们保持hidden，形成geometry↔execution bootstrap死锁。
+  修复后Profile held-slider在UP前完成`scrub-visible-ratio`提交：target100由visible=[100]扩为[99,100,101]，同一transientPreview内localOnly 1→3、hidden retained 10→8；页101/99首帧约95/128ms完成，UP约4.9s后才发生。11-download membership与hidden gate均未扩大。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

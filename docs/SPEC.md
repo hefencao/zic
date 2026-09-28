@@ -1203,8 +1203,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 
 ### 2.4 页面几何、输出与预热合同
 
-纵向Reader的异步尺寸更新 MUST 在active scroll期间冻结所有会改变当前viewport前缀的sliver geometry；
+纵向Reader的异步尺寸更新 MUST 在finger-owned dragging/scrolling/settling期间冻结所有会改变当前viewport前缀的sliver geometry；
 idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续。
+slider `Interaction.scrubbing` 是绝对page-index导航，不属于上述content-drag冻结：当前真实visible页的新authoritative source ratio MUST可在pointer-up前提交，
+并以slider-selected current的centered offset作layout-time correction后立即重发真实visible coverage；新暴露相邻页只获得既有transientPreview visible资格，MUST NOT扩大hidden decode/upload窗口。
 DecodeSession首个成功frame MAY触发尺寸事实提前解析，但Reader页面几何的最终authority MUST是source canvas而非decoded raster；
 Pipeline只读`PipelinePageDimensionsFeed` MUST携带dimension basis并优先`PageAsset`/WebP source canvas，
 decoded raster仅可作为provisional fallback且 MUST NOT覆盖已知source canvas。
@@ -1920,7 +1922,7 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   WebP、Reader playback-controlled GIF、缺少可信intrinsic dimensions、
   平台不支持descriptor reopen或lease preflight失败时 MUST退回既有encoded-byte/native路径；
   该fallback MUST NOT改变3/7、decode2/1、UploadDemand、NetLane、SAF executor数量或read/open watchdog。
-- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT在dragging/scrolling/settling/scrubbing期间改变真实visible tail及之前的 `ReaderVerticalGeometry` / `itemExtentBuilder`；
+- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT在finger-owned dragging/scrolling/settling期间改变真实visible tail及之前的 `ReaderVerticalGeometry` / `itemExtentBuilder`；
   一次连续用户滚动 MUST保持当前viewport prefix稳定。
   DecodeSession已成功decode的frame可触发Pipeline提前解析尺寸，但`PipelinePageDimensionsFeed`的最终geometry fact MUST区分`sourceCanvas`与`decodedRaster`：
   source canvas优先，decoded raster仅provisional且不得覆盖source；
@@ -1933,7 +1935,9 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
   沿higher-index方向，严格高于真实visibleMax的future page source ratio MAY在active scroll中提前进入layout snapshot，
   因为其extent不改变当前pixels对应prefix；沿lower-index方向，严格低于真实visibleMin的incoming source ratio MAY在active scroll中提前采用，
   但 MUST在同一次layout以提交前top-pixel anchor计算`geometryCorrectionTarget`并原子补偿prefix长度变化。
-  真实visible页的新ratio仍只允许latest-wins暂存，真正idle后 MAY一次提交；
+  真实visible页的新ratio通常只允许latest-wins暂存，真正idle后 MAY一次提交；
+  slider scrub例外：当前已visible页的新source ratio MUST在scrub期间允许提交，并以selected current center作layout-time correction后重发coverage，
+  从而避免unknown一屏provisional extent与transientPreview hidden gate互相等待；该例外 MUST NOT赋予原hidden页执行资格，只有新geometry确认其真实可见后才按既有visible规则晋升。
   MUST NOT恢复dev.207 ratio-driven `jumpTo`循环，也 MUST NOT恢复dev.286 `presentationExtentAt`/OverflowBox裁切workaround。
   真实viewport/DPR/stitch变化与显式navigation仍 MAY保留/恢复anchor。
 - 纵向 page-host composition retention MUST 与Pipeline资源窗口分离；

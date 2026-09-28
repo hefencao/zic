@@ -1883,6 +1883,105 @@ void main() {
 
 
   testWidgets(
+    'vertical scrub adopts visible ratios before pointer up',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-scrub-ratio-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-scrub-ratio-chapter',
+          comicId: 'vertical-scrub-ratio-comic',
+          title: 'vertical scrub ratio',
+          sequence: 0,
+          pageCount: 4,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          4,
+          (index) => PageAsset(
+            pageId: 'vertical-scrub-ratio-$index',
+            chapterId: 'vertical-scrub-ratio-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-scrub-ratio-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-scrub-ratio-test',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-scrub-ratio:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      controller.beginPageScrub();
+      controller.scrubToPage(1);
+      await tester.pump();
+      await tester.pump();
+
+      expect(controller.pageScrubbing, isTrue);
+      expect(controller.currentIndex, 1);
+      expect(observations.last.interaction, Interaction.scrubbing);
+      expect(
+        observations.last.visibleCoverages.map((entry) => entry.pageIndex),
+        <int>[1],
+        reason:
+            'unknown ratios intentionally begin as one-viewport provisional extents',
+      );
+
+      observations.clear();
+      ratios.value = <String, double>{
+        chapter.pages[1].assetKey: 0.25,
+      };
+      await tester.pump();
+      await tester.pump();
+
+      expect(controller.pageScrubbing, isTrue,
+          reason: 'the test has not delivered pointer-up/endPageScrub');
+      expect(controller.currentIndex, 1,
+          reason: 'ratio adoption must preserve the slider-selected page');
+      expect(observations, isNotEmpty);
+      expect(observations.last.interaction, Interaction.scrubbing);
+      expect(
+        observations.last.visibleCoverages.map((entry) => entry.pageIndex),
+        contains(2),
+        reason:
+            'a short measured current page must expose and schedule the next physically visible page while the slider remains held',
+      );
+
+      controller.endPageScrub(1);
+      await tester.pump();
+    },
+  );
+
+
+  testWidgets(
     'vertical measured ratios stay frozen until active scrolling is idle',
     (tester) async {
       final chapter = ChapterManifest(

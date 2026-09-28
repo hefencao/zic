@@ -51,7 +51,7 @@
   loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330已关闭navigation-state→resource-window耦合：scrub current/visible为`localOnly`，hidden 3/7为`retained`；hidden decode/upload只降执行深度，松手后同一claim/task恢复full。localOnly→retained会立即cancel旧local restore，但slot仍等Future真实退出，不扩大并发。
-  15-41-33 Profile复测50/50 scrub均保持11个downloads且`taskFailed=0`；priority0 local-restore退休8→0，active max 71.98ms→27.40ms。visible分类正确；剩余快速scrub空白来自encoded cache到presentation raster仍需约10–35ms读取+30–60ms PNG raster，不恢复hidden全窗口decode/upload。
+  held-slider又定位出geometry死锁：unknown ratio先占一屏且scrub曾冻结visible ratio，导致相邻已挂载页永远不成为visible、只能UP后恢复。现scrub可提交当前visible source ratio并center-correct；Profile target100在UP前扩为[99,100,101]，页101/99约95/128ms出帧，11-download与hidden gate不变。
   continuous 单击上一/下一页为 viewport-step（默认滚90%、保留10%），scrollbar 仍是绝对 page-index→vertical anchor，不模拟多次滚动。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。

@@ -17,6 +17,7 @@ ADR 0329 已关闭 navigation state 直接拥有 resource window 的错误：sli
    - 同一3/7中的 hidden DownloadDemand 使用 `retained`，只保留 logical/physical identity；
    - DecodeDemand 保留 baseline membership，visible/current 最多请求一帧，hidden `targetWatermark=0`；
    - UploadDemand 保留 baseline identity，只有 foreground page `prepareOutput=true`；hidden output 不发起新 prepare，但已有 resident output/retention bookkeeping 仍可更新。
+   - vertical slider scrub必须允许当前已visible页的authoritative source ratio在pointer-up前进入Reader geometry，并以selected current center做layout correction后重发visible coverage；这只修正foreground truth，不扩张hidden执行深度。
 4. scrub 结束进入 stable phase 时，Pipeline 必须即使 roles/visible membership 不变也重新投影 execution configuration；同一 Download claim/task 原位恢复 `full`，不得 detach/reacquire。
 5. Sessions 将 `EncodedWorkMode` 映射为 physical `TransferWorkMode`。`retained/localOnly` 不创建新 network task；已存在 physical task 只在 NetLane 上 `demanded=false / priority=0` park，同一 task key 保留。`localOnly` 仍可执行已有 local preparation。required completion claim 始终提升为 `full`。
    `localOnly/full -> retained` 是 local execution permission 的撤销，不是普通 rank migration：pending/active durable local preparation 必须立即收到 cancellation；bounded slot 仍等旧 operation Future 真正退出后释放，因此不会突破并发上限或制造第二 local scheduler。
@@ -26,4 +27,4 @@ ADR 0329 已关闭 navigation state 直接拥有 resource window 的错误：sli
 
 ## Consequences
 
-快速 slider 拖动仍只每50ms推进最新 viewport，但中间窗口不会因为保留完整3/7 claim 就自动做满3/7的远程预取/解码/上传。已缓存/已准备资源仍可被原 identity 复用；scrub release 恢复正常预取时不需要 teardown/rebuild。current/visible 是 correctness authority，interaction 是 work-depth configuration，两者不再互相冒充。
+快速 slider 拖动仍只每50ms推进最新 viewport，但中间窗口不会因为保留完整3/7 claim 就自动做满3/7的远程预取/解码/上传。current/visible 是 correctness authority，interaction 是 work-depth configuration。vertical unknown geometry不得把“尚未测得”伪装成“不可见”：当前页source ratio到达后，scrub仍须更新真实coverage，而不是等release恢复full work。
