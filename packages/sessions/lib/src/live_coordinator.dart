@@ -1429,6 +1429,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (snapshot == null || snapshot.failure != null) {
           return false;
         }
+        if (snapshot.externalPresentationRequired &&
+            snapshot.state == DecodeState.ended &&
+            _externalPresentationPending.contains(id)) {
+          // Decode has already handed this exact single-frame result to the
+          // presentation owner. Waiting for the mounted/detached first-frame
+          // acknowledgement is a presentation dependency, not remaining
+          // decode work. Treat it as decode-satisfied so the staged refill
+          // policy can release one separately bounded offscreen static warm.
+          // `admittedWhileExternalPresentationPending` still caps those
+          // speculative presentation handshakes and visible work still
+          // preempts them.
+          return true;
+        }
         final animation = snapshot.animation;
         if (!animation.complete || animation.frameCount > 1) {
           return false;

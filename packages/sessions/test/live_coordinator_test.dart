@@ -3935,6 +3935,170 @@ void main() {
   },
   );
 
+  test('current presentation wait does not block one bounded static warm', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_external_presentation_parallel_refill_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+
+    DownloadId download(String pageId, int index) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.jpg'),
+          pageIndexHint: index,
+        );
+    DecodeId decode(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+
+    final currentId = download('current-fallback', 0);
+    final warmId = download('warm-fallback', 1);
+    final currentDecode = decode(currentId);
+    final warmDecode = decode(warmId);
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'external-presentation-parallel-refill',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _NeverUsedCursorFactory(),
+      clock: clock,
+    );
+    final requested = <DecodeId>[];
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const _ImmediateTransport(
+        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      ),
+      clock: clock,
+      decodes: decodes,
+      onExternalPresentationRequested: (id, revision) {
+        requested.add(id);
+      },
+      externalPresentationAvailable: (_) => true,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+      maxSpeculativeExternalPresentationPending: 1,
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        currentId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'current-fallback',
+          expirationRevision: 2,
+        ),
+        warmId: const DownloadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'warm-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        currentDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'current-fallback',
+          expirationRevision: 2,
+        ),
+        warmDecode: const DecodeDemand(
+          role: PageRole.next,
+          priority: 820,
+          targetWatermark: 1,
+          reason: 'warm-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        currentDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'current-fallback',
+          expirationRevision: 2,
+          viewportVisible: true,
+        ),
+        warmDecode: const UploadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'warm-fallback',
+          expirationRevision: 2,
+          viewportVisible: false,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(currentId),
+        ResourceId.download(warmId),
+        ResourceId.decode(currentDecode),
+        ResourceId.decode(warmDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{
+            0: PageRole.current,
+            1: PageRole.next,
+          },
+        ),
+      ),
+    );
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (requested.toSet().length < 2) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail(
+          'offscreen static warm stayed decode-blocked behind current presentation: $requested',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(requested.toSet(), <DecodeId>{currentDecode, warmDecode});
+    expect(
+      coordinator.externalPresentationPendingFor(currentDecode),
+      isTrue,
+    );
+    expect(
+      coordinator.externalPresentationPendingFor(warmDecode),
+      isTrue,
+      reason:
+          'current/visible presentation wait is not part of the speculative warm cap',
+    );
+  });
+
   test('visible fallback preempts another visible external first-frame wait', () async {
     final temp = await Directory.systemTemp.createTemp(
       'live_visible_external_presentation_test_',

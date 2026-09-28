@@ -51,30 +51,40 @@ final class StagedDecodeRefillPolicy {
     DecodeSatisfiedLookup satisfiedOf = _neverSatisfied,
   }) {
     DecodeId? currentId;
-    DecodeId? transitionId;
+    final transitions = <MapEntry<DecodeId, DecodeDemand>>[];
     for (final entry in demands.entries) {
       if (entry.value.role == PageRole.current) currentId = entry.key;
-      if (entry.value.role == PageRole.transition) transitionId = entry.key;
+      if (entry.value.role == PageRole.transition) transitions.add(entry);
     }
+    transitions.sort((a, b) {
+      final priority = b.value.priority.compareTo(a.value.priority);
+      if (priority != 0) return priority;
+      return a.key.key.compareTo(b.key.key);
+    });
 
     DecodeRefillDecision? transitionFirstFrame() {
-      final id = transitionId;
-      if (id == null ||
-          !eligibleOf(id) ||
-          terminalOf(id) ||
-          satisfiedOf(id) ||
-          depthOf(id) >= 1) {
-        return null;
+      // A short vertical current can expose both neighboring pages at once.
+      // transition is a viewport role, not a singleton target slot. If one
+      // visible transition is waiting on source/presentation, another ready
+      // transition must still be able to acquire its first frame.
+      for (final entry in transitions) {
+        final id = entry.key;
+        if (!eligibleOf(id) ||
+            terminalOf(id) ||
+            satisfiedOf(id) ||
+            depthOf(id) >= 1) {
+          continue;
+        }
+        return DecodeRefillDecision(
+          id: id,
+          role: entry.value.role,
+          stage: DecodeWaterlineStage.transitionFirstFrame,
+          depth: depthOf(id),
+          threshold: 0,
+          targetWatermark: 1,
+        );
       }
-      final demand = demands[id]!;
-      return DecodeRefillDecision(
-        id: id,
-        role: demand.role,
-        stage: DecodeWaterlineStage.transitionFirstFrame,
-        depth: depthOf(id),
-        threshold: 0,
-        targetWatermark: 1,
-      );
+      return null;
     }
 
     final current = currentId;
@@ -135,6 +145,9 @@ final class StagedDecodeRefillPolicy {
       byRole[entry.value.role] = entry.key;
     }
 
+    // Preserve the historical logical-next choice for deeper staged animation
+    // waterlines. The multi-transition list above only fixes first-frame
+    // eligibility; it does not redefine the later one-role-at-a-time schedule.
     final transition = byRole[PageRole.transition];
     final transitionFirstFrameDecision = transitionFirstFrame();
     final logical = <_WaterlineRole, DecodeId?>{

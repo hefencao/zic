@@ -50,8 +50,8 @@
   2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
   loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
-  ADR 0330已关闭navigation-state→resource-window耦合：scrub current/visible为`localOnly`，hidden 3/7为`retained`；hidden decode/upload只降执行深度，松手后同一claim/task恢复full。localOnly→retained会立即cancel旧local restore，但slot仍等Future真实退出，不扩大并发。
-  held-slider又定位出geometry死锁：unknown ratio先占一屏且scrub曾冻结visible ratio，导致相邻已挂载页永远不成为visible、只能UP后恢复。现scrub可提交当前visible source ratio并center-correct；Profile target100在UP前扩为[99,100,101]，页101/99约95/128ms出帧，11-download与hidden gate不变。
+  ADR 0330/0331：scrub继续保留7/3 membership；outer hidden保持`retained/target0/no-prepare`，仅既有static `next/next2/previous` deadline可local-only准备一帧，remote gate与50ms latest-wins不变。
+  held-slider geometry已闭合；Mihon对照后又收口visible transition/presentation deadline。最新Profile adjacent-current n32 median/p90/max=0.0/29.9/32.2ms（修复前16.1/48.7/82.1ms），prepared raster直接复用，`taskFailed=0`；见ADR 0331。
   continuous 单击上一/下一页为 viewport-step（默认滚90%、保留10%），scrollbar 仍是绝对 page-index→vertical anchor，不模拟多次滚动。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。

@@ -201,6 +201,78 @@ void main() {
     );
   });
 
+  test('scrub locally warms only bounded static deadline neighbors', () {
+    final obs = ReaderObs(
+      sessionId: 'scrub-local-static-deadline',
+      currentIndex: 4,
+      stableIndex: 4,
+      interaction: Interaction.scrubbing,
+      logicalPosition: 4,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 4,
+        assetKey: 'chapter/p4',
+        fraction: 1,
+      ),
+      visibleCoverages: const <Coverage>[
+        Coverage(pageIndex: 4, assetKey: 'chapter/p4', fraction: 1),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 11),
+      monotonicMicros: 2,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+    ).resolve(chapter, obs);
+    final plan = const HeuristicPolicy().createPlan(
+      revision: 2,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      runtimeAnimatedPages: <int, bool>{
+        4: false,
+      },
+      runtimeLocalStaticPages: <int>{4},
+      assumeUnresolvedStatic: true,
+    );
+
+    for (final role in <PageRole>[PageRole.previous, PageRole.next]) {
+      expect(
+        plan.downloads.values.singleWhere((demand) => demand.role == role)
+            .encodedWorkMode,
+        EncodedWorkMode.localOnly,
+      );
+      expect(
+        plan.decodes.values.singleWhere((demand) => demand.role == role)
+            .targetWatermark,
+        1,
+      );
+      expect(
+        plan.uploads.values.singleWhere((demand) => demand.role == role)
+            .prepareOutput,
+        isTrue,
+      );
+    }
+    expect(
+      plan.downloads.values
+          .where((demand) => demand.role == PageRole.near)
+          .every(
+            (demand) => demand.encodedWorkMode == EncodedWorkMode.retained,
+          ),
+      isTrue,
+      reason:
+          'scrub may locally prepare the existing immediate static deadline, '
+          'but must not reopen the outer 3/7 hidden window',
+    );
+  });
+
   test('continuous scrub preserves every page actually visible in viewport', () {
     final obs = ReaderObs(
       sessionId: 'scrub-visible',

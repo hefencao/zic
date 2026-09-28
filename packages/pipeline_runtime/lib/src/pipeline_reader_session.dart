@@ -1233,6 +1233,7 @@ final class PipelineReaderSession {
             ),
             width: size.width,
             height: size.height,
+            direction: observation.direction,
           );
         }
       }
@@ -1306,6 +1307,7 @@ final class PipelineReaderSession {
     required DecodeId id,
     required int width,
     required int height,
+    ReadingDirection? direction,
   }) {
     if (width <= 0 || height <= 0) return;
     // Once UploadSession has claimed a frame, its uploader owns the
@@ -1323,7 +1325,7 @@ final class PipelineReaderSession {
         _deferredOutputPrewarms[id] == size) {
       return;
     }
-    if (_shouldDeferOutputPrewarm(id)) {
+    if (_shouldDeferOutputPrewarm(id, direction: direction)) {
       _deferredOutputPrewarms[id] = size;
       _scheduleOutputPrewarmIdle();
       return;
@@ -1337,24 +1339,34 @@ final class PipelineReaderSession {
     );
   }
 
-  bool _shouldDeferOutputPrewarm(DecodeId id) {
+  bool _shouldDeferOutputPrewarm(
+    DecodeId id, {
+    ReadingDirection? direction,
+  }) {
     final scheduler = _media.frameScheduler;
     final frameBusy =
         scheduler.inPersistentCallbacks || scheduler.hasScheduledFrame;
     if (!frameBusy) return false;
 
     final role = _pagedOutputPrewarmRole(id);
+    final uploadDemand = _binding?.pipeline.currentPlan.uploads[id];
+    final verticalViewportVisible =
+        (direction ?? _lastAcceptedControlObservation?.direction) ==
+            ReadingDirection.vertical &&
+        uploadDemand?.viewportVisible == true;
     final output = _pageOutputs[id.download.key];
     final detached =
         output == null ||
         output._listeners.isEmpty ||
         !output.snapshot.hasSurface;
 
-    // Current has a first-frame deadline. If its host is not mounted yet, or
-    // it has no resident surface to display, let the exact prewarm proceed in
-    // this turn. A next/transition lease is invisible until PageView catches
-    // up, so its platform create must yield to the frame already in flight.
-    if (role == PageRole.current) return !detached;
+    // Every physically visible page in continuous vertical mode has the same
+    // first-frame presentation deadline. `current` remains navigation/progress
+    // semantics; it must not make another on-screen transition wait for an
+    // idle platform-create handoff. Horizontal PageView targets keep the
+    // historical defer-until-idle behavior because their transition lease is
+    // not necessarily part of the currently painted viewport.
+    if (role == PageRole.current || verticalViewportVisible) return !detached;
     if (role == PageRole.next || role == PageRole.transition) return true;
     return !detached;
   }
@@ -1781,6 +1793,7 @@ final class PipelineReaderSession {
         id: id,
         width: size.width,
         height: size.height,
+        direction: acceptedObservation.direction,
       );
     }
     // The role plan is already a bounded visibility decision. Creating the
@@ -2767,6 +2780,7 @@ final class PipelineReaderSession {
       id: id,
       width: raster.width,
       height: raster.height,
+      direction: observation.direction,
     );
   }
 
@@ -3337,6 +3351,7 @@ final class PipelineReaderSession {
         id: id,
         width: decodedWidth,
         height: decodedHeight,
+        direction: observation.direction,
       );
     }
     unawaited(

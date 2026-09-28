@@ -108,6 +108,15 @@ App build：0.31.0+328
   后续held-slider复现推翻“剩余只是raster延迟”的归因：pointer保持4s时current=144一直只有visible=[144]，而145/146 PageHost已挂载却直到UP后才拿尺寸/首帧。
   根因是unknown vertical ratio会先占至少一屏，而scrubbing被错误纳入scroll-stable geometry冻结；current短页720x700的新ratio无法缩短extent，相邻页因此永远不能成为visible，transientPreview又正确把它们保持hidden，形成geometry↔execution bootstrap死锁。
   修复后Profile held-slider在UP前完成`scrub-visible-ratio`提交：target100由visible=[100]扩为[99,100,101]，同一transientPreview内localOnly 1→3、hidden retained 10→8；页101/99首帧约95/128ms完成，UP约4.9s后才发生。11-download membership与hidden gate均未扩大。
+  2026-09-28继续对照Mihon后确认剩余represent偏移不是“decoder并发不足”：Mihon WebGPU decode本身单线程，
+  但continuous viewer把真实viewport/adjacent页放在同一page-cache生命周期；旧Webtoon holder进入实际绑定后也会从adjacent preload提升为正常page load。
+  ZIC随后修正三个边界：transition first-frame从单槽改为可重复viewport role；vertical `viewportVisible` output prewarm不再等待idle；
+  scrub现允许既有`next/next2/previous` static deadline以local-only一帧进入统一presentation raster cache，
+  external-static decode handed-off后也不再等待presentation ack才释放下一staged refill。
+  outer `near/far`仍retained/target0/prepareOutput=false，50ms latest-wins和remote gate不变。
+  Profile同机样本的`adjacent firstFrameReady-current`从修复前n75 median/p90/max=16.1/48.7/82.1ms、80%偏慢，
+  降到最新n32的0.0/29.9/32.2ms、53.1%偏慢；Trace出现大量detached `preparedOnly=true`后viewport `prepared=true`直接复用，且`taskFailed=0`。
+  因此主要current偏置已关闭，剩余尾部约两帧暂不通过扩大speculative并发处理。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

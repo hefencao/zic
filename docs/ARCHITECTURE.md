@@ -812,7 +812,13 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   scrub期间当前/transition/真实visible DownloadDemand保持同一claim但降为`localOnly`，只允许复用/恢复本地authoritative bytes；
   其余3/7 hidden claim为`retained`，不新增remote source work；baseline DecodeDemand/UploadDemand identity同样保留，
   `localOnly -> retained`同时撤销尚未退出的durable local preparation：`retained`是identity-only，旧viewport的restore不得继续占用两个bounded local-operation slot；取消只发信号，writer/descriptor/Future实际退出前slot仍不释放。
-  visible/current decode最多一帧、hidden decode使用`targetWatermark=0`，hidden upload使用`prepareOutput=false`。
+  visible/current decode最多一帧。ADR 0331进一步区分“外层hidden工作窗”与“既有静态presentation deadline”：
+  `next/next2/previous`若具备static资格，可在scrub中继续以`localOnly`取得一帧decode并`prepareOutput=true`，
+  用于在进入viewport前写入统一presentation raster owner；该资格不得打开remote source。
+  其余`near/far` hidden decode仍使用`targetWatermark=0`、hidden upload仍使用`prepareOutput=false`。
+  external-static decode已经ended并把一帧交给presentation owner后，等待first-frame acknowledgement不得继续阻塞下一项staged decode；
+  offscreen presentation仍受独立bounded pending gate约束。vertical真实visible transition是可重复viewport role，
+  不得被单一transition slot覆盖，其output prewarm与current共享first-frame deadline。
   phase回到stable即使current/visible membership未变化也必须replan，并在同一claim/task上恢复正常full execution；
   已admit physical transport只park为NetLane `demanded=false`/rank0，不得为scrub cancel/reopen。
   velocity/logicalPosition等连续事实不得直接压成跨lane单一权重；encoded I/O、decode depth、presentation prepare、retention与rank必须保留typed projection边界。

@@ -79,9 +79,25 @@ final class HeuristicPolicy {
         currentIndex: observation.currentIndex,
         readDirection: readDirection,
       );
+      final staticWarm = staticWarmPages.contains(entry.key);
+      final localStaticReady =
+          runtimeLocalStaticPages.contains(entry.key) &&
+              runtimeAnimatedPages[entry.key] == false;
+      final deadlineStaticPreupload =
+          role == PageRole.next ||
+              role == PageRole.next2 ||
+              role == PageRole.previous;
       final foregroundResource = role == PageRole.current ||
           role == PageRole.transition ||
           visibleIndexes.contains(entry.key);
+      // During a slider scrub the outer 3/7 working set remains execution-
+      // inert, but a static candidate in the existing 2/1 presentation
+      // deadline may attempt one local-only frame before it becomes visible.
+      // If no authoritative local body exists, localOnly simply cannot grow
+      // source bytes. This mirrors Mihon's adjacent decode/presentation cache
+      // without reopening remote transport or creating a second window.
+      final transientLocalStaticDeadline =
+          transientPreview && staticWarm && deadlineStaticPreupload;
       if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
           role: role,
@@ -90,7 +106,7 @@ final class HeuristicPolicy {
           expirationRevision: revision + 1,
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
           encodedWorkMode: transientPreview
-              ? foregroundResource
+              ? foregroundResource || transientLocalStaticDeadline
                   ? EncodedWorkMode.localOnly
                   : EncodedWorkMode.retained
               : EncodedWorkMode.full,
@@ -98,11 +114,11 @@ final class HeuristicPolicy {
         keep.add(ResourceId.download(download));
       }
 
-      final staticWarm = staticWarmPages.contains(entry.key);
       final visibleStatic = staticWarm && visibleIndexes.contains(entry.key);
       final normalDecodeWatermark = staticWarm ? 1 : _decodeWatermark(role);
       final decodeWatermark = transientPreview
-          ? foregroundResource && normalDecodeWatermark > 0
+          ? (foregroundResource || transientLocalStaticDeadline) &&
+                  normalDecodeWatermark > 0
               ? 1
               : 0
           : normalDecodeWatermark;
@@ -137,16 +153,9 @@ final class HeuristicPolicy {
               (role == PageRole.next || role == PageRole.previous) &&
               decodeWatermark > 0 &&
               isPresentationMotionInteraction(observation.interaction);
-      final localStaticReady =
-          runtimeLocalStaticPages.contains(entry.key) &&
-              runtimeAnimatedPages[entry.key] == false;
       final externalStatic =
           runtimeExternalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
-      final deadlineStaticPreupload =
-          role == PageRole.next ||
-          role == PageRole.next2 ||
-          role == PageRole.previous;
       final deferHiddenVerticalNativeStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
@@ -195,7 +204,9 @@ final class HeuristicPolicy {
               visibleStatic || localStaticReady || deadlineStaticPreupload,
           viewportVisible: primaryUpload || visibleStatic,
           prepareOutput: !deferHiddenVerticalNativeStaticUpload &&
-              (!transientPreview || foregroundResource),
+              (!transientPreview ||
+                  foregroundResource ||
+                  transientLocalStaticDeadline),
         );
       }
     }

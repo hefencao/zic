@@ -1142,7 +1142,15 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   相邻preview移动 SHOULD只产生实际窗口差集（稳定profile中通常为一项far退出/一项far进入），不得每50ms批量detach再在松手后重建。
   `Interaction.scrubbing` MAY用于方向学习抑制、UI、诊断与resource execution projection，但 MUST NOT单独改变download/decode/upload membership。
   Pipeline MUST把scrub作为transient preview而不是stable prefetch：current/transition/真实visible DownloadDemand保持同一claim并限制为local-only encoded work；同一3/7中的hidden DownloadDemand MUST只retain identity而不得新增remote source work。
-  baseline DecodeDemand/UploadDemand identity MUST保持；visible/current decode MAY只请求一帧，hidden decode MUST允许`targetWatermark=0`表示无新执行，hidden upload MUST以`prepareOutput=false`禁止新presentation prepare而不是删除demand。
+  baseline DecodeDemand/UploadDemand identity MUST保持；visible/current decode MAY只请求一帧。
+  既有static presentation deadline中的`next/next2/previous` MAY在scrub中以
+  `localOnly + targetWatermark=1 + prepareOutput=true`提前准备一帧，但 MUST NOT因此取得remote transport authority。
+  外层`near/far` hidden decode MUST继续允许`targetWatermark=0`表示无新执行，
+  hidden upload MUST继续以`prepareOutput=false`禁止新presentation prepare而不是删除demand。
+  一个external-static decode若已ended并把一帧交给presentation owner，等待其mounted/detached first-frame acknowledgement
+  MUST NOT继续占据staged decode前驱；实际offscreen presentation pending仍 MUST独立有界。
+  vertical viewport同时出现多个transition时，它们都属于真实foreground；实现 MUST NOT以单一transition槽覆盖其中任一页，
+  且`viewportVisible=true`的vertical output prewarm MUST与current共享first-frame deadline。
   scrub结束后即使current、visible membership与role均未变化，resource control phase变化也 MUST触发重新投影；normal work MUST在同一claim/physical task上恢复，不得detach/reacquire或cancel/reopen。
   operation、coverage、direction与media-cost等事实 SHOULD投影到各自typed resource配置；MUST NOT把velocity/logicalPosition等pointer-rate连续事实压成一个跨network/decode/upload通用标量权重并形成第二scheduler。
   多consumer映射到同一physical body时，priority与provider MUST按执行资格聚合：retained/local-only claim不得提升另一个full claim的network rank，也不得为其提供remote transport authority。

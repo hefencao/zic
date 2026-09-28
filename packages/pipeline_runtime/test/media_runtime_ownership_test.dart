@@ -718,6 +718,67 @@ void main() {
     await session.dispose();
   });
 
+  test('vertical visible transition prewarms with current before idle', () async {
+    final scheduler = _ControlledFrameScheduler(scheduled: true);
+    final runtime = _Runtime(
+      renderer: RendererKind.androidTexture,
+      scheduler: scheduler,
+    );
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
+    ).create(
+      chapter: _galleryChapter(pageCount: 3),
+      sessionId: 'vertical-visible-transition-prewarm-test',
+    );
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    final current = session.chapter.pages[0];
+    final adjacent = session.chapter.pages[1];
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.scrubbing,
+        logicalPosition: 0.5,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: current.assetKey,
+          fraction: 0.5,
+        ),
+        targetCoverage: Coverage(
+          pageIndex: 1,
+          assetKey: adjacent.assetKey,
+          fraction: 0.5,
+        ),
+        visibleCoverages: <Coverage>[
+          Coverage(pageIndex: 0, assetKey: current.assetKey, fraction: 0.5),
+          Coverage(pageIndex: 1, assetKey: adjacent.assetKey, fraction: 0.5),
+        ],
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(
+      runtime.prewarmCalls,
+      2,
+      reason:
+          'both physically visible vertical pages share the first-frame deadline; '
+          'only hidden output prewarm may wait for the idle handoff',
+    );
+
+    await session.dispose();
+  });
+
   test('animated paged next prewarms output without idle upload', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);

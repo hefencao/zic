@@ -246,6 +246,41 @@ void main() {
     expect(decision?.targetWatermark, 1);
   });
 
+  test('any visible transition may bootstrap while current is blocked', () {
+    final current = _id('current-blocked');
+    final readyPrevious = _id('transition-ready-previous');
+    final blockedNext = _id('transition-blocked-next');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 1),
+      readyPrevious: DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 1,
+        reason: 'visible-previous',
+        expirationRevision: 2,
+      ),
+      // Intentionally inserted last. A viewport can contain both sides of a
+      // short current page; one unavailable transition must not hide the other.
+      blockedNext: DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 1,
+        reason: 'visible-next',
+        expirationRevision: 2,
+      ),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id == readyPrevious,
+    );
+
+    expect(decision?.id, readyPrevious);
+    expect(decision?.stage, DecodeWaterlineStage.transitionFirstFrame);
+    expect(decision?.targetWatermark, 1);
+  });
+
   test('current deepening resumes after transition has its first frame', () {
     final current = _id('current-low');
     final transition = _id('transition-ready');
