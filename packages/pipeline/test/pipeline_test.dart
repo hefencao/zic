@@ -204,18 +204,18 @@ void main() {
   test('scrub locally warms only bounded static deadline neighbors', () {
     final obs = ReaderObs(
       sessionId: 'scrub-local-static-deadline',
-      currentIndex: 4,
-      stableIndex: 4,
+      currentIndex: 2,
+      stableIndex: 2,
       interaction: Interaction.scrubbing,
-      logicalPosition: 4,
+      logicalPosition: 2,
       velocity: 0,
       currentCoverage: Coverage(
-        pageIndex: 4,
-        assetKey: 'chapter/p4',
+        pageIndex: 2,
+        assetKey: 'chapter/p2',
         fraction: 1,
       ),
       visibleCoverages: const <Coverage>[
-        Coverage(pageIndex: 4, assetKey: 'chapter/p4', fraction: 1),
+        Coverage(pageIndex: 2, assetKey: 'chapter/p2', fraction: 1),
       ],
       direction: ReadingDirection.vertical,
       timestamp: DateTime.utc(2026, 8, 11),
@@ -237,9 +237,9 @@ void main() {
         physicalHeight: 1920,
       ),
       runtimeAnimatedPages: <int, bool>{
-        4: false,
+        2: false,
       },
-      runtimeLocalStaticPages: <int>{4},
+      runtimeLocalStaticPages: <int>{2},
       assumeUnresolvedStatic: true,
     );
 
@@ -260,9 +260,36 @@ void main() {
         isTrue,
       );
     }
+    final previousDownload = plan.downloads.values
+        .singleWhere((demand) => demand.role == PageRole.previous);
+    final nextDownload = plan.downloads.values
+        .singleWhere((demand) => demand.role == PageRole.next);
+    final next2Download = plan.downloads.values
+        .singleWhere((demand) => demand.role == PageRole.next2);
+    expect(previousDownload.priority, nextDownload.priority);
+    expect(previousDownload.priority, greaterThan(next2Download.priority));
+    final previousDecode = plan.decodes.values
+        .singleWhere((demand) => demand.role == PageRole.previous);
+    final nextDecode = plan.decodes.values
+        .singleWhere((demand) => demand.role == PageRole.next);
+    final next2Decode = plan.decodes.values
+        .singleWhere((demand) => demand.role == PageRole.next2);
+    expect(previousDecode.priority, nextDecode.priority);
+    expect(previousDecode.priority, greaterThan(next2Decode.priority));
+    final previousUpload = plan.uploads.values
+        .singleWhere((demand) => demand.role == PageRole.previous);
+    final nextUpload = plan.uploads.values
+        .singleWhere((demand) => demand.role == PageRole.next);
+    final next2Upload = plan.uploads.values
+        .singleWhere((demand) => demand.role == PageRole.next2);
+    expect(previousUpload.priority, nextUpload.priority);
+    expect(previousUpload.priority, greaterThan(next2Upload.priority));
     expect(
       plan.downloads.values
-          .where((demand) => demand.role == PageRole.near)
+          .where(
+            (demand) =>
+                demand.role == PageRole.near || demand.role == PageRole.far,
+          )
           .every(
             (demand) => demand.encodedWorkMode == EncodedWorkMode.retained,
           ),

@@ -1145,6 +1145,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   baseline DecodeDemand/UploadDemand identity MUST保持；visible/current decode MAY只请求一帧。
   既有static presentation deadline中的`next/next2/previous` MAY在scrub中以
   `localOnly + targetWatermark=1 + prepareOutput=true`提前准备一帧，但 MUST NOT因此取得remote transport authority。
+  transient scrub 中 immediate `next` 与 immediate `previous` MUST作为selected target两侧对称的representation deadline，
+  local preparation / one-frame decode / upload priority MUST相同；`next2` MUST保持更低。
+  该对称 MUST NOT修改stable readDirection、方向学习、7/3 membership或worker concurrency。
   外层`near/far` hidden decode MUST继续允许`targetWatermark=0`表示无新执行，
   hidden upload MUST继续以`prepareOutput=false`禁止新presentation prepare而不是删除demand。
   一个external-static decode若已ended并把一帧交给presentation owner，等待其mounted/detached first-frame acknowledgement
@@ -1213,8 +1216,12 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 
 纵向Reader的异步尺寸更新 MUST 在finger-owned dragging/scrolling/settling期间冻结所有会改变当前viewport前缀的sliver geometry；
 idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续。
-slider `Interaction.scrubbing` 是绝对page-index导航，不属于上述content-drag冻结：当前真实visible页的新authoritative source ratio MUST可在pointer-up前提交，
-并以slider-selected current的centered offset作layout-time correction后立即重发真实visible coverage；新暴露相邻页只获得既有transientPreview visible资格，MUST NOT扩大hidden decode/upload窗口。
+slider `Interaction.scrubbing` 是绝对page-index导航，不属于上述content-drag冻结。
+slider-selected整数页 MUST在整个scrub transaction内保持显式center anchor；所有已知`index <= selected`的authoritative source ratio MUST在pointer-up前提交，
+因为任一prefix extent都会改变该绝对目标的物理offset。已真实visible的post-anchor ratio也 MUST立即采用并重发coverage。
+若layout新暴露的相邻页ratio已经在pending中，后续held-scrub layout MUST继续消费，不得等待另一次dimensions event。
+pointer-up只结束input phase；首次pending ratio commit MUST继续保持同一selected-page center，geometry/coverage收敛后才释放scrub anchor。
+该规则只修正absolute navigation geometry；新暴露页仍只获得既有transientPreview资格，MUST NOT扩大hidden decode/upload窗口。
 DecodeSession首个成功frame MAY触发尺寸事实提前解析，但Reader页面几何的最终authority MUST是source canvas而非decoded raster；
 Pipeline只读`PipelinePageDimensionsFeed` MUST携带dimension basis并优先`PageAsset`/WebP source canvas，
 decoded raster仅可作为provisional fallback且 MUST NOT覆盖已知source canvas。

@@ -1982,6 +1982,110 @@ void main() {
 
 
   testWidgets(
+    'vertical scrub keeps selected center through deferred prefix ratios',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-scrub-prefix-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-scrub-prefix-chapter',
+          comicId: 'vertical-scrub-prefix-comic',
+          title: 'vertical scrub prefix',
+          sequence: 0,
+          pageCount: 5,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          5,
+          (index) => PageAsset(
+            pageId: 'vertical-scrub-prefix-$index',
+            chapterId: 'vertical-scrub-prefix-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-scrub-prefix-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-scrub-prefix-test',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-scrub-prefix:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      controller.beginPageScrub();
+      controller.scrubToPage(2);
+      await tester.pump();
+      await tester.pump();
+      expect(controller.currentIndex, 2);
+
+      observations.clear();
+      ratios.value = <String, double>{
+        chapter.pages[1].assetKey: 0.25,
+        chapter.pages[2].assetKey: 0.25,
+      };
+      // The selected page shrinks first. That exposes page 1, whose ratio was
+      // already known in the same update even though it was outside the old
+      // provisional viewport. Drain the held-scrub geometry convergence.
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      expect(controller.pageScrubbing, isTrue);
+      expect(controller.currentIndex, 2);
+      expect(observations.last.interaction, Interaction.scrubbing);
+      expect(
+        observations.last.visibleCoverages.map((entry) => entry.pageIndex),
+        containsAll(<int>[1, 2, 3]),
+      );
+
+      controller.endPageScrub(2);
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+
+      expect(controller.pageScrubbing, isFalse);
+      expect(
+        controller.currentIndex,
+        2,
+        reason:
+            'pointer-up must not switch from the slider-selected page center '
+            'to an idle top-of-viewport geometry anchor',
+      );
+      expect(observations.last.currentIndex, 2);
+    },
+  );
+
+
+  testWidgets(
     'vertical measured ratios stay frozen until active scrolling is idle',
     (tester) async {
       final chapter = ChapterManifest(

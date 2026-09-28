@@ -117,6 +117,13 @@ App build：0.31.0+328
   Profile同机样本的`adjacent firstFrameReady-current`从修复前n75 median/p90/max=16.1/48.7/82.1ms、80%偏慢，
   降到最新n32的0.0/29.9/32.2ms、53.1%偏慢；Trace出现大量detached `preparedOnly=true`后viewport `prepared=true`直接复用，且`taskFailed=0`。
   因此主要current偏置已关闭，剩余尾部约两帧暂不通过扩大speculative并发处理。
+  2026-09-28继续复现出release geometry漂移：backward slider held 47%时current=82/logical=82.5，pointer-up后约38ms变为current83/48%；
+  同时scrollPixels约75549.63→74784.19。根因是held scrub按selected center提交ratio，而pointer-up后的pending prefix ratio改用idle top-anchor。
+  现slider-selected index贯穿整个scrub transaction作为center anchor；已知prefix ratio在held阶段即提交，新暴露visible的pending ratio继续在后续layout消费；
+  pointer-up遗留的首次pending commit仍保持selected center，收敛后才释放anchor。新Profile backward 8%→8%、forward 49%→49%，均无release漂移。
+  同轮确认previous慢不是“只有两个worker”：旧transient static次序为current1000/next820/next2 800/previous780，即使3 slot仍会让previous最后。
+  scrub现把immediate next/previous统一为820，next2保留800；Profile可见相邻首帧prev n18 median/p90/max=48.8/82.3/98.3ms，
+  next n17=47.4/76.7/80.5ms，两次held均在UP前完成相邻firstFrameReady且`taskFailed=0`。worker与7/3/NetLane边界未改。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

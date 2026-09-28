@@ -73,7 +73,7 @@ final class HeuristicPolicy {
         renderer: decodeTarget.renderer,
       );
 
-      final downloadPriority = _downloadPriority(
+      var downloadPriority = _downloadPriority(
         role,
         pageIndex: entry.key,
         currentIndex: observation.currentIndex,
@@ -98,6 +98,22 @@ final class HeuristicPolicy {
       // without reopening remote transport or creating a second window.
       final transientLocalStaticDeadline =
           transientPreview && staticWarm && deadlineStaticPreupload;
+      if (transientLocalStaticDeadline) {
+        downloadPriority =
+            _transientStaticDeadlinePriority(role, downloadPriority);
+      }
+      final staticWarmPriority = staticWarm
+          ? _staticWarmPriority(
+              role,
+              visible: visibleIndexes.contains(entry.key),
+              pageIndex: entry.key,
+              currentIndex: observation.currentIndex,
+              readDirection: readDirection,
+            )
+          : 0;
+      final effectiveStaticWarmPriority = transientLocalStaticDeadline
+          ? _transientStaticDeadlinePriority(role, staticWarmPriority)
+          : staticWarmPriority;
       if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
           role: role,
@@ -125,15 +141,8 @@ final class HeuristicPolicy {
       if (normalDecodeWatermark > 0) {
         decodes[decode] = DecodeDemand(
           role: role,
-          priority: staticWarm
-              ? _staticWarmPriority(
-                  role,
-                  visible: visibleStatic,
-                  pageIndex: entry.key,
-                  currentIndex: observation.currentIndex,
-                  readDirection: readDirection,
-                )
-              : _decodePriority(role),
+          priority:
+              staticWarm ? effectiveStaticWarmPriority : _decodePriority(role),
           targetWatermark: decodeWatermark,
           reason: staticWarm
               ? visibleStatic
@@ -177,13 +186,7 @@ final class HeuristicPolicy {
                 }
               : pagedTargetPreupload && !staticWarm
                   ? 820
-                  : _staticWarmPriority(
-                      role,
-                      visible: visibleStatic,
-                      pageIndex: entry.key,
-                      currentIndex: observation.currentIndex,
-                      readDirection: readDirection,
-                    ),
+                  : effectiveStaticWarmPriority,
           reason: pagedTargetPreupload && !staticWarm
               ? role == PageRole.previous
                   ? 'heuristic:paged-previous-preupload'
@@ -335,6 +338,14 @@ final class HeuristicPolicy {
           ),
         PageRole.detached => 0,
       };
+
+  int _transientStaticDeadlinePriority(PageRole role, int priority) {
+    // Slider scrub is an absolute page selection, not a read-direction
+    // observation. Its immediate physical neighbors are therefore symmetric
+    // presentation deadlines. Keep next2 below both ±1 neighbors while the
+    // stable 7/3 read-direction window and its learning remain unchanged.
+    return role == PageRole.previous && priority < 820 ? 820 : priority;
+  }
 
   int _downloadPriority(
     PageRole role, {

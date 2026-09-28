@@ -280,6 +280,7 @@ final class _ReaderViewState extends State<ReaderView>
   late Map<String, double> _runtimePageAspectRatios;
   late Map<String, double> _verticalLayoutRatios;
   Map<String, double>? _pendingVerticalLayoutRatios;
+  int? _verticalScrubAnchorIndex;
   bool _verticalRatioCommitScheduled = false;
   bool _verticalFutureRatioAdoptionScheduled = false;
   bool _verticalObservationRefreshScheduled = false;
@@ -497,6 +498,7 @@ final class _ReaderViewState extends State<ReaderView>
           widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
       _verticalLayoutRatios = _runtimePageAspectRatios;
       _pendingVerticalLayoutRatios = null;
+      _verticalScrubAnchorIndex = null;
       _verticalRatioCommitScheduled = false;
       _pendingVerticalGeometryCorrection = null;
       _resetVerticalCompositionCache();
@@ -988,7 +990,8 @@ final class _ReaderViewState extends State<ReaderView>
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
-    final scrubAnchor = widget.controller.currentIndex
+    final scrubAnchor = (_verticalScrubAnchorIndex ??
+            widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
     Map<String, double>? merged;
@@ -1003,6 +1006,19 @@ final class _ReaderViewState extends State<ReaderView>
       adopted.add(index);
     }
 
+    // An absolute slider target is positioned by the complete prefix before
+    // its center. Any newly measured ratio at/before that target therefore
+    // changes the selected page's physical offset even when the page itself
+    // is not visible. Adopt that prefix while the scrub anchor is explicit,
+    // then correct back to the same selected-page center. Leaving these facts
+    // pending until pointer-up would switch to the ordinary idle top-anchor
+    // policy and make the content jump after the thumb is released.
+    for (var index = 0; index <= scrubAnchor; index++) {
+      adopt(index);
+    }
+    // Ratios after the anchor do not affect its offset, but a page already in
+    // the viewport must use its real extent so visible coverage can converge
+    // while the slider is still held.
     for (var index = visibleMin; index <= visibleMax; index++) {
       adopt(index);
     }
@@ -1201,13 +1217,26 @@ final class _ReaderViewState extends State<ReaderView>
           identical(pending, _verticalLayoutRatios) ||
           _sameVerticalRatios(_verticalLayoutRatios, pending)) {
         _pendingVerticalLayoutRatios = null;
+        if (_interaction == Interaction.idle) {
+          _verticalScrubAnchorIndex = null;
+        }
         return;
       }
-      _preserveVerticalAnchor(
-        oldRatios: _verticalLayoutRatios,
-        oldStitch: widget.verticalStitch,
-        nextRatios: pending,
-      );
+      final scrubAnchor = _verticalScrubAnchorIndex;
+      if (scrubAnchor != null) {
+        final boundedAnchor = scrubAnchor
+            .clamp(0, widget.controller.chapter.pages.length - 1)
+            .toInt();
+        _pendingVerticalGeometryCorrection =
+            _verticalGeometry(ratios: pending).centeredOffsetFor(boundedAnchor);
+        _scheduleVerticalGeometryCorrectionClear();
+      } else {
+        _preserveVerticalAnchor(
+          oldRatios: _verticalLayoutRatios,
+          oldStitch: widget.verticalStitch,
+          nextRatios: pending,
+        );
+      }
       _verticalLayoutRatios = pending;
       _pendingVerticalLayoutRatios = null;
       _invalidateVerticalGeometryCache();
@@ -1234,6 +1263,25 @@ final class _ReaderViewState extends State<ReaderView>
         _verticalController.position,
         forceLayoutSnapshot: true,
       );
+      final pending = _pendingVerticalLayoutRatios;
+      if (_interaction == Interaction.scrubbing && pending != null) {
+        // A prefix correction can expose an already-measured page that was
+        // outside the provisional viewport. Consume that page's ratio in the
+        // same held scrub instead of waiting for another dimension event (or
+        // pointer-up) that may never arrive.
+        final layoutChanged = _adoptScrubViewportVerticalRatios(pending);
+        _pendingVerticalLayoutRatios =
+            _sameVerticalRatios(_verticalLayoutRatios, pending)
+                ? null
+                : pending;
+        if (layoutChanged) {
+          _verticalLayoutRevision.value++;
+        }
+      }
+      if (_interaction == Interaction.idle &&
+          _pendingVerticalLayoutRatios == null) {
+        _verticalScrubAnchorIndex = null;
+      }
       if (_interaction == Interaction.idle &&
           _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
         _scheduleVerticalKeepAliveRecenter();
@@ -2076,6 +2124,7 @@ final class _ReaderViewState extends State<ReaderView>
       _resetStripZoom();
       _verticalKeepAliveCenter.value = controller.currentIndex;
       _resetVerticalCompositionCache();
+      _verticalScrubAnchorIndex = null;
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
         _verticalLayoutRatios = _runtimePageAspectRatios;
@@ -2151,6 +2200,9 @@ final class _ReaderViewState extends State<ReaderView>
             _verticalController.position.hasContentDimensions) {
           _emitFromVerticalMetrics(_verticalController.position);
           _schedulePendingVerticalRatioCommit();
+          if (_pendingVerticalLayoutRatios == null) {
+            _verticalScrubAnchorIndex = null;
+          }
         } else {
           _emitObservation(
             controller.currentIndex.toDouble(),
@@ -2169,6 +2221,12 @@ final class _ReaderViewState extends State<ReaderView>
         return;
       }
       _handledNavigationRevision = revision;
+      if (controller.pageScrubbing || _interaction == Interaction.scrubbing) {
+        // Keep the absolute slider selection as geometry authority until all
+        // ratios observed during this scrub are committed. `currentIndex` is
+        // viewport-derived and may otherwise drift on the first idle layout.
+        _verticalScrubAnchorIndex = requested;
+      }
       final animated =
           controller.requestedPageAnimated && !controller.pageScrubbing;
       if (controller.pageScrubbing) {

@@ -778,9 +778,11 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   沿lower-index方向，仅严格低于visibleMin的incoming ratio可提前采用，
   且因其改变viewport prefix必须在同一次layout以top-anchor `geometryCorrectionTarget`原子修正ScrollPosition；
   真实visible页ratio通常冻结到idle；slider scrub是例外，因为它是绝对page-index导航而不是finger-owned content drag。
-  scrub中当前真实visible页的新source ratio必须可立即进入layout，并以slider-selected current的centered offset作为layout-time correction；
-  ratio提交后必须立即重发真实visible coverage，使因当前页缩短而新暴露的相邻页获得既有localOnly/one-frame资格，不得靠pointer-up/full execution打破geometry bootstrap。
-  idle采用其余新ratio时top-pixel offset仍必须通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
+  scrub中slider-selected page是显式center anchor；所有已知`index <= anchor`的source ratio必须立即进入layout，
+  因为任一prefix extent都会改变绝对page-index的物理offset。已真实visible的post-anchor ratio也必须立即采用。
+  ratio提交后立即重发coverage；若新暴露页的ratio已在pending中，下一layout pass继续消费，不等待新dimensions event或pointer-up。
+  pointer-up只结束input phase；scrub期间遗留的首次pending commit仍保持同一selected-page center，收敛后才释放scrub anchor。
+  普通idle/content-scroll采用其余新ratio时，top-pixel offset仍通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
   不得先换extent再以`jumpTo`制造可观察中间页。
   Pipeline在vertical active presentation期间对generic/unresolved以及仍走native texture的non-visible `far/near` speculative static output只defer新presentation work；对应UploadDemand identity继续保留，但`prepareOutput=false`，已有resident output/retention bookkeeping不被当成需要重建的资源；
   既有2/1 decode deadline窗口中的`next/next2/previous`在静态一帧已经decode-ready后必须允许提前进入UploadLane/present，并以`retainOutput`交给FrameBudgeter保留到viewport消费，避免把RGBA→SurfaceProducer首拷贝推迟到visible/transition seam。
@@ -815,6 +817,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   visible/current decode最多一帧。ADR 0331进一步区分“外层hidden工作窗”与“既有静态presentation deadline”：
   `next/next2/previous`若具备static资格，可在scrub中继续以`localOnly`取得一帧decode并`prepareOutput=true`，
   用于在进入viewport前写入统一presentation raster owner；该资格不得打开remote source。
+  transient scrub把immediate `next/previous`视为selected target两侧对称的representation deadline，二者同优先级；`next2`更低。
+  这不改变stable readDirection、7/3方向窗口或方向学习；不得靠增加local/decode/upload worker掩盖priority错误。
   其余`near/far` hidden decode仍使用`targetWatermark=0`、hidden upload仍使用`prepareOutput=false`。
   external-static decode已经ended并把一帧交给presentation owner后，等待first-frame acknowledgement不得继续阻塞下一项staged decode；
   offscreen presentation仍受独立bounded pending gate约束。vertical真实visible transition是可重复viewport role，
