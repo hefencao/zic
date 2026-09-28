@@ -49,10 +49,10 @@
   2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
   loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
-  ADR 0330–0332：scrub保留7/3 membership与50ms latest-wins；outer hidden仍retained/target0/no-prepare，static 2/1 deadline仅local-only一帧；selected page center anchor贯穿pointer-up。
-  immediate next/previous对称820、next2为800，不改readDirection/worker；ADR 0333进一步让vertical command completion不再写interaction，并让claim add/update/remove共用aggregate execution projection。
-  点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；同时去掉scrub ratio重复遍历、decode候选排序分配与点击action helper重复实现。
-  dev.114/dev.117 已把 refill 的源码字符串 guard 改成 stable stage + behavior regression 检查；Android API stub 冲突未复现，平台 guard 保留。
+  ADR 0330–0333：scrub保留7/3 membership与50ms latest-wins；outer hidden仍retained/target0/no-prepare；selected page center anchor贯穿pointer-up；immediate next/previous对称820、next2为800，不改readDirection/worker。
+  当前树Profile 12-30-02：held UI页74/113在UP前logical分别73.5/112.5、velocity=0，首个idle仍相同、delta=0；48次presentation sourceRead/38 identity，10个重复pair最短45.634s、5s内重复0、taskFailed=0。selected只拥有navigation identity，resident raster mounted先attach统一cache owner。
+  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：dispose claim/listener、native batch frame、exact cache authority、late lease、GIF codec、stale recovery、worker exit已收口；删除`_prewarmedSizes`和不可达direct-local分支。
+  点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）；逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 残余水位，不额外扩窗，同一 lease 随页推进伸缩且 priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。

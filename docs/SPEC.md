@@ -1159,7 +1159,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   scrub结束后即使current、visible membership与role均未变化，resource control phase变化也 MUST触发重新投影；normal work MUST在同一claim/physical task上恢复，不得detach/reacquire或cancel/reopen。
   operation、coverage、direction与media-cost等事实 SHOULD投影到各自typed resource配置；MUST NOT把velocity/logicalPosition等pointer-rate连续事实压成一个跨network/decode/upload通用标量权重并形成第二scheduler。
   多consumer映射到同一physical body时，priority与provider MUST按执行资格聚合：retained/local-only claim不得提升另一个full claim的network rank，也不得为其提供remote transport authority。
-  viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。
+  viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。slider-selected page只可覆盖navigation identity；
+  `logicalPosition` MUST始终来自同一physical vertical geometry；absolute slider scrub不是content travel，因此scrubbing observation MUST同步该physical baseline但投影`velocity=0`，MUST NOT更新travel direction。
+  held scrub中的post-frame ratio收敛若再次改变vertical layout，实际应用该layout revision的frame MUST在post-frame重发physical observation；MUST NOT依赖下一pointer事件，pointer-up/input phase变化本身 MUST NOT首次暴露最终center或制造velocity。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade enqueue `ReadingProgress`，普通翻页 MUST NOT等待 SQLite；
   persistent SQLite progress isolate尚未ready或启动失败时，enqueue MUST只在内存latest-wins缓冲并低频重试writer，
   MUST NOT在Flutter UI isolate同步SELECT/解析整章JSON/UPSERT。
@@ -1416,12 +1418,16 @@ cache owner MUST只在预算压力下回收 speculative entry，并在真实回�
 cache eviction 与 DecodeDemand/UploadDemand demand gap 都 MUST只改变 residency/claim，不得旋转 `externalPresentationCacheIdentity`；
 source/recovery/force-reload 或 fit 变化才 MAY旋转该 identity。Reader route retention/reentry MUST NOT被视为 presentation generation 变化：
 retained `PipelineReaderSession` MAY释放 page host/PageOutput/native decode/upload working set并释放 presentation claim，
-但 MUST保留 composition-owned presentation cache identity；若 raster 仍resident，重入 MUST直接复用同一 completer/key。
+但 MUST保留 composition-owned presentation cache identity；若 raster 仍resident，mounted consumer MUST在任何encoded file/bytes reopen之前直接复用同一 completer/key。
+`PipelineReaderSession.dispose()` MUST释放所有presentation claim并注销cache invalidation listener，direct dispose与retention不得存在两套清理语义。
 fit 变化 MUST只失效/旋转 presentation cache generation 与 external first-frame proof，
 并经既有 staged refill 重新授予，MUST NOT改变 DecodeId/source/download identity 或产生第二 scheduling authority；
 同一 mounted widget 与同一 PageOutput 在 DecodeId/source generation rebind 后收到不同 opaque identity 时 MUST重新取得一次 load 资格，
 且每个 identity 至多消费一次。旧 identity 已启动、完成或失败 MUST NOT压制新 generation grant；
 该 adapter 状态 MUST NOT升级成 Reader retry、transport、cache 或 scheduling authority。
+每次artifact-cache presentation bytes/file read MUST携带同一次读取的不可变`storageId + generation` authority；自动decode failure recovery MUST回传该exact authority，MUST NOT按page查询最近generation。manual force reload无旧read token时 MAY让cache owner解析当前authority。
+`LocalImagePlayer`取得presentation file lease后 MUST立即进入release保护；取消/替换发生在await期间时late lease仍 MUST释放。automatic recovery/retry结果 MUST绑定启动时load generation/token，旧结果不得重启新图片。
+GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NOT在旧fetch未完成时发起第二fetch，loading→ready MUST NOT改变媒体子树identity或重建codec。
 实际首帧回报后才可满足该watermark并释放下一张speculative fallback，新的current/transition MAY抢占等待中的后台request。
 真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。
 纵排 dragging/scrolling/settling 期间，任何非 current/transition 且不在真实 viewport 的 speculative static page MUST defer UploadDemand，
@@ -2240,7 +2246,9 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     `DownloadIngressProjectionRegistry` 只拥有有界 replay operation queue（默认最多2个）与实时 priority 排序，
     MUST NOT再实现 `>=1000 / 780..999 / <780` role gate或独立 memory-pressure eligibility。
     其 scheduler-owned `TaskControl` MUST贯穿 background Ingress/source execution；native source-write worker MAY并行执行已接纳的 reserve/copy/direct-file range，但 pending queue MUST消费同一动态 priority/cancellation，MUST NOT退化为独立FIFO scheduler，且取消后的in-flight native operation MUST真实退出后才释放worker capacity。
-    native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；SQLite artifact authority metadata MUST由 `SqliteIndex` owner connection 在一个短read transaction中返回object/replica/root一致snapshot，不得仅为该sub-millisecond查询建立常驻read worker；recency write MAY在既有 `StorageWriteScheduler` admission 后由专用worker执行。详见 ADR 0328。
+    native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；每个in-flight request MUST同时观察response与真实worker exit，worker异常退出不得让`response.first`永久悬挂，且busy capacity只能在exit已真实发生后结算。
+    NativeCursor若在batch decode等待期间dispose，batch返回的所有尚未转交frame MUST立即release，不得把prefetched native frame写回已dispose cursor。
+    SQLite artifact authority metadata MUST由 `SqliteIndex` owner connection 在一个短read transaction中返回object/replica/root一致snapshot，不得仅为该sub-millisecond查询建立常驻read worker；recency write MAY在既有 `StorageWriteScheduler` admission 后由专用worker执行。详见 ADR 0328。
     FrameBudgeter/memory pressure 只裁决native decoded/upload residency与media资源释放，
     MUST NOT再调整encoded/network flow credit；
     实际 persistent replay byte bandwidth 继续由共享 `ArtifactCacheReadScheduler` 拥有。

@@ -1,6 +1,7 @@
 part of 'native_source.dart';
 
 const int _nativeDecodeWorkerCount = 2;
+final Object _decodeWorkerExitedSignal = Object();
 
 final class _NativeDecodeResult {
   const _NativeDecodeResult({
@@ -483,7 +484,13 @@ final class _NativeDecodeWorker {
         epoch,
         maxFrames,
       ]);
-      final value = await response.first;
+      final value = await Future.any<Object?>(<Future<Object?>>[
+        response.first,
+        _exited.then<Object?>((_) => _decodeWorkerExitedSignal),
+      ]);
+      if (identical(value, _decodeWorkerExitedSignal)) {
+        throw StateError('native decode worker exited before responding');
+      }
       if (value is! List<Object?> || value.isEmpty) {
         throw StateError('invalid native decode worker response: $value');
       }

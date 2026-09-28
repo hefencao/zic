@@ -7,6 +7,7 @@ final class LocalImagePlayer extends StatefulWidget {
     required this.image,
     this.bytesLoader,
     this.tokenBytesLoader,
+    this.presentationBytesLoader,
     this.presentationFileLoader,
     this.decodeProbe,
     this.onRecoverPresentationFailure,
@@ -35,9 +36,13 @@ final class LocalImagePlayer extends StatefulWidget {
   final PickedImage image;
   final LocalImageBytesLoader? bytesLoader;
   final LocalImageTokenBytesLoader? tokenBytesLoader;
+  final LocalImagePresentationBytesLoader? presentationBytesLoader;
   final LocalImagePresentationFileLoader? presentationFileLoader;
   final LocalImageDecodeProbe? decodeProbe;
-  final Future<bool> Function(Object error)? onRecoverPresentationFailure;
+  final Future<bool> Function(
+    Object error,
+    PipelinePresentationArtifactAuthority? authority,
+  )? onRecoverPresentationFailure;
   final Future<bool> Function()? onRetry;
   final Future<bool> Function(Object? error)? onRetryWithError;
   final ImagePreviewStateChanged? onPreviewStateChanged;
@@ -81,6 +86,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
   Object? _externalPresentationLoadIdentity;
+  PipelinePresentationArtifactAuthority? _presentationRecoveryAuthority;
   bool _recoveryInFlight = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
@@ -147,6 +153,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _releasePresentationFileLease();
       _bytes = null;
       _imageProvider = null;
+      _presentationRecoveryAuthority = null;
       _reportedDimensions = null;
       _reportedDimensionsAuthoritative = false;
       _reportedPlaybackCapability = null;
@@ -404,6 +411,19 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     // let a newer identity supersede any older in-flight result through the
     // existing [_generation] guard in [_load].
     _externalPresentationLoadIdentity = presentationIdentity;
+    final resident = pipelinePresentationRasterCache
+        .residentProviderForIdentity(presentationIdentity);
+    if (resident != null) {
+      _generation++;
+      _loadToken.cancel();
+      _loadToken = MediaLoadToken();
+      _releasePresentationFileLease();
+      _bytes = null;
+      _presentationRecoveryAuthority = null;
+      _reportPlaybackCapability(false);
+      setState(() => _imageProvider = resident);
+      return;
+    }
     unawaited(_load());
   }
 
@@ -413,6 +433,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _releasePresentationFileLease();
     try {
       final tokenLoader = widget.tokenBytesLoader;
+      final presentationBytesLoader = widget.presentationBytesLoader;
       final loader = widget.bytesLoader;
       final presentationFileLoader = widget.presentationFileLoader;
       final presentationFormat = _detectedFormat;
@@ -424,14 +445,13 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               presentationFormat == LocalImageFormat.gif);
       if (mayUsePresentationFile) {
         final lease = await presentationFileLoader(token);
-        token.throwIfCancelled();
-        if (!mounted || generation != _generation || token != _loadToken) {
-          await lease?.release();
-          return;
-        }
         if (lease != null) {
           var retained = false;
           try {
+            token.throwIfCancelled();
+            if (!mounted || generation != _generation || token != _loadToken) {
+              return;
+            }
             final provider = encodedResourceImageProvider(
               FileEncodedResourceSource(
                 path: lease.path,
@@ -450,6 +470,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               );
             }
             _presentationFileLease = lease;
+            _presentationRecoveryAuthority = lease.authority;
             retained = true;
             _reportPlaybackCapability(false);
             _reportDimensions(width, height);
@@ -462,10 +483,16 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           } finally {
             if (!retained) await lease.release();
           }
+        } else {
+          token.throwIfCancelled();
+          if (!mounted || generation != _generation || token != _loadToken) {
+            return;
+          }
         }
       }
       final directPath =
-          tokenLoader == null &&
+          presentationBytesLoader == null &&
+              tokenLoader == null &&
               loader == null &&
               widget.decodeProbe == null &&
               !presentationFormat.isWebp &&
@@ -481,18 +508,26 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         if (!mounted || generation != _generation || token != _loadToken) {
           return;
         }
+        _presentationRecoveryAuthority = null;
         setState(() => _imageProvider = provider);
         return;
       }
-      final bytes = tokenLoader != null
-          ? await tokenLoader(widget.image, token)
-          : loader == null
-              ? await widget.image.readAsBytes()
-              : await loader(widget.image);
+      final PipelinePresentationBytes? presentationRead =
+          presentationBytesLoader == null
+              ? null
+              : await presentationBytesLoader(widget.image, token);
+      final bytes = presentationRead != null
+          ? presentationRead.bytes
+          : tokenLoader != null
+              ? await tokenLoader(widget.image, token)
+              : loader == null
+                  ? await widget.image.readAsBytes()
+                  : await loader(widget.image);
       token.throwIfCancelled();
       if (!mounted || generation != _generation || token != _loadToken) {
         return;
       }
+      _presentationRecoveryAuthority = presentationRead?.authority;
       final detected = detectLocalImageFormat(bytes, fileLength: bytes.length);
       if (detected == null) {
         throw const FormatException('文件头不是可识别的图片格式');
@@ -576,10 +611,17 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }) async {
     final recover = widget.onRecoverPresentationFailure;
     if (recover == null || _recoveryInFlight) return false;
+    final generation = _generation;
+    final token = _loadToken;
     _recoveryInFlight = true;
     try {
-      final recovered = await recover(error);
-      if (!mounted || !recovered) return false;
+      final recovered = await recover(error, _presentationRecoveryAuthority);
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          !recovered) {
+        return false;
+      }
       if (restartLoad) {
         _restartLoadAfterRecovery();
       }
@@ -596,13 +638,17 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final retryWithError = widget.onRetryWithError;
     if ((retry == null && retryWithError == null) || _recoveryInFlight) return;
     final prior = _state;
+    final generation = _generation;
+    final token = _loadToken;
     _recoveryInFlight = true;
     _publish(ImagePreviewState.loading(_detectedFormat));
     try {
       final recovered = retryWithError != null
           ? await retryWithError(prior.error)
           : await retry!();
-      if (!mounted) return;
+      if (!mounted || generation != _generation || token != _loadToken) {
+        return;
+      }
       if (recovered) {
         _restartLoadAfterRecovery();
         return;
@@ -614,7 +660,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && generation == _generation && token == _loadToken) {
         _publish(ImagePreviewState.invalid(prior.format, error));
       }
     } finally {
@@ -630,6 +676,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _releasePresentationFileLease();
     _bytes = null;
     _imageProvider = null;
+    _presentationRecoveryAuthority = null;
     _scheduledStaticFrameGeneration = -1;
     _reportedDimensions = null;
     _reportedDimensionsAuthoritative = false;
@@ -1074,17 +1121,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         },
       );
     }
-    final keyed = switch (_state.phase) {
-      ImagePreviewPhase.loading => KeyedSubtree(
-          key: imageFolderPreviewLoadingKey,
-          child: content,
-        ),
-      ImagePreviewPhase.ready => KeyedSubtree(
-          key: imageFolderPreviewReadyKey,
-          child: content,
-        ),
-      ImagePreviewPhase.invalid => content,
-    };
+    final keyed = _state.phase == ImagePreviewPhase.invalid
+        ? content
+        : KeyedSubtree(
+            key: ValueKey<String>(
+              'image-folder-preview-generation:$_generation',
+            ),
+            child: content,
+          );
     return ImagePreviewStateRegion(
       key: imageFolderPreviewStateKey,
       state: _state,

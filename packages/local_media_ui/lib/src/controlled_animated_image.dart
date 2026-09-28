@@ -53,6 +53,7 @@ final class _ControlledAnimatedImageState
   late final MonoClock _traceClock;
   int? _workRevision;
   int _generation = 0;
+  int _frameFetchGeneration = -1;
 
   @override
   void initState() {
@@ -149,12 +150,14 @@ final class _ControlledAnimatedImageState
     if (codec == null || !mounted || generation != _generation) {
       return;
     }
+    if (_frameFetchGeneration == generation) return;
     final totalPresentations = codec.repetitionCount < 0
         ? null
         : codec.frameCount * (codec.repetitionCount + 1);
     if (totalPresentations != null && _framesPresented >= totalPresentations) {
       return;
     }
+    _frameFetchGeneration = generation;
     try {
       final frame = await codec.getNextFrame();
       if (!mounted || generation != _generation) {
@@ -211,6 +214,10 @@ final class _ControlledAnimatedImageState
     } on Object catch (error) {
       if (mounted && generation == _generation) {
         widget.onError(error);
+      }
+    } finally {
+      if (_frameFetchGeneration == generation) {
+        _frameFetchGeneration = -1;
       }
     }
   }
@@ -303,7 +310,9 @@ final class _ControlledAnimatedImageState
     _playbackSpeed = playback.speed;
     _paused = playback.paused;
     _remaining = remaining;
-    if (!_paused && (hadTimer || wasPaused)) {
+    if (!_paused &&
+        _frameFetchGeneration != _generation &&
+        (hadTimer || wasPaused)) {
       _schedule(_generation, _remaining);
     }
   }

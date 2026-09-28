@@ -62,6 +62,20 @@ final class PipelinePresentationRasterCache
     presentationIdentity: presentationIdentity,
   );
 
+  ImageProvider<Object>? residentProviderForIdentity(
+    Object presentationIdentity,
+  ) {
+    final key = _keysByIdentity[presentationIdentity];
+    if (key == null) return null;
+    final entry = _entries.remove(key);
+    if (entry == null) return null;
+    _entries[key] = entry;
+    return _ResidentPresentationImageProvider(
+      key: key,
+      completer: entry.completer,
+    );
+  }
+
   @override
   void addInvalidationListener(
     PipelinePresentationCacheInvalidationListener listener,
@@ -549,6 +563,32 @@ final class _ManagedPresentationImageProvider
       provider: provider,
       handleError: handleError,
     );
+  }
+}
+
+final class _ResidentPresentationImageProvider
+    extends ImageProvider<PresentationRasterCacheKey> {
+  const _ResidentPresentationImageProvider({
+    required this.key,
+    required this.completer,
+  });
+
+  final PresentationRasterCacheKey key;
+  final ImageStreamCompleter completer;
+
+  @override
+  Future<PresentationRasterCacheKey> obtainKey(
+    ImageConfiguration configuration,
+  ) => Future<PresentationRasterCacheKey>.value(key);
+
+  @override
+  void resolveStreamForKey(
+    ImageConfiguration configuration,
+    ImageStream stream,
+    PresentationRasterCacheKey key,
+    ImageErrorListener handleError,
+  ) {
+    stream.setCompleter(completer);
   }
 }
 

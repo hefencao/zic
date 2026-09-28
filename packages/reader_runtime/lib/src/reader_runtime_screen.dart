@@ -58,6 +58,8 @@ typedef ReaderArtifactBytesLoader = PipelineArtifactBytesLoader;
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
+typedef ReaderPagePresentationBytesLoader = Future<PipelinePresentationBytes>
+    Function(MediaLoadToken token);
 typedef ReaderPageDimensionsReporter = void Function(int width, int height);
 
 final class ReaderPageRuntime {
@@ -68,6 +70,7 @@ final class ReaderPageRuntime {
     required this.sessionId,
     required this.demandRevision,
     required this.loadBytes,
+    required this.loadPresentationBytes,
     required this.openEncodedPresentationFile,
     required this.recoverPresentationFailure,
     required this.retryPresentation,
@@ -86,9 +89,13 @@ final class ReaderPageRuntime {
   final String sessionId;
   final int Function() demandRevision;
   final ReaderPageBytesLoader loadBytes;
+  final ReaderPagePresentationBytesLoader loadPresentationBytes;
   final Future<PipelineEncodedPresentationFileLease?> Function(MediaLoadToken token)
       openEncodedPresentationFile;
-  final Future<bool> Function(Object error) recoverPresentationFailure;
+  final Future<bool> Function(
+    Object error,
+    PipelinePresentationArtifactAuthority? authority,
+  ) recoverPresentationFailure;
   final Future<bool> Function() retryPresentation;
   final ReaderPlaybackController playback;
   final PipelinePageStream pageStream;
@@ -1220,10 +1227,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                 demandRevision: () => _pipeline.revision,
                 loadBytes: (token) =>
                     _pipeline.loadBytes(asset, token),
+                loadPresentationBytes: (token) =>
+                    _pipeline.loadPresentationBytes(asset, token),
                 openEncodedPresentationFile: (token) =>
                     _pipeline.openEncodedPresentationFile(asset, token),
-                recoverPresentationFailure: (error) =>
-                    _pipeline.recoverPresentationFailure(asset, error),
+                recoverPresentationFailure: (error, authority) =>
+                    _pipeline.recoverPresentationFailure(
+                      asset,
+                      error,
+                      rejectedAuthority: authority,
+                    ),
                 retryPresentation: () =>
                     _pipeline.retryPresentation(asset),
                 playback: _playback,

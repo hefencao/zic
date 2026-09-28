@@ -628,6 +628,12 @@ final class _ReaderViewState extends State<ReaderView>
             final list = ValueListenableBuilder<int>(
               valueListenable: _verticalLayoutRevision,
               builder: (_, _, _) {
+                // A geometry revision is not complete until the rebuilt
+                // ListView has applied the new extents/corrected pixels. The
+                // resulting physical viewport observation must be published
+                // from this frame, especially while a slider is held and no
+                // further pointer event is guaranteed.
+                _scheduleVerticalObservationRefreshAfterLayout();
                 final geometry = _verticalGeometry();
                 return ListView.builder(
                   key: const ValueKey<String>('reader-vertical-list'),
@@ -1272,6 +1278,8 @@ final class _ReaderViewState extends State<ReaderView>
                 : pending;
         if (layoutChanged) {
           _verticalLayoutRevision.value++;
+          // The ValueListenableBuilder schedules the authoritative observation
+          // from the frame that actually applies this geometry revision.
         }
       }
       if (_interaction == Interaction.idle &&
@@ -2190,16 +2198,26 @@ final class _ReaderViewState extends State<ReaderView>
     if (requested == null) {
       _handledNavigationRevision = revision;
       if (_interaction == Interaction.scrubbing && !controller.pageScrubbing) {
-        _interaction = Interaction.idle;
         if (controller.direction == ReadingDirection.vertical &&
             _verticalController.hasClients &&
             _verticalController.position.hasContentDimensions) {
-          _emitFromVerticalMetrics(_verticalController.position);
+          final position = _verticalController.position;
+          final physical = _verticalNavigationPosition(
+            _verticalGeometry(),
+            position,
+          ).logicalPosition;
+          // Ending the input phase is not physical travel. Synchronize the
+          // velocity baseline to the already-laid-out viewport before the idle
+          // observation so pointer-up cannot manufacture direction.
+          _resetVelocityBaseline(physical);
+          _interaction = Interaction.idle;
+          _emitFromVerticalMetrics(position);
           _schedulePendingVerticalRatioCommit();
           if (_pendingVerticalLayoutRatios == null) {
             _verticalScrubAnchorIndex = null;
           }
         } else {
+          _interaction = Interaction.idle;
           _emitObservation(
             controller.currentIndex.toDouble(),
             0,
@@ -3327,7 +3345,7 @@ final class _ReaderViewState extends State<ReaderView>
   }) {
     final geometry = _verticalGeometry();
     final position = _verticalNavigationPosition(geometry, metrics);
-    final velocity = _velocityFor(position.logicalPosition);
+    final velocity = _verticalVelocityFor(position.logicalPosition);
     _lastVerticalScrollPixels = metrics.pixels;
     _lastVerticalLogicalPosition = position.logicalPosition;
     _lastVerticalVelocity = velocity;
@@ -3416,17 +3434,9 @@ final class _ReaderViewState extends State<ReaderView>
     ScrollMetrics metrics,
   ) {
     const boundaryTolerance = 0.01;
-    final scrubAnchor = widget.controller.pageScrubbing
-        ? _verticalScrubAnchorIndex
-        : null;
-    if (scrubAnchor != null) {
-      final index = scrubAnchor
-          .clamp(0, widget.controller.chapter.pages.length - 1)
-          .toInt();
-      return (index: index, logicalPosition: index.toDouble());
-    }
     final minExtent = metrics.minScrollExtent;
     final maxExtent = metrics.maxScrollExtent;
+    ({int index, double logicalPosition}) physicalPosition;
     if (maxExtent - minExtent <= boundaryTolerance) {
       // With no scroll range, geometry cannot infer a unique center page.
       // Preserve Reader navigation identity instead of fabricating a midpoint
@@ -3434,19 +3444,30 @@ final class _ReaderViewState extends State<ReaderView>
       final index = widget.controller.currentIndex
           .clamp(0, widget.controller.chapter.pages.length - 1)
           .toInt();
-      return (index: index, logicalPosition: index.toDouble());
-    }
-    if (metrics.pixels <= minExtent + boundaryTolerance) {
-      return (index: 0, logicalPosition: 0);
-    }
-    if (metrics.pixels >= maxExtent - boundaryTolerance) {
+      physicalPosition = (index: index, logicalPosition: index.toDouble());
+    } else if (metrics.pixels <= minExtent + boundaryTolerance) {
+      physicalPosition = (index: 0, logicalPosition: 0);
+    } else if (metrics.pixels >= maxExtent - boundaryTolerance) {
       final index = widget.controller.chapter.pages.length - 1;
-      return (index: index, logicalPosition: index.toDouble());
+      physicalPosition = (index: index, logicalPosition: index.toDouble());
+    } else {
+      physicalPosition = geometry.positionAt(
+        pixels: metrics.pixels,
+        viewportDimension: metrics.viewportDimension,
+      );
     }
-    return geometry.positionAt(
-      pixels: metrics.pixels,
-      viewportDimension: metrics.viewportDimension,
-    );
+
+    final scrubAnchor = widget.controller.pageScrubbing
+        ? _verticalScrubAnchorIndex
+        : null;
+    if (scrubAnchor == null) return physicalPosition;
+    final index = scrubAnchor
+        .clamp(0, widget.controller.chapter.pages.length - 1)
+        .toInt();
+    // Slider ownership selects navigation identity only. Logical position and
+    // velocity remain physical viewport coordinates so ending the interaction
+    // cannot manufacture travel from a phase-only index -> center conversion.
+    return (index: index, logicalPosition: physicalPosition.logicalPosition);
   }
 
   void _scheduleVerticalLayoutSnapshot({
@@ -3603,6 +3624,22 @@ final class _ReaderViewState extends State<ReaderView>
       assetKey: page.assetKey,
       fraction: target.fraction,
     );
+  }
+
+  double _verticalVelocityFor(double logicalPosition) {
+    if (_interaction == Interaction.scrubbing) {
+      // Slider jumps are absolute navigation, not content travel. Keep the
+      // baseline synchronized to physical geometry without teaching a reading
+      // direction from the distance between successive slider targets.
+      _resetVelocityBaseline(logicalPosition);
+      return 0;
+    }
+    return _velocityFor(logicalPosition);
+  }
+
+  void _resetVelocityBaseline(double logicalPosition) {
+    _lastLogicalPosition = logicalPosition;
+    _lastMicros = widget.clock.nowMicros();
   }
 
   double _velocityFor(double logicalPosition) {

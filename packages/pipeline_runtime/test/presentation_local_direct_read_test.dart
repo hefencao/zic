@@ -461,15 +461,25 @@ void main() {
 
       try {
         final first = await reader
-            .loadBytes(asset, MediaLoadToken())
+            .loadPresentationBytes(asset, MediaLoadToken())
             .timeout(const Duration(seconds: 2));
-        expect(first, oldBytes);
+        expect(first.bytes, oldBytes);
+        expect(first.authority, isNotNull);
+        final rejectedAuthority = first.authority!;
 
         await cache.storePromotedArtifact(id: id, bytes: newBytes);
+        final newest = await reader
+            .loadPresentationBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 2));
+        expect(newest.bytes, newBytes);
+        expect(newest.authority, isNotNull);
+        expect(newest.authority!.generation, isNot(rejectedAuthority.generation));
+
         expect(
           await reader.recoverPresentationFailure(
             asset,
             StateError('late rejection from old generation'),
+            rejectedAuthority: rejectedAuthority,
           ),
           isTrue,
         );
@@ -536,9 +546,10 @@ void main() {
         await store.partialOpened.future.timeout(const Duration(seconds: 2));
 
         final cached = await reader
-            .loadBytes(asset, MediaLoadToken())
+            .loadPresentationBytes(asset, MediaLoadToken())
             .timeout(const Duration(seconds: 2));
-        expect(cached, cachedImage);
+        expect(cached.bytes, cachedImage);
+        expect(cached.authority, isNotNull);
         expect(transferRuntime.registry.find(id)?.state,
             DownloadState.receiving);
 
@@ -546,6 +557,7 @@ void main() {
           await reader.recoverPresentationFailure(
             asset,
             StateError('decoder rejected cached image'),
+            rejectedAuthority: cached.authority,
           ),
           isTrue,
         );
@@ -554,6 +566,7 @@ void main() {
           await reader.recoverPresentationFailure(
             asset,
             const FormatException('must not auto-loop'),
+            rejectedAuthority: cached.authority,
           ),
           isFalse,
         );

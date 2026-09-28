@@ -3,6 +3,8 @@ library reader_runtime;
 export 'package:pipeline_runtime/pipeline_runtime.dart'
     show
         PipelineArtifactBytesLoader,
+        PipelinePresentationArtifactAuthority,
+        PipelinePresentationBytes,
         PipelinePageContentKind,
         PipelinePageOutputListener,
         PipelinePageOutputSnapshot,

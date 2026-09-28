@@ -20,6 +20,8 @@ typedef LocalImageTokenBytesLoader = Future<Uint8List> Function(
   PickedImage image,
   MediaLoadToken token,
 );
+typedef LocalImagePresentationBytesLoader = Future<PipelinePresentationBytes>
+    Function(PickedImage image, MediaLoadToken token);
 typedef LocalImagePresentationFileLoader =
     Future<PipelineEncodedPresentationFileLease?> Function(MediaLoadToken token);
 typedef LocalImageDecodeProbe = Future<void> Function(Uint8List bytes);
@@ -189,10 +191,6 @@ const webpNativeTextureViewportKey =
 const imageFolderScreenKey = ValueKey<String>('webp-folder-screen');
 const imageFolderPreviewStateKey =
     ValueKey<String>('image-folder-preview-state');
-const imageFolderPreviewReadyKey =
-    ValueKey<String>('image-folder-preview-ready');
-const imageFolderPreviewLoadingKey =
-    ValueKey<String>('image-folder-preview-loading');
 const imagePageLoadingIndicatorKey =
     ValueKey<String>('image-page-loading-indicator');
 const imageFolderPreviewErrorKey =

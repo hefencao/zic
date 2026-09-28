@@ -115,6 +115,106 @@ void main() {
   );
 
   testWidgets(
+    'mounted external static reuses detached resident raster without reopening encoded source',
+    (tester) async {
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(() {
+        pipelinePresentationRasterCache.clearPresentationRasters();
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+      });
+      final bytes = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final chapter = _chapterWithPages(5);
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _RuntimeFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+        externalPresentationPrewarmer:
+            prewarmPipelineExternalStaticPresentation,
+        presentationCacheAuthority: pipelinePresentationRasterCache,
+        loaderSources: <Uri, LoaderTransportSource>{
+          for (final page in chapter.pages)
+            page.uri: LoaderTransportSource(
+              revision: 'resident-static-r1',
+              loadBytes: () async => bytes,
+            ),
+        },
+      ).create(
+        chapter: chapter,
+        sessionId: 'resident-detached-mounted-widget-test',
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+
+      final asset = chapter.pages[2];
+      final output = session.pageOutput(asset);
+      final stream = session.pageStream(asset);
+      session.accept(_observationAt(chapter, 0, 1));
+      await _pumpUntil(tester, () => output.externalPresentationReady);
+      expect(output.externalPresentationCacheIdentity, isNotNull);
+      expect(
+        pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+        greaterThan(0),
+      );
+
+      var presentationFileOpens = 0;
+      var byteLoads = 0;
+      final image = PickedImage(
+        file: XFile('resident-static.png'),
+        format: LocalImageFormat.png,
+        displayName: 'resident-static.png',
+        sourceId: asset.uri.toString(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 360,
+            child: LocalImagePlayer(
+              image: image,
+              presentationFileLoader: (token) async {
+                token.throwIfCancelled();
+                presentationFileOpens++;
+                return null;
+              },
+              tokenBytesLoader: (_, token) async {
+                token.throwIfCancelled();
+                byteLoads++;
+                return Uint8List.fromList(bytes);
+              },
+              onFirstFrame: () =>
+                  session.reportPresentationFrameReady(asset),
+              pageStream: stream,
+              pageOutput: output,
+            ),
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
+      );
+
+      expect(
+        presentationFileOpens,
+        0,
+        reason:
+            'the managed raster owner already has the exact presentation '
+            'identity, so mounted binding must not reopen encoded storage',
+      );
+      expect(byteLoads, 0);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      for (var turn = 0; turn < 2; turn++) {
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+        await tester.pump(const Duration(milliseconds: 1));
+      }
+    },
+  );
+
+  testWidgets(
     'mounted external static relinquishes raster across a presentation demand gap',
     (tester) async {
       pipelinePresentationRasterCache.clearPresentationRasters();

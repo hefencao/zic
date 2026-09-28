@@ -322,11 +322,12 @@ final class ImportedImageChapterScreen extends StatelessWidget {
                 'folder-image:${page.sourceId}:${format.name}:${asset.index}',
               ),
               image: image,
-              tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+              presentationBytesLoader: (_, token) =>
+                  runtime.loadPresentationBytes(token),
               presentationFileLoader: runtime.openEncodedPresentationFile,
               onRecoverPresentationFailure: onPagePresentationRecovery == null
                   ? runtime.recoverPresentationFailure
-                  : (error) async {
+                  : (error, authority) async {
                       if (await onPagePresentationRecovery!(
                         asset,
                         error,
@@ -334,7 +335,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
                       )) {
                         return true;
                       }
-                      return runtime.recoverPresentationFailure(error);
+                      return runtime.recoverPresentationFailure(
+                        error,
+                        authority,
+                      );
                     },
               onRetry: onPagePresentationRecovery == null
                   ? runtime.retryPresentation

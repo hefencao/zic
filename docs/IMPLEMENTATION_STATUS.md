@@ -132,6 +132,19 @@ App build：0.31.0+328
   同轮确认previous慢不是“只有两个worker”：旧transient static次序为current1000/next820/next2 800/previous780，即使3 slot仍会让previous最后。
   scrub现把immediate next/previous统一为820，next2保留800；Profile可见相邻首帧prev n18 median/p90/max=48.8/82.3/98.3ms，
   next n17=47.4/76.7/80.5ms，两次held均在UP前完成相邻firstFrameReady且`taskFailed=0`。worker与7/3/NetLane边界未改。
+  同一轮后续手动Trace又暴露两项独立presentation/navigation生命周期问题：末次held scrub在current=98时physical viewport未动，旧实现却因scrub phase用整数logical、UP后恢复center fraction而产生logical 98.0→98.5及约+3.50 pages/s伪速度；
+  35个tap区间另有131次presentation sourceRead，其中28次为同页重复读取（21.4%，累计约188.7ms），detached raster已经prepared后mounted consumer仍先重开encoded presentation file。
+  现selected page只覆盖navigation identity；held scrub中的physical logicalPosition会随实际layout revision在pointer-up前重新发布，absolute scrub自身velocity固定为0且不更新travel direction。
+  mounted external-static先按同一presentation identity直接attach统一raster owner已有completer，owner miss才回退encoded acquisition。
+  真机验收中发现`prepare_reader_device_test.py`只是“安装现有APK+readiness preflight”，不会构建；因此前两份误装13:44旧Profile APK的样本作废。
+  重新执行`./tool/build_android.sh profile`并安装后，11-57-54 Profile Trace中held target118先稳定为logical=118.5/velocity=0，约5.25s后仍为118.5/0；pointer-up后的idle仍为118.5/0，页码119→119不漂移。
+  同一新Profile Trace的artifact-cache presentation-file-lease为26次/26个unique identity、重复读取0；同任务pre-fix 11-18-08为64次/37个unique、27次额外重复读取，重复identity累计readMicros约531.5ms。说明resident-raster mounted attach已切断“prepared后再重开encoded file”的重复路径。
+  对`522da3d4`后的Reader/media runtime另做了生命周期反审计并记录到`docs/audits/reader_media_runtime_state_audit.json`：8项报告问题与2项删除候选均由当前代码确认。
+  实现已收口direct dispose的presentation listener/claim释放、NativeCursor batch-return-after-dispose frame释放、presentation read exact `storageId+generation` authority回传（删除page→latest-authority镜像）、late file lease finally；
+  GIF单一frame fetch与稳定媒体子树identity、旧recovery/retry generation guard、decode/source-write worker exit结算也已收口；
+  同时删除纯写`_prewarmedSizes`及不可达第二个direct-local分支。affected Reader/local-media/Pipeline/native/reader-runtime tests为177 passed，bridge为3 passed；最终`./tool/check.sh --require-toolchains`在当前树exit 0（200.809s），三ABI debug与Rust 22/22通过。
+  当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
+  presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

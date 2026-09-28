@@ -68,7 +68,6 @@ for token in (
     require(runtime_api, token, "pipeline media prewarm boundary")
 for token in (
     "_AndroidTextureLeasePool",
-    "final Set<_TextureSize> _prewarmedSizes",
     "Map<_TextureSize, Set<_TexturePrewarmRequest>>",
     "pendingPrewarmCount",
     "await lease.initialize();",

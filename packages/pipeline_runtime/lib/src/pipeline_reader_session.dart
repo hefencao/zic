@@ -24,6 +24,27 @@ part 'pipeline_page_output.dart';
 typedef PipelineArtifactBytesLoader =
     Future<Uint8List> Function(PageAsset asset, MediaLoadToken token);
 
+/// Immutable cache authority for the exact encoded body returned to one
+/// presentation load. Error recovery must return this same authority rather
+/// than asking the page for whichever generation happens to be newest later.
+final class PipelinePresentationArtifactAuthority {
+  const PipelinePresentationArtifactAuthority({
+    required this.storageId,
+    required this.generation,
+  });
+
+  final DownloadId storageId;
+  final int generation;
+}
+
+/// Exact encoded bytes plus the artifact authority that produced them.
+final class PipelinePresentationBytes {
+  const PipelinePresentationBytes({required this.bytes, this.authority});
+
+  final Uint8List bytes;
+  final PipelinePresentationArtifactAuthority? authority;
+}
+
 /// Immutable encoded-body file/descriptor lease for presentation codecs that
 /// can consume a path directly. The lease is physical-generation scoped and
 /// must remain alive until the ImageProvider/codec no longer needs the path.
@@ -35,6 +56,7 @@ final class PipelineEncodedPresentationFileLease {
     required this.release,
     this.width,
     this.height,
+    this.authority,
   });
 
   final String path;
@@ -42,6 +64,7 @@ final class PipelineEncodedPresentationFileLease {
   final Object cacheIdentity;
   final int? width;
   final int? height;
+  final PipelinePresentationArtifactAuthority? authority;
   final Future<void> Function() release;
 }
 
@@ -125,16 +148,6 @@ abstract interface class PipelinePresentationCacheAuthority {
   bool allowsPresentationWarm(Object presentationIdentity);
 
   void invalidatePresentationIdentity(Object presentationIdentity);
-}
-
-final class _PresentationArtifactAuthority {
-  const _PresentationArtifactAuthority({
-    required this.storageId,
-    required this.generation,
-  });
-
-  final DownloadId storageId;
-  final int generation;
 }
 
 final class _MediaLoadTaskControl implements TaskControl {
@@ -846,9 +859,6 @@ final class PipelineReaderSession {
       <String, PipelinePageStream>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
-  final Map<DownloadId, _PresentationArtifactAuthority>
-  _artifactCachePresentationAuthorities =
-      <DownloadId, _PresentationArtifactAuthority>{};
   final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
   final Set<DecodeId> _externalPresentationRequests = <DecodeId>{};
@@ -1529,9 +1539,7 @@ final class PipelineReaderSession {
     _externalPresentationReady.clear();
     _externalPresentationPrewarmFailures.clear();
     _externalPresentationVisibleFrames.clear();
-    for (final identity in _externalPresentationCacheIdentities.values) {
-      _presentationCacheAuthority?.releasePresentationClaim(identity);
-    }
+    _releasePresentationCacheClaims();
     final binding = _binding;
     final readerSessionId = _readerSessionId;
     _binding = null;
@@ -1586,6 +1594,14 @@ final class PipelineReaderSession {
         },
       ),
     );
+  }
+
+  void _releasePresentationCacheClaims() {
+    final authority = _presentationCacheAuthority;
+    if (authority == null) return;
+    for (final identity in _externalPresentationCacheIdentities.values) {
+      authority.releasePresentationClaim(identity);
+    }
   }
 
   void resumeRetainedReaderSession({required int retainedMicros}) {
@@ -1984,11 +2000,10 @@ final class PipelineReaderSession {
         );
         return null;
       }
-      _artifactCachePresentationAuthorities[id] =
-          _PresentationArtifactAuthority(
-            storageId: read.storageId,
-            generation: read.generation,
-          );
+      final authority = PipelinePresentationArtifactAuthority(
+        storageId: read.storageId,
+        generation: read.generation,
+      );
       _publishPageSourceDimensions(
         id: id,
         asset: asset,
@@ -2013,6 +2028,7 @@ final class PipelineReaderSession {
         cacheIdentity: read.cacheIdentity,
         width: width,
         height: height,
+        authority: authority,
         release: read.release,
       );
     } on Object catch (error) {
@@ -2040,12 +2056,17 @@ final class PipelineReaderSession {
     }
   }
 
-  Future<Uint8List> loadBytes(PageAsset asset, MediaLoadToken token) async {
+  Future<Uint8List> loadBytes(PageAsset asset, MediaLoadToken token) async =>
+      (await loadPresentationBytes(asset, token)).bytes;
+
+  Future<PipelinePresentationBytes> loadPresentationBytes(
+    PageAsset asset,
+    MediaLoadToken token,
+  ) async {
     final override = _bytesLoader;
     final id = readerPageDownloadId(chapter, asset);
     if (override != null) {
-      _artifactCachePresentationAuthorities.remove(id);
-      return override(asset, token);
+      return PipelinePresentationBytes(bytes: await override(asset, token));
     }
     token.throwIfCancelled();
     final cache = _artifactCacheManager;
@@ -2057,11 +2078,10 @@ final class PipelineReaderSession {
       );
       token.throwIfCancelled();
       if (retained != null) {
-        _artifactCachePresentationAuthorities[id] =
-            _PresentationArtifactAuthority(
-              storageId: retained.storageId,
-              generation: retained.generation,
-            );
+        final authority = PipelinePresentationArtifactAuthority(
+          storageId: retained.storageId,
+          generation: retained.generation,
+        );
         _recordPresentationCacheRead(
           asset: asset,
           id: id,
@@ -2073,17 +2093,19 @@ final class PipelineReaderSession {
           joined: retained.joined,
           integrityBasis: retained.integrityBasis.name,
         );
-        return retained.bytes;
+        return PipelinePresentationBytes(
+          bytes: retained.bytes,
+          authority: authority,
+        );
       }
     }
     final hotRead = cache?.lookupMemoryWithAuthority(id);
     if (hotRead != null) {
       final hotBytes = hotRead.bytes;
-      _artifactCachePresentationAuthorities[id] =
-          _PresentationArtifactAuthority(
-            storageId: hotRead.storageId,
-            generation: hotRead.generation,
-          );
+      final authority = PipelinePresentationArtifactAuthority(
+        storageId: hotRead.storageId,
+        generation: hotRead.generation,
+      );
       _recordPresentationCacheRead(
         asset: asset,
         id: id,
@@ -2095,7 +2117,7 @@ final class PipelineReaderSession {
         joined: false,
         integrityBasis: ArtifactReadIntegrityBasis.memoryResident.name,
       );
-      return hotBytes;
+      return PipelinePresentationBytes(bytes: hotBytes, authority: authority);
     }
 
     final session = _downloads.find(id);
@@ -2111,11 +2133,10 @@ final class PipelineReaderSession {
         );
         token.throwIfCancelled();
         if (cached != null) {
-          _artifactCachePresentationAuthorities[id] =
-              _PresentationArtifactAuthority(
-                storageId: cached.storageId,
-                generation: cached.generation,
-              );
+          final authority = PipelinePresentationArtifactAuthority(
+            storageId: cached.storageId,
+            generation: cached.generation,
+          );
           final readMicros = clock.nowMicros() - readStarted;
           _recordPresentationCacheRead(
             asset: asset,
@@ -2133,7 +2154,10 @@ final class PipelineReaderSession {
             integrityBasis: cached.integrityBasis.name,
             sessionState: session?.state.name,
           );
-          return cached.bytes;
+          return PipelinePresentationBytes(
+            bytes: cached.bytes,
+            authority: authority,
+          );
         }
       } on Object catch (error) {
         token.throwIfCancelled();
@@ -2163,21 +2187,18 @@ final class PipelineReaderSession {
       );
     }
     if (_isDirectImmutableLocalUri(asset.uri)) {
-      _artifactCachePresentationAuthorities.remove(id);
       // An immutable local source owns final bytes before, during and after
       // its transfer. Presentation must not queue behind the transfer copy,
       // CRC and promotion just to read the same immutable body back; the
       // validated direct read below is the exact post-promotion authority.
-      return _readDirectImmutableSource(asset, id, session, token);
+      return PipelinePresentationBytes(
+        bytes: await _readDirectImmutableSource(asset, id, session, token),
+      );
     }
     if (session.state != DownloadState.promoted) {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
-    if (session.residentBodyBacked && _isDirectImmutableLocalUri(asset.uri)) {
-      _artifactCachePresentationAuthorities.remove(id);
-      return _readDirectImmutableSource(asset, id, session, token);
-    }
     if (session.residentBodyBacked) {
       // A promoted resident-body session intentionally owns no duplicate
       // writable Artifact body. This is the durable/historical-cache fast
@@ -2189,7 +2210,9 @@ final class PipelineReaderSession {
       // Falling through to readSessionArtifact(session.artifact) turns a
       // healthy promoted cache hit into "artifact cache entry is empty" and
       // incorrectly requires a user retry/source reload.
-      return _readResidentPresentationBody(asset, id, session, token);
+      return PipelinePresentationBytes(
+        bytes: await _readResidentPresentationBody(asset, id, session, token),
+      );
     }
     final artifactReadStarted = clock.nowMicros();
     final cacheRead = cache == null
@@ -2208,7 +2231,6 @@ final class PipelineReaderSession {
     }
     token.throwIfCancelled();
     final artifactReadMicros = clock.nowMicros() - artifactReadStarted;
-    _artifactCachePresentationAuthorities.remove(id);
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -2228,7 +2250,7 @@ final class PipelineReaderSession {
           cacheRead?.integrityBasis.name ??
           ArtifactReadIntegrityBasis.sessionArtifact.name,
     );
-    return bytes;
+    return PipelinePresentationBytes(bytes: bytes);
   }
 
   Future<Uint8List> _readResidentPresentationBody(
@@ -2277,7 +2299,6 @@ final class PipelineReaderSession {
             '${bytes.lengthInBytes}/$expectedLength for ${id.key}',
       );
     }
-    _artifactCachePresentationAuthorities.remove(id);
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -2305,10 +2326,11 @@ final class PipelineReaderSession {
     PageAsset asset,
     Object error, {
     bool userInitiated = false,
+    PipelinePresentationArtifactAuthority? rejectedAuthority,
   }) async {
     _requireOpen();
     final id = readerPageDownloadId(chapter, asset);
-    final authority = _artifactCachePresentationAuthorities[id];
+    final authority = rejectedAuthority;
     if (!userInitiated) {
       if (authority == null) return false;
       if (!_automaticPresentationRecoveries.add(id)) return false;
@@ -2321,7 +2343,6 @@ final class PipelineReaderSession {
       rejectedGeneration: authority?.generation,
     );
     if (recovered) {
-      _artifactCachePresentationAuthorities.remove(id);
       _rotateExternalPresentationCacheIdentity(id);
       _downloadTransfer.refreshScheduling();
     }
@@ -2331,16 +2352,12 @@ final class PipelineReaderSession {
   Future<bool> forceReloadPresentation(PageAsset asset) async {
     _requireOpen();
     final id = readerPageDownloadId(chapter, asset);
-    final authority = _artifactCachePresentationAuthorities[id];
     final recovered = await _transferRuntime.recoverPresentationArtifact(
       id,
       reason: 'manual-force-reload',
       userInitiated: true,
-      rejectedStorageId: authority?.storageId,
-      rejectedGeneration: authority?.generation,
     );
     if (recovered) {
-      _artifactCachePresentationAuthorities.remove(id);
       _automaticPresentationRecoveries.remove(id);
       _rotateExternalPresentationCacheIdentity(id);
       _downloadTransfer.refreshScheduling();
@@ -3889,6 +3906,10 @@ final class PipelineReaderSession {
       token.cancel();
     }
     _externalPresentationPrewarmTokens.clear();
+    _releasePresentationCacheClaims();
+    _presentationCacheAuthority?.removeInvalidationListener(
+      _handlePresentationCacheInvalidated,
+    );
     _externalPresentationCacheIdentities.clear();
     for (final output in _pageOutputs.values) {
       output._dispose();

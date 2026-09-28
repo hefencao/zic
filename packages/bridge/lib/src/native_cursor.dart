@@ -191,6 +191,12 @@ final class NativeCursor
       if (results.isEmpty) {
         throw StateError('native decode worker returned an empty batch');
       }
+      if (_disposeRequested) {
+        for (final result in results) {
+          _releaseWorkerFrame(result.frameAddress);
+        }
+        throw StateError('native cursor is disposed');
+      }
       _prefetched.addAll(results.skip(1));
       return _stepFromResult(results.first);
     } finally {

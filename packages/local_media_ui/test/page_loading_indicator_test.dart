@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_media_ui/local_media_ui.dart';
+import 'package:pipeline_runtime/pipeline_runtime.dart';
 
 void main() {
   testWidgets('page media owns the only loading indicator', (tester) async {
@@ -71,7 +73,7 @@ void main() {
                 'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
               );
             },
-            onRecoverPresentationFailure: (_) async {
+            onRecoverPresentationFailure: (_, __) async {
               recoveries++;
               return true;
             },
@@ -115,7 +117,7 @@ void main() {
                 'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
               );
             },
-            onRecoverPresentationFailure: (_) async => false,
+            onRecoverPresentationFailure: (_, __) async => false,
             onRetry: () async {
               retries++;
               fresh = true;
@@ -163,7 +165,7 @@ void main() {
                     'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
                   )
                 : Uint8List.fromList('<html>bad media</html>'.codeUnits),
-            onRecoverPresentationFailure: (_) async => false,
+            onRecoverPresentationFailure: (_, __) async => false,
             onRetryWithError: (error) async {
               retryError = error;
               fresh = true;
@@ -181,6 +183,160 @@ void main() {
 
     expect(retryError, isNotNull);
     expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+  });
+
+  testWidgets('cancelled presentation file load releases late lease',
+      (tester) async {
+    final leaseResult = Completer<PipelineEncodedPresentationFileLease?>();
+    var releases = 0;
+    final image = PickedImage(
+      file: XFile('late-lease.png'),
+      format: LocalImageFormat.png,
+      displayName: 'late-lease.png',
+      sourceId: 'memory:late-lease.png',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocalImagePlayer(
+          image: image,
+          presentationFileLoader: (_) => leaseResult.future,
+        ),
+      ),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    await tester.runAsync(() async {
+      leaseResult.complete(
+        PipelineEncodedPresentationFileLease(
+          path: '/unused/late-lease.png',
+          length: 1,
+          cacheIdentity: const ('late-lease', 1),
+          width: 1,
+          height: 1,
+          release: () async {
+            releases++;
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+    });
+    await tester.pump();
+
+    expect(releases, 1);
+  });
+
+  testWidgets('presentation recovery receives the exact read authority',
+      (tester) async {
+    final authority = PipelinePresentationArtifactAuthority(
+      storageId: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.invalid/page.png'),
+      ),
+      generation: 7,
+    );
+    PipelinePresentationArtifactAuthority? rejected;
+    final image = PickedImage(
+      file: XFile('authority.png'),
+      format: LocalImageFormat.png,
+      displayName: 'authority.png',
+      sourceId: 'memory:authority.png',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocalImagePlayer(
+          image: image,
+          presentationBytesLoader: (_, __) async => PipelinePresentationBytes(
+            bytes: Uint8List.fromList('<html>bad authority</html>'.codeUnits),
+            authority: authority,
+          ),
+          onRecoverPresentationFailure: (_, readAuthority) async {
+            rejected = readAuthority;
+            return false;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(identical(rejected, authority), isTrue);
+    expect(find.byKey(imageFolderPreviewErrorKey), findsOneWidget);
+  });
+
+  testWidgets('stale automatic recovery cannot restart replacement image',
+      (tester) async {
+    final recovery = Completer<bool>();
+    var recoveryCalls = 0;
+    var bLoads = 0;
+    final imageA = PickedImage(
+      file: XFile('generation-a.png'),
+      format: LocalImageFormat.png,
+      displayName: 'generation-a.png',
+      sourceId: 'memory:generation-a.png',
+    );
+    final imageB = PickedImage(
+      file: XFile('generation-b.png'),
+      format: LocalImageFormat.png,
+      displayName: 'generation-b.png',
+      sourceId: 'memory:generation-b.png',
+    );
+    final valid = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+      'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+
+    Widget player(PickedImage image, Future<Uint8List> Function(PickedImage) load) {
+      return MaterialApp(
+        home: LocalImagePlayer(
+          image: image,
+          bytesLoader: load,
+          onRecoverPresentationFailure: (_, __) async {
+            recoveryCalls++;
+            return recovery.future;
+          },
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      player(
+        imageA,
+        (_) async => Uint8List.fromList('<html>bad A</html>'.codeUnits),
+      ),
+    );
+    for (var turn = 0; turn < 20 && recoveryCalls == 0; turn++) {
+      await tester.pump(const Duration(milliseconds: 5));
+    }
+    expect(recoveryCalls, 1);
+
+    await tester.pumpWidget(
+      player(
+        imageB,
+        (_) async {
+          bLoads++;
+          return valid;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(bLoads, 1);
+
+    recovery.complete(true);
+    await tester.pumpAndSettle();
+
+    expect(
+      bLoads,
+      1,
+      reason:
+          'recovery from the replaced A generation must not restart current B',
+    );
   });
 
 }

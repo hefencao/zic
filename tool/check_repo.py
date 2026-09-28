@@ -1322,7 +1322,7 @@ def check_compile_regressions() -> None:
         'imageFolderChapterRecord',
         'ReaderRuntimeScreen(',
         'LoaderTransportSource(',
-        'tokenBytesLoader:',
+        'presentationBytesLoader:',
         'pageSubtitleBuilder:',
         'downloadIdentity: runtime.pageStream.identity',
         'traceSessionId: runtime.sessionId',

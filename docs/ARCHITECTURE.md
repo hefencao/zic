@@ -732,12 +732,18 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   DecodeDemand/UploadDemand 离开 3/7 调度窗口同样只是 demand gap：claim MAY 降级/释放，但 identity MUST 保持稳定。
   source/recovery/force-reload 或 fit 改变才可旋转该 identity。Reader route retention/reentry 同样不是 presentation generation 边界：
   retained `PipelineReaderSession` 可以销毁 page host/PageOutput/native decode/upload 并释放 presentation claim 以释放 Reader-local working set，
-  但 MUST 保留 composition-owned presentation cache identity；若同 raster 仍由 manager resident，重入直接复用同一 completer/key，
+  但 MUST 保留 composition-owned presentation cache identity；若同 raster 仍由 manager resident，mounted consumer先按该identity直接attach既有completer/key，
+  不得为了确认同一resident raster先重新打开encoded presentation file或重读encoded bytes；只有owner不再resident时才回到正常encoded acquisition。
   fit 改变时才旋转 Flutter presentation cache identity / first-frame proof并经既有 staged policy 重授，
   不得借此改变 DecodeId、source/download identity 或建立新的 scheduling owner：
   同一 `LocalImagePlayer`/`PipelinePageOutputStream` 在 DecodeId/source generation rebind 后若 opaque cache identity 改变，
   必须允许新 generation 再次启动一次 load；旧 generation 已开始/完成不能成为抑制新 grant 的证据。
   较新的 identity 可借既有 local load generation guard 淘汰旧 in-flight 结果，但不得因此产生新的 retry/transport/policy owner。
+  每次artifact-cache presentation read同时产生不可变`storageId + generation` authority；file lease/bytes与该authority属于同一次读取结果，
+  presentation decode失败必须回传原authority，禁止按page id查询“最近一次读取”的generation后再失效缓存。manual force reload没有旧read token时才由cache owner解析当前authority。
+  `PipelineReaderSession.dispose()`必须与retention共用claim释放边界，并额外注销composition presentation-cache invalidation listener；全局cache不得因已销毁session遗留listener/claim而保活Reader。
+  `LocalImagePlayer`取得file lease后立即进入finally保护，late cancellation不能漏lease；automatic recovery/retry绑定启动时load generation/token，旧任务不得重启替换后的图片。
+  GIF的Flutter codec由单一串行frame-fetch生命周期拥有；pause/resume只能改变循环输入，不得并发调用同一codec的`getNextFrame()`，loading→ready也不得通过widget key变化重建codec。
   实际首帧回报才满足该 watermark；通用LiveCoordinator的speculative external grant缺省仍为1，
   Reader profile显式允许最多3个offscreen external-static first-frame并行pending，
   新的visible/current/transition不计入该speculative cap且可抢占后台等待。
@@ -835,7 +841,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `ReaderController`与requested/current page属于route/navigation owner，`DecodeTarget`只属于pipeline/media projection；
   MediaQuery/system UI导致target变化时只更新PipelineController target并在enqueue observation中从既有DemandPlan做增量diff，
   不得detach binding、清空download demand或重建navigation controller。
-  纵向continuous的coverage fraction/velocity/logicalPosition属于Reader连续几何事实；
+  纵向continuous的coverage fraction/velocity/logicalPosition属于Reader连续几何事实；slider scrub期间selected page只覆盖navigation identity，
+  `logicalPosition`仍来自同一physical `ScrollMetrics + ReaderVerticalGeometry`坐标，但absolute scrub jump本身不是content travel：`Interaction.scrubbing`只同步physical baseline并投影`velocity=0`，不得更新travel direction。
+  scrub中若ratio收敛在post-frame阶段再次改变layout，新的`_verticalLayoutRevision`必须由实际重建ListView的frame在post-frame重发physical observation；不得等待下一次pointer事件或在pointer-up才暴露最终center。
   当current/stable、target page、visible page membership与interaction control phase均不变时，
   PipelineReaderSession MUST在enqueue边界丢弃该control-no-op observation，
   不得每帧重跑ReaderBinding/PipelinePageStream/output/artifact scheduler。
@@ -1428,7 +1436,9 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   其rank变化直接唤醒同一`ArtifactCacheReadScheduler`重新pump pending队列；
   因此已排队的background页升为transition/current时可立即按新rank竞争，而不是等待无关I/O释放lease后才偶然重排。
   该seam只传播既有scheduler事实，不取消/重开already-admitted read，也不产生Reader-owned gate或第二local scheduler。
-  Reader-local native source replay 的后台 reserve/copy/file-range 同样只能作为 execution seam：`DownloadIngressProjectionRegistry` 的 scheduler-owned control 必须贯穿 `Ingress -> BackgroundWritableEncodedSource -> native source-write worker`；pending worker 必须按实时 priority 排序并响应 queued cancellation，in-flight native operation 仍须真实退出后释放 slot。decode worker 与 source-write worker lifecycle 必须显式分离，由 composition 并列 prewarm/shutdown，不得用 decode API 暗中拥有 source mutation worker。
+  Reader-local native source replay 的后台 reserve/copy/file-range 同样只能作为 execution seam：`DownloadIngressProjectionRegistry` 的 scheduler-owned control 必须贯穿 `Ingress -> BackgroundWritableEncodedSource -> native source-write worker`；
+  pending worker 必须按实时 priority 排序并响应 queued cancellation，in-flight native operation 仍须真实退出后释放 slot。decode worker 与 source-write worker lifecycle 必须显式分离，由 composition 并列 prewarm/shutdown，不得用 decode API 暗中拥有 source mutation worker。
+  每个worker request同时观察response与真实isolate exit；异常退出必须结算等待者，但只有exit已发生后才释放busy capacity。NativeCursor在batch decode等待期间被dispose时，返回批次中尚未转交的所有native frame立即release，不能写回已dispose的prefetch queue。
   durable artifact authority 的 metadata snapshot 仍由 `SqliteIndex` 唯一拥有；artifact object/replica/storage-root 直接在 owner connection 的一个短 read transaction 中形成同一 snapshot。约0.13ms的该查询不再常驻 background read isolate；真正的body/access I/O仍走既有异步边界，recency touch仍在 `StorageWriteScheduler` admission 后交给专用 SQLite worker。详见 ADR 0328。
   durable cold-partial只读lookup必须由persistent index/file直接裁决，
   hit/miss均不得为读取或存在性探测materialize durable-store `DownloadSession`；store session只允许用于durable mutation。

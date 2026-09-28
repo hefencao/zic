@@ -1292,7 +1292,7 @@ void main() {
             index: index,
             uri: Uri.parse('asset:///ticker-$index.png'),
             width: 1000,
-            height: 100,
+            height: 1000,
           ),
         ),
         readingDirection: ReadingDirection.vertical,
@@ -1309,22 +1309,35 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: ReaderView(
-            controller: controller,
-            clock: clock,
-            pageBuilder: (context, asset, reportFirstFrame) => const Center(
-              child: CircularProgressIndicator(),
+          home: Center(
+            child: SizedBox(
+              width: 400,
+              height: 300,
+              child: ReaderView(
+                controller: controller,
+                clock: clock,
+                pageBuilder: (context, asset, reportFirstFrame) =>
+                    const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              ),
             ),
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 16));
+      final list = find.byKey(
+        const ValueKey<String>('reader-vertical-list'),
+      );
+      await tester.drag(list, const Offset(0, -500));
+      await tester.pump(const Duration(milliseconds: 250));
 
       final pageFinders = <({int index, Finder finder})>[];
       for (var index = 0; index < chapter.pages.length; index++) {
         final finder = find.byKey(
           ValueKey<String>('reader-vertical-page:$index'),
+          skipOffstage: false,
         );
         if (finder.evaluate().isNotEmpty) {
           pageFinders.add((index: index, finder: finder));
@@ -1332,29 +1345,49 @@ void main() {
       }
       expect(pageFinders.length, greaterThan(1));
 
-      final tickerModes = <int, bool>{};
+      final listRect = tester.getRect(list);
+      var visibleCount = 0;
+      var offscreenCount = 0;
       for (final entry in pageFinders) {
         final tickerMode = find.descendant(
           of: entry.finder,
-          matching: find.byType(TickerMode),
+          matching: find.byType(TickerMode, skipOffstage: false),
         );
         expect(
           tickerMode,
           findsOneWidget,
           reason: 'every composed vertical page must have a ticker gate',
         );
-        tickerModes[entry.index] =
-            tester.widget<TickerMode>(tickerMode).enabled;
+        final rect = tester.getRect(entry.finder);
+        final geometryVisible =
+            rect.bottom > listRect.top && rect.top < listRect.bottom;
+        final enabled = tester.widget<TickerMode>(tickerMode).enabled;
+        if (geometryVisible) {
+          visibleCount++;
+          expect(
+            enabled,
+            isTrue,
+            reason:
+                'geometry-visible page ' + entry.index.toString() + ' must be allowed to tick',
+          );
+        } else {
+          offscreenCount++;
+          expect(
+            enabled,
+            isFalse,
+            reason:
+                'composed offscreen page ' + entry.index.toString() + ' must stay ticker-muted',
+          );
+        }
       }
 
-      expect(tickerModes.values, contains(true));
+      expect(visibleCount, greaterThan(0));
       expect(
-        tickerModes.values,
-        contains(false),
+        offscreenCount,
+        greaterThan(0),
         reason:
-            'cacheExtent/keepAlive pages outside the viewport must stay mounted but ticker-muted',
+            'the cacheExtent scenario must keep at least one offscreen page composed',
       );
-      expect(tickerModes[controller.currentIndex], isTrue);
     },
   );
 
@@ -2193,6 +2226,24 @@ void main() {
         observations.last.visibleCoverages.map((entry) => entry.pageIndex),
         containsAll(<int>[1, 2, 3]),
       );
+      final held = observations.lastWhere(
+        (item) =>
+            item.interaction == Interaction.scrubbing &&
+            item.currentIndex == 2,
+      );
+      expect(
+        held.logicalPosition,
+        closeTo(2.5, 0.001),
+        reason:
+            'the final held-scrub observation must publish the corrected '
+            'physical center after deferred prefix-ratio convergence',
+      );
+      expect(
+        held.velocity,
+        closeTo(0, 0.001),
+        reason:
+            'absolute slider jumps must not teach continuous travel direction',
+      );
 
       controller.endPageScrub(2);
       await tester.pump();
@@ -2208,7 +2259,116 @@ void main() {
             'pointer-up must not switch from the slider-selected page center '
             'to an idle top-of-viewport geometry anchor',
       );
-      expect(observations.last.currentIndex, 2);
+      final released = observations.lastWhere(
+        (item) =>
+            item.interaction == Interaction.idle &&
+            item.currentIndex == 2,
+      );
+      expect(released.logicalPosition, closeTo(held.logicalPosition, 0.001));
+      expect(
+        released.velocity,
+        closeTo(0, 0.001),
+        reason:
+            'pointer-up after deferred ratio convergence must not manufacture '
+            'travel from a stale pre-correction observation',
+      );
+    },
+  );
+
+
+  testWidgets(
+    'vertical scrub release preserves physical logical position and zero phase velocity',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-scrub-logical-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-scrub-logical-chapter',
+          comicId: 'vertical-scrub-logical-comic',
+          title: 'vertical scrub logical',
+          sequence: 0,
+          pageCount: 4,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          4,
+          (index) => PageAsset(
+            pageId: 'vertical-scrub-logical-$index',
+            chapterId: 'vertical-scrub-logical-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-scrub-logical-$index.png'),
+            width: 400,
+            height: 400,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-scrub-logical-test',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              pageAspectRatios: <String, double>{
+                for (final page in chapter.pages) page.assetKey: 1,
+              },
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      controller.beginPageScrub();
+      controller.scrubToPage(1);
+      await tester.pump();
+      await tester.pump();
+
+      final held = observations.lastWhere(
+        (item) =>
+            item.interaction == Interaction.scrubbing &&
+            item.currentIndex == 1,
+      );
+      expect(
+        held.logicalPosition,
+        closeTo(1.5, 0.001),
+        reason:
+            'slider selection owns current identity, but logical position must '
+            'remain the physical viewport-center coordinate',
+      );
+
+      observations.clear();
+      controller.endPageScrub(1);
+      await tester.pump();
+      await tester.pump();
+
+      final released = observations.lastWhere(
+        (item) =>
+            item.interaction == Interaction.idle &&
+            item.currentIndex == 1,
+      );
+      expect(released.logicalPosition, closeTo(held.logicalPosition, 0.001));
+      expect(
+        released.velocity,
+        closeTo(0, 0.001),
+        reason:
+            'ending scrub without physical motion must not manufacture travel '
+            'direction from a navigation-phase coordinate change',
+      );
     },
   );
 

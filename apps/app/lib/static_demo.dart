@@ -195,7 +195,8 @@ Widget? _buildMediaReaderPage(
         sourceId: asset.uri.toString(),
         byteLength: asset.byteLength,
       ),
-      tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+      presentationBytesLoader: (_, token) =>
+          runtime.loadPresentationBytes(token),
       onRecoverPresentationFailure: runtime.recoverPresentationFailure,
       onRetry: runtime.retryPresentation,
       pageStream: runtime.pageStream,

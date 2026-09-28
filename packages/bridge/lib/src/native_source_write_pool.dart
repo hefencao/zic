@@ -1,6 +1,7 @@
 part of 'native_source.dart';
 
 const int _nativeSourceWriteWorkerCount = 2;
+final Object _sourceWriteWorkerExitedSignal = Object();
 
 enum _NativeSourceWriteOperation { reserveCapacity, append, appendFileRange }
 
@@ -341,7 +342,13 @@ final class _NativeSourceWriteWorker {
         pending.path,
         pending.fileOffset,
       ]);
-      final value = await response.first;
+      final value = await Future.any<Object?>(<Future<Object?>>[
+        response.first,
+        _exited.then<Object?>((_) => _sourceWriteWorkerExitedSignal),
+      ]);
+      if (identical(value, _sourceWriteWorkerExitedSignal)) {
+        throw StateError('native source write worker exited before responding');
+      }
       if (value is int) return value;
       throw StateError('invalid native source write response: $value');
     } finally {

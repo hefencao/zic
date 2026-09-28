@@ -412,7 +412,6 @@ final class _AndroidTextureLeasePool {
   // raster while the upload is still in flight.
   final Map<_TextureSize, Set<Future<AndroidTextureLease>>> _acquiring =
       <_TextureSize, Set<Future<AndroidTextureLease>>>{};
-  final Set<_TextureSize> _prewarmedSizes = <_TextureSize>{};
   int _generation = 0;
 
   int get idleCount =>
@@ -456,7 +455,6 @@ final class _AndroidTextureLeasePool {
         _idle.remove(size);
       }
       _idleOrder.remove(lease);
-      _updatePrewarmMarker(size);
       return _TextureReservation(
         lease: lease,
         reused: true,
@@ -526,7 +524,6 @@ final class _AndroidTextureLeasePool {
     _prewarming
         .putIfAbsent(size, () => <_TexturePrewarmRequest>{})
         .add(request);
-    _prewarmedSizes.add(size);
     unawaited(_runPrewarm(request, width: width, height: height));
     return request.future;
   }
@@ -568,7 +565,6 @@ final class _AndroidTextureLeasePool {
       if (requests != null && requests.isEmpty) {
         _prewarming.remove(request.size);
       }
-      _updatePrewarmMarker(request.size);
     }
   }
 
@@ -578,7 +574,6 @@ final class _AndroidTextureLeasePool {
       for (final entry in _idle.entries.toList(growable: false)) {
         if (!entry.value.remove(lease)) continue;
         if (entry.value.isEmpty) _idle.remove(entry.key);
-        _updatePrewarmMarker(entry.key);
         return lease;
       }
     }
@@ -596,22 +591,8 @@ final class _AndroidTextureLeasePool {
     }
   }
 
-  void _updatePrewarmMarker(_TextureSize size) {
-    final hasIdle = _idle[size]?.isNotEmpty ?? false;
-    final hasPending = _prewarming[size]?.any(
-          (request) => request.generation == _generation,
-        ) ??
-        false;
-    if (hasIdle || hasPending) {
-      _prewarmedSizes.add(size);
-    } else {
-      _prewarmedSizes.remove(size);
-    }
-  }
-
   Future<void> releaseIdle() async {
     _generation++;
-    _prewarmedSizes.clear();
     final leases = _idle.values
         .expand((value) => value)
         .toList(growable: false);

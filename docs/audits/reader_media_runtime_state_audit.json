@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "audit_version": "1.2.0",
+  "last_updated": "2026-09-28T20:31:00+08:00",
+  "baseline_commit": "522da3d4",
+  "system": "zic-reader-media-runtime",
+  "scope": "Reader navigation truth, external-static presentation ownership, Pipeline presentation recovery, native decode/source-write lifecycle, GIF presentation lifecycle",
+  "summary": {
+    "total_issues": 12,
+    "confirmed": 12,
+    "resolved": 10,
+    "deleted_candidates": 2,
+    "full_validation_pending": false,
+    "profile_device_validation_pending": false
+  },
+  "governance": {
+    "status": "in_progress",
+    "rule": "先以当前代码/失败回归/设备trace确认所有权边界，再修改；禁止新增第二套scheduler、presentation cache或navigation authority。",
+    "preserve": [
+      "NetLane仍是网络执行权威",
+      "取消后容量必须等待真实operation/worker退出后才能释放",
+      "native decode前释放source read lock的现有边界不得回退",
+      "7/3 Download membership与既有bounded decode/upload/presentation窗口不得因本审计扩大"
+    ]
+  },
+  "issues": [
+    {
+      "id": "RMR-001",
+      "severity": "P1",
+      "title": "scrub结束会制造logicalPosition/velocity相位跳变",
+      "status": "resolved",
+      "evidence": "最新手动trace末次scrub保持current=98，但held logicalPosition=98.0，pointer-up后无物理pageCurrent变化却变为98.5，并投影约+3.50 pages/s velocity。当前ReaderView在pageScrubbing时直接返回anchor.toDouble()，结束后恢复ReaderVerticalGeometry.positionAt()的center坐标。",
+      "owner": "packages/reader/lib/src/reader_view.dart",
+      "plan": "currentIndex继续由slider selected anchor拥有，但logicalPosition始终使用同一物理geometry坐标；phase transition本身不得改变velocity/travel direction。",
+      "remediation_applied": "slider selected page只覆盖navigation identity；logicalPosition持续使用physical ReaderVerticalGeometry/ScrollMetrics坐标，避免phase-only 0.5页跳变与伪velocity。"
+    },
+    {
+      "id": "RMR-002",
+      "severity": "P1",
+      "title": "已resident的external-static raster挂载时仍重新打开encoded presentation file",
+      "status": "resolved",
+      "evidence": "最新手动trace的35个tap区间共有131次presentation sourceRead，其中28次为同页重复读取（21.4%，累计约188.7ms）。page102 detached prewarm后已有prepared raster，mounted consumer仍再次open durable presentation file，随后又命中prepared=true。LocalImagePlayer在cache owner命中前无条件进入_load/presentationFileLoader。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart + presentation_raster_cache.dart",
+      "plan": "由现有PipelinePresentationRasterCache提供按presentationIdentity直接attach resident completer的能力；命中时不得先打开encoded source，不引入第二缓存。",
+      "remediation_applied": "统一PipelinePresentationRasterCache新增resident-by-identity attach；mounted consumer命中resident completer时不再先open encoded presentation file。"
+    },
+    {
+      "id": "RMR-003",
+      "severity": "P1",
+      "title": "PipelineReaderSession.dispose未注销presentation cache监听且未统一释放claim",
+      "status": "resolved",
+      "evidence": "构造时调用presentationCacheAuthority.addInvalidationListener；retainReaderSession会逐identity releasePresentationClaim，但dispose当前既未removeInvalidationListener，也未在清空identity前逐项release claim。直接dispose可因此被全局cache listener持有，并留下protected/deadline claim。",
+      "owner": "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
+      "plan": "把listener unregister与claim release收口成单一presentation-cache detach出口，retain与dispose复用。",
+      "remediation_applied": "retain/dispose共用presentation claim释放helper；dispose额外remove invalidation listener后再清identity。"
+    },
+    {
+      "id": "RMR-004",
+      "severity": "P1",
+      "title": "NativeCursor双帧decode在dispose竞态下可遗留prefetched native frame",
+      "status": "resolved",
+      "evidence": "dispose仅释放调用当下_prefetched并在_decodeInFlight时延迟free；decodeNextScheduled await decodeBatch返回后无dispose检查即_prefetched.addAll(results.skip(1))。若dispose发生在await期间，第二帧会在清理之后进入queue且不再被释放。",
+      "owner": "packages/bridge/lib/src/native_cursor.dart",
+      "plan": "batch返回后若dispose已请求，统一释放整个返回批次；若保留双帧prefetch，则明确其预算与所有权。暂不无证据删除批量decode优化。",
+      "remediation_applied": "decodeBatch返回后先检查disposeRequested；若已dispose，整批native frame全部release，再释放cursor。"
+    },
+    {
+      "id": "RMR-005",
+      "severity": "P1",
+      "title": "presentation错误反馈按页查询最近authority，可把旧错误绑定到新generation",
+      "status": "resolved",
+      "evidence": "loadBytes/openEncodedPresentationFile每次读取都会覆盖_artifactCachePresentationAuthorities[id]；recoverPresentationFailure仅接收asset+error并查询该map当前值。旧读取的异步decode错误晚于新读取时，会把新storageId/generation作为rejected authority传入recoverPresentationArtifact。",
+      "owner": "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart + ReaderPageRuntime/LocalImagePlayer recovery seam",
+      "plan": "读取结果携带不可变presentation authority token，错误反馈必须回传同一token；删除按page id查询最新authority来关联旧错误的做法。",
+      "remediation_applied": "presentation bytes/file lease携带不可变storageId+generation authority并由LocalImagePlayer随同一次load回传；自动恢复不再读取page->latest authority镜像，该镜像已删除。"
+    },
+    {
+      "id": "RMR-006",
+      "severity": "P1",
+      "title": "LocalImagePlayer取消后返回的presentation file lease存在未释放窗口",
+      "status": "resolved",
+      "evidence": "_load在await presentationFileLoader后先token.throwIfCancelled()，lease释放保护位于之后。若取消发生于loader执行期间并返回非null lease，throw会越过release逻辑。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "lease取得后立即进入try/finally接管协议；只有成功转移给_presentationFileLease后才停止局部释放。",
+      "remediation_applied": "late presentation file lease在取得后立即进入try/finally接管；cancel/generation mismatch仍会release。"
+    },
+    {
+      "id": "RMR-007",
+      "severity": "P1",
+      "title": "ControlledAnimatedImage同一codec的getNextFrame可异步重入",
+      "status": "resolved",
+      "evidence": "_presentNext await codec.getNextFrame期间没有in-flight guard；_handlePlaybackChanged在paused->running且wasPaused=true时可重新_schedule，timer随后再次调用_presentNext，同一codec可能同时存在两个getNextFrame。",
+      "owner": "packages/local_media_ui/lib/src/controlled_animated_image.dart",
+      "plan": "一个串行播放循环唯一拥有getNextFrame；pause/resume只改变循环状态，不启动第二次取帧。",
+      "remediation_applied": "ControlledAnimatedImage以generation-scoped frame-fetch guard串行拥有getNextFrame；pause/resume不再重入同一codec。"
+    },
+    {
+      "id": "RMR-008",
+      "severity": "P2",
+      "title": "LocalImagePlayer loading→ready通过KeyedSubtree换key重建媒体子树",
+      "status": "resolved",
+      "evidence": "build按ImagePreviewPhase.loading/ready选择不同KeyedSubtree key；GIF首帧onReady发布ready后会替换子树identity，ControlledAnimatedImage state/codec因此被dispose并重新创建。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "媒体子树identity仅绑定图片/load generation，loading/ready只作为外层状态投影，不驱动资源Widget身份切换。",
+      "remediation_applied": "loading/ready共享load-generation稳定KeyedSubtree identity，不再因ready phase销毁并重建codec。"
+    },
+    {
+      "id": "RMR-009",
+      "severity": "P1",
+      "title": "旧automatic recovery/retry结果可操作已经替换的图片generation",
+      "status": "resolved",
+      "evidence": "_tryAutomaticRecovery与_retry等待异步recover后主要只检查mounted；didUpdateWidget会增长_generation并替换image，但旧recover成功仍可_restartLoadAfterRecovery操作当前B图。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "recovery/retry捕获启动generation与load token，完成后必须仍匹配才能修改状态或restart。",
+      "remediation_applied": "automatic recovery/manual retry捕获启动generation+MediaLoadToken；异步完成后不匹配则失去修改当前图片状态权限。"
+    },
+    {
+      "id": "RMR-010",
+      "severity": "P1",
+      "title": "native decode/source-write worker退出不结算response.first等待者",
+      "status": "resolved",
+      "evidence": "_NativeDecodeWorker和_NativeSourceWriteWorker都安装isolate exit listener，但run/decodeBatch分别直接await response.first，没有与_exited竞争；worker异常退出且未回复时pending request可永久悬挂。",
+      "owner": "packages/bridge/lib/src/native_decode_pool.dart + native_source_write_pool.dart",
+      "plan": "统一race response、worker exit/error并只完成一次pending；不得用timeout伪释放busy容量，worker真实退出后再结算slot。",
+      "remediation_applied": "decode/source-write request同时race response与真实worker exit；exit先发生时立即结算请求，pool busy slot在该真实exit之后的run finally释放。"
+    },
+    {
+      "id": "RMR-DEL-001",
+      "severity": "cleanup",
+      "title": "_prewarmedSizes为纯写死状态",
+      "status": "deleted",
+      "evidence": "_AndroidTextureLeasePool._prewarmedSizes只add/remove/clear，生产代码没有任何contains/read消费；真实资格已由_idle/_prewarming/_acquiring表达。",
+      "owner": "packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart",
+      "plan": "删除字段与_updatePrewarmMarker维护；同步把锁死该字段的字符串contract改成行为/owner seam检查。",
+      "remediation_applied": "删除纯写_prewarmedSizes及_updatePrewarmMarker，并移除dev.113字符串guard对该死状态的要求；_idle/_prewarming/_acquiring保持真实pool authority。"
+    },
+    {
+      "id": "RMR-DEL-002",
+      "severity": "cleanup",
+      "title": "loadBytes第二个direct immutable local判断不可达",
+      "status": "deleted",
+      "evidence": "loadBytes在session promotion wait之前遇到_isDirectImmutableLocalUri(asset.uri)已经直接return _readDirectImmutableSource；其后session.residentBodyBacked && 同一direct predicate分支无法到达。",
+      "owner": "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
+      "plan": "删除第二个重复direct-local分支并保持现有首个fast path。",
+      "remediation_applied": "删除promotion之后重复的residentBodyBacked && direct-local分支；保留前置唯一direct immutable fast path。"
+    }
+  ],
+  "validation": {
+    "passed": [
+      "affected Reader/local_media_ui/pipeline_runtime/pipeline_native/reader_runtime Flutter tests: 177 passed",
+      "packages/bridge tests: 3 passed",
+      "focused scrub logical-position, resident-raster reuse, presentation authority, late lease, stale recovery, GIF codec lifecycle, dispose claim/listener, and ticker-gating regressions passed",
+      "./tool/check.sh --require-toolchains: exit 0 in 200.809s; repository/documentation guards, full Dart/Flutter suites, Android three-ABI debug build, and Rust media_core 22/22 passed",
+      "current-tree Profile build/install preflight: authoritative Home in 1.342s on M2007J1SC",
+      "Profile trace zic-debug-trace-2026-09-28T12-30-02.jsonl: held scrub UI pages 74 and 113 publish physical logical positions 73.5 and 112.5 with velocity 0 before pointer-up; first idle observations are identical, delta 0",
+      "same Profile trace: 48 presentation source reads / 38 unique identities; 10 repeated reads are only later revisits with minimum repeat gap 45.634s, zero same-identity repeats under 5s, taskFailed=0"
+    ],
+    "pending": []
+  },
+  "profile_trace": {
+    "file": "zic-debug-trace-2026-09-28T12-30-02.jsonl",
+    "scrub_release": [
+      {
+        "ui_page": 74,
+        "internal_index": 73,
+        "held_logical_position": 73.5,
+        "held_velocity": 0.0,
+        "idle_logical_position": 73.5,
+        "idle_velocity": 0.0,
+        "logical_delta": 0.0
+      },
+      {
+        "ui_page": 113,
+        "internal_index": 112,
+        "held_logical_position": 112.5,
+        "held_velocity": 0.0,
+        "idle_logical_position": 112.5,
+        "idle_velocity": 0.0,
+        "logical_delta": 0.0
+      }
+    ],
+    "presentation_reads": {
+      "total": 48,
+      "unique_identities": 38,
+      "repeat_pairs": 10,
+      "minimum_repeat_gap_ms": 45633.594,
+      "repeat_pairs_under_5s": 0,
+      "interpretation": "remaining repeats are deliberate far-window revisits after raster residency can legitimately be evicted; no immediate mounted-after-prewarm reopen remains in this run"
+    },
+    "task_failures": 0
+  }
+}

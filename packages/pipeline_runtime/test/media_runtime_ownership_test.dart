@@ -2011,6 +2011,96 @@ void main() {
     },
   );
 
+  test('Reader session dispose releases presentation cache listener and claims',
+      () async {
+    final pages = List<PageAsset>.generate(
+      3,
+      (index) => PageAsset(
+        pageId: 'dispose-static-$index',
+        chapterId: 'dispose-static-chapter',
+        index: index,
+        uri: Uri.parse('asset:///dispose-static-$index.png'),
+        width: 1,
+        height: 1,
+        contentKindHint: ContentKindHint.png,
+      ),
+    );
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'dispose-static-comic',
+      chapter: const Chapter(
+        chapterId: 'dispose-static-chapter',
+        comicId: 'dispose-static-comic',
+        title: 'dispose static',
+        sequence: 1,
+        pageCount: 3,
+        sourceRevision: 'r1',
+      ),
+      pages: pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final authority = _FakePresentationCacheAuthority();
+    final warmed = <PipelineExternalPresentationWarmRequest>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 3),
+      presentationCacheAuthority: authority,
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request);
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        for (final page in pages)
+          page.uri: LoaderTransportSource(
+            revision: 'dispose-static-r1',
+            loadBytes: () async => Uint8List.fromList(
+              const <int>[
+                0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+              ],
+            ),
+          ),
+      },
+    ).create(
+      chapter: chapter,
+      sessionId: 'presentation-dispose-test',
+    );
+    session.attach(
+      DecodeTarget(physicalWidth: 320, physicalHeight: 480),
+      externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+    );
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: pages.first.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (authority.claims.isEmpty) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('presentation cache claim was never established');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(authority.listenerCount, 1);
+
+    await session.dispose();
+
+    expect(authority.listenerCount, 0);
+    expect(authority.claims, isEmpty);
+  });
+
   test('Reader session owns and closes one atomic media runtime', () async {
     final runtime = _Runtime();
     final factory = _Factory(runtime);
@@ -2151,6 +2241,8 @@ final class _FakePresentationCacheAuthority
   final Map<Object, PipelinePresentationCacheClaim> claims =
       <Object, PipelinePresentationCacheClaim>{};
   final Set<Object> speculativeAdmissionDenied = <Object>{};
+
+  int get listenerCount => _listeners.length;
 
   @override
   void addInvalidationListener(
