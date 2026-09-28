@@ -1222,6 +1222,104 @@ void main() {
   },
   );
 
+  test(
+      'removing final executable claim revokes local preparation with retained consumer',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_retained_remaining_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final id = _id('local-prepare-retained-remaining');
+    final entered = Completer<void>();
+    final cancelled = Completer<void>();
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownloadWithControl: (session, {required control}) async {
+        if (session.id != id) return;
+        if (!entered.isCompleted) entered.complete();
+        await control.whenCancelled;
+        if (!cancelled.isCompleted) cancelled.complete();
+        control.throwIfCancelled();
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final executable = owner.attachConsumer(
+      scopeId: 'reader-executable-consumer',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPexecutable'.codeUnits),
+      traceSink: trace,
+    );
+    final retained = owner.attachConsumer(
+      scopeId: 'reader-retained-consumer',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPretained'.codeUnits),
+      traceSink: trace,
+    );
+
+    retained.replaceDemands(
+      'reader-retained-consumer',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 640,
+          reason: 'hidden-retained',
+          workMode: TransferWorkMode.retained,
+        ),
+      },
+    );
+    executable.replaceDemands(
+      'reader-executable-consumer',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 900,
+          reason: 'visible-local',
+          workMode: TransferWorkMode.localOnly,
+        ),
+      },
+    );
+    await entered.future.timeout(const Duration(seconds: 1));
+
+    executable.replaceDemands(
+      'reader-executable-consumer',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+
+    await cancelled.future.timeout(const Duration(seconds: 1));
+    expect(
+      registry.find(id)?.demanded,
+      isTrue,
+      reason: 'the retained consumer keeps identity lifetime but not execution',
+    );
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.policyDecision &&
+            event.payload['stage'] == 'local-preparation-revoked' &&
+            event.payload['reason'] == 'encoded-work-retained',
+      ),
+      isTrue,
+    );
+
+    retained.replaceDemands(
+      'reader-retained-consumer',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+  });
+
   test('post-local network admission preserves higher demand priority', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_prepare_priority_barrier_',

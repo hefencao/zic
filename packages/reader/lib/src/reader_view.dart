@@ -1018,15 +1018,11 @@ final class _ReaderViewState extends State<ReaderView>
     }
     // Ratios after the anchor do not affect its offset, but a page already in
     // the viewport must use its real extent so visible coverage can converge
-    // while the slider is still held.
-    for (var index = visibleMin; index <= visibleMax; index++) {
+    // while the slider is still held. Prefix pages, including the anchor,
+    // were already handled above; do not revisit them or duplicate trace ids.
+    final visibleTailStart = math.max(visibleMin, scrubAnchor + 1);
+    for (var index = visibleTailStart; index <= visibleMax; index++) {
       adopt(index);
-    }
-    // Defensive race closure: Reader current is authoritative for slider
-    // navigation even if the prior provisional geometry has not yet included
-    // it in the last visible range.
-    if (scrubAnchor < visibleMin || scrubAnchor > visibleMax) {
-      adopt(scrubAnchor);
     }
     if (merged == null) return false;
 
@@ -2318,7 +2314,6 @@ final class _ReaderViewState extends State<ReaderView>
         _completeVerticalViewportRequest(revision, viewportFraction);
         return;
       }
-      _interaction = Interaction.idle;
       _emitFromVerticalMetrics(
         _verticalController.position,
         forceLayoutSnapshot: true,
@@ -2356,9 +2351,6 @@ final class _ReaderViewState extends State<ReaderView>
       }
       _lastLogicalPosition = requested.toDouble();
       _verticalKeepAliveCenter.value = requested;
-      _interaction = widget.controller.pageScrubbing
-          ? Interaction.scrubbing
-          : Interaction.idle;
       _emitFromVerticalMetrics(
         position,
         forceLayoutSnapshot: true,
@@ -3334,10 +3326,7 @@ final class _ReaderViewState extends State<ReaderView>
     bool forceLayoutSnapshot = false,
   }) {
     final geometry = _verticalGeometry();
-    final position = geometry.positionAt(
-      pixels: metrics.pixels,
-      viewportDimension: metrics.viewportDimension,
-    );
+    final position = _verticalNavigationPosition(geometry, metrics);
     final velocity = _velocityFor(position.logicalPosition);
     _lastVerticalScrollPixels = metrics.pixels;
     _lastVerticalLogicalPosition = position.logicalPosition;
@@ -3420,6 +3409,44 @@ final class _ReaderViewState extends State<ReaderView>
       _lastReportedVerticalPage = position.index;
       _recordPageCurrent(position.index);
     }
+  }
+
+  ({int index, double logicalPosition}) _verticalNavigationPosition(
+    ReaderVerticalGeometry geometry,
+    ScrollMetrics metrics,
+  ) {
+    const boundaryTolerance = 0.01;
+    final scrubAnchor = widget.controller.pageScrubbing
+        ? _verticalScrubAnchorIndex
+        : null;
+    if (scrubAnchor != null) {
+      final index = scrubAnchor
+          .clamp(0, widget.controller.chapter.pages.length - 1)
+          .toInt();
+      return (index: index, logicalPosition: index.toDouble());
+    }
+    final minExtent = metrics.minScrollExtent;
+    final maxExtent = metrics.maxScrollExtent;
+    if (maxExtent - minExtent <= boundaryTolerance) {
+      // With no scroll range, geometry cannot infer a unique center page.
+      // Preserve Reader navigation identity instead of fabricating a midpoint
+      // handoff from whichever short page happens to cover the viewport center.
+      final index = widget.controller.currentIndex
+          .clamp(0, widget.controller.chapter.pages.length - 1)
+          .toInt();
+      return (index: index, logicalPosition: index.toDouble());
+    }
+    if (metrics.pixels <= minExtent + boundaryTolerance) {
+      return (index: 0, logicalPosition: 0);
+    }
+    if (metrics.pixels >= maxExtent - boundaryTolerance) {
+      final index = widget.controller.chapter.pages.length - 1;
+      return (index: index, logicalPosition: index.toDouble());
+    }
+    return geometry.positionAt(
+      pixels: metrics.pixels,
+      viewportDimension: metrics.viewportDimension,
+    );
   }
 
   void _scheduleVerticalLayoutSnapshot({

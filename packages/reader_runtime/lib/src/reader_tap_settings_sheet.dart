@@ -2,6 +2,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 
 import 'reader_session_settings.dart';
+import 'reader_tap_region_overlay.dart';
 
 const readerSingleTapAnimationKey =
     ValueKey<String>('reader-single-tap-page-animation');
@@ -135,9 +136,12 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                             value: candidate,
                             child: Row(
                               children: <Widget>[
-                                Icon(_gestureActionIcon(candidate), size: 20),
+                                Icon(
+                                  readerGestureActionIcon(candidate),
+                                  size: 20,
+                                ),
                                 const SizedBox(width: 10),
-                                Text(_gestureActionLabel(candidate)),
+                                Text(readerGestureActionLabel(candidate)),
                               ],
                             ),
                           ),
@@ -156,7 +160,7 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: <Widget>[
-                              Icon(_gestureActionIcon(action)),
+                              Icon(readerGestureActionIcon(action)),
                               const SizedBox(height: 4),
                               Text(
                                 _zoneLabel(index),
@@ -164,7 +168,7 @@ Future<ReaderModeSettings?> showReaderGestureSettingsSheet(
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                _gestureActionLabel(action),
+                                readerGestureActionLabel(action),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -228,19 +232,3 @@ String _zoneLabel(int index) => const <String>[
       '下',
       '右下',
     ][index];
-
-String _gestureActionLabel(ReaderGestureAction action) => switch (action) {
-      ReaderGestureAction.defaultBehavior => '默认行为',
-      ReaderGestureAction.previousPage => '上一页',
-      ReaderGestureAction.nextPage => '下一页',
-      ReaderGestureAction.previousChapter => '上一章',
-      ReaderGestureAction.nextChapter => '下一章',
-    };
-
-IconData _gestureActionIcon(ReaderGestureAction action) => switch (action) {
-      ReaderGestureAction.defaultBehavior => Icons.touch_app_outlined,
-      ReaderGestureAction.previousPage => Icons.navigate_before,
-      ReaderGestureAction.nextPage => Icons.navigate_next,
-      ReaderGestureAction.previousChapter => Icons.skip_previous_outlined,
-      ReaderGestureAction.nextChapter => Icons.skip_next_outlined,
-    };

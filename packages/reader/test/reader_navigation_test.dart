@@ -130,6 +130,71 @@ void main() {
   );
 
   testWidgets(
+    'interrupted continuous animation does not overwrite active drag state',
+    (tester) async {
+      final base = _chapter(pageCount: 8);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-animation-drag-interrupt',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final list =
+          find.byKey(const ValueKey<String>('reader-vertical-list'));
+      observations.clear();
+
+      controller.requestViewportStep(0.9, animated: true);
+      await tester.pump(const Duration(milliseconds: 24));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -80));
+      await tester.pump(const Duration(milliseconds: 24));
+
+      expect(
+        observations.any((item) => item.interaction == Interaction.dragging),
+        isTrue,
+        reason: 'pointer-owned motion must become the interaction authority',
+      );
+
+      await tester.pump(const Duration(milliseconds: 220));
+      expect(
+        observations.last.interaction,
+        Interaction.dragging,
+        reason:
+            'the interrupted command Future may finish while the pointer is '
+            'still down, but its completion must not publish idle',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
     'continuous viewport command scrolls by a fraction of the visible screen',
     (tester) async {
       final base = _chapter(pageCount: 6);
@@ -519,9 +584,10 @@ void main() {
     expect(requested, isEmpty);
     expect(
       controller.currentIndex,
-      0,
+      1,
       reason:
-          'the tall penultimate page remains coverage-current at max extent',
+          'max extent is the final-page navigation boundary even when the '
+          'viewport center still lies inside a taller previous page',
     );
 
     final gesture = await tester.startGesture(tester.getCenter(list));
@@ -535,6 +601,68 @@ void main() {
 
     expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.next]);
   });
+
+  testWidgets(
+    'continuous max extent reports the final page for short-page chapters',
+    (tester) async {
+      final base = _chapter(pageCount: 8);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-short-pages-final-current-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 600,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              verticalStitch: true,
+              pageAspectRatios: <String, double>{
+                for (final page in chapter.pages) page.assetKey: 0.25,
+              },
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final list =
+          find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final state = tester.state<ScrollableState>(scrollable);
+      expect(state.position.maxScrollExtent, greaterThan(0));
+
+      state.position.jumpTo(state.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+
+      expect(
+        controller.currentIndex,
+        chapter.pages.length - 1,
+        reason:
+            'the clamped end position is the final-page navigation boundary, '
+            'even though the viewport center lies several short pages earlier',
+      );
+    },
+  );
 
   testWidgets('single-page RTL maps forward boundary gesture to next chapter',
       (tester) async {

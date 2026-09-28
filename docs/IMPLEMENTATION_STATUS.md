@@ -76,7 +76,9 @@ App build：0.31.0+328
   preference 使用 `gestureActions.singleTap` 分层；PageHost 仍负责单击/双击/长按消歧，双击与长按没有被九宫格接管，为后续各自独立九宫格保留边界。
   Reader 顶部保留强制重载直达按钮；本漫画阅读设置已移到底栏阅读设置图标，右上杂项收纳全局阅读设置、点击设置、来源 WebView 与系统浏览器入口。
   Reader 新增按 mode 独立的“连续阅读”：只控制章节边界 UI traversal，不控制预加载。章节仍一章一个 immutable manifest/session；实际跨章前 flush progress 并通过 HomeLibrarySession 持久确立目标章。
-  章节 logical previous/next 现按 sequence 升序定义，不再继承详情/source chapter 的展示顺序。continuous 以真实 ScrollPosition 首/尾作为边界 authority，边界后的单指 pointer pull 决定是否提交；短末页时 coverage-current 仍为倒数第二页也不会阻断 next。
+  章节 logical previous/next 现按 sequence 升序定义，不再继承详情/source chapter 的展示顺序。
+  continuous 以真实 ScrollPosition 首/尾作为边界 authority，边界后的单指 pointer pull 决定是否提交；
+  普通interior current仍按viewport center，但真实min/max extent现分别映射首/末页，短末页不再把progress/current回退到较前页面。
   layout/ballistic ScrollNotification 不再同步写 UI ValueNotifier；沿既有 post-frame observation owner 发布，已消除实机跨章时 `Build scheduled during frame` → `_dependents.isEmpty` 连锁红屏。
   相邻章 preparation 的 null/error 不再永久留在 route coalescing cache，瞬时 Venera/source 失败可在后续 pull 重试。实机 `venera:jm`“唬爛也冇關係”已验证列表 6→1 显示时第5话底部仍进入 logical next 第6话；Trace 为 sequence 4→5 且无 chapter taskFailed。
   2026-09-27 对当前 Reader 用 native-release Profile 重新复核滑动：连续模式 120Hz scroll cadence 大多数窗口均值约 8.4ms、窗口最大约 14.8–15.8ms；
@@ -108,6 +110,12 @@ App build：0.31.0+328
   后续held-slider复现推翻“剩余只是raster延迟”的归因：pointer保持4s时current=144一直只有visible=[144]，而145/146 PageHost已挂载却直到UP后才拿尺寸/首帧。
   根因是unknown vertical ratio会先占至少一屏，而scrubbing被错误纳入scroll-stable geometry冻结；current短页720x700的新ratio无法缩短extent，相邻页因此永远不能成为visible，transientPreview又正确把它们保持hidden，形成geometry↔execution bootstrap死锁。
   修复后Profile held-slider在UP前完成`scrub-visible-ratio`提交：target100由visible=[100]扩为[99,100,101]，同一transientPreview内localOnly 1→3、hidden retained 10→8；页101/99首帧约95/128ms完成，UP约4.9s后才发生。11-download membership与hidden gate均未扩大。
+  2026-09-28 对最近Reader修复做生命周期反审计后，4项P2均被新回归先证伪再修复：
+  旧vertical command Future不再写idle覆盖真实drag；physical claim移除与新增/更新共用aggregate execution projection，
+  retained survivor不再让旧local restore占slot；点击区域save绑定edit-session token，旧保存不能关闭reopen后的新overlay；
+  短页章节真实max extent直接映射最终页。同步做了三项纯减法：scrub ratio去重遍历、decode first-frame候选改为单遍best selection、
+  两处点击动作label/icon共用helper。full gate 随后暴露 dev.114/dev.117 对 refill 具体源码字符串的误报，已改为稳定 stage + executable behavior regression 合同；
+  所称 Android API stub 冲突本轮未复现，因此 Android 平台 guard 未做泛化删除。
   2026-09-28继续对照Mihon后确认剩余represent偏移不是“decoder并发不足”：Mihon WebGPU decode本身单线程，
   但continuous viewer把真实viewport/adjacent页放在同一page-cache生命周期；旧Webtoon holder进入实际绑定后也会从adjacent preload提升为正常page load。
   ZIC随后修正三个边界：transition first-frame从单槽改为可重复viewport role；vertical `viewportVisible` output prewarm不再等待idle；

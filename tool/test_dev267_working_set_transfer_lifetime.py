@@ -14,7 +14,7 @@ net=read('packages/sessions/lib/src/net_lane.dart')
 owner=read('packages/sessions/lib/src/download_transfer_owner.dart')
 for token in ('bool demanded = true','bool updateDemanded(String key, bool demanded)','bool? demandedOf(String key)'):
     req(token in net,f'NetLane demanded-state contract missing: {token}')
-for token in ('net.updateDemanded(taskKey, false);',"reason: 'inactive-physical-retention'",'net.updateDemanded(taskKey, true);','net.cancelQueued(taskKey);'):
+for token in ('net.updateDemanded(taskKey, false);',"reason: 'inactive-physical-retention'",'net.updateDemanded(taskKey, networkDemanded);','net.cancelQueued(taskKey);'):
     req(token in owner,f'TransferOwner working-set lifetime contract missing: {token}')
 remove=owner[owner.index('  void _removeClaim('):owner.index('  Future<void> _disposeConsumer',owner.index('  void _removeClaim('))]
 req('net.cancel(taskKey)' not in remove,'logical _removeClaim must not cancel active task')
@@ -29,7 +29,9 @@ for token in response_tokens:
     req(token in net,f'live response-lifetime owner missing: {token}')
 pred=read('packages/pipeline/lib/src/browsing_direction_predictor.dart')
 req('_candidateCount >= 2' in pred and '_history' not in pred and 'nowMicros' not in pred,'direction must remain working-set-only two-move confirmation')
-req('working-set turn out and back reuses the same active physical task' in read('packages/sessions/test/download_transfer_owner_test.dart'),'TransferOwner turn-out/back identity regression missing')
+owner_test=read('packages/sessions/test/download_transfer_owner_test.dart')
+req('working-set turn out and back reuses the same active physical task' in owner_test,'TransferOwner turn-out/back identity regression missing')
+req('encoded work mode changes preserve one logical claim and physical task' in owner_test,'TransferOwner demanded park/revive regression missing')
 for path in ('docs/adr/0245-working-set-physical-transfer-lifetime-separation.md','docs/audits/dev267-working-set-transfer-lifetime-root-cause-audit.md'):
     req((ROOT/path).is_file(),f'missing governance file {path}')
 req('test_dev267_working_set_transfer_lifetime.py' in read('tool/check.sh'),'dev.267 gate not wired')

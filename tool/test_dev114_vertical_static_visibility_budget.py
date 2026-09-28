@@ -18,6 +18,7 @@ geometry = read("packages/reader/lib/src/vertical_reader_geometry.dart")
 window = read("packages/pipeline/lib/src/role_window.dart")
 policy = read("packages/pipeline/lib/src/heuristic_policy.dart")
 refill = read("packages/sessions/lib/src/decode_refill_policy.dart")
+refill_test = read("packages/sessions/test/decode_refill_policy_test.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 output = read("packages/pipeline_runtime/lib/src/pipeline_page_output.dart")
 player = read("packages/local_media_ui/lib/src/local_image_player.dart")
@@ -57,11 +58,17 @@ for token in (
     "StagedDecodeRefillPolicy releases one-frame work in priority",
 ):
     require(policy, token, "static one-frame intent policy")
-for token in (
-    "entry.value.targetWatermark == 1",
+require(
+    refill,
     "DecodeWaterlineStage.oneFrame",
+    "staged one-frame refill stage",
+)
+for token in (
+    "single-frame demands bootstrap before staged animation waterlines",
+    "transition may bootstrap while current is waiting for source",
+    "any visible transition may bootstrap while current is blocked",
 ):
-    require(refill, token, "staged one-frame refill")
+    require(refill_test, token, "staged one-frame refill regression")
 for token in (
     "_externalPresentationPending.add(id)",
     "onExternalPresentationRequested",

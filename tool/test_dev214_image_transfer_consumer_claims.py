@@ -46,7 +46,7 @@ if transfer_owner:
         'final Map<DownloadId, Map<String, _TransferClaim>> _claims',
         'existing.lease.updatePriority(demand.priority);',
         'claim.lease.detach();',
-        "reason: 'remaining-consumer'",
+        '_refreshClaimScheduling(id, session);',
     ):
         require(transfer_owner, token, 'composition transfer claim integration')
 else:

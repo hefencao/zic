@@ -40,7 +40,7 @@ for token in (
     'prior.exactId != next.exactId',
     'prior.demand.expectedChecksum',
     'prior.demand.completionIntent != next.demand.completionIntent',
-    '_refreshClaimScheduling(id, session, next.demand);',
+    '_refreshClaimScheduling(id, session);',
 ):
     require(transfer, token, 'fast-path authority guard')
 

@@ -711,6 +711,89 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
+  testWidgets(
+    'stale tap settings save cannot close a reopened editor',
+    (tester) async {
+      final firstSave = Completer<void>();
+      var writes = 0;
+      final chapter = _chapter(direction: ReadingDirection.vertical);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _pipelineReader(
+            chapter: chapter,
+            build: (pipeline) => ReaderRuntimeScreen(
+              chapter: chapter,
+              pipeline: pipeline,
+              initiallyImmersive: false,
+              initialSettings: const ReaderSessionSettings(
+                comicSpecificEnabled: true,
+                directionOverride: ReadingDirection.vertical,
+              ),
+              onModeSettingsChanged: (mode, settings) async {
+                writes++;
+                if (writes == 1) {
+                  await firstSave.future;
+                }
+              },
+              artifactPageBuilder: (
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+              ) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      Future<void> openEditor() async {
+        await tester.tap(find.byKey(readerMiscMenuKey));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(readerTapSettingsKey));
+        await tester.pumpAndSettle();
+      }
+
+      await openEditor();
+      await tester.tap(find.byKey(readerTapRegionSaveKey));
+      await tester.pump();
+      expect(find.byKey(readerTapRegionOverlayKey), findsOneWidget);
+
+      await tester.tap(find.byKey(readerTapRegionCancelKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(readerTapRegionOverlayKey), findsNothing);
+
+      await openEditor();
+      await tester.tap(find.byKey(readerTapRegionAnimationKey));
+      await tester.pump();
+      expect(
+        tester.widget<Switch>(find.byKey(readerTapRegionAnimationKey)).value,
+        isFalse,
+      );
+
+      firstSave.complete();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(readerTapRegionOverlayKey),
+        findsOneWidget,
+        reason:
+            'completion from the cancelled edit session must not close the '
+            'new editor',
+      );
+      expect(
+        tester.widget<Switch>(find.byKey(readerTapRegionAnimationKey)).value,
+        isFalse,
+        reason: 'the new edit session draft must remain intact',
+      );
+
+      await tester.tap(find.byKey(readerTapRegionCancelKey));
+      await tester.pumpAndSettle();
+      await _disposePipelineReader(tester);
+    },
+  );
+
   testWidgets('configured center tap navigates through the Reader command',
       (tester) async {
     final progress = <ReadingProgress>[];

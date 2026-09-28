@@ -22,12 +22,16 @@ local_test = read("packages/local_media_ui/test/image_folder_manifest_test.dart"
 check = read("tool/check.sh")
 
 for token in (
-    "entry.value.targetWatermark == 1",
     "stage: DecodeWaterlineStage.oneFrame",
-    "b.value.priority.compareTo(a.value.priority)",
     "return oneFramePriority > stagedPriority",
 ):
     require(refill, token, "single-frame refill policy")
+for token in (
+    "single-frame demands bootstrap before staged animation waterlines",
+    "animated current waterline outranks lower-priority static warming",
+    "terminal single-frame demand does not block another bootstrap",
+):
+    require(refill_test, token, "single-frame refill behavior")
 for token in (
     "void _reportAnimationEvidence()",
     "holder.add(frame);\n            _reportAnimationEvidence();",

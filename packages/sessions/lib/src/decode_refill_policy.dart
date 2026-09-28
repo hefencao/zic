@@ -51,23 +51,28 @@ final class StagedDecodeRefillPolicy {
     DecodeSatisfiedLookup satisfiedOf = _neverSatisfied,
   }) {
     DecodeId? currentId;
-    final transitions = <MapEntry<DecodeId, DecodeDemand>>[];
     for (final entry in demands.entries) {
       if (entry.value.role == PageRole.current) currentId = entry.key;
-      if (entry.value.role == PageRole.transition) transitions.add(entry);
     }
-    transitions.sort((a, b) {
-      final priority = b.value.priority.compareTo(a.value.priority);
-      if (priority != 0) return priority;
-      return a.key.key.compareTo(b.key.key);
-    });
+
+    bool outranks(
+      MapEntry<DecodeId, DecodeDemand> candidate,
+      MapEntry<DecodeId, DecodeDemand> current,
+    ) {
+      final priority =
+          candidate.value.priority.compareTo(current.value.priority);
+      if (priority != 0) return priority > 0;
+      return candidate.key.key.compareTo(current.key.key) < 0;
+    }
 
     DecodeRefillDecision? transitionFirstFrame() {
       // A short vertical current can expose both neighboring pages at once.
       // transition is a viewport role, not a singleton target slot. If one
       // visible transition is waiting on source/presentation, another ready
       // transition must still be able to acquire its first frame.
-      for (final entry in transitions) {
+      MapEntry<DecodeId, DecodeDemand>? best;
+      for (final entry in demands.entries) {
+        if (entry.value.role != PageRole.transition) continue;
         final id = entry.key;
         if (!eligibleOf(id) ||
             terminalOf(id) ||
@@ -75,16 +80,17 @@ final class StagedDecodeRefillPolicy {
             depthOf(id) >= 1) {
           continue;
         }
-        return DecodeRefillDecision(
-          id: id,
-          role: entry.value.role,
-          stage: DecodeWaterlineStage.transitionFirstFrame,
-          depth: depthOf(id),
-          threshold: 0,
-          targetWatermark: 1,
-        );
+        if (best == null || outranks(entry, best)) best = entry;
       }
-      return null;
+      if (best == null) return null;
+      return DecodeRefillDecision(
+        id: best.key,
+        role: best.value.role,
+        stage: DecodeWaterlineStage.transitionFirstFrame,
+        depth: depthOf(best.key),
+        threshold: 0,
+        targetWatermark: 1,
+      );
     }
 
     final current = currentId;
@@ -114,28 +120,26 @@ final class StagedDecodeRefillPolicy {
       }
     }
 
-    final oneFrame = demands.entries
-        .where(
-          (entry) =>
-              entry.value.targetWatermark == 1 &&
-              eligibleOf(entry.key) &&
-              !terminalOf(entry.key) &&
-              !satisfiedOf(entry.key) &&
-              depthOf(entry.key) < 1,
-        )
-        .toList(growable: false)
-      ..sort((a, b) {
-        final priority = b.value.priority.compareTo(a.value.priority);
-        if (priority != 0) return priority;
-        return a.key.key.compareTo(b.key.key);
-      });
-    final oneFrameDecision = oneFrame.isEmpty
+    MapEntry<DecodeId, DecodeDemand>? oneFrame;
+    for (final entry in demands.entries) {
+      if (entry.value.targetWatermark != 1 ||
+          !eligibleOf(entry.key) ||
+          terminalOf(entry.key) ||
+          satisfiedOf(entry.key) ||
+          depthOf(entry.key) >= 1) {
+        continue;
+      }
+      if (oneFrame == null || outranks(entry, oneFrame)) {
+        oneFrame = entry;
+      }
+    }
+    final oneFrameDecision = oneFrame == null
         ? null
         : DecodeRefillDecision(
-            id: oneFrame.first.key,
-            role: oneFrame.first.value.role,
+            id: oneFrame.key,
+            role: oneFrame.value.role,
             stage: DecodeWaterlineStage.oneFrame,
-            depth: depthOf(oneFrame.first.key),
+            depth: depthOf(oneFrame.key),
             threshold: 0,
             targetWatermark: 1,
           );

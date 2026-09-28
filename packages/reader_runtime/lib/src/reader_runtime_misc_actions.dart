@@ -14,7 +14,9 @@ extension _ReaderRuntimeMiscActions on _ReaderRuntimeScreenState {
 
   void _activateTapRegionEditor(ReaderMode mode) {
     _tapRegionRestoreControlsVisible = _controlsVisible;
+    final editSession = Object();
     _updateRuntimeState(() {
+      _tapRegionEditSession = editSession;
       _tapRegionMode = mode;
       _tapRegionDraft = _settings.modeSettingsFor(mode);
       _controlsVisible = false;
@@ -24,6 +26,7 @@ extension _ReaderRuntimeMiscActions on _ReaderRuntimeScreenState {
   void _dismissTapRegionEditor() {
     final restoreControls = _tapRegionRestoreControlsVisible;
     _updateRuntimeState(() {
+      _tapRegionEditSession = null;
       _tapRegionMode = null;
       _tapRegionDraft = null;
       _tapRegionSaveInFlight = false;
@@ -63,8 +66,10 @@ extension _ReaderRuntimeMiscActions on _ReaderRuntimeScreenState {
 
   Future<void> _saveTapRegionEditor(ReaderModeSettings saved) async {
     final mode = _tapRegionMode;
+    final editSession = _tapRegionEditSession;
     final writer = widget.onModeSettingsChanged;
     if (mode == null ||
+        editSession == null ||
         writer == null ||
         _tapRegionSaveInFlight) {
       return;
@@ -73,15 +78,14 @@ extension _ReaderRuntimeMiscActions on _ReaderRuntimeScreenState {
     try {
       await Future<void>.sync(() => writer(mode, saved));
     } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          _copyableReaderErrorSnackBar('保存点击设置失败：$error'),
-        );
-      }
+      if (!mounted || !identical(_tapRegionEditSession, editSession)) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        _copyableReaderErrorSnackBar('保存点击设置失败：$error'),
+      );
       _tapRegionSaveInFlight = false;
       return;
     }
-    if (!mounted) return;
+    if (!mounted || !identical(_tapRegionEditSession, editSession)) return;
     _replaceModeSettings(mode, saved);
     _closeTapRegionEditor();
   }

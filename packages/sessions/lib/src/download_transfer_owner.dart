@@ -1016,7 +1016,7 @@ final class DownloadTransferOwner {
       return true;
     }
     claim.lease.updatePriority(next.demand.priority);
-    _refreshClaimScheduling(id, session, next.demand);
+    _refreshClaimScheduling(id, session);
 
     // Existing claims may currently be locally preparing, flow-paused or fully
     // idle. The historical path re-ran ensure after every changed demand; keep
@@ -1074,13 +1074,12 @@ final class DownloadTransferOwner {
       existing.revision = revision;
       existing.lease.updatePriority(demand.priority);
     }
-    _refreshClaimScheduling(id, session, demand);
+    _refreshClaimScheduling(id, session);
   }
 
   void _refreshClaimScheduling(
     DownloadId id,
     DownloadSession session,
-    TransferDemand demand,
   ) {
     final workMode = _effectiveWorkMode(id);
     final localPreparationControl = _localPreparationControls[id];
@@ -1143,7 +1142,7 @@ final class DownloadTransferOwner {
       if (!deferredStillMatches ||
           _allowsCostlyFullBodyCatchup(
             id: id,
-            priority: demand.priority,
+            priority: _networkPriority(id, session),
             preservedLength: session.committedLength,
           )) {
         _downloadDeferredAtLength.remove(id);
@@ -1207,27 +1206,16 @@ final class DownloadTransferOwner {
     final session = registry.find(id);
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
-    if (session != null && session.demanded && taskKey != null) {
-      final networkDemanded =
-          _effectiveWorkMode(id) == TransferWorkMode.full;
-      if (networkDemanded) {
-        net.updateDemanded(taskKey, true);
-        _migrateDownloadPriority(
-          id,
-          taskKey,
-          _networkPriority(id, session),
-          reason: 'remaining-consumer',
-        );
-      } else {
-        net.updateDemanded(taskKey, false);
-        _migrateDownloadPriority(
-          id,
-          taskKey,
-          0,
-          reason: 'remaining-consumer-work-parked',
-        );
-      }
-    } else if (taskKey != null && taskIsActive) {
+    if (session != null && session.demanded) {
+      // Claim creation, mutation and removal all change one aggregate
+      // execution permission. Reuse the same physical scheduling projection
+      // so a retained survivor revokes local work just like an in-place
+      // localOnly -> retained downgrade does.
+      _refreshClaimScheduling(id, session);
+      _drainPreparedNetworkAdmissions();
+      return;
+    }
+    if (taskKey != null && taskIsActive) {
       // Working-set membership and physical transport lifetime are separate.
       // Losing the final Reader/other consumer claim never cancels an already
       // admitted task. It becomes rank-zero inactive physical work. DownloadJob
@@ -1263,12 +1251,10 @@ final class DownloadTransferOwner {
       _networkTaskKeys.remove(id);
       _retireDownloadTracking(id, session);
     }
-    if (session == null || !session.demanded) {
-      _preparedNetworkAdmissions.remove(id);
-      _preparedAdmissionDeferrals.remove(id);
-      _localPreparationControls[id]?.cancel();
-      _cancelDownloadRetry(id);
-    }
+    _preparedNetworkAdmissions.remove(id);
+    _preparedAdmissionDeferrals.remove(id);
+    _localPreparationControls[id]?.cancel();
+    _cancelDownloadRetry(id);
     _pumpLocalPreparations();
     _drainPreparedNetworkAdmissions();
   }

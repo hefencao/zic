@@ -1138,6 +1138,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   窗口内只提交最新整数页，不得为滑杆跨过的每个中间页制造navigationRevision/PageView jump/Pipeline reconcile。整数页量化 MUST由scrubber自身完成；
   长章节的Flutter `Slider` MUST NOT以`pages-1` divisions/ticks把每一页物化为RenderSlider/semantics离散刻度。
   首个目标 MAY立即推进viewport，`onChangeEnd` MUST取消pending并立即精确提交最终页、结束`Interaction.scrubbing`。
+  程序化 vertical animate/jump 的 completion callback MUST只确认命令并读取实际ScrollMetrics，MUST NOT自行写入`Interaction.idle`；
+  dragging/scrolling/scrubbing/idle唯一由raw pointer与ScrollNotification生命周期裁决，旧动画Future不得覆盖新的真实输入状态。
   scrub MUST NOT拥有current-only/visible-only资源窗口；Pipeline membership MUST继续由真实current与viewport coverage解析正常7/3工作集。
   相邻preview移动 SHOULD只产生实际窗口差集（稳定profile中通常为一项far退出/一项far进入），不得每50ms批量detach再在松手后重建。
   `Interaction.scrubbing` MAY用于方向学习抑制、UI、诊断与resource execution projection，但 MUST NOT单独改变download/decode/upload membership。
@@ -1175,6 +1177,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   single-tap profile MUST 同时持久化两条横向与两条纵向的归一化分隔坐标，并保证最小 cell 尺寸；实际 hit test 与可视化编辑器
   MUST 消费同一个 layout authority，不能保留固定三等分的第二套命中规则。
   Reader 内的点击区域入口 MUST 直接覆盖在当前 Reader 页面上并临时隐藏 Reader controls 与系统栏，使用户看到实际 viewport 上的命中区域。
+  每次打开编辑器 MUST拥有独立 edit-session identity；异步 save completion 只有在仍属于当前同一会话时 MAY关闭/清空 overlay。cancel + reopen 后，旧保存Future MUST NOT关闭新会话或丢弃其draft。
   编辑覆层 MUST 截获输入，底层 ReaderView 不得收到拖线/点格操作；高频 divider drag draft SHOULD 保持在覆层本地状态，
   不得因每个 pointer move 重建 Reader/Pipeline，只有保存时才提交 mode settings。
   双击与长按 MUST 继续由既有缩放手势 owner 解释，不得因为增加单击九宫格而经过同一 action map；
@@ -1194,7 +1197,11 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
 - 阅读设置 UI MUST 至少先区分“布局 / 界面 / 分页模式 / 连续模式”；两个 mode 内再保持双击与长按设置成组排列，双击倍率/锚点不得与长按倍率/释放/移动方式交错。相同项的 paged / continuous 控件不得绑定同一可变 preference。
 - “连续阅读” MUST 在 paged 与 continuous 两个 mode 中分别设置。开启时 Reader 只在当前章首/尾的明确边界 pull 后请求上一/下一章；关闭时 MUST 只禁用该 UI traversal。逻辑 previous/next MUST 由 chapter `sequence` 定义，MUST NOT 受详情列表或 source chapter 的展示顺序影响；底部始终进入逻辑下一章，顶部始终进入逻辑上一章。章节 manifest/session MUST 继续一章一个，不得把多章拼成一个 Reader chapter。
-- continuous 的章节边界 MUST 由 ScrollPosition 的真实 `extentBefore/extentAfter` 判断，不能用 coverage-current page 代替；边界后的提交距离 MUST 基于单指 pointer motion，不得依赖平台 overscroll physics。layout/ballistic 触发的 ScrollNotification MUST NOT 在 layout pass 中同步驱动 ValueNotifier/widget rebuild，应复用 post-frame observation owner。
+- continuous 的章节边界 MUST 由 ScrollPosition 的真实 `extentBefore/extentAfter` 判断，不能用 coverage-current page 代替；
+  边界后的提交距离 MUST 基于单指 pointer motion，不得依赖平台 overscroll physics。
+  普通interior current MAY按viewport center映射，但真实min/max scroll extent MUST分别映射首/末页；
+  显式slider scrub anchor存在时selected page MUST保持navigation identity，无scroll range时不得仅凭中心几何伪造另一个current。
+  layout/ballistic 触发的 ScrollNotification MUST NOT 在 layout pass 中同步驱动 ValueNotifier/widget rebuild，应复用 post-frame observation owner。
 - 相邻章节预加载 MUST 与上述 UI 开关解耦：无论两个 mode 的“连续阅读”是否开启，只要 Reader route 存在且有相邻章，App composition SHOULD 把现有稳定 encoded window（当前前 7 / 后 3）的**剩余水位**跨章节延伸；当前章前方/后方已经覆盖的页数必须先从 7/3 中扣除，MUST NOT 额外再加一组 7/3 demand。相邻章 demand 随当前页推进在同一 preload lease 上伸缩，并通过同一 `CompositionDownloadTransferRuntime` / `DownloadTransferOwner` / `NetLane` 建立 opportunistic demand。该 demand MUST 低于当前章正常 far demand（当前 adjacent preload priority 500、当前章 far 下限 520），MUST 继续受同一 `SpeculativeEncodedReadBudget`（默认 50MB）与 source bucket/concurrency 约束，MUST NOT 建立第二 scheduler 或 UI-owned network gate。
 - 跨章预加载 MAY materialize/refresh transient source chapter capability，但 MUST NOT 仅因预加载而把未进入章节持久写入 library；用户实际跨章前 MUST flush 当前 progress checkpoint，并通过当前 `HomeLibrarySession` 确立目标章节 durable identity 后再替换 prepared Reader chapter。
 - Reader 的“进入时隐藏阅读控制”只控制 Reader 上下控制与系统导航栏；系统状态栏 MUST 使用全局三态 `显示 / 隐藏 / 跟随控制栏`，默认显示。`显示/隐藏`独立于控制栏，`跟随控制栏` MUST 直接消费同一个 Reader controls visibility presentation fact，不得建立第二个可见性 owner。Android 16 / targetSdk 36 及以后不得依赖被系统忽略的旧 Flutter 非 edge-to-edge `SystemUiMode` 隐藏状态栏，Android 实现 MUST 由 Reader platform owner 使用 `WindowInsetsController` show/hide status/navigation bars。Reader exit MUST 恢复系统栏；App resume 和控制栏显隐变化 MUST 重新投影当前 policy。
@@ -2205,6 +2212,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     candidate/victim 改变 MUST重置 grace，且一次只能有一个该类 cancellation in-flight。
     上述 grace 只适用于仍拥有 local/full execution permission 的相对 priority 抢占；当 physical effective work mode 降为 `retained` 时，
     local preparation 的执行资格已经被撤销，owner MUST立即向 pending/active preparation 发 cancellation，不得让 priority=0 的旧 scrub restore继续占 slot。
+    claim 新增、更新、移除 MUST复用同一个aggregate execution-permission投影；最后一个local/full claim被移除而retained claim仍在时，`DownloadSession.demanded`仍可保持true，但 MUST NOT因此保留local execution。
     取消 MUST等待旧 writer/descriptor/operation Future 实际退出后才释放 operation slot，
     MUST NOT让并发数瞬时超过 2，也 MUST NOT删除 durable partial 或撤销 logical demand；
     scheduler-owned local preparation若已进入generic `Artifact.restore`/whole-file CRC，

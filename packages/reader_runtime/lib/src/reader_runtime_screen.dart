@@ -209,6 +209,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   bool _tapChapterRequestInFlight = false;
   ReaderMode? _tapRegionMode;
   ReaderModeSettings? _tapRegionDraft;
+  Object? _tapRegionEditSession;
   bool _tapRegionRestoreControlsVisible = false;
   bool _tapRegionSaveInFlight = false;
   bool _reportedFirstPresentationFrame = false;

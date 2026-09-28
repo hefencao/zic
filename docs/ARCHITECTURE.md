@@ -814,6 +814,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   scrub期间当前/transition/真实visible DownloadDemand保持同一claim但降为`localOnly`，只允许复用/恢复本地authoritative bytes；
   其余3/7 hidden claim为`retained`，不新增remote source work；baseline DecodeDemand/UploadDemand identity同样保留，
   `localOnly -> retained`同时撤销尚未退出的durable local preparation：`retained`是identity-only，旧viewport的restore不得继续占用两个bounded local-operation slot；取消只发信号，writer/descriptor/Future实际退出前slot仍不释放。
+  claim removal也必须走同一aggregate execution projection：若最后一个localOnly/full consumer退出后仍有retained consumer，
+  session lifetime可以保留，但local restore权限必须立即撤销；新增、更新、移除不得各维护一套scheduler分支。
   visible/current decode最多一帧。ADR 0331进一步区分“外层hidden工作窗”与“既有静态presentation deadline”：
   `next/next2/previous`若具备static资格，可在scrub中继续以`localOnly`取得一帧decode并`prepareOutput=true`，
   用于在进入viewport前写入统一presentation raster owner；该资格不得打开remote source。
@@ -941,12 +943,16 @@ single-tap profile 除 9 个 action 外还保存归一化的两条横向/两条�
 `ReaderGestureGridLayout` 同时是实际 hit-test authority 和编辑覆层的几何 authority，禁止 UI 预览与真实命中各算一份。
 Reader 内打开点击区域设置时直接在当前页面上覆盖全屏编辑层并临时进入沉浸显示。编辑层的 9 个 cell 覆盖完整 viewport 并拥有命中，
 所以拖线/选动作不能下穿成为翻页、缩放或滚动；底层 ReaderView 的 widget ancestry 不因进入/退出编辑而改变。分隔线拖动的 draft 只在 overlay-local State 中更新，
-不逐 move 重建 Reader/Pipeline；保存时才一次性写回当前 mode profile。全局阅读设置没有真实 Reader viewport，
-因此只提供 action map/动画表单，并明确实际区域尺寸需在 Reader 覆层调整。
+不逐 move 重建 Reader/Pipeline；保存时才一次性写回当前 mode profile。每次打开编辑器都有独立edit-session identity；
+异步保存只能关闭发起它的同一会话，cancel后重新打开的新overlay/draft不得被旧Future完成回调清掉。
+全局阅读设置没有真实 Reader viewport，因此只提供 action map/动画表单，并明确实际区域尺寸需在 Reader 覆层调整；两处 action 名称与图标复用同一helper，避免设置入口逐渐分叉。
 当前只有 single-tap profile 可编辑和消费；`ReaderPageHost` 继续唯一拥有单击/双击/长按消歧，只有确认不是双击/长按后的
 `onSingleTap(globalPosition)` 才跨到 `reader_runtime`。Runtime 只负责用上述可调 3×3 layout 把坐标映射到区域并发出 typed
 `ReaderGestureAction`；paged 的上一/下一页仍通过 `ReaderController.requestPage(index±1)`，continuous 则通过 `requestViewportStep` 移动一个可配置的 viewport 比例，默认保留 10% 上下文、滚动 90% 屏幕；两者都只是程序化 Reader command，不伪造 pointer/drag/velocity。章节动作复用既有 chapter-boundary callback。
-单击切页动画只决定对应 command 使用 `animateTo/animateToPage` 还是 `jumpTo/jumpToPage`。scrollbar scrub/跳页是独立的绝对 page-index 命令：continuous 把目标图片映射到其纵向 centered offset 后定位，不用多次 viewport-step 逼近；scrub、拖动和恢复定位不继承 single-tap animation intent。
+单击切页动画只决定对应 command 使用 `animateTo/animateToPage` 还是 `jumpTo/jumpToPage`。
+程序化vertical command的completion只负责读取最终ScrollMetrics并acknowledge，不再裁决`Interaction`；
+真实pointer/ScrollNotification唯一拥有dragging/scrolling/idle，旧动画Future不得把进行中的drag覆盖成idle。
+scrollbar scrub/跳页是独立的绝对 page-index 命令：continuous 把目标图片映射到其纵向 centered offset 后定位，不用多次 viewport-step 逼近；scrub、拖动和恢复定位不继承 single-tap animation intent。
 以后若增加双击/长按九宫格，必须在 `gestureActions` 下新增独立 sibling，并先由 PageHost 对应 gesture owner 显式上送，
 不得让 single-tap action map 抢占当前 zoom/long-press 语义。
 Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.systemStatusBarMode` 只读投影全局三态偏好：
@@ -962,6 +968,9 @@ settled scale 经既有 `onZoomScaleChanged` 投影给 zoom decode boost，仅�
 章节 UI 与章节预加载是两个独立边界。Reader 仍保持“一章一个不可变 `ChapterManifest` / `PipelineReaderSessionHost`”，不得把相邻章节页面拼成一个伪 manifest。
 逻辑章节 previous/next 由 chapter `sequence` 升序定义，详情列表或 source chapter 的展示顺序不得成为 Reader 导航 authority；因此列表正序/倒序都不改变“底部=逻辑下一章、顶部=逻辑上一章”。
 每个 mode 的 `ReaderModeSettings.crossChapterReading` 只 gate 章节边界 UI traversal。paged 使用 PageView 的明确边界 pull；continuous 必须先由 ScrollPosition 的真实首/尾几何确认到章边界，再从边界后的单指 pointer pull 计算提交距离，不能用 coverage-current page 或 Android overscroll physics 代替边界 authority。
+continuous current/progress 的普通interior仍由viewport center推导，但真实min/max scroll extent分别映射首/末页；
+显式slider scrub anchor存在时selected page优先作为navigation identity，无scroll range时保留既有current。
+这样短页章节的边界落点、slider与progress不再因center不可达而回退。
 ScrollPosition 因 layout/ballistic correction 产生的通知 MAY 更新内部测量与 pipeline observation，但 MUST NOT 在 layout pass 中同步驱动 ValueNotifier/widget rebuild；应复用既有 post-frame observation owner。关闭跨章 UI 时不撤销任何相邻章节预加载。
 跨章节预加载由 App composition 在当前 Reader route 生命周期内建立低优先级 `CompositionChapterPreloadLease`，直接挂到现有 `CompositionDownloadTransferRuntime` / `DownloadTransferOwner` / `NetLane`；
 它延伸的是同一个稳定前 7 / 后 3 encoded window，而不是额外再加 7/3：先扣掉当前章按实际阅读顺序仍可覆盖的页数，只把残余水位补到下一章开头或上一章结尾；因此跨章后总逻辑窗口不扩张。adjacent claim priority 500 低于当前章 far window 的最低 520，

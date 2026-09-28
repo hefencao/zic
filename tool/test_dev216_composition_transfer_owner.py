@@ -45,7 +45,7 @@ for token in (
     'final Map<DownloadId, int> _downloadDeferredAtLength',
     "final taskKey = 'transfer:${++_taskSequence}:${id.key}';",
     'attachLegacyDemand: false',
-    "reason: 'remaining-consumer'",
+    '_refreshClaimScheduling(id, session);',
     'await net.idleKeys(providerKeys);',
 ):
     require(owner, token, 'single physical transfer owner')
@@ -110,6 +110,7 @@ for token in ('_downloads.dispose()', '_workspace.dispose()'):
 for token in (
     'two consumers join one exact physical transfer and writer',
     'disposing active provider preserves remaining consumer and reopens once',
+    'removing final executable claim revokes local preparation with retained consumer',
     'expect(registry.sessions, hasLength(1));',
     'expect(owner.claimCount(id), 2);',
 ):
