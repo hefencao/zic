@@ -96,6 +96,7 @@ void main() {
     expect(visiblePage.value.priority, greaterThanOrEqualTo(880));
     expect(visiblePage.value.retainOutput, isTrue);
     expect(visiblePage.value.viewportVisible, isTrue);
+    expect(plan.downloads[visiblePage.key.download]!.viewportVisible, isTrue);
     expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
   test('every reported vertical visible page changes foreground demand', () {

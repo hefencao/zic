@@ -819,7 +819,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   但membership不等于execution depth：Pipeline把interaction粗投影为`stable/motion/transientPreview` resource phase。
   scrub期间当前/transition/真实visible DownloadDemand保持同一claim但降为`localOnly`，只允许复用/恢复本地authoritative bytes；
   其余3/7 hidden claim为`retained`，不新增remote source work；baseline DecodeDemand/UploadDemand identity同样保留，
-  `localOnly -> retained`同时撤销尚未退出的durable local preparation：`retained`是identity-only，旧viewport的restore不得继续占用两个bounded local-operation slot；取消只发信号，writer/descriptor/Future实际退出前slot仍不释放。
+  `localOnly -> retained`同时撤销尚未退出的durable local preparation：`retained`是identity-only，旧viewport的restore不得继续占用普通两个bounded local-operation slot或visible-cohort handoff；取消只发信号，writer/descriptor/Future实际退出前slot仍不释放。
   claim removal也必须走同一aggregate execution projection：若最后一个localOnly/full consumer退出后仍有retained consumer，
   session lifetime可以保留，但local restore权限必须立即撤销；新增、更新、移除不得各维护一套scheduler分支。
   visible/current decode最多一帧。ADR 0331进一步区分“外层hidden工作窗”与“既有静态presentation deadline”：
@@ -1418,15 +1418,19 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   local prepare完成顺序不得取得network admission排序权：
   完成后由同一`DownloadTransferOwner`按当前`DownloadSession.effectivePriority`保持local→network rank连续性，
   lower ready work不得越过仍处于local prepare的higher demanded work，随后才交给唯一NetLane。
-  local prepare的max2只约束真实operation lifetime而不是页面资格；
+  local prepare普通max2只约束真实operation lifetime而不是页面资格；
+  唯一例外是同一个Reader consumer、同一个accepted revision内已经由`ReaderObs.visibleCoverages/current`证明真实可见的3个`localOnly` physical work：
+  当普通2槽已由其中两页占用时，第三页可使用唯一visible-cohort handoff让operation lifetime短暂重叠到3。
+  `DownloadDemand.viewportVisible`必须由Pipeline直接投影该observation事实，再由LiveCoordinator原样传给physical owner，
+  transfer owner不得从页号、拖动方向或current/next/previous角色猜测；跨consumer/revision、hidden、非localOnly以及第四个work都不得使用该handoff。
   如果两槽都被旧低rank prepare占用而新的high-rank demand被挡在pre-admission边界，
   owner复用NetLane既有数值high-priority/preemption margin与candidate grace；
   candidate/victim必须稳定跨过同一grace后才单次取消一个最低rank active prepare，快速滚动导致candidate变化会重置grace。
-  必须等其writer/descriptor实际退出后才补位，不能把2槽变成隐含current-only gate、瞬时抢占风暴或临时扩容。被取消的durable prefix继续是可恢复物理事实：
+  必须等其writer/descriptor实际退出后才补普通位；除上述同viewport handoff外，不能把2槽变成隐含current-only gate、瞬时抢占风暴或一般临时扩容。被取消的durable prefix继续是可恢复物理事实：
   0-byte demand重排local prepare，已有prefix则回到post-local network admission排序，均不得丢claim、删partial或越过更高rank work。
   被scheduler撤销的local prepare如果已经进入generic `Artifact.restore`/whole-file rehash，
   现有`TaskControl` MUST继续下沉到该restore operation；
-  受控CRC仍在worker isolate执行，但cancel MUST终止worker并及时释放max2 operation slot。普通restore/seal的非受控CRC语义保持不变；
+  受控CRC仍在worker isolate执行，但cancel MUST终止worker并及时释放其bounded local-operation占位；普通restore/seal的非受控CRC语义保持不变；
   storage只观察cancel，不得读取priority或建立第二scheduler。
   verified-equivalent incomplete partial若store暴露metadata ranking capability，
   index中的state/bytes只允许用于候选排序，最终选中id仍必须经过`openPartialDownload()`的root/locator/length/resume-owner物理校验后才能成为body authority；

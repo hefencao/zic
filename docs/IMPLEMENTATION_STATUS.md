@@ -17,7 +17,7 @@ App build：0.31.0+328
 - 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。
 
 ### 存储与恢复 (Storage & Ingress)
-- 本地准备：设立 physical-local-prepare 并限定 local-prepare operation 上限为 max2。
+- 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝读取：冷启动 cold partial 读取通过 SQLite 索引与文件直接裁决，不向 durable store 随意 materialize durable-store。
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
@@ -145,6 +145,12 @@ App build：0.31.0+328
   同时删除纯写`_prewarmedSizes`及不可达第二个direct-local分支。affected Reader/local-media/Pipeline/native/reader-runtime tests为177 passed，bridge为3 passed；最终`./tool/check.sh --require-toolchains`在当前树exit 0（200.809s），三ABI debug与Rust 22/22通过。
   当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
   presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
+  之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，
+  但严格max2会让第二个900按stable claim顺序多等约3.7–15.4ms。ADR 0334不全局扩容，而只给同Reader/revision、三者均`localOnly + viewportVisible`的cohort一个第三operation handoff；
+  `DownloadDemand.viewportVisible`现直接来自Reader observation而非role推断。修复前13-26-45 matched fast-forward样本`next-current`中位约+18.21ms；
+  修复后14-15-30长双向Profile中forward n=19与reverse n=11均约+0.01ms。48次production handoff queue wait median/p95/max=158/747/1654us，`activePreparations`从未>3。
+  将visibility进一步收口成`ReaderObs -> DownloadDemand -> TransferDemand`显式fact后，最终源码重新构建Profile并得到14-33-10 Trace：forward n=17、reverse n=10的`next-current`中位仍均约+0.01ms；37次handoff queue wait median/max=166/1684us，active从未>3且`taskFailed=0`。
+  已热previous仍可早于current/next，这是resident raster复用而非待消除偏置；少量Flutter raster/host长尾继续作为独立presentation问题，不用扩大NetLane、decode/upload、7/3或2/1掩盖。
   相邻章预加载已下沉到 composition transfer owner：只补当前章前 7 / 后 3 encoded window 的残余水位，不额外扩大窗口；同一 preload lease 随当前页伸缩 demand。
   priority 500 opportunistic claim 共用既有 DownloadTransferOwner/NetLane/ArtifactCache/partial state，并继续受全局 50MB speculative encoded-read budget；UI 连续阅读关闭时预加载仍存在。
   系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。

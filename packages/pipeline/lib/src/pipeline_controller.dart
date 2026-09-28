@@ -551,6 +551,7 @@ final class PipelineController {
         expirationRevision: desiredRevision + 1,
         flowTargetFrames: 0,
         encodedWorkMode: EncodedWorkMode.retained,
+        viewportVisible: false,
       );
     }
     return DownloadDemand(
@@ -560,6 +561,7 @@ final class PipelineController {
       expirationRevision: desiredRevision + 1,
       flowTargetFrames: previous.flowTargetFrames,
       encodedWorkMode: previous.encodedWorkMode,
+      viewportVisible: previous.viewportVisible,
       decisionId: previous.decisionId,
     );
   }

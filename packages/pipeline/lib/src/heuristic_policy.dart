@@ -121,6 +121,7 @@ final class HeuristicPolicy {
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
+          viewportVisible: visibleIndexes.contains(entry.key),
           encodedWorkMode: transientPreview
               ? foregroundResource || transientLocalStaticDeadline
                   ? EncodedWorkMode.localOnly

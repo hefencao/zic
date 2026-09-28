@@ -1392,6 +1392,242 @@ void main() {
   },
   );
 
+  test(
+      'one same-viewport local preparation handoff keeps both visible edges coequal',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_visible_prepare_handoff_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final current = _id('visible-handoff-current');
+    final previous = _id('visible-handoff-previous');
+    final next = _id('visible-handoff-next');
+    final entered = <DownloadId, Completer<void>>{
+      current: Completer<void>(),
+      previous: Completer<void>(),
+      next: Completer<void>(),
+    };
+    final releases = <DownloadId, Completer<void>>{
+      current: Completer<void>(),
+      previous: Completer<void>(),
+      next: Completer<void>(),
+    };
+    var activePreparations = 0;
+    var maxActivePreparations = 0;
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 3),
+      prepareDownloadWithControl: (session, {required control}) async {
+        activePreparations++;
+        if (activePreparations > maxActivePreparations) {
+          maxActivePreparations = activePreparations;
+        }
+        if (!entered[session.id]!.isCompleted) {
+          entered[session.id]!.complete();
+        }
+        try {
+          await Future.any<void>(<Future<void>>[
+            releases[session.id]!.future,
+            control.whenCancelled,
+          ]);
+        } finally {
+          activePreparations--;
+        }
+      },
+    );
+    addTearDown(() async {
+      for (final release in releases.values) {
+        if (!release.isCompleted) release.complete();
+      }
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-visible-prepare-handoff',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPvisible'.codeUnits),
+      traceSink: trace,
+    );
+    consumer.replaceDemands(
+      'reader-visible-prepare-handoff',
+      7,
+      <DownloadId, TransferDemand>{
+        current: const TransferDemand(
+          priority: 1000,
+          reason: 'current',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+        previous: const TransferDemand(
+          priority: 900,
+          reason: 'visible-previous',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+        next: const TransferDemand(
+          priority: 900,
+          reason: 'visible-next',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+      },
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+    final allViewportPagesEntered =
+        entered.values.every((value) => value.isCompleted);
+    final handoffWasTraced = trace.events.any(
+      (event) =>
+          event.kind == TraceEventKind.policyDecision &&
+          event.payload['stage'] == 'local-preparation-lifecycle' &&
+          event.payload['action'] == 'admitted' &&
+          event.payload['viewportHandoff'] == true,
+    );
+
+    for (final release in releases.values) {
+      release.complete();
+    }
+    await consumer.idle();
+
+    expect(allViewportPagesEntered, isTrue,
+        reason:
+            'the base two-operation bound must not make page order choose which already-visible edge misses the presentation frame');
+    expect(maxActivePreparations, 3);
+    expect(handoffWasTraced, isTrue);
+  });
+
+  test('viewport local preparation handoff never crosses Reader consumers',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_cross_reader_prepare_handoff_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final first = _id('visible-handoff-reader-a-current');
+    final second = _id('visible-handoff-reader-a-edge');
+    final foreign = _id('visible-handoff-reader-b-edge');
+    final entered = <DownloadId, Completer<void>>{
+      first: Completer<void>(),
+      second: Completer<void>(),
+      foreign: Completer<void>(),
+    };
+    final releases = <DownloadId, Completer<void>>{
+      first: Completer<void>(),
+      second: Completer<void>(),
+      foreign: Completer<void>(),
+    };
+    var activePreparations = 0;
+    var maxActivePreparations = 0;
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 3),
+      prepareDownload: (session) async {
+        activePreparations++;
+        if (activePreparations > maxActivePreparations) {
+          maxActivePreparations = activePreparations;
+        }
+        try {
+          final ready = entered[session.id]!;
+          if (!ready.isCompleted) ready.complete();
+          await releases[session.id]!.future;
+        } finally {
+          activePreparations--;
+        }
+      },
+    );
+    addTearDown(() async {
+      for (final release in releases.values) {
+        if (!release.isCompleted) release.complete();
+      }
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final readerA = owner.attachConsumer(
+      scopeId: 'reader-visible-prepare-handoff-a',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPvisible-a'.codeUnits),
+      traceSink: trace,
+    );
+    readerA.replaceDemands(
+      'reader-visible-prepare-handoff-a',
+      11,
+      <DownloadId, TransferDemand>{
+        first: const TransferDemand(
+          priority: 1000,
+          reason: 'current-a',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+        second: const TransferDemand(
+          priority: 900,
+          reason: 'visible-edge-a',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+      },
+    );
+    await entered[first]!.future;
+    await entered[second]!.future;
+
+    final readerB = owner.attachConsumer(
+      scopeId: 'reader-visible-prepare-handoff-b',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPvisible-b'.codeUnits),
+      traceSink: trace,
+    );
+    readerB.replaceDemands(
+      'reader-visible-prepare-handoff-b',
+      11,
+      <DownloadId, TransferDemand>{
+        foreign: const TransferDemand(
+          priority: 900,
+          reason: 'visible-edge-b',
+          workMode: TransferWorkMode.localOnly,
+          viewportVisible: true,
+        ),
+      },
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+    expect(entered[foreign]!.isCompleted, isFalse);
+    expect(maxActivePreparations, 2);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.policyDecision &&
+            event.payload['stage'] == 'local-preparation-lifecycle' &&
+            event.payload['viewportHandoff'] == true,
+      ),
+      isEmpty,
+    );
+
+    releases[second]!.complete();
+    await entered[foreign]!.future;
+    expect(maxActivePreparations, 2);
+
+    releases[first]!.complete();
+    releases[foreign]!.complete();
+    await Future.wait<void>(<Future<void>>[
+      readerA.idle(),
+      readerB.idle(),
+    ]);
+  });
+
   test('local preparation bounds operations without a foreground eligibility gate',
       () async {
     final temp = await Directory.systemTemp.createTemp(

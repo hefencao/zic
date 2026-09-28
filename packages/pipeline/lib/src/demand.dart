@@ -22,6 +22,7 @@ final class DownloadDemand {
     required this.expirationRevision,
     this.flowTargetFrames = 0,
     this.encodedWorkMode = EncodedWorkMode.full,
+    this.viewportVisible = false,
     this.decisionId,
   }) : assert(flowTargetFrames >= 0);
 
@@ -37,6 +38,12 @@ final class DownloadDemand {
 
   final EncodedWorkMode encodedWorkMode;
 
+  /// The page intersects the actual viewport in this observation.
+  ///
+  /// This is execution metadata rather than a role-derived guess. Transfer
+  /// preparation may use it only for bounded foreground admission.
+  final bool viewportVisible;
+
   final String? decisionId;
 
   /// Scheduling identity excludes [expirationRevision]. Expiration is liveness
@@ -48,6 +55,7 @@ final class DownloadDemand {
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
       encodedWorkMode == other.encodedWorkMode &&
+      viewportVisible == other.viewportVisible &&
       decisionId == other.decisionId;
 
   @override
@@ -60,6 +68,7 @@ final class DownloadDemand {
           expirationRevision == other.expirationRevision &&
           flowTargetFrames == other.flowTargetFrames &&
           encodedWorkMode == other.encodedWorkMode &&
+          viewportVisible == other.viewportVisible &&
           decisionId == other.decisionId;
 
   @override
@@ -70,6 +79,7 @@ final class DownloadDemand {
         expirationRevision,
         flowTargetFrames,
         encodedWorkMode,
+        viewportVisible,
         decisionId,
       );
 }

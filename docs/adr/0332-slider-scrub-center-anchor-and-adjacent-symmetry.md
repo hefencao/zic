@@ -1,6 +1,10 @@
 # ADR 0332：Slider scrub center anchor 与相邻 presentation 对称
 
-状态：Accepted
+状态：Superseded
+
+由 ADR 0334 supersede。本文 Decision 1–4 的 geometry anchor 与相邻 priority
+仍由当前规范保留；Decision 5 中“local preparation 在任何情况下严格为2”的
+假设由 ADR 0334 的 visible-cohort bounded handoff 取代。
 
 ## Context
 

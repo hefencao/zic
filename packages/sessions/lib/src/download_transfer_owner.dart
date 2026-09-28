@@ -51,6 +51,7 @@ final class TransferDemand {
     required this.reason,
     this.flowTargetFrames = 0,
     this.workMode = TransferWorkMode.full,
+    this.viewportVisible = false,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
@@ -60,6 +61,10 @@ final class TransferDemand {
   final String reason;
   final int flowTargetFrames;
   final TransferWorkMode workMode;
+  /// True only when this exact demand is part of the currently painted
+  /// viewport. The transfer owner may use this as a bounded foreground
+  /// admission fact, but it must not infer navigation direction from it.
+  final bool viewportVisible;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -70,6 +75,7 @@ final class TransferDemand {
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
       workMode == other.workMode &&
+      viewportVisible == other.viewportVisible &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -79,6 +85,7 @@ final class TransferDemand {
         reason,
         flowTargetFrames,
         workMode,
+        viewportVisible,
         expectedChecksum,
         completionIntent,
       );
@@ -153,8 +160,13 @@ final class DownloadTransferOwner {
   // generation performs this initialization at most once.
   // Local preparation is an operation-lifetime bound, not a page-eligibility
   // policy. Persistent body I/O is scheduled separately per chunk by the
-  // composition-owned ArtifactCacheReadScheduler.
+  // composition-owned ArtifactCacheReadScheduler. Two ordinary operations may
+  // run at once. One additional handoff is allowed only when all three
+  // operations belong to the same Reader revision's already-visible localOnly
+  // viewport cohort; otherwise this bound itself would make page-list order an
+  // accidental presentation priority for one visible edge.
   static const int _maxActiveLocalPreparations = 2;
+  static const int _maxViewportLocalPreparationHandoffs = 1;
 
   final Map<DownloadId, Future<void>> _localPreparations =
       <DownloadId, Future<void>>{};
@@ -885,6 +897,7 @@ final class DownloadTransferOwner {
             reason: rawDemand.reason,
             flowTargetFrames: rawDemand.flowTargetFrames,
             workMode: rawDemand.workMode,
+            viewportVisible: rawDemand.viewportVisible,
             expectedChecksum:
                 _normalizeExpectedChecksum(rawDemand.expectedChecksum),
             completionIntent: rawDemand.completionIntent,
@@ -931,6 +944,9 @@ final class DownloadTransferOwner {
             reason: selected.demand.reason,
             flowTargetFrames: selected.demand.flowTargetFrames,
             workMode: required ? TransferWorkMode.full : workMode,
+            viewportVisible:
+                aggregate.demand.viewportVisible ||
+                candidate.demand.viewportVisible,
             expectedChecksum: leftChecksum ?? rightChecksum,
             completionIntent: required
                 ? TransferCompletionIntent.required
@@ -1664,6 +1680,49 @@ final class DownloadTransferOwner {
     _pumpLocalPreparations();
   }
 
+  _TransferClaim? _localPreparationClaim(DownloadId id) =>
+      _preferredClaimForWork(id, TransferWorkMode.localOnly) ??
+      _preferredClaim(id);
+
+  List<_PendingLocalPreparation> _rankedPendingLocalPreparations() =>
+      _pendingLocalPreparations.values.toList(growable: false)
+        ..sort((left, right) {
+          final priority = _localPreparationPriority(right.id, right.session)
+              .compareTo(_localPreparationPriority(left.id, left.session));
+          if (priority != 0) return priority;
+          final leftSequence = _localPreparationClaim(left.id)?.sequence ??
+              (1 << 62);
+          final rightSequence = _localPreparationClaim(right.id)?.sequence ??
+              (1 << 62);
+          return leftSequence.compareTo(rightSequence);
+        });
+
+  bool _canUseViewportLocalPreparationHandoff(
+    _PendingLocalPreparation pending,
+  ) {
+    if (_activeLocalPreparations.length != _maxActiveLocalPreparations ||
+        _maxViewportLocalPreparationHandoffs <= 0) {
+      return false;
+    }
+    final candidate = _localPreparationClaim(pending.id);
+    if (candidate == null ||
+        !candidate.demand.viewportVisible ||
+        candidate.demand.workMode != TransferWorkMode.localOnly) {
+      return false;
+    }
+    for (final activeId in _activeLocalPreparations) {
+      final active = _localPreparationClaim(activeId);
+      if (active == null ||
+          !active.demand.viewportVisible ||
+          active.demand.workMode != TransferWorkMode.localOnly ||
+          !identical(active.consumer, candidate.consumer) ||
+          active.revision != candidate.revision) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void _pumpLocalPreparations() {
     if (_disposed) return;
     if (_demandMutationDepth > 0) {
@@ -1687,31 +1746,37 @@ final class DownloadTransferOwner {
       return;
     }
 
-    if (_activeLocalPreparations.length >= _maxActiveLocalPreparations) {
-      _preemptLocalPreparationForBlockedHighPriority();
-      return;
-    }
-
-    _clearLocalPreparationPreemptionCandidate();
-    while (_activeLocalPreparations.length < _maxActiveLocalPreparations) {
-      final candidates = _pendingLocalPreparations.values.toList(growable: false)
-        ..sort((left, right) {
-          final priority = _localPreparationPriority(right.id, right.session)
-              .compareTo(_localPreparationPriority(left.id, left.session));
-          if (priority != 0) return priority;
-          final leftSequence =
-              _preferredClaimForWork(left.id, TransferWorkMode.localOnly)
-                      ?.sequence ??
-                  (1 << 62);
-          final rightSequence =
-              _preferredClaimForWork(right.id, TransferWorkMode.localOnly)
-                      ?.sequence ??
-                  (1 << 62);
-          return leftSequence.compareTo(rightSequence);
-        });
+    while (true) {
+      final candidates = _rankedPendingLocalPreparations();
       if (candidates.isEmpty) break;
 
-      final target = candidates.first;
+      var viewportHandoff = false;
+      late final _PendingLocalPreparation target;
+      if (_activeLocalPreparations.length < _maxActiveLocalPreparations) {
+        target = candidates.first;
+        _clearLocalPreparationPreemptionCandidate();
+      } else {
+        final handoffCapacity = _maxActiveLocalPreparations +
+            _maxViewportLocalPreparationHandoffs;
+        if (_activeLocalPreparations.length >= handoffCapacity) {
+          _preemptLocalPreparationForBlockedHighPriority();
+          return;
+        }
+        _PendingLocalPreparation? visibleCandidate;
+        for (final candidate in candidates) {
+          if (_canUseViewportLocalPreparationHandoff(candidate)) {
+            visibleCandidate = candidate;
+            break;
+          }
+        }
+        if (visibleCandidate == null) {
+          _preemptLocalPreparationForBlockedHighPriority();
+          return;
+        }
+        target = visibleCandidate;
+        viewportHandoff = true;
+        _clearLocalPreparationPreemptionCandidate();
+      }
 
       _pendingLocalPreparations.remove(target.id);
       _activeLocalPreparations.add(target.id);
@@ -1726,6 +1791,7 @@ final class DownloadTransferOwner {
           'action': 'admitted',
           'effectivePriority':
               _localPreparationPriority(target.id, target.session),
+          'viewportHandoff': viewportHandoff,
           'queueWaitMicros': (admittedAtMicros - target.startedAtMicros)
               .clamp(0, 1 << 62)
               .toInt(),
@@ -1815,21 +1881,7 @@ final class DownloadTransferOwner {
       if (_localPreparationControls[id]?.cancelled == true) return false;
     }
 
-    final pending = _pendingLocalPreparations.values.toList(growable: false)
-      ..sort((left, right) {
-        final priority = _localPreparationPriority(right.id, right.session)
-            .compareTo(_localPreparationPriority(left.id, left.session));
-        if (priority != 0) return priority;
-        final leftSequence =
-            _preferredClaimForWork(left.id, TransferWorkMode.localOnly)
-                    ?.sequence ??
-                (1 << 62);
-        final rightSequence =
-            _preferredClaimForWork(right.id, TransferWorkMode.localOnly)
-                    ?.sequence ??
-                (1 << 62);
-        return leftSequence.compareTo(rightSequence);
-      });
+    final pending = _rankedPendingLocalPreparations();
     if (pending.isEmpty) {
       _clearLocalPreparationPreemptionCandidate();
       return false;

@@ -2210,7 +2210,15 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
 15. 内存与存储层之间的 Promoted Artifact 提交与持久化 Handoff MUST 使用零拷贝不可变视图（`UnmodifiableUint8ListView`），
     禁止对已不可变的数据反复执行全量堆内存深拷贝（`Uint8List.fromList`）；对已有权威校验和的媒体块 MUST 透传 contentHash，避免重复逐字节哈希重算。
 16. 物理 `DownloadSession` 的 local preparation MUST 只承担有界 operation 生命周期与动态 priority 排序，
-    MUST NOT 根据 `PageRole` 或 `priority>=900` 再建立第二套页面资格门禁。composition 级 local prepare 同时最多 2 个；
+    MUST NOT 根据 `PageRole` 或 `priority>=900` 再建立第二套页面资格门禁。composition 级 local prepare 普通同时最多 2 个；
+    唯一的额外 admission 是 visible-cohort handoff：当且仅当普通2槽已满，pending candidate 与两个active work
+    属于同一Reader consumer、同一accepted demand revision，三者effective work mode均为`localOnly`且
+    `DownloadDemand.viewportVisible=true`时，physical owner MAY让该第三个operation短暂重叠；
+    handoff MUST最多1个，任何第四个operation、跨consumer/revision、hidden或非localOnly work MUST继续等待普通slot。
+    `DownloadDemand.viewportVisible` MUST由当前Reader observation的真实`visibleCoverages`/current事实产生并由LiveCoordinator原样投影，
+    MUST NOT由transfer owner从页号、drag direction或PageRole猜测。
+    该handoff只改变local operation lifetime，不得扩大7/3 membership、2/1 decode deadline、Upload/presentation并发、
+    raster预算或NetLane容量，且`localOnly`仍MUST NOT打开remote source；
     该 operation cap MUST NOT 变成不可抢占的 pre-admission 阻塞：
     当所有 operation slot 已占用且一个新的 high-priority demanded preparation 被阻塞时，
     physical owner MAY复用唯一 NetLane 的数值 high-priority/preemption margin 与同一 preemption-candidate grace；
@@ -2220,7 +2228,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     local preparation 的执行资格已经被撤销，owner MUST立即向 pending/active preparation 发 cancellation，不得让 priority=0 的旧 scrub restore继续占 slot。
     claim 新增、更新、移除 MUST复用同一个aggregate execution-permission投影；最后一个local/full claim被移除而retained claim仍在时，`DownloadSession.demanded`仍可保持true，但 MUST NOT因此保留local execution。
     取消 MUST等待旧 writer/descriptor/operation Future 实际退出后才释放 operation slot，
-    MUST NOT让并发数瞬时超过 2，也 MUST NOT删除 durable partial 或撤销 logical demand；
+    普通路径 MUST NOT让并发数瞬时超过 2，visible-cohort handoff 活跃时 MUST NOT超过3，
+    且均 MUST NOT删除 durable partial 或撤销 logical demand；
     scheduler-owned local preparation若已进入generic `Artifact.restore`/whole-file CRC，
     现有`TaskControl` MUST继续下沉到该restore；
     受控CRC MUST保持off-UI且cancel必须终止其worker并及时释放operation slot，普通restore/seal的非受控CRC语义不得改变；
