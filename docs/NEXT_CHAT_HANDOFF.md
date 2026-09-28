@@ -21,7 +21,7 @@
   fresh Profile `08-55-17` 已验证16次跨页0次在正coverage后补首帧；native `outputReadyToPresent` 为53/53/88µs，page27–30 detached prewarm约提前310–510ms，详见ADR 0323。
   之后 `09-01-07` 的高速空白定位到 external-static 第二调度/驻留 owner：detached raster 已在 viewport entry 前约554ms ready，
   但 Flutter `Image` 的 `ScrollAwareImageProvider` 仍可高速滚动 defer mounted resolve；`TickerMode(false)` 又会让 `Image` 自己持有 private completer keepAlive，导致 cache owner 宣布 eviction 后 mounted consumer 仍可能留活。
-  当前修复改为 managed static 直接 resolve 统一 provider、mounted 只持 `ImageInfo`，撤权即释放；speculative budget eviction 的 re-admission backpressure 下沉到 cache owner，并删除 Pipeline `_externalPresentationEvictedWhileFar`，详见ADR 0324。
+  managed static直接resolve统一provider，mounted只持`ImageInfo`，backpressure归cache owner（ADR0324）；resident-raster failure只轮换volatile presentation generation，exact artifact authority拒绝才允许durable reset（ADR0335）。
   6-screen bootstrap、`current±7` KeepAlive和有界recenter目前也保留。2026-09-24 已确认 source-canvas ratio live feed 会把 pending-only/future geometry 事实放大成 whole-Reader rebuild；
   现改为 pending-only 零 rebuild、真实 extent 变化只重建 vertical ListView geometry subtree，Pipeline policy 不变；逐帧displacement又把finger-down drag与ballistic拆开：无resampling平均相邻速度摆动9.9%–18.3%、最高255%，built-in resampling降到0个>20% jump、max<=0.0171%。
   ADR 0325恢复`reader_runtime` scoped ref-counted lease；旧dev.310 ballistic cadence否证仍有效，禁止调`samplingOffset`或自定义插值。下一真机同时验视觉平滑和touch latency；功耗继续先量化warm task cadence，不缩窗口/禁warm。

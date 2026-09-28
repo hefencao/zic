@@ -22,6 +22,8 @@ App build：0.31.0+328
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
+- presentation recovery 已拆成两层 authority：resident managed-raster failure 只轮换 volatile presentation generation，并复用既有 encoded artifact；
+  只有携带 exact `storageId + generation` authority 的 rejection 才允许 `DownloadTransferOwner` 失效 durable generation。两层 automatic recovery 各自有界一次，强制重载仍是最终 fresh-byte 手段。
 
 ### Home 组合与服务代际
 - 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。

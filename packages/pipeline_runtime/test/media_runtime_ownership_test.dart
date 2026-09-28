@@ -1304,6 +1304,124 @@ void main() {
   );
 
   test(
+    'resident raster failure rotates presentation only and regrants without artifact recovery',
+    () async {
+      final trace = MemoryTraceSink();
+      final uri = Uri.parse('asset:///resident-raster-recovery.jpg');
+      final warmed = <PipelineExternalPresentationWarmRequest>[];
+      final cacheAuthority = _FakePresentationCacheAuthority();
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: _Factory(_Runtime()),
+        pageDownloadLane: NetLane(maxActive: 5),
+        externalPresentationPrewarmer: (request) async {
+          request.token.throwIfCancelled();
+          warmed.add(request);
+        },
+        presentationCacheAuthority: cacheAuthority,
+        loaderSources: <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'resident-raster-recovery-r1',
+            loadBytes: () async => Uint8List.fromList(const <int>[
+              0xff,
+              0xd8,
+              0xff,
+              0xe0,
+              0x00,
+              0x10,
+              0x4a,
+              0x46,
+              0x49,
+              0x46,
+              0x00,
+              0x01,
+            ]),
+          ),
+        },
+      ).create(
+        chapter: _chapter(
+          uri: uri,
+          contentKindHint: ContentKindHint.unknown,
+        ),
+        sessionId: 'resident-raster-recovery-test',
+        traceSink: trace,
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+      session.accept(_currentObservation(session.chapter));
+
+      final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (warmed.isEmpty) {
+        if (DateTime.now().isAfter(firstDeadline)) {
+          fail('initial detached presentation warm never completed');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      final asset = session.chapter.pages.single;
+      final output = session.pageOutput(asset);
+      final firstIdentity = output.externalPresentationCacheIdentity;
+      expect(firstIdentity, isNotNull);
+      expect(output.externalPresentationReady, isTrue);
+
+      expect(
+        await session.recoverPresentationFailure(
+          asset,
+          StateError('resident raster completer failed'),
+        ),
+        isTrue,
+      );
+      final replacementIdentity = output.externalPresentationCacheIdentity;
+      expect(replacementIdentity, isNotNull);
+      expect(
+        identical(firstIdentity, replacementIdentity),
+        isFalse,
+        reason:
+            'a failed resident raster needs a new presentation generation so the mounted consumer cannot suppress reload',
+      );
+
+      final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (warmed.length < 2) {
+        if (DateTime.now().isAfter(secondDeadline)) {
+          fail('presentation-only recovery never re-granted static warm');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(
+        identical(warmed.last.cacheIdentity, replacementIdentity),
+        isTrue,
+      );
+      expect(
+        trace.events.where(
+          (event) =>
+              event.kind == TraceEventKind.policyDecision &&
+              event.payload['stage'] ==
+                  'presentation-raster-generation-recovery' &&
+              event.payload['durableArtifactInvalidated'] == false,
+        ),
+        hasLength(1),
+      );
+      expect(
+        trace.events.where(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['stage'] == 'presentation-artifact-recovery',
+        ),
+        isEmpty,
+        reason:
+            'a volatile resident-raster fault must not destroy the accepted encoded artifact',
+      );
+      expect(
+        await session.recoverPresentationFailure(
+          asset,
+          StateError('repeated resident raster failure'),
+        ),
+        isFalse,
+        reason:
+            'presentation-only recovery is bounded once per page and Reader session',
+      );
+    },
+  );
+
+  test(
     'external static cache identity survives an ordinary demand gap',
       () async {
     final pages = List<PageAsset>.generate(
