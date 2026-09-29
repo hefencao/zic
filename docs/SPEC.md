@@ -1654,8 +1654,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - 设置 MUST 提供单行"默认下载目录"项：该行同时展示当前生效的章节下载目录并直接进入目录选择，不得像 Venera 一样把路径展示与设置动作拆成两行。用户选择的目录按旧/新文件规则解析生效位置：
   缺失或空的所选目录直接作为下载根；
   非空目录 MUST NOT 被合并或覆盖，存储改置于其下第一个可用的 `offline_chapters`、`offline_chapters(1)`… 条目（已存在但为空的条目 MAY 复用）。
-  切换目录时用户 MAY 选择是否迁移：迁移 MUST 把 SQLite 索引与 `partial/final` 字节一起移动并把索引内记录路径重写到新前缀，MUST NOT 只修改字符串路径；
-  不迁移时旧文件保留在原位置，但应用内章节显示为未下载。新、旧目录相同或存在嵌套关系时 MUST 拒绝迁移。意图（目标目录与迁移来源）MUST 先于移动持久化，中断的移动由下次启动幂等补完。
+  切换目录时用户 MAY 选择是否迁移。已有 App-private metadata 时，explicit Direct-root migration MUST 逐 sealed replica 执行：只迁移 verified READY 且由显式 manual/offline retention 保护的物理副本，MUST 保持 `replica_id`，并在删除 source 前提交 destination locator/root authority；automatic-cache-only bytes 与 mutable partial/spool MUST NOT 因根切换被强制迁移。结构化 manifest MUST 在 replica 全部提交后先 durable copy/verify，再推进 `DownloadPlacement` generation/root。MUST NOT 仅递归搬完整个根后统一重写 SQLite 前缀。
+  不迁移时旧 replica/partial/cache MUST 保留在原物理位置，新目录只成为后续 materialization 目标；Direct 旧 locator 仍可按 durable index 读取。旧 SAF tree 在切走当前 grant 后的可访问性属于独立 SAF authority 问题，MUST NOT 因“文件仍存在”而宣称仍可读。新、旧 Direct 目录相同或存在嵌套关系时 MUST 拒绝迁移。意图（目标目录、迁移来源与 migration protocol marker）MUST 先于迁移持久化；中断后 MUST 保留 source layout + pending intent，并由下次启动在同一 App-private artifact authority 上幂等续作，已提交的 destination replica MUST NOT 回滚或重复复制。若 source 或 destination 任一为 SAF，当前 UI MUST 禁用 automatic existing-download migration，不得把 Direct/POSIX 迁移协议冒充 SAF provider 原子性。
   有整本任务进行中或 Reader transfer consumer 未退出时 MUST 拒绝立即切换并保持现状。
 - 来源管理 MUST 为每个 source 提供齿轮“源设置”入口。应用级 source policy MUST 集中在该页，
   当前包括条漫置信、历史缓存冲突数据信任与来源独立下载目录；这些设置不得重新挂回插件生命周期管理。

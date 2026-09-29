@@ -726,6 +726,9 @@ void main() {
     controller.setDebugTraceExportDirectory('Debug/Reader');
     controller.setChapterDownloadDirectoryOverride('/data/downloads');
     controller.setChapterDownloadDirectoryPendingMoveFrom('/data/old');
+    controller.setChapterDownloadDirectoryPendingMoveProtocol(
+      'replica-direct-v1',
+    );
     controller.setCacheLimitMb(1024);
     controller.setReaderPrefetchReadBudgetMiB(64);
     controller.setCachedCarrierTrustMode(CachedCarrierTrustMode.trustCached);
@@ -788,6 +791,10 @@ void main() {
     expect(
       written?['chapterDownloadDirectoryPendingMoveFrom'],
       '/data/old',
+    );
+    expect(
+      written?['chapterDownloadDirectoryPendingMoveProtocol'],
+      'replica-direct-v1',
     );
     expect(written?['cacheLimitMb'], 1024);
     expect(written?['readerPrefetchReadBudgetMiB'], 64);

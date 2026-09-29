@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.22.0",
-  "last_updated": "2026-09-04T13:08:00+08:00",
+  "audit_version": "1.23.0",
+  "last_updated": "2026-09-29T19:55:05+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -10,41 +10,36 @@
     "high_p1": 8,
     "medium_p2": 2,
     "governance_status": "in_progress",
-    "review_status": "completed_with_open_findings",
-    "resolved_count": 1,
+    "review_status": "reconciled_with_open_findings",
+    "resolved_count": 5,
     "deferred_count": 1,
     "pending_count": 1,
-    "in_progress_count": 10
+    "in_progress_count": 6
   },
   "governance": {
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-03T08:45:00+08:00",
-    "review_basis": "基于当前工作树完成的下载管理单向内存投影重构、实体标识防碰撞 Framing、按索引绝对路径恢复物理根、SQLite 索引约束修复，以及同漫画多版本更新（E-Hentai 等）任务处理交互重构；本轮验证覆盖全仓 Dart/Flutter 包测试（downloads 194 passed、sessions 272 passed、storage 98 passed、apps/app 182 passed），确认下载管理进入零全量扫描、Framing 防碰撞兼容、以及版本决策弹窗闭环。",
+    "reviewed_at": "2026-09-29T19:55:05+08:00",
+    "review_basis": "按 main@54efc050 之后的最终工作树重新对账，不沿用 2026-09-03 结论。当前 schema-8 artifact_object/artifact_replica、ExportPageBinding、reference-safe delete、DownloadManagerProjection 均有生产代码与回归；DL-DIR-018 已改为 schema-9 per-replica Direct-root migration，并补齐 replica-direct-v1 恢复标记、legacy pending 隔离、失败后 source-root 真值和 legacy default placement 兼容。focused migration 3/3、settings/preferences 48/48、downloads 464/464、repo/docs/ownership guards及最终全仓 toolchain gate均通过。",
     "closure_blockers": [
-      "下载根迁移仍是逐文件递归提交，SAF provider replace、manifest 与 placement 仍未形成跨进程原子所有权事务",
-      "同长度损坏、checksum 算法语义和版本级删除保护尚未闭合"
+      "DL-DIR-019 / DL-DIR-017 / DL-DIR-005：SAF provider replace、manifest/placement owner 与跨进程提交仍未形成可证明的单一事务边界，且缺真实 provider 崩溃恢复证据",
+      "DL-DIR-007：ready 读取的同长度损坏发现策略、PageAsset checksum 与 artifact CRC32 算法语义仍需单独闭合",
+      "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
     ]
   },
   "validation": {
     "passed": [
-      "python3 tool/check_documentation.py",
-      "python3 tool/check_repo.py",
-      "packages/domain tests: 9 passed（含 identity framing、legacyKey 兼容与字段防碰撞验证）",
-      "packages/catalog tests: 66 passed",
-      "packages/storage tests: 99 passed（含 SQLite/CacheIndex/CacheScanner/DownloadDirectory/Artifact及祖先挂载点符号链接安全验证）",
-      "packages/transport tests: 15 passed",
-      "packages/pipeline_runtime tests: 19 passed（Flutter test）",
-      "packages/downloads tests: 195 passed（含 ChapterDownloadManagementProjection、版本关系判定、新任务替换旧任务置换与结构化落盘验证）",
-      "packages/sessions tests: 272 passed（含 startup_recovery_test 绝对路径恢复与 framing key 调度验证）",
-      "packages/storage_bridge tests: 6 passed",
-      "apps/app tests: 182 passed（含下载管理单向投影进入零扫描、local_image_preview framing 链路与「下载任务处理」对话框全交互回归）"
+      "python3 tool/check_repo.py: passed on current reconciliation tree",
+      "python3 tool/check_documentation.py: passed on current reconciliation tree",
+      "python3 tool/test_download_root_migration_ownership.py: passed; AppRuntime cannot call legacy whole-tree mover for current private-metadata root switches",
+      "packages/downloads: 464/464 passed, including schema-9 replica migration, cross-version reference-safe deletion, canonical cache/binding split, and management projection regressions",
+      "packages/downloads structured_root_migration_test: 3/3 passed (manual sealed-only move, destination-conflict preflight, cold resume after earlier replica authority commit)",
+      "apps/app chapter_download_directory_test + misc_settings_test: 48/48 passed, including Direct-only migration policy and durable protocol-marker persistence",
+      "./tool/check.sh --require-toolchains: exit 0 in 219.572s on the final reconciliation/root-migration tree; all repository/documentation/ownership guards, Dart/Flutter suites, Android three-ABI debug builds and Rust media_core 22/22 passed"
     ],
     "failed_or_unverified": [
-      "./tool/check.sh 在无关的 dev.142 floating search contract 处提前失败",
-      "完整 Android/Rust 构建因总检查提前失败而未验证",
-      "真实 SAF provider、跨进程并发覆盖和首次安装重启场景尚无设备回归证据"
+      "DL-DIR-019 的真实 SAF provider rename/replace、跨进程并发和崩溃恢复仍无新的设备证据"
     ],
     "code_changes_in_this_audit": true
   },
@@ -64,7 +59,7 @@
       ],
       "status": "in_progress",
       "remediation_applied": "已落地 exact owner 目录、持久化 DownloadPlacement、单/多章节迁移、最终路径串行提交、详情页冲突决策和整本队列 placement 持久化；历史任务只可从唯一的已校验 CacheRec 路径恢复 placement，并排除内部 final/partial。manifest 已保存 generation/fingerprint、稳定章节目录映射与同名章节隔离，placement 同步保存最近提交 token；POSIX 写入使用目录锁并拒绝损坏 fingerprint。moveChapterDownloadStore 现递归迁移整个根，包括结构化漫画目录和 .zic.json。执行期 ErrorCode.policy 进入持久化 requiresUserAction，详情页会强制重新弹出冲突对比。",
-      "remaining_work": "递归目录迁移仍是逐文件落位后再重写索引，不是整库 staged/atomic commit，崩溃中间态可能分裂新旧根；manifest 字节与 placement token 也不是同一存储事务，SAF 路径没有跨进程目录锁。需要闭合跨根恢复协议、跨进程 owner 提交与 per-source/SAF root identity 的一致性证据。"
+      "remaining_work": "Direct/POSIX 全局根迁移已从 legacy whole-tree mover 切到 schema-9 per-replica 协议；剩余只保留 manifest/placement 在 SAF provider 与跨进程并发下的 owner 提交一致性，不再把 Direct 根迁移列为本项 blocker。"
     },
     {
       "id": "DL-PIPE-001",
@@ -130,9 +125,9 @@
         "packages/downloads/lib/src/artifact_cache_reuse.dart",
         "packages/downloads/lib/src/chapter_downloads.dart"
       ],
-      "status": "in_progress",
-      "remediation_applied": "verified checksum/image-key/content-hash 等价统一用于进度与执行；createNew 复用现在按 1-based 页码复制到本版本目录，支持 POSIX/SAF 交叉来源并在复制前后校验 bytes+CRC32，禁止为空或错误目标建立 ready 记录。",
-      "remaining_work": "将 artifact object、逻辑 version/page binding 与 export binding 正式拆表，避免继续由 CacheRec.path 同时表达三种所有权；需要保留 physical object generation 与 logical revision 的明确边界。"
+      "status": "resolved",
+      "remediation_applied": "verified checksum/image-key/content-hash 等价统一用于进度与执行；createNew 复用现在按 1-based 页码复制到本版本目录，支持 POSIX/SAF 交叉来源并在复制前后校验 bytes+CRC32，禁止为空或错误目标建立 ready 记录。 后续 schema-8 已正式拆出 artifact_object / artifact_replica 物理 authority，ExportPageBinding 独立表达用户可见导出 ordinal，canonical PhysicalMediaProjection 独立于 logical revision；CacheRec.path 仅保留兼容投影。当前 downloads 464/464 覆盖跨版本等价复用、canonical physical-only cache 与 createNew 自包含物化。",
+      "remaining_work": ""
     },
     {
       "id": "DL-DIR-010",
@@ -142,9 +137,9 @@
       "locations": [
         "packages/downloads/lib/src/chapter_downloads.dart"
       ],
-      "status": "in_progress",
-      "remediation_applied": "同一路径 CacheRec 删除已具备引用保护，createNew 等价页会物化自包含副本。",
-      "remaining_work": "引入 comic family 主干、版本页映射和 DeletePlan：删除旧版只移除绑定，删除新版只回收新版独有页；SAF 不得在仍有跨版本绑定时直接递归删除章节目录。"
+      "status": "resolved",
+      "remediation_applied": "同一路径 CacheRec 删除已具备引用保护，createNew 等价页会物化自包含副本。 当前删除路径先移除 exact logical binding，再由 artifact owner 的 isPathOrArtifactReferenced / replica authority 判断是否回收物理 bytes；structured chapter cleanup 在 POSIX/SAF 删除目录前再次扫描 ready/partial 引用。双向多版本删除回归证明删除旧版保留新版共享页、删除新版只回收独有页并保留旧版。",
+      "remaining_work": ""
     },
     {
       "id": "DL-DIR-017",
@@ -160,7 +155,7 @@
       ],
       "status": "in_progress",
       "remediation_applied": "目标路径串行锁、exact owner、持久化 placement、提交前 owner 复查、manifest generation/fingerprint、稳定章节目录映射、逐页 CRC32 记录、无扫描重试和跨版本自包含物化已接入；生产整本 enqueue 同步保存目录、模式与 observed owner。同进程旧 owner 认领仅可由精确匹配 observedOwnerKey 的 overwrite 替换。已落地 ContentId/DownloadId/DecodeId 长度前缀 Framing 编码（_frame(s) => '${s.length}:$s'），彻底杜绝由特殊字符和分隔符碰撞导致的不同实体被合并；SqliteIndex 启动时通过 _migrateDownloadIdentityKeys 自动兼容迁移旧 row；DownloadRegistry.restoreIndexed 对确定性 partial/final 路径基于 CacheRec.path 绝对路径推导旧 root 恢复物理文件，杜绝目录切换或插件级 layoutResolver 误绑新根；SqliteIndex.putPlacement 将主键/所有者归属修正为 (source_id, comic_id) 避免 placement_id 变更冲突；_putArtifactObject 增设 _artifactObjectDiffers 校验字节数与 CRC32，防止内容篡改与错误绑定。 补充治理：修复存储与下载权威层符号链接校验递归越界问题。在 Android 等 OS 下，内部私有存储根 /data/user/0 与外部存储 /storage/emulated/0 属于系统级软链/挂载点；此前 _rejectLink / _rejectPathLinks / _rejectDirectoryPathLinks / _rejectLocalPathLinks 无界遍历父级直至系统根 / 导致在真机上正常文件操作全量误判为 Failure(artifactCorruption)；现将符号链接校验范围严格收敛至下载存储自身管辖的目录树与直接容器内，并在 storage 补齐祖先挂载点软链回归测试。",
-      "remaining_work": "完成 artifact/binding 拆分和版本级 DeletePlan；manifest 字节与 placement generation/fingerprint 尚未形成单一跨进程事务，SAF owner 提交也没有跨进程锁；overwrite 后必须清理或迁移旧 CacheRec binding，避免旧 revision 继续指向新字节。上述事务边界闭合前不能关闭本 P0。"
+      "remaining_work": "artifact/logical/export binding 拆分和跨版本物理引用安全已由 schema-8 + ExportPageBinding + reference-safe delete 闭合。仍未关闭的是 SAF manifest/placement 跨进程 owner 提交，以及 provider replace 的可证明崩溃恢复边界；这些与 DL-DIR-019 共用同一剩余根因。"
     },
     {
       "id": "DL-DIR-018",
@@ -172,11 +167,11 @@
         "packages/downloads/lib/src/chapter_downloads.dart:1385-1404",
         "packages/downloads/lib/src/chapter_downloads.dart:1889-1924"
       ],
-      "root_cause": "moveChapterDownloadStore 已改为递归搬迁整个下载根，结构化漫画目录、.zic.json、cache.sqlite 及内部 artifact 都会进入 moveTree；但当前仍逐文件 rename/copy 后才重写目标索引路径，没有整库 staging、提交标记和回滚边界。",
+      "root_cause": "历史 App-private metadata 路径仍调用 legacy moveChapterDownloadStore：先递归移动整个 byte tree，再统一 rewrite SQLite locator/root，崩溃窗口会让物理位置与 durable authority 分裂。",
       "impact": "正常迁移不再固定遗漏结构化目录；但进程在递归移动或索引重写之间崩溃时，新旧根仍可能各持一部分 authority，Reader、下载管理和冲突探测需要依赖幂等重入恢复，尚不能证明不会出现分裂或孤儿状态。",
-      "status": "in_progress",
-      "remediation_applied": "递归 moveTree 已覆盖整个下载根；跨文件系统复制使用同目录临时文件后 rename，重复目标只有字节完全一致才会收敛，结构化目录和 manifest 不再被固定遗漏。",
-      "remediation_plan": "将整个 store generation、迁移意图、文件校验和索引切换纳入统一 staged move plan；全部复制/校验完成后一次切换 authority，失败时保留旧根并可确定性回滚或续作。"
+      "status": "resolved",
+      "remediation_applied": "当前 explicit Direct-root switch 不再从 AppRuntime 调 legacy whole-tree mover。PersistentDownloadArtifactStore.migrateStructuredDirectRoot 只选择 verified READY + explicit manual/offline pinned 的 sealed primary replica，逐个复用 schema-9 migrateArtifactReplica：目标完整 proof 后原子提交 destination replica/root authority，再清理 source；automatic-cache-only 与 mutable partial/spool 保留原 locator。全部选中 replica 提交后才 copy/verify .zic.json 并推进 DownloadPlacement generation/root。pending intent 新增 replica-direct-v1 协议标记，旧无标记 whole-tree pending 继续 legacy recovery，避免升级时错误重解释；失败时 Settings/Runtime 继续把 pending source 视为当前目录并只允许同目标重试。",
+      "remediation_plan": "closed"
     },
     {
       "id": "DL-DIR-019",
@@ -203,11 +198,11 @@
         "packages/downloads/lib/src/chapter_downloads.dart:3363-3406",
         "packages/catalog/lib/src/imported_chapter.dart"
       ],
-      "root_cause": "discoverOrphanedEntries、known key、inspectMany 章节分组现均包含 sourceRevision，同章多 revision 不再直接合并；剩余缺口是 synthetic orphan 和管理页删除仍只有逻辑 entry 语义，没有 physical generation、comic-family page mapping 与版本级 DeletePlan。",
-      "impact": "revision 投影与进度查询已能分开；但删除某个 orphan/revision 时仍无法先证明哪些 binding 或实体被其它版本覆盖，管理页不能可靠表达“只删记录”与“回收该版本独有页”的差异。",
+      "root_cause": "orphan/revision identity 已精确到 sourceId+comicId+chapterId+sourceRevision，物理删除也已由 artifact/replica reference owner 保证共享 bytes 安全；剩余缺口已收窄为管理页没有在确认前显式展示该版本删除会仅解除共享 binding 还是同时回收独有物理页。",
+      "impact": "不会再因删除一个 revision 误删其它版本仍引用的物理页；当前不足主要是删除影响的可解释性/预览，而不是物理安全。",
       "status": "in_progress",
       "remediation_applied": "orphan discovery、known-entry 排除和 inspectMany 均按 sourceId+comicId+chapterId+sourceRevision 分组，synthetic entry 保留完整 revision identity。",
-      "remediation_plan": "在现有 revision 分组上增加 physical generation 与版本页映射，所有管理页删除先生成 DeletePlan，再分别执行 binding-only 删除和独有 artifact 回收。"
+      "remediation_plan": "如继续治理，基于现有 exact revision snapshot + artifact reference 查询生成只读 delete-impact projection；不得在 UI 复制物理引用计数或建立第二删除 authority。"
     },
     {
       "id": "DL-MGR-006",
@@ -221,9 +216,9 @@
       ],
       "root_cause": "Route 原先捕获启动初期的 bootstrap services，且在 post-frame _reload() 中每次进入都重复执行 library list、orphan discovery、inspectMany 与 cache usage，导致同一 SQLite 索引被重复读取最多 3 次，严重阻塞 UI 帧。",
       "impact": "打开与退出下载管理页延迟数秒，页面在初始化完成前丢失部分未完成或已完成任务，或出现快照跳变。",
-      "status": "in_progress",
-      "remediation_applied": "在 HomeLibrarySession 中引入权威 DownloadManagerProjection，统一管理包含 orphan entries 的下载快照，Home 首帧后及 durable adoption 后后台 single-flight 刷新；PersistentChapterDownloadService 实现 ChapterDownloadManagementProjectionReader，底层通过单次 SQLite 索引快照一次性完成 orphan discovery 与 snapshot inspection。download_manager route 打开/重进/退出只订阅投影并完成 service identity rebind，缓存用量仅在进入自动缓存 Tab 时按需加载，彻底消除了进入卡顿与重复索引扫描。",
-      "remaining_work": "当下载管理页保持在前台且有外部后台任务频繁变化时，评估高频通知下的局部 Diff 刷新机制，避免在极端任务数量（上万条）下的全量列表重构开销。"
+      "status": "resolved",
+      "remediation_applied": "在 HomeLibrarySession 中引入权威 DownloadManagerProjection，统一管理包含 orphan entries 的下载快照，Home 首帧后及 durable adoption 后后台 single-flight 刷新；PersistentChapterDownloadService 实现 ChapterDownloadManagementProjectionReader，底层通过单次 SQLite 索引快照一次性完成 orphan discovery 与 snapshot inspection。download_manager route 打开/重进/退出只订阅投影并完成 service identity rebind，缓存用量仅在进入自动缓存 Tab 时按需加载，彻底消除了进入卡顿与重复索引扫描。 当前回归进一步证明 DownloadManager 首屏直接消费已有 projection，durable service generation adoption 不触发 inspectMany；downloads 的 128-chapter management projection 主动跨 event turn 让行，避免一次本地大快照独占 UI isolate。",
+      "remaining_work": ""
     },
     {
       "id": "DL-DIR-020",

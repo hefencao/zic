@@ -191,6 +191,7 @@ final class AppPreferencesController extends ChangeNotifier {
   String _debugTraceExportDirectory = defaultDebugTraceExportDirectory;
   String? _chapterDownloadDirectoryOverride;
   String? _chapterDownloadDirectoryPendingMoveFrom;
+  String? _chapterDownloadDirectoryPendingMoveProtocol;
   int _cacheLimitMb = defaultCacheLimitMb;
   int _readerPrefetchReadBudgetMiB = defaultReaderPrefetchReadBudgetMiB;
   CachedCarrierTrustMode _cachedCarrierTrustMode =
@@ -259,11 +260,13 @@ final class AppPreferencesController extends ChangeNotifier {
   String? get chapterDownloadDirectoryOverride =>
       _chapterDownloadDirectoryOverride;
 
-  /// Source directory of a chapter-download store move that has not been
-  /// confirmed complete yet. Startup finishes or discards it; it is not user
-  /// facing.
+  /// Source directory of a chapter-download move that has not been confirmed
+  /// complete yet. [chapterDownloadDirectoryPendingMoveProtocol] determines
+  /// whether startup resumes the current replica protocol or legacy recovery.
   String? get chapterDownloadDirectoryPendingMoveFrom =>
       _chapterDownloadDirectoryPendingMoveFrom;
+  String? get chapterDownloadDirectoryPendingMoveProtocol =>
+      _chapterDownloadDirectoryPendingMoveProtocol;
   int get cacheLimitMb => _cacheLimitMb;
   int get readerPrefetchReadBudgetMiB => _readerPrefetchReadBudgetMiB;
   CachedCarrierTrustMode get cachedCarrierTrustMode => _cachedCarrierTrustMode;
@@ -493,6 +496,9 @@ final class AppPreferencesController extends ChangeNotifier {
     _chapterDownloadDirectoryPendingMoveFrom = _nullableTrimmedString(
       values['chapterDownloadDirectoryPendingMoveFrom'],
     );
+    _chapterDownloadDirectoryPendingMoveProtocol = _nullableTrimmedString(
+      values['chapterDownloadDirectoryPendingMoveProtocol'],
+    );
     _cacheLimitMb = _intInRange(
       values['cacheLimitMb'],
       fallback: _cacheLimitMb,
@@ -681,6 +687,16 @@ final class AppPreferencesController extends ChangeNotifier {
       return;
     }
     _chapterDownloadDirectoryPendingMoveFrom = normalized;
+    _changed();
+  }
+
+  void setChapterDownloadDirectoryPendingMoveProtocol(String? value) {
+    final normalized = _nullableTrimmedString(value);
+    if (_disposed ||
+        _chapterDownloadDirectoryPendingMoveProtocol == normalized) {
+      return;
+    }
+    _chapterDownloadDirectoryPendingMoveProtocol = normalized;
     _changed();
   }
 
@@ -1005,6 +1021,8 @@ final class AppPreferencesController extends ChangeNotifier {
       'chapterDownloadDirectoryOverride': _chapterDownloadDirectoryOverride,
       'chapterDownloadDirectoryPendingMoveFrom':
           _chapterDownloadDirectoryPendingMoveFrom,
+      'chapterDownloadDirectoryPendingMoveProtocol':
+          _chapterDownloadDirectoryPendingMoveProtocol,
       'cacheLimitMb': _cacheLimitMb,
       'readerPrefetchReadBudgetMiB': _readerPrefetchReadBudgetMiB,
       'cachedCarrierTrustMode': _cachedCarrierTrustMode.name,

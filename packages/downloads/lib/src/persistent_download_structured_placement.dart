@@ -34,6 +34,17 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   );
   Future<Uint8List> _readArtifactBytes(String path);
   Future<Map<String, CacheRec>> indexedRecords();
+  Future<ArtifactReplicaMigrationResult> migrateArtifactReplica({
+    required DownloadId id,
+    required String replicaId,
+    required String destinationAccessLocator,
+    required String destinationStorageRootId,
+    TaskControl? control,
+  });
+  Future<T> _withStorageWriteQuantum<T>(
+    Future<T> Function() operation, {
+    TaskControl? control,
+  });
   Future<T> _commitAuthoritySwitchWithObsoleteSealedCleanup<T>({
     required String oldAccessLocator,
     required String oldStorageRootId,
@@ -57,6 +68,291 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   final Set<String> _sessionPlacementClaims = <String>{};
   bool _placementClaimsLoaded = false;
   final Map<String, Future<void>> _placementWrites = <String, Future<void>>{};
+
+  /// Migrates user-materialized direct-root artifacts without moving mutable
+  /// transfer spools or automatic-cache-only replicas.
+  ///
+  /// Each sealed replica uses the schema-9 migration protocol: destination
+  /// bytes are verified before authority moves and source cleanup happens only
+  /// afterwards. Placement and manifest roots are switched only after every
+  /// selected replica has committed, so a failed attempt remains resumable
+  /// from the persisted pending root intent instead of exposing half-rewritten
+  /// metadata.
+  Future<({int replicas, int placements})> migrateStructuredDirectRoot({
+    required String sourceRoot,
+    required String destinationRoot,
+    TaskControl? control,
+  }) async {
+    _requireOpen();
+    final rawSource = sourceRoot.trim();
+    final rawDestination = destinationRoot.trim();
+    if (rawSource.startsWith('saf://') ||
+        rawDestination.startsWith('saf://')) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'structured direct-root migration requires direct roots',
+      );
+    }
+    final source = Directory(rawSource).absolute.path;
+    final destination = Directory(rawDestination).absolute.path;
+    if (source == destination) return (replicas: 0, placements: 0);
+
+    String? relativeTo(String root, String path) {
+      final separator = Platform.pathSeparator;
+      final prefix = root.endsWith(separator) ? root : '$root$separator';
+      if (path == root) return '';
+      if (!path.startsWith(prefix)) return null;
+      return path.substring(prefix.length);
+    }
+
+    String atDestination(String relative) {
+      if (relative.isEmpty) return destination;
+      return '$destination${Platform.pathSeparator}$relative';
+    }
+
+    void rejectDestinationLinks(String path) {
+      var current = File(path).absolute.path;
+      while (true) {
+        if (FileSystemEntity.typeSync(current, followLinks: false) ==
+            FileSystemEntityType.link) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'root migration destination contains a symbolic link',
+          );
+        }
+        if (current == destination) break;
+        final parent = Directory(current).parent.path;
+        if (parent == current || !parent.startsWith(destination)) break;
+        current = parent;
+      }
+    }
+
+    final selected = <
+        String,
+        ({
+          CacheRec record,
+          ArtifactReplicaRecord replica,
+          String destination,
+        })>{};
+    final sourcePlacementOwners = <String>{};
+    for (final record in await _index.list(state: CacheState.ready)) {
+      control?.throwIfCancelled();
+      if (!record.pinned || !_isVerifiedReadyRecord(record)) continue;
+      final recordRelative = relativeTo(source, record.path);
+      if (recordRelative == null) continue;
+      final replicas = await _index.listArtifactReplicas(
+        record.effectiveArtifactId,
+      );
+      final primary = replicas
+          .where((value) => value.replicaId == record.effectiveArtifactId)
+          .firstOrNull;
+      if (primary == null) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'manual artifact has no primary replica authority',
+        );
+      }
+      final replicaRelative = relativeTo(source, primary.accessLocator);
+      if (replicaRelative == null || replicaRelative != recordRelative) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'manual artifact replica disagrees with its direct root',
+        );
+      }
+      selected.putIfAbsent(
+        primary.replicaId,
+        () => (
+          record: record,
+          replica: primary,
+          destination: atDestination(replicaRelative),
+        ),
+      );
+      sourcePlacementOwners.add(
+        '${record.id.content.sourceId}\u0000${record.id.content.comicId}',
+      );
+    }
+
+    final placements = (await _index.listPlacements())
+        .where(
+          (placement) =>
+              placement.storageRootId == source ||
+              (placement.storageRootId == 'default' &&
+                  sourcePlacementOwners.contains(placement.ownerKey)),
+        )
+        .toList(growable: false);
+
+    // Deterministic destination conflicts are rejected before any authority
+    // move. Runtime I/O failures after this point are safe because every
+    // replica migration is independently durable and resumable.
+    for (final candidate in selected.values) {
+      control?.throwIfCancelled();
+      final file = File(candidate.destination);
+      if (!await file.exists()) continue;
+      final proof = await _artifactProof(candidate.destination);
+      if (!_proofMatchesRecord(proof, candidate.record)) {
+        throw Failure(
+          code: ErrorCode.policy,
+          message:
+              'root migration destination contains different bytes: '
+              '${candidate.destination}',
+        );
+      }
+    }
+    for (final placement in placements) {
+      final relativeDirectory = _requireSafeComicDirectoryName(
+        placement.relativeDirectory,
+      );
+      final sourceManifest = File(
+        '$source${Platform.pathSeparator}$relativeDirectory'
+        '${Platform.pathSeparator}$comicManifestFileName',
+      );
+      final sourceType = await FileSystemEntity.type(
+        sourceManifest.path,
+        followLinks: false,
+      );
+      if (sourceType == FileSystemEntityType.notFound) continue;
+      if (sourceType != FileSystemEntityType.file) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'root migration source manifest is not a regular file',
+        );
+      }
+      final destinationManifest = File(
+        '$destination${Platform.pathSeparator}$relativeDirectory'
+        '${Platform.pathSeparator}$comicManifestFileName',
+      );
+      final destinationType = await FileSystemEntity.type(
+        destinationManifest.path,
+        followLinks: false,
+      );
+      if (destinationType == FileSystemEntityType.notFound) continue;
+      if (destinationType != FileSystemEntityType.file) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'root migration destination manifest is not a regular file',
+        );
+      }
+      final sourceBytes = await sourceManifest.readAsBytes();
+      final destinationBytes = await destinationManifest.readAsBytes();
+      if (!_bytesEqual(sourceBytes, destinationBytes)) {
+        throw Failure(
+          code: ErrorCode.policy,
+          message:
+              'root migration destination contains a different comic manifest: '
+              '${placement.relativeDirectory}',
+        );
+      }
+    }
+
+    var migratedReplicas = 0;
+    for (final candidate in selected.values) {
+      control?.throwIfCancelled();
+      await migrateArtifactReplica(
+        id: candidate.record.id,
+        replicaId: candidate.replica.replicaId,
+        destinationAccessLocator: candidate.destination,
+        destinationStorageRootId: destination,
+        control: control,
+      );
+      migratedReplicas++;
+    }
+
+    for (final placement in placements) {
+      control?.throwIfCancelled();
+      final relativeDirectory = _requireSafeComicDirectoryName(
+        placement.relativeDirectory,
+      );
+      final sourceManifest = File(
+        '$source${Platform.pathSeparator}$relativeDirectory'
+        '${Platform.pathSeparator}$comicManifestFileName',
+      );
+      if (await sourceManifest.exists()) {
+        final destinationManifest = File(
+          '$destination${Platform.pathSeparator}$relativeDirectory'
+          '${Platform.pathSeparator}$comicManifestFileName',
+        );
+        if (!await destinationManifest.exists()) {
+          await _withStorageWriteQuantum(() async {
+            rejectDestinationLinks(destinationManifest.path);
+            await destinationManifest.parent.create(recursive: true);
+          }, control: control);
+          final temporary = File(
+            '${destinationManifest.path}.zic-tmp-'
+            '${DateTime.now().microsecondsSinceEpoch}',
+          );
+          await _registerTemporaryCleanupDebt(
+            temporary.path,
+            storageRootId: destination,
+          );
+          try {
+            final sourceBytes = await sourceManifest.readAsBytes();
+            await _withStorageWriteQuantum(
+              () => temporary.writeAsBytes(sourceBytes, flush: true),
+              control: control,
+            );
+            final temporaryBytes = await temporary.readAsBytes();
+            if (!_bytesEqual(sourceBytes, temporaryBytes)) {
+              throw const Failure(
+                code: ErrorCode.artifactCorruption,
+                message: 'root migration manifest copy failed verification',
+              );
+            }
+            await _withStorageWriteQuantum(
+              () => temporary.rename(destinationManifest.path),
+              control: control,
+            );
+          } finally {
+            if (await temporary.exists()) {
+              await _withStorageWriteQuantum(
+                temporary.delete,
+                control: control,
+              );
+            }
+            if (!await temporary.exists()) {
+              await _forgetStorageCleanupDebt(temporary.path);
+            }
+          }
+        }
+      }
+    }
+
+    final now = DateTime.now().toUtc();
+    for (final placement in placements) {
+      control?.throwIfCancelled();
+      await _index.putPlacement(
+        placement.copyWith(
+          storageRootId: destination,
+          generation: placement.generation + 1,
+          updatedAt: now,
+        ),
+      );
+      // This source manifest stops being ownership only after its placement
+      // commit. Cleanup is deliberately best-effort and must never roll back
+      // the destination placement/replica authority.
+      final relativeDirectory = _requireSafeComicDirectoryName(
+        placement.relativeDirectory,
+      );
+      final sourceManifest = File(
+        '$source${Platform.pathSeparator}$relativeDirectory'
+        '${Platform.pathSeparator}$comicManifestFileName',
+      );
+      if (!await sourceManifest.exists()) continue;
+      try {
+        await _withStorageWriteQuantum(sourceManifest.delete, control: control);
+      } on Object {
+        // Stale source metadata is harmless after the placement commit.
+      }
+    }
+    return (replicas: migratedReplicas, placements: placements.length);
+  }
+
+  bool _bytesEqual(List<int> first, List<int> second) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) return false;
+    }
+    return true;
+  }
 
   Future<T> _serializeStructuredWrite<T>(
     String path,

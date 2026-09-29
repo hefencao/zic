@@ -157,7 +157,7 @@ App build：0.31.0+328
   queued cancellation可直接移除pending，动态numeric priority由同一control驱动class内排序，current/nonCurrent仍只表达execution class；role promotion先迁移DecodeLane rank再迁移同一request class。
   in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。focused DecodeSession/LiveCoordinator回归与native decode ownership guard已通过。
   最终Profile authoritative Home 1.245s；`zic-debug-trace-2026-09-29T02-34-05.jsonl`完成4次forward+4次reverse，含2次stable `previous` 起手，`taskFailed=0`、decode recovery=0、priority promotion 1次且为active迁移。
-  最终`./tool/check.sh --require-toolchains` exit 0（177.969s），Rust media_core 22/22。
+  下载治理对账已关闭DL-DIR-018：显式Direct根迁移改走schema-9 per-replica authority，manual sealed replica先提交destination再清source；auto-cache/partial不随根扫动，pending以`replica-direct-v1`区分legacy恢复；SAF跨根仍归DL-DIR-019。
   partial复用继续收口到physical authority：03-03-51 Trace中page79/exact `6d924728a464c2c6`已有7,708,375-byte canonical SAF partial，却因不可borrow而经DownloadSession writer从0本地重放并被投影成receiving；同identity当段无origin sourceRead。
   现在persistent store在per-physical serializer内先将SAF authority安全迁到App-private Direct transfer staging，再borrow给hot session，generic fallback不变（ADR0340）。
   current-source Profile `zic-debug-trace-2026-09-29T03-35-53.jsonl`直接命中同一7,708,375-byte SAF partial：`accessMode=saf/adoptable=true -> adopted-physical`，local hydration结束仍为idle且未发生本地`receiving from 0`；随后03-54-39同页直接`adopted-posix-spool`。

@@ -14,6 +14,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'dialog_actions.dart';
 
 import 'app_preferences.dart';
+import 'chapter_download_directory.dart';
 import 'directory_picker.dart';
 import 'diagnostic_error_ui.dart';
 
@@ -445,6 +446,9 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   String? get _effectiveDownloadDirectory {
     final root = widget.runtime.readStorageRoot();
     if (root == null) return null;
+    final pendingSource =
+        widget.preferences.chapterDownloadDirectoryPendingMoveFrom;
+    if (pendingSource != null) return pendingSource;
     final override = widget.preferences.chapterDownloadDirectoryOverride;
     return override ?? defaultChapterDownloadDirectory(root);
   }
@@ -603,8 +607,10 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     String target, {
     String title = '设置默认下载目录',
   }) {
-    final isSaf = target.startsWith('saf://');
-    var migrate = !isSaf;
+    final current = _effectiveDownloadDirectory;
+    final crossesSafBoundary = current != null &&
+        !chapterDownloadDirectoryMigrationSupported(current, target);
+    var migrate = !crossesSafBoundary;
     return showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -620,13 +626,14 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
                 contentPadding: EdgeInsets.zero,
                 title: const Text('迁移已下载文件'),
                 subtitle: Text(
-                  isSaf
-                      ? 'SAF 目录暂不支持跨存储方案自动搬运文件；旧下载将保留在原目录。'
-                      : '索引与文件一起移动；不迁移时旧下载保留在原目录，'
-                          '应用内会显示为未下载。',
+                  crossesSafBoundary
+                      ? '当前目录或目标目录使用 SAF，暂不支持自动跨存储搬运；'
+                          '旧下载将保留在原目录。'
+                      : '已下载文件按持久化副本逐个校验并迁移；'
+                          '不迁移时旧下载保留在原目录。',
                 ),
-                value: isSaf ? false : migrate,
-                onChanged: isSaf
+                value: crossesSafBoundary ? false : migrate,
+                onChanged: crossesSafBoundary
                     ? null
                     : (value) =>
                         setDialogState(() => migrate = value ?? false),
@@ -639,7 +646,10 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
               actions: <Widget>[
                 FilledButton(
                   onPressed: () =>
-                      Navigator.pop(dialogContext, isSaf ? false : migrate),
+                      Navigator.pop(
+                        dialogContext,
+                        crossesSafBoundary ? false : migrate,
+                      ),
                   child: const Text('设置'),
                 ),
               ],

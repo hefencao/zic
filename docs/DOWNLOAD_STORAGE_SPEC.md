@@ -172,40 +172,43 @@ This document is normative for the detailed download/storage behavior.
 17. Concurrent relocation MUST serialize mutations of the same artifact and the same destination path.
     Commit-time metadata MUST reject an exact destination locator already owned by another replica;
     same-root Direct/SAF aliases MUST also be treated as one physical destination across artifact identities.
-18. Automatic lazy-migration/retention policy and retained multi-root convergence are not current authority.
+18. The current explicit global Direct-root migration MUST select only sealed replicas retained by an exact manual/offline binding; it MUST NOT sweep automatic-cache-only replicas or mutable partial records merely because their locators share the old root prefix.
+19. After all selected replicas commit, each structured manifest destination MUST be durable and byte-verified before the corresponding `DownloadPlacement.storageRootId` commit. That placement root change MUST advance its generation; source-manifest deletion MUST happen only afterwards and MUST NOT roll back committed authority if cleanup fails.
+20. With App-private metadata, crash recovery MUST resume this per-replica protocol only when the persisted pending intent carries the current replica-migration protocol marker. Untagged legacy pending moves MUST retain whole-root recovery semantics; the legacy whole-root tree mover MAY remain only for pre-replica-protocol adoption/recovery and MUST NOT be used by the current explicit root-switch path.
+21. Automatic lazy-migration/retention policy and retained multi-root convergence are not current authority.
     Separate root-relative replica persistence is HOLD because proven `StorageRoot` aliases already recover remounted access for reads and destructive lifecycle operations.
     Durable recovery state and removable-volume access discovery MUST NOT silently choose migration policy.
-19. Download-cache schema 16 `storage_cleanup_debt` MUST be a durable cleanup-only record and MUST confer no artifact/replica/partial authority.
+22. Download-cache schema 16 `storage_cleanup_debt` MUST be a durable cleanup-only record and MUST confer no artifact/replica/partial authority.
     Its `temporary` kind covers generic Direct/SAF atomic-write temporaries and generated migration temps only after schema-9 progress authority is being retired.
     Before creating a non-authoritative random `.zic-tmp-*` / `.tmp-*` temporary,
     the writer MUST durably record it;
     a resumable schema-9 `copying` migration temporary MUST remain owned only by schema 9 until final invalidation or structural retirement is about to remove that progress owner.
-20. Generic temporary cleanup MUST delete only a recognized generated-temp relative locator on the same proven `StorageRoot`.
+23. Generic temporary cleanup MUST delete only a recognized generated-temp relative locator on the same proven `StorageRoot`.
     After a removable-volume remount it MAY re-resolve that relative locator through current proven Direct/SAF aliases;
     it MUST NOT infer equivalence from path text alone,
     enumerate an SAF tree by suffix/pattern, or delete a non-generated name.
     The cleanup row MUST be removed only after absence is confirmed and retained on access/I/O failure.
     `PersistentDownloadArtifactStore.open()` MUST schedule this work asynchronously in bounded `StorageWriteScheduler` quanta,
-    and a newly proven root alias MUST make previously unreachable debt eligible for another targeted drain.
-21. Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known,
+    and a newly proven access alias MUST make previously unreachable debt eligible for another targeted drain.
+24. Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known,
     and MUST be durably recorded before an authority mutation can stop naming that old locator.
     After commit, cleanup MUST first prove that the resolved locator is no longer durable replica/partial/migration authority.
     After remount it MAY derive the same relative locator through a proven `StorageRoot` alias,
     but MUST revalidate length+checksum and authority again before deletion;
     changed/reused path content MUST be preserved and stale cleanup intent discarded.
-22. Mutable partial/spool cleanup MUST NOT use `obsoleteSealedSource` or enter `artifact_replica`.
+25. Mutable partial/spool cleanup MUST NOT use `obsoleteSealedSource` or enter `artifact_replica`.
     A cross-locator partial replacement or cold exact-partial retirement MAY instead create `obsoletePartialSource`,
     but only after reading the exact old prefix and freezing its actual length + CRC32 immediately before the old locator can lose authority.
     This proof is cleanup-only and MUST NOT become partial validity, resume, scheduling, or checkpoint metadata;
     ordinary network append/pause MUST NOT compute it.
     A delayed retry MUST re-check that the locator is no longer durable partial/replica/migration authority and that current bytes still match the frozen prefix before deletion;
     changed/reused content MUST be preserved.
-    Ordinary `PhysicalPartialRecord` invalidation/trim MUST keep its row until body and sidecar deletion are confirmed rather than manufacturing cleanup debt.
+    Ordinary `PhysicalPartialRecord` invalidation/trim MUST keep its row until body and sidecar absence is confirmed rather than manufacturing cleanup debt.
     A shorter failed cross-locator staging prefix MUST NOT replace a longer old authoritative prefix,
     an unavailable old exact root MUST fail closed before replacement,
     and a hot session that takes over the old path MUST cancel provisional cleanup intent.
     Automatic multi-root convergence/retention MUST remain separate policy and MUST NOT be inferred from cleanup debt.
-23. `artifact_replica_migration` remains the sole relocation-progress ledger while relocation is live.
+26. `artifact_replica_migration` remains the sole relocation-progress ledger while relocation is live.
     A `copying` destination/temporary MAY be rebound only when a re-proven `StorageRoot` proves the same canonical root and the same relative path;
     the source replica authority MUST remain unchanged.
     `cleanupPending` source cleanup MAY resolve a current proven alias only after rechecking immutable proof.

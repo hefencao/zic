@@ -1950,13 +1950,11 @@ download-cache schema 12在既有logical/artifact/replica表上只增加`cache_e
 生效位置由 `packages/storage` 纯函数解析：所选目录缺失或为空时直接使用，非空目录不合并不覆盖，存储置于其下第一个可用 `offline_chapters(i)` 条目（空条目可复用）。
 目录切换由 runtime owner 执行：
 设置 UI 经 `HomeServiceHandoff.chapterDownloadRelay` 调用 `_BootstrapAppState.changeChapterDownloadDirectory`，
-意图（目标位置与迁移来源 `chapterDownloadDirectoryPendingMoveFrom`）先持久化，
-再 checkpoint 并关闭 queue/cache coordinator/download composition；
-private metadata 已存在时 `moveChapterDownloadStore(metadataDbPath: ...)` 只递归搬迁 artifact/partial/结构化漫画目录与 `.zic.json`，
-明确跳过残留 legacy `cache.sqlite*`，随后在原地 App-private DB 中重写已搬 locator/root 前缀并重建三个下载侧服务（library store 与外部插件不动）。
-移动支持幂等续作，但当前仍是整个所选 POSIX byte root 的逐文件迁移后统一 rewrite，并非目标中的 per-replica migration。
-启动期 `settleChapterDownloadDirectory` 在任何服务打开前补完中断移动；
-private metadata 存在后不再仅凭 default 根有内容推断自动搬迁，SAF target 也不进入 POSIX default-store adoption。
+意图（目标位置、迁移来源 `chapterDownloadDirectoryPendingMoveFrom` 与当前 `replica-direct-v1` 协议标记）先持久化；未标记的历史 pending move 仍按 legacy whole-tree recovery 解释，
+再 checkpoint 并关闭 queue/cache coordinator；已有 App-private metadata 时，当前 `PersistentDownloadComposition` 排空 transfer consumer 后直接复用唯一 `PersistentDownloadArtifactStore` 做 explicit Direct-root migration。
+迁移只选择 verified READY + explicit manual/offline retention 的 sealed replica，并逐个复用 schema-9 `migrateArtifactReplica`：目标 bytes proof 先成立，destination replica/root authority 提交后才删除 source，`replica_id` 保持不变；automatic-cache-only bytes 与 mutable partial/spool 不参与根迁移，继续由原 indexed locator 读取。
+全部选中 replica 提交后才 durable copy/verify `.zic.json` 并推进 `DownloadPlacement` generation/root；placement commit 后旧 manifest 仅作 best-effort cleanup。中途失败保留 pending intent 并重开 source layout，已提交到目标的 replica 不回滚，冷启动只打开同一 App-private artifact store 继续剩余迁移。
+SAF 任一侧参与时 UI 禁用 automatic migration；provider replace/跨进程 owner 语义继续由独立 SAF 治理。`moveChapterDownloadStore`/`settleChapterDownloadDirectory` 仅保留给 private metadata 出现前的 legacy 整树恢复/升级兼容，不得重新进入当前 runtime 的 private-metadata root switch。
 整本任务活跃或 transfer consumer 未退出时拒绝切换；
 `durableZicStateExists` 优先识别 App-private chapter metadata，同时仅为升级兼容探测 legacy 生效根 `cache.sqlite`。
 源设置为每个 source 提供独立下载目录：偏好映射 `sourceDownloadDirectories` 按稳定 source identity 记录物理根，

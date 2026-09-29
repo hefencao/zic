@@ -1267,6 +1267,34 @@ final class PersistentDownloadComposition
   final PersistentChapterDownloadService chapterDownloads;
   bool _closed = false;
 
+  Future<({int replicas, int placements})>
+      migrateStructuredDirectRootAndClose({
+    required String sourceRoot,
+    required String destinationRoot,
+    TaskControl? control,
+  }) async {
+    if (_closed) {
+      throw StateError('persistent download composition is already closed');
+    }
+    await chapterDownloads.close();
+    if (transferRuntime.hasConsumers) {
+      throw StateError(
+        'cannot migrate persistent download root with active transfer consumers',
+      );
+    }
+    await transferRuntime.dispose();
+    try {
+      return await artifactStore.migrateStructuredDirectRoot(
+        sourceRoot: sourceRoot,
+        destinationRoot: destinationRoot,
+        control: control,
+      );
+    } finally {
+      await artifactStore.close();
+      _closed = true;
+    }
+  }
+
   Future<void> close() async {
     if (_closed) return;
     await chapterDownloads.close();
@@ -1278,6 +1306,34 @@ final class PersistentDownloadComposition
     await transferRuntime.dispose();
     await artifactStore.close();
     _closed = true;
+  }
+}
+
+Future<({int replicas, int placements})>
+    migratePersistentDownloadStructuredDirectRoot({
+  required String root,
+  required String sourceRoot,
+  required String destinationRoot,
+  required String indexPath,
+  CacheLayout? Function(DownloadId id)? layoutResolver,
+  StorageWriteScheduler? storageWriteScheduler,
+  TraceSink? traceSink,
+}) async {
+  final store = await PersistentDownloadArtifactStore.open(
+    root,
+    directory: sourceRoot,
+    indexPath: indexPath,
+    layoutResolver: layoutResolver,
+    storageWriteScheduler: storageWriteScheduler,
+    traceSink: traceSink,
+  );
+  try {
+    return await store.migrateStructuredDirectRoot(
+      sourceRoot: sourceRoot,
+      destinationRoot: destinationRoot,
+    );
+  } finally {
+    await store.close();
   }
 }
 

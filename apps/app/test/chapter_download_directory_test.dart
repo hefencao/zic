@@ -11,4 +11,32 @@ void main() {
   test('direct chapter directory is not treated as SAF', () {
     expect(chapterDownloadSafTreeUri('/data/user/0/dev.zic.zic/files/zic'), isNull);
   });
+  test('existing-download migration is direct-root only', () {
+    expect(
+      chapterDownloadDirectoryMigrationSupported('/data/a', '/data/b'),
+      isTrue,
+    );
+    expect(
+      chapterDownloadDirectoryMigrationSupported(
+        'saf://content://tree/source',
+        '/data/b',
+      ),
+      isFalse,
+    );
+    expect(
+      chapterDownloadDirectoryMigrationSupported(
+        '/data/a',
+        'saf://content://tree/destination',
+      ),
+      isFalse,
+    );
+    expect(
+      chapterDownloadDirectoryMigrationSupported(
+        'saf://content://tree/source',
+        'saf://content://tree/destination',
+      ),
+      isFalse,
+    );
+  });
+
 }

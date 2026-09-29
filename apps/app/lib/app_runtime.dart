@@ -455,16 +455,15 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   /// Applies a new chapter-download directory chosen in settings.
   ///
   /// Returns a user-facing error message, or `null` on success. The intent is
-  /// persisted before any byte moves so an interrupted attempt is completed at
-  /// the next startup by [settleChapterDownloadDirectory]. Index and artifact
-  /// bytes always move together; the string preference alone never relocates
-  /// the store.
+  /// persisted before replica authority moves so an interrupted explicit
+  /// Direct-root migration resumes on the next startup. App-private metadata
+  /// stays in place; sealed manual replicas move one-by-one while cache/partial
+  /// locators may intentionally remain on the former root.
   Future<String?> changeChapterDownloadDirectory({
     String? directory,
     required bool migrateFiles,
   }) async {
     final root = await _storageRoot;
-    final chapterMetadataPath = defaultChapterDownloadMetadataPath(root);
     if (_services?.hasCoreServices != true) {
       try {
         await _ensureDurableServices();
@@ -492,16 +491,32 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       debugPrint('chapter-download directory resolve failed: $error');
       return '无法使用所选目录';
     }
-    if (safTarget && migrateFiles) {
-      migrateFiles = false;
-    }
     final previousOverride = _preferences.chapterDownloadDirectoryOverride;
-    final current = previousOverride ?? defaultChapterDownloadDirectory(root);
-    if (_isSamePath(target, current)) {
+    final pendingSourceBefore =
+        _preferences.chapterDownloadDirectoryPendingMoveFrom;
+    final pendingProtocolBefore =
+        _preferences.chapterDownloadDirectoryPendingMoveProtocol;
+    final configuredCurrent =
+        previousOverride ?? defaultChapterDownloadDirectory(root);
+    final current = pendingSourceBefore ?? configuredCurrent;
+    if (pendingSourceBefore != null &&
+        pendingProtocolBefore != chapterDownloadReplicaMigrationProtocolV1) {
+      return '检测到旧版未完成的下载目录迁移，请重启应用完成恢复后再修改目录';
+    }
+    if (pendingSourceBefore != null &&
+        (!_isSamePath(target, configuredCurrent) || !migrateFiles)) {
+      return '当前下载目录迁移尚未完成，请先重试同一目标目录的迁移';
+    }
+    if (migrateFiles &&
+        !chapterDownloadDirectoryMigrationSupported(current, target)) {
+      return 'SAF 与其他目录之间暂不支持自动迁移已下载文件；请保留旧下载并只切换新下载目录';
+    }
+    if (pendingSourceBefore == null && _isSamePath(target, current)) {
       _preferences.setChapterDownloadDirectoryOverride(
         directory == null ? null : target,
       );
       _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      _preferences.setChapterDownloadDirectoryPendingMoveProtocol(null);
       return null;
     }
     if (!services.hasCoreServices) {
@@ -514,6 +529,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       }
       _preferences.setChapterDownloadDirectoryOverride(null);
       _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      _preferences.setChapterDownloadDirectoryPendingMoveProtocol(null);
       return null;
     }
 
@@ -532,8 +548,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     if (composition != null && composition.transferRuntime.hasConsumers) {
       return '阅读器正在使用下载内容，请稍后再试';
     }
-    final hasStoreContent = chapterDownloadStoreHasContent(current);
-    if (migrateFiles && hasStoreContent && _isSameOrNested(current, target)) {
+    if (migrateFiles && _isSameOrNested(current, target)) {
       return '新目录不能包含或嵌套于当前下载目录';
     }
     // Android scoped storage can allow listing/creating a directory while
@@ -555,7 +570,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       directory == null ? null : target,
     );
     _preferences.setChapterDownloadDirectoryPendingMoveFrom(
-      migrateFiles && hasStoreContent ? current : null,
+      migrateFiles ? current : null,
+    );
+    _preferences.setChapterDownloadDirectoryPendingMoveProtocol(
+      migrateFiles ? chapterDownloadReplicaMigrationProtocolV1 : null,
     );
     await _preferences.flush();
 
@@ -566,9 +584,6 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         await queue.close();
       }
       await services.cacheCoordinator?.close();
-      // Throws while Reader transfer consumers are still attached; nothing
-      // has moved yet at that point.
-      await services.downloadComposition?.close();
     } on Object catch (error) {
       closeFailure = error;
     }
@@ -577,8 +592,11 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         'download service close for directory change failed: '
         '$closeFailure',
       );
-      _preferences.setChapterDownloadDirectoryOverride(previousOverride);
-      _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      if (pendingSourceBefore == null) {
+        _preferences.setChapterDownloadDirectoryOverride(previousOverride);
+        _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+        _preferences.setChapterDownloadDirectoryPendingMoveProtocol(null);
+      }
       final rebuilt = await _rebuildDownloadServices(
         storageRoot: root,
         downloadDirectory: current,
@@ -592,33 +610,34 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
     Object? moveError;
     final pendingFrom = _preferences.chapterDownloadDirectoryPendingMoveFrom;
-    if (pendingFrom != null) {
-      try {
-        final report = await moveChapterDownloadStore(
-          from: pendingFrom,
-          to: target,
-          metadataDbPath: chapterMetadataPath,
+    try {
+      if (pendingFrom != null && composition != null) {
+        final report = await composition.migrateStructuredDirectRootAndClose(
+          sourceRoot: pendingFrom,
+          destinationRoot: target,
         );
         _startupLog(
-          'chapter-download-move-complete files=${report.movedFileCount} '
-          'records=${report.rewrittenRecordCount} to=$target',
+          'chapter-download-replica-migration-complete '
+          'replicas=${report.replicas} placements=${report.placements} '
+          'to=$target',
         );
-      } on Object catch (error) {
-        moveError = error;
-        debugPrint('chapter-download move failed: $error');
+      } else if (pendingFrom != null) {
+        throw StateError(
+          'durable download composition is unavailable for root migration',
+        );
+      } else {
+        await composition?.close();
       }
+    } on Object catch (error) {
+      moveError = error;
+      debugPrint('chapter-download replica migration failed: $error');
     }
-    // If the move failed before the source index was moved, reopening the
-    // target would create a fresh cache.sqlite there. That empty database
-    // would then conflict with the source database on the next startup retry,
-    // permanently stranding the pending move. Keep the source authoritative
-    // until recovery moves it successfully; if the source index is already
-    // gone, the target is the only authoritative side after a partial move.
-    final rebuildDirectory = moveError == null
-        ? target
-        : pendingFrom != null && chapterDownloadStoreHasContent(pendingFrom)
-            ? pendingFrom
-            : target;
+    // During schema-9 migration each moved replica has already committed its
+    // own destination authority, while placement/root intent remains pending
+    // until the whole explicit migration completes. Reopen the source layout
+    // after any failure: indexed absolute replica locators remain readable on
+    // either root and startup can resume the same pending transaction.
+    final rebuildDirectory = moveError == null ? target : current;
     final rebuildError = await _rebuildDownloadServices(
       storageRoot: root,
       downloadDirectory: rebuildDirectory,
@@ -630,8 +649,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     }
     if (moveError == null) {
       _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      _preferences.setChapterDownloadDirectoryPendingMoveProtocol(null);
     }
-    return moveError == null ? null : '目录已切换，但部分文件迁移失败：$moveError';
+    return moveError == null ? null : '目录迁移未完成，已继续使用原目录：$moveError';
   }
 
   /// Reopens the download-owned durable services after a store move or an
@@ -1333,31 +1353,78 @@ Future<_AppServices> _openServices(
     );
     late final String chapterDownloadDirectory;
     var chapterDownloadMoveSettled = true;
+    final pendingSource = preferences.chapterDownloadDirectoryPendingMoveFrom;
+    final pendingProtocol =
+        preferences.chapterDownloadDirectoryPendingMoveProtocol;
+    final privateReplicaMigration = pendingSource != null &&
+        pendingProtocol == chapterDownloadReplicaMigrationProtocolV1;
+    final unknownPendingProtocol = pendingSource != null &&
+        pendingProtocol != null &&
+        pendingProtocol != chapterDownloadReplicaMigrationProtocolV1;
     try {
-      chapterDownloadDirectory = await settleChapterDownloadDirectory(
-        storageRoot: root,
-        configuredOverride: preferences.chapterDownloadDirectoryOverride,
-        pendingMoveFrom: preferences.chapterDownloadDirectoryPendingMoveFrom,
-        metadataDbPath: chapterMetadataPreexisting ? chapterMetadataPath : null,
-      );
+      if (unknownPendingProtocol) {
+        throw StateError(
+          'unknown chapter-download migration protocol: $pendingProtocol',
+        );
+      }
+      if (privateReplicaMigration) {
+        if (!chapterMetadataPreexisting) {
+          throw StateError(
+            'replica-scoped root migration requires App-private metadata',
+          );
+        }
+        if (chapterDownloadSafTreeUri(pendingSource) != null ||
+            chapterDownloadSafTreeUri(configuredChapterDownloadDirectory) !=
+                null) {
+          throw StateError(
+            'pending SAF root migration requires explicit user recovery',
+          );
+        }
+        final report = await migratePersistentDownloadStructuredDirectRoot(
+          root: root,
+          sourceRoot: pendingSource,
+          destinationRoot: configuredChapterDownloadDirectory,
+          indexPath: chapterMetadataPath,
+          layoutResolver: sourceDownloadLayoutResolver(preferences),
+          storageWriteScheduler:
+              defaultDownloadResourceCoordinator.storageWriteScheduler,
+          traceSink: debugTrace,
+        );
+        chapterDownloadDirectory = configuredChapterDownloadDirectory;
+        _startupLog(
+          'chapter-download-replica-migration-recovered '
+          'replicas=${report.replicas} placements=${report.placements}',
+        );
+      } else {
+        chapterDownloadDirectory = await settleChapterDownloadDirectory(
+          storageRoot: root,
+          configuredOverride: preferences.chapterDownloadDirectoryOverride,
+          pendingMoveFrom: pendingSource,
+          metadataDbPath:
+              chapterMetadataPreexisting ? chapterMetadataPath : null,
+        );
+      }
     } on Object catch (error) {
-      // Keep the intent marker when recovery could not finish. The target is
-      // still usable for startup, while the next launch gets another chance
-      // to complete the source-to-target move.
       chapterDownloadMoveSettled = false;
-      final pendingSource = preferences.chapterDownloadDirectoryPendingMoveFrom;
-      // A preflight failure leaves the source store authoritative. Reopen it
-      // when its index is still present; otherwise the destination already
-      // owns the moved index and is the only usable recovery side.
-      final sourceStillOwnsBytes =
-          pendingSource != null &&
-          chapterDownloadStoreHasContent(pendingSource);
-      final sourceHasLegacyIndex =
-          pendingSource != null &&
-          await chapterDownloadIndexExists(pendingSource);
-      chapterDownloadDirectory = sourceStillOwnsBytes || sourceHasLegacyIndex
-          ? pendingSource
-          : configuredChapterDownloadDirectory;
+      if (privateReplicaMigration || unknownPendingProtocol) {
+        // Schema-9 commits each sealed replica independently. Until the whole
+        // explicit move finishes, reopen the source layout and keep the
+        // persisted target/pending marker so the same migration resumes next
+        // launch. Indexed replicas already committed to the target remain
+        // readable by their absolute durable locators.
+        chapterDownloadDirectory = pendingSource;
+      } else {
+        // Legacy pre-App-private metadata recovery still uses the historical
+        // whole-store mover. Prefer whichever side still owns that legacy
+        // index/byte tree and retain its pending intent for another retry.
+        final sourceStillOwnsBytes = pendingSource != null &&
+            chapterDownloadStoreHasContent(pendingSource);
+        final sourceHasLegacyIndex = pendingSource != null &&
+            await chapterDownloadIndexExists(pendingSource);
+        chapterDownloadDirectory = sourceStillOwnsBytes || sourceHasLegacyIndex
+            ? pendingSource
+            : configuredChapterDownloadDirectory;
+      }
       debugPrint(
         'chapter-download move recovery failed: $error; '
         'using $chapterDownloadDirectory while retaining retry marker',
@@ -1365,6 +1432,7 @@ Future<_AppServices> _openServices(
     }
     if (chapterDownloadMoveSettled) {
       preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      preferences.setChapterDownloadDirectoryPendingMoveProtocol(null);
     }
     final legacyChapterMetadataPath = legacyChapterDownloadMetadataPath(
       storageRoot: root,
