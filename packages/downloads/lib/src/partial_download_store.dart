@@ -57,8 +57,11 @@ final class PartialDownloadEntry {
   final bool exactDurableFinal;
 
   /// Optional exclusive mutable-spool adoption. Only a store that can prove a
-  /// POSIX session-owned partial and keep its index/cleanup authority alive may
-  /// expose this. SAF and generic stream stores leave it null and use [open].
+  /// session-owned mutable partial and keep its index/cleanup authority alive
+  /// may expose this. A SAF-backed physical partial may use this seam only if
+  /// its store can atomically migrate that same authority to proven direct
+  /// staging before adoption. Generic stream stores leave it null and use
+  /// [open].
   final Future<bool> Function(
     DownloadSession session, {
     TaskControl? control,

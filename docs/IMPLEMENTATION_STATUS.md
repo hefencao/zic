@@ -158,6 +158,11 @@ App build：0.31.0+328
   in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。focused DecodeSession/LiveCoordinator回归与native decode ownership guard已通过。
   最终Profile authoritative Home 1.245s；`zic-debug-trace-2026-09-29T02-34-05.jsonl`完成4次forward+4次reverse，含2次stable `previous` 起手，`taskFailed=0`、decode recovery=0、priority promotion 1次且为active迁移。
   最终`./tool/check.sh --require-toolchains` exit 0（177.969s），Rust media_core 22/22。
+  partial复用继续收口到physical authority：03-03-51 Trace中page79/exact `6d924728a464c2c6`已有7,708,375-byte canonical SAF partial，却因不可borrow而经DownloadSession writer从0本地重放并被投影成receiving；同identity当段无origin sourceRead。
+  现在persistent store在per-physical serializer内先将SAF authority安全迁到App-private Direct transfer staging，再borrow给hot session，generic fallback不变（ADR0340）。
+  current-source Profile `zic-debug-trace-2026-09-29T03-35-53.jsonl`直接命中同一7,708,375-byte SAF partial：`accessMode=saf/adoptable=true -> adopted-physical`，local hydration结束仍为idle且未发生本地`receiving from 0`；随后03-54-39同页直接`adopted-posix-spool`。
+  provider之后对`Range: bytes=7642839-`返回HTTP 200而触发full-body-prefix-catchup属于独立Range rejection；partial仍被保留，不与authority-loss混写。
+  ADR0340最终`./tool/check.sh --require-toolchains` exit 0（162.134s）；三ABI Android debug构建与Rust media_core 22/22通过。
   当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
   presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，

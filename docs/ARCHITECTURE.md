@@ -104,7 +104,7 @@ canonical physical 与 exact-fallback unfinished checkpoint 都优先在 downloa
 全局/来源 SAF 可继续承载 generic/historical partial 兼容，但不得仅因配置存在就成为 Reader/composition automatic checkpoint 的默认根。
 显式 chapter download 只有在 promoted artifact 已形成后才由 structured placement/mirror owner 写入 SAF 并 pin exact 记录。
 旧 external/SAF partial 收敛到 Direct staging 时，persistent store serializer 必须掌握 prefix/locator proof、
-new authority commit 与 cleanup debt，Reader 或 App route 不得自行搬运。
+new authority commit 与 cleanup debt，Reader 或 App route 不得自行搬运。canonical SAF physical partial 在 composition local-prepare 命中时直接由同一 serializer 迁入 App-private Direct transfer staging 后再借给 hot DownloadSession；禁止先经 DownloadSession writer 从0重放整段 SAF prefix。迁移前取消保留旧 SAF authority，迁移提交后 subsequent visit 直接 adoption 同一 Direct spool（ADR 0340）。
 
 ### `media`
 
@@ -1632,7 +1632,7 @@ checkpoint之后继续append但尚未进入下一checkpoint的bytes只是crash t
 `Artifact.adoptExistingPartial`只证明非link且正文至少覆盖indexed committed checkpoint；
 正文若更长只代表未checkpoint crash tail，adoption必须先截回indexed长度再继续，若更短才按corruption拒绝；checksum保持dirty，完整CRC仍在seal边界唯一计算；
 本地prefix L只设置`networkStartLength`，不得伪造transient transport cursor。
-SAF、verified-equivalent candidate及无capability backend继续经共享`ArtifactCacheReadScheduler`走原stream-copy fallback。
+generic SAF exact partial、verified-equivalent candidate及无capability backend继续经共享`ArtifactCacheReadScheduler`走原stream-copy fallback；persistent canonical SAF physical partial不是generic fallback：它必须先由store把同一authority安全迁移到Direct transfer staging，再以borrowed spool adoption给hot session，避免本地body被投影成`receiving from 0`并在revisit重复whole-prefix replay（ADR 0340）。
 SAF physical partial的`.meta`只提供resume加速；
 冷打开必须直接以`open()`完成sidecar存在性与descriptor建立，不得先额外`exists()`重复provider路径解析，
 missing/invalid sidecar只回退为空resume state，不能否定已通过indexed physical row且正文至少覆盖indexed checkpoint的partial authority；

@@ -4969,6 +4969,7 @@ final class PersistentDownloadArtifactStore
         return null;
       }
       final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+      final touched = record.copyWith(touchedUs: touchedUs);
       await _index.touchPhysicalPartial(physicalId, touchedUs);
       return PartialDownloadEntry(
         length: record.bytes,
@@ -4980,6 +4981,13 @@ final class PersistentDownloadArtifactStore
           endExclusive: record.bytes,
         ),
         accessMode: 'saf',
+        adoptInto: (session, {TaskControl? control}) =>
+            _migrateSafPhysicalPartialAndAdopt(
+          session,
+          expected: touched,
+          requestId: requestId,
+          control: control,
+        ),
       );
     }
 
@@ -5189,7 +5197,102 @@ final class PersistentDownloadArtifactStore
     required PhysicalPartialRecord expected,
     required bool transferStaging,
     TaskControl? control,
+  }) => _serializePhysicalPartialMutation(
+    expected.id,
+    () => _adoptPhysicalPosixPartialUnserialized(
+      target,
+      expected: expected,
+      transferStaging: transferStaging,
+      control: control,
+    ),
+  );
+
+  Future<bool> _migrateSafPhysicalPartialAndAdopt(
+    DownloadSession target, {
+    required PhysicalPartialRecord expected,
+    required DownloadId requestId,
+    TaskControl? control,
   }) => _serializePhysicalPartialMutation(expected.id, () async {
+    _requireOpen();
+    control?.throwIfCancelled();
+    final physicalId = expected.id;
+    if (target.physicalId != physicalId ||
+        _borrowedPhysicalPartialIds.contains(physicalId)) {
+      return false;
+    }
+    final current = await _index.getPhysicalPartial(physicalId);
+    if (current == null ||
+        !_samePhysicalPartialRecord(expected, current) ||
+        parseSafRecordPath(current.path) == null) {
+      return false;
+    }
+    final resume = await _readSafPhysicalPartialResumeState(
+      current.path,
+      physicalId,
+      requestId,
+    );
+    if (resume.explicitDifferentOwner) {
+      await _index.removePhysicalPartial(physicalId);
+      return false;
+    }
+    control?.throwIfCancelled();
+
+    // A SAF partial is already the durable physical authority. Move that same
+    // authority to App-private mutable staging before giving it to the hot
+    // DownloadSession. Do not stream the body through DownloadSession itself:
+    // that would publish receiving-from-zero state for local bytes and can
+    // repeat the whole prefix when local preparation is cancelled/revisited.
+    final source = PartialDownloadEntry(
+      length: current.bytes,
+      validators: resume.validators,
+      totalLength: resume.totalLength,
+      accessMode: 'saf',
+      open: ({required int start}) => _bytes.readChunks(
+        current.path,
+        start: start,
+        endExclusive: current.bytes,
+      ),
+    );
+    await _storePhysicalPartialDownload(
+      physicalId: physicalId,
+      providerHint: requestId,
+      entry: source,
+      preferDirectStaging: true,
+      control: control,
+    );
+    control?.throwIfCancelled();
+
+    final migrated = await _index.getPhysicalPartial(physicalId);
+    if (migrated == null ||
+        migrated.bytes < current.bytes ||
+        parseSafRecordPath(migrated.path) != null ||
+        migrated.storageRootId != layout.root) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF physical partial migration did not publish direct staging',
+      );
+    }
+    final adopted = await _adoptPhysicalPosixPartialUnserialized(
+      target,
+      expected: migrated,
+      transferStaging: true,
+      control: control,
+    );
+    if (!adopted) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'migrated physical partial could not be adopted by its session',
+      );
+    }
+    return true;
+  });
+
+  Future<bool> _adoptPhysicalPosixPartialUnserialized(
+    DownloadSession target, {
+    required PhysicalPartialRecord expected,
+    required bool transferStaging,
+    TaskControl? control,
+  }) async {
     _requireOpen();
     control?.throwIfCancelled();
     final physicalId = expected.id;
@@ -5244,7 +5347,7 @@ final class PersistentDownloadArtifactStore
       }
       rethrow;
     }
-  });
+  }
 
   @override
   Future<void> storePhysicalPartialDownload({
@@ -5269,8 +5372,10 @@ final class PersistentDownloadArtifactStore
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
     required bool preferDirectStaging,
+    TaskControl? control,
   }) async {
     _requireOpen();
+    control?.throwIfCancelled();
     if (_borrowedPhysicalPartialIds.contains(physicalId)) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
@@ -5303,6 +5408,7 @@ final class PersistentDownloadArtifactStore
           entry: entry,
           existing: existing,
           targetLayoutOverride: layout,
+          control: control,
         );
       } else {
         final obsoleteChecksum = existing == null
@@ -5314,7 +5420,9 @@ final class PersistentDownloadArtifactStore
                   endExclusive: existing.bytes,
                 ),
                 expectedBytes: existing.bytes,
+                control: control,
               );
+        control?.throwIfCancelled();
         await _storePhysicalPartialDirect(
           physicalId: physicalId,
           providerHint: providerHint,
@@ -5323,6 +5431,7 @@ final class PersistentDownloadArtifactStore
           createdUsOverride: existing?.createdUs,
           obsoleteSource: existing,
           obsoleteSourceChecksum: obsoleteChecksum,
+          control: control,
         );
       }
       return;
@@ -5350,6 +5459,7 @@ final class PersistentDownloadArtifactStore
       providerHint: providerHint,
       entry: entry,
       existing: existing,
+      control: control,
     );
   }
 
@@ -5362,7 +5472,9 @@ final class PersistentDownloadArtifactStore
     int? createdUsOverride,
     PhysicalPartialRecord? obsoleteSource,
     String? obsoleteSourceChecksum,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     final CacheLayout targetLayout;
     if (targetLayoutOverride != null) {
       targetLayout = targetLayoutOverride;
@@ -5445,6 +5557,7 @@ final class PersistentDownloadArtifactStore
         // and restore, and that body must not become authority from metadata
         // alone.
         await artifact.restore();
+        control?.throwIfCancelled();
       } else {
         final file = File(existing.path);
         if (!await file.exists() || await file.length() != existing.bytes) {
@@ -5454,12 +5567,15 @@ final class PersistentDownloadArtifactStore
           );
         }
         await artifact.adoptExistingPartial(expectedLength: existing.bytes);
+        control?.throwIfCancelled();
       }
       var offset = artifact.committedLength;
       try {
         await for (final chunk in entry.open(start: offset)) {
+          control?.throwIfCancelled();
           if (chunk.isEmpty) continue;
           await artifact.append(offset, chunk);
+          control?.throwIfCancelled();
           offset += chunk.length;
           if (offset >= entry.length) break;
         }

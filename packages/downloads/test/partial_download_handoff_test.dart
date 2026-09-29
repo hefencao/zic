@@ -11,6 +11,132 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test(
+    'SAF physical partial migrates once to direct staging before hot adoption',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'physical-saf-adopt-durable-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'physical-saf-adopt-hot-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-saf-adopt';
+      final safStorage = <String, Uint8List>{};
+      final saf = _PhysicalPartialMemorySafIo(safStorage);
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(store.close);
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'physical-saf-adopt',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/physical-saf.webp'),
+      );
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000physical-saf-adopt',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(7 * 1024 * 1024 + 123, (index) => index & 0xff),
+      );
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes + 4096,
+          open: ({required int start}) => Stream<List<int>>.value(
+            Uint8List.sublistView(bytes, start),
+          ),
+        ),
+      );
+      final physicalIndex = store.index as PhysicalPartialIndex;
+      final safRecord = await physicalIndex.getPhysicalPartial(physical);
+      expect(safRecord, isNotNull);
+      expect(parseSafRecordPath(safRecord!.path), isNotNull);
+
+      Future<({int safReads, String directPath})> restoreOnce() async {
+        final trace = MemoryTraceSink();
+        final registry = DownloadRegistry(
+          layout: CacheLayout(hotRoot.path),
+          clock: SystemClock(),
+          traceSink: trace,
+        );
+        registry.bindPhysicalMedia(id: id, physicalId: physical);
+        final session = registry.get(id);
+        final handoff = PartialDownloadHandoff(
+          store: store,
+          traceSink: trace,
+          clock: SystemClock(),
+        );
+        await handoff.restoreInto(session);
+
+        expect(session.state, DownloadState.idle);
+        expect(session.committedLength, bytes.lengthInBytes);
+        expect(session.artifact.partialPath, isNot(safRecord.path));
+        expect(
+          trace.events.where(
+            (event) =>
+                event.kind == TraceEventKind.downloadState &&
+                event.payload['state'] == 'receiving',
+          ),
+          isEmpty,
+          reason: 'local SAF migration must not masquerade as a network receive',
+        );
+        expect(
+          trace.events.any(
+            (event) =>
+                event.kind == TraceEventKind.artifactSource &&
+                event.payload['action'] == 'adopted-physical',
+          ),
+          isTrue,
+        );
+        expect(
+          trace.events.any(
+            (event) =>
+                event.kind == TraceEventKind.artifactSource &&
+                event.payload['action'] == 'restored-physical',
+          ),
+          isFalse,
+        );
+        final directPath = session.artifact.partialPath;
+        await handoff.close();
+        await registry.dispose();
+        return (safReads: saf.readCalls, directPath: directPath);
+      }
+
+      final first = await restoreOnce();
+      final migrated = await physicalIndex.getPhysicalPartial(physical);
+      expect(migrated, isNotNull);
+      expect(parseSafRecordPath(migrated!.path), isNull);
+      expect(migrated.storageRootId, store.layout.root);
+      expect(migrated.path, first.directPath);
+      expect(await File(migrated.path).readAsBytes(), orderedEquals(bytes));
+
+      final readsAfterMigration = first.safReads;
+      final second = await restoreOnce();
+      expect(second.directPath, first.directPath);
+      expect(
+        second.safReads,
+        readsAfterMigration,
+        reason: 'later visits must adopt direct staging without replaying SAF',
+      );
+    },
+  );
+
   test('persistent POSIX partial is adopted as the active spool without copying',
       () async {
     final durableRoot =
@@ -2872,4 +2998,126 @@ final class _StoredPartial {
   final Uint8List bytes;
   final Validators validators;
   final int? totalLength;
+}
+
+final class _PhysicalPartialMemorySafIo implements SafTreeIo {
+  _PhysicalPartialMemorySafIo(this.storage);
+
+  final Map<String, Uint8List> storage;
+  final Map<int, ({String path, int pos})> _handles =
+      <int, ({String path, int pos})>{};
+  int _nextHandle = 1;
+  int readCalls = 0;
+
+  @override
+  Future<int?> open(String relativePath, {SafWriteMode? mode}) async {
+    if (!storage.containsKey(relativePath)) {
+      if (mode == SafWriteMode.writeTruncate ||
+          mode == SafWriteMode.writeAppend) {
+        storage[relativePath] = Uint8List(0);
+      } else {
+        return null;
+      }
+    }
+    final handle = _nextHandle++;
+    final initialPos = mode == SafWriteMode.writeAppend
+        ? storage[relativePath]!.lengthInBytes
+        : 0;
+    _handles[handle] = (path: relativePath, pos: initialPos);
+    return handle;
+  }
+
+  @override
+  Future<Uint8List> read(int handle, int length) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid SAF handle');
+    readCalls++;
+    final bytes = storage[state.path]!;
+    final start = state.pos;
+    final end = (start + length).clamp(0, bytes.lengthInBytes);
+    _handles[handle] = (path: state.path, pos: end);
+    return Uint8List.fromList(bytes.sublist(start, end));
+  }
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid SAF handle');
+    final existing = storage[state.path] ?? Uint8List(0);
+    final builder = BytesBuilder(copy: false)
+      ..add(existing.sublist(0, state.pos))
+      ..add(bytes);
+    storage[state.path] = builder.takeBytes();
+    _handles[handle] = (path: state.path, pos: state.pos + bytes.lengthInBytes);
+  }
+
+  @override
+  Future<int?> length(int handle) async {
+    final state = _handles[handle];
+    return state == null ? null : storage[state.path]?.lengthInBytes;
+  }
+
+  @override
+  Future<void> seek(int handle, int position) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid SAF handle');
+    _handles[handle] = (path: state.path, pos: position);
+  }
+
+  @override
+  Future<void> close(int handle) async {
+    _handles.remove(handle);
+  }
+
+  @override
+  Future<bool> delete(String relativePath) async =>
+      storage.remove(relativePath) != null;
+
+  @override
+  Future<bool> rename(String relativePath, String newRelativePath) async {
+    if (storage.containsKey(newRelativePath) ||
+        !storage.containsKey(relativePath)) {
+      return false;
+    }
+    storage[newRelativePath] = storage.remove(relativePath)!;
+    return true;
+  }
+
+  @override
+  Future<bool> exists(String relativePath) async =>
+      storage.containsKey(relativePath);
+
+  @override
+  Future<List<SafTreeFile>> list(String relativePath) async {
+    final prefix = relativePath.isEmpty ? '' : '$relativePath/';
+    final result = <SafTreeFile>[];
+    final seen = <String>{};
+    for (final path in storage.keys) {
+      if (prefix.isEmpty) {
+        final segments = path.split('/');
+        if (segments.length > 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(name: segments.first, isDirectory: true, length: 0),
+          );
+        }
+      } else if (path.startsWith(prefix)) {
+        final sub = path.substring(prefix.length);
+        final segments = sub.split('/');
+        if (segments.length == 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(
+              name: segments.first,
+              isDirectory: false,
+              length: storage[path]?.lengthInBytes ?? 0,
+            ),
+          );
+        } else if (segments.length > 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(name: segments.first, isDirectory: true, length: 0),
+          );
+        }
+      }
+    }
+    return result;
+  }
 }

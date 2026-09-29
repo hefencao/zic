@@ -1518,6 +1518,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   由既有 structured placement/mirror owner 单独提交并最终 pin；automatic checkpoint 不得持有该 final-placement authority。
   若旧 SAF/external exact partial 被 automatic checkpoint 收敛到 Direct staging，
   authority switch MUST先保证新 prefix 不短于旧 authority，并通过 cleanup-debt 机制安全退休旧 locator；失败时不得因迁移而丢失更长旧 prefix。
+  persistent canonical SAF physical partial 在 composition local-prepare 命中时 MUST由 persistent store 的同一 per-physical serializer 先迁移为 App-private Direct transfer staging，再把该 mutable spool adoption 给 hot DownloadSession；MUST NOT 经 DownloadSession writer 从0复制 SAF body并把本地 replay 发布成 network receiving。scheduler TaskControl MUST贯穿这次迁移：authority switch 前取消保留旧 SAF partial，switch 后 retry MUST直接使用新 Direct authority。详见 ADR 0340。
   \n- 若 route 首帧仍绑定 bootstrap services 或 durable handoff 尚在进行，
   同一个下载管理 route MUST 在首帧后 force/await Home core-service handoff，
   adopt 匹配的 chapter-download/whole-comic/cache bindings，重绑 service stream，并立即读取及持续订阅 Home 最新投影。
@@ -1772,7 +1773,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   App进入paused/detached时composition owner SHOULD对当前committed hot partial做durable safety checkpoint，
   但 checkpoint MUST NOT退休hot owner或改变session generation。cold-store失败 MUST保留hot owner。
   persistent store把durable partial借给composition `DownloadSession`后，
-  正文 MAY由该session继续append，但持久`cache_entry`/`physical_partial`/`physical_media_artifact` mutation ownership MUST继续属于`PersistentDownloadArtifactStore`；
+  正文 MAY由该session继续append，但持久`cache_entry`/`physical_partial`/`physical_media_artifact` mutation ownership MUST继续属于`PersistentDownloadArtifactStore`；canonical SAF physical partial若尚不可直接borrow，store MUST先在自己的serializer内完成同authority SAF→Direct staging迁移，不得让session先进入receiving后逐字节重建同一prefix；
+  provider对非零Range返回200/rangeStart0时属于transport capability/rejection，MUST保留partial并沿现有cost-aware full-body-prefix-catchup/defer处理，不得据此清零durable partial；
   adoption初始sync在store serializer内完成，后续sync/reset/evict MUST经注入的mutation owner回到同一per-id serialization domain，
   MUST NOT由session私有cache tail直接写同一持久row。
   sessions层的retire primitive MUST只处理claim/task/session/alias机械生命周期，不得依赖durable store或retention budget。

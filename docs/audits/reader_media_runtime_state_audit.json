@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.4.0",
-  "last_updated": "2026-09-29T10:38:02+08:00",
-  "baseline_commit": "27467b96",
+  "audit_version": "1.5.0",
+  "last_updated": "2026-09-29T12:03:53+08:00",
+  "baseline_commit": "4b4d8dfe",
   "system": "zic-reader-media-runtime",
   "scope": "Reader navigation truth, external-static presentation ownership/state handoff, Pipeline presentation recovery, native decode/source-write worker lifecycle, GIF presentation lifecycle",
   "summary": {
-    "total_issues": 19,
-    "confirmed": 19,
-    "resolved": 17,
+    "total_issues": 20,
+    "confirmed": 20,
+    "resolved": 18,
     "deleted_candidates": 2,
     "full_validation_pending": false,
     "profile_device_validation_pending": false,
@@ -215,6 +215,16 @@
       "owner": "packages/bridge/lib/src/native_decode_pool.dart + native_source_write_pool.dart",
       "plan": "pool统一拥有worker exit：原子retire失效worker、结算其active request、从可调度集合移除并补齐worker数量；只有真实live worker可恢复idle并接新任务。",
       "remediation_applied": "pool在单一exit callback中移除dead worker、结算active capacity并异步补位；pump明确跳过exited worker，degraded期间保留current decode slot。"
+    },
+    {
+      "id": "RMR-018",
+      "severity": "P1",
+      "title": "canonical SAF physical partial被hot DownloadSession从0本地重放，表现为已有partial却重新接收",
+      "status": "resolved",
+      "evidence": "Profile zic-debug-trace-2026-09-29T03-03-51.jsonl中page79/exact 6d924728a464c2c6已有7,708,375-byte canonical physical partial。persistent store记录physical-partial-opened accessMode=saf/adoptable=false，随后physical DownloadSession进入receiving并依次checkpoint约1/3/5/7MiB；同exact identity在这段local replay中没有origin sourceRead。若local preparation在等长Direct checkpoint提交前撤销，后续访问仍可再次从SAF offset0重放。",
+      "owner": "packages/downloads/lib/src/persistent_download_artifact_store.dart + partial_download_handoff.dart + DownloadSession durable spool adoption",
+      "plan": "persistent canonical SAF physical partial由PersistentDownloadArtifactStore的per-physical serializer先迁移为App-private Direct transfer staging，再经既有adoptDurablePartialBacking借给hot session；Reader/Pipeline/session不得成为第二partial owner。provider Range rejection继续作为独立transport能力处理。",
+      "remediation_applied": "SAF physical partial即使没有pre-proven Direct alias也暴露store-owned adoptInto；该seam在同一physical serializer内执行SAF→Direct migration、authority row switch/cleanup debt，再调用POSIX spool adoption。TaskControl贯穿checksum/copy；generic stream fallback不变。确定性回归证明首次恢复不发布DownloadState.receiving/restored-physical，第二个fresh hot session不再读取SAF。"
     }
   ],
   "validation": {
@@ -231,7 +241,11 @@
       "./tool/check.sh --require-toolchains: exit 0 in 193.331s；all repository/documentation/ownership checks, Dart/Flutter suites, three-ABI Android debug build and Rust media_core tests passed",
       "ADR0339 focused control/lifecycle validation: DecodeSession control propagation + queued cancellation + admitted cancellation real-exit tests passed; LiveCoordinator source-retirement barrier test passed; dev.96/dev.128/native-worker/native-decode ownership guards passed",
       "final-source Profile build/install on M2007J1SC: authoritative Home ready in 1.245s; zic-debug-trace-2026-09-29T02-34-05.jsonl completed 4 forward + 4 reverse committed moves, including 2 stable previous-role starts; taskFailed=0, decode recoveries=0, decode priority promotion count=1 active=1 queued=0",
-      "./tool/check.sh --require-toolchains: exit 0 in 177.969s after ADR0339/source-retirement changes; repository/documentation/ownership gates, Dart/Flutter suites, Android toolchain/build checks and Rust media_core 22/22 passed"
+      "./tool/check.sh --require-toolchains: exit 0 in 177.969s after ADR0339/source-retirement changes; repository/documentation/ownership gates, Dart/Flutter suites, Android toolchain/build checks and Rust media_core 22/22 passed",
+      "ADR0340 deterministic regression: 7MiB+ SAF physical partial migrates once to Direct staging, hot session stays idle/no restored-physical stream-copy, and second fresh session performs zero additional SAF body reads",
+      "focused existing regressions: validatorless Range ignored reuses one full response for catchup; large unsupported-range catchup remains deferred until foreground-adjacent demand",
+      "Profile build/install: authoritative Home 1.275s; zic-debug-trace-2026-09-29T03-35-53.jsonl exercised the original page79 7,708,375-byte SAF partial as adoptable and completed store-owned adoption without local receiving-from-zero; zic-debug-trace-2026-09-29T03-54-39.jsonl revisited it through Direct adopted-posix-spool",
+      "./tool/check.sh --require-toolchains: exit 0 in 162.134s on final ADR0340 tree; repository/documentation/ownership gates, Dart/Flutter suites, three-ABI Android debug builds and Rust media_core 22/22 passed"
     ],
     "pending": []
   },
@@ -340,5 +354,18 @@
       "active": 1
     },
     "interpretation": "正常final-source双向Reader运行验证本轮scheduler-control/source-retirement改动未造成执行回归。该run未故意制造native queued cancellation、worker crash或in-flight cancellation；这些边界由确定性行为回归和ownership guards覆盖，不能把本Profile样本写成fault injection。"
+  },
+  "saf_physical_partial_governance": {
+    "adr": "0340-saf-physical-partial-direct-staging-adoption.md",
+    "authority_owner": "PersistentDownloadArtifactStore per-physical serializer",
+    "pre_fix_trace": "zic-debug-trace-2026-09-29T03-03-51.jsonl",
+    "pre_fix_identity": "6d924728a464c2c6",
+    "pre_fix_partial_bytes": 7708375,
+    "pre_fix_failure": "SAF physical partial was non-adoptable and replayed through DownloadSession writer from offset zero; session receiving/checkpoints described local copy, not origin network",
+    "post_fix_trace": "zic-debug-trace-2026-09-29T03-35-53.jsonl",
+    "post_fix_evidence": "same 7,708,375-byte page79 partial opens as SAF adoptable=true, migrates under persistent store authority, then adopted-physical/local-hydration-ready while session remains idle; later visits are Direct adoption",
+    "post_fix_revisit_trace": "zic-debug-trace-2026-09-29T03-54-39.jsonl",
+    "transport_distinction": "after local authority is ready, provider may still answer a non-zero Range request with HTTP 200/rangeStart0; existing full-body-prefix-catchup preserves the durable partial and is a separate Range capability path",
+    "policy_unchanged": "7/3 network window, 2/1 decode window, local-preparation cap, 50MB speculative encoded budget and final SAF placement unchanged"
   }
 }
