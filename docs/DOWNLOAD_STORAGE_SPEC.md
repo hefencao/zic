@@ -131,6 +131,10 @@ This document is normative for the detailed download/storage behavior.
    The compatibility `pinned` state may protect only an exact logical binding completed by explicit manual/offline materialization;
    chapter-level pinning MUST NOT include other source revisions or pages outside the current exact manifest.
    Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent.
+7. One App-private download metadata database MUST have exactly one live process owner. The owner MUST be acquired before SQLite open/recovery and MUST exclude both another process and another in-process store using the same absolute index path.
+8. On SAF, `.zic.json` and its `DownloadPlacement` token form one recoverable metadata commit. An existing manifest MUST be retained as deterministic `.zic.json.zic-old` until the new valid manifest's exact generation+fingerprint is committed to placement.
+9. SAF manifest recovery MUST be driven by a flushed App-private transaction intent plus the exact placement token and MUST probe exact paths only. A valid target with a generation ahead of placement and no intent MUST NOT advance placement. First-write rollback removes the uncommitted target; final-delete rollback/commit is decided by whether the old placement token still exists.
+10. These manifest rules MUST NOT be generalized into a claim that generic SAF page/partial replacement is atomic. Provider rename/replace crash recovery remains a separate capability and evidence requirement.
 
 ## 5. Export layout and migration
 

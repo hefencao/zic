@@ -146,6 +146,8 @@ final class PersistentDownloadArtifactStore
     required CacheOps cacheOps,
     required ArtifactBytes bytes,
     required File recoveryMarker,
+    required RandomAccessFile metadataOwnerLock,
+    required String metadataOwnerKey,
     required this._storageWriteScheduler,
     this.safTreeIo,
     required this.safTreeUri,
@@ -157,6 +159,8 @@ final class PersistentDownloadArtifactStore
         _cacheOps = cacheOps,
         _bytes = bytes,
         _recoveryMarker = recoveryMarker,
+        _metadataOwnerLock = metadataOwnerLock,
+        _metadataOwnerKey = metadataOwnerKey,
         _traceSink = traceSink ?? const NoopTraceSink(),
         _clock = clock ?? const SystemClock();
 
@@ -212,8 +216,35 @@ final class PersistentDownloadArtifactStore
     final layout = CacheLayout(
       directory ?? defaultChapterDownloadDirectory(root),
     );
-    final index = SqliteIndex(indexPath ?? layout.dbPath);
-    await index.open();
+    final resolvedIndexPath = File(indexPath ?? layout.dbPath).absolute.path;
+    if (!_processMetadataOwners.add(resolvedIndexPath)) {
+      throw StateError(
+        'persistent download metadata is already owned in this process: '
+        '$resolvedIndexPath',
+      );
+    }
+    final metadataOwnerFile = File('$resolvedIndexPath.owner.lock');
+    RandomAccessFile? metadataOwnerLock;
+    try {
+      await metadataOwnerFile.parent.create(recursive: true);
+      metadataOwnerLock = await metadataOwnerFile.open(mode: FileMode.append);
+      await metadataOwnerLock.lock(FileLock.exclusive);
+    } on FileSystemException catch (error) {
+      await metadataOwnerLock?.close();
+      _processMetadataOwners.remove(resolvedIndexPath);
+      throw StateError(
+        'persistent download metadata owner lock failed: '
+        '$resolvedIndexPath ($error)',
+      );
+    } on Object {
+      await metadataOwnerLock?.close();
+      _processMetadataOwners.remove(resolvedIndexPath);
+      rethrow;
+    }
+    final ownerLock = metadataOwnerLock;
+    final index = SqliteIndex(resolvedIndexPath);
+    try {
+      await index.open();
     final resolvedClock = clock ?? const SystemClock();
     final registry = DownloadRegistry(
       layout: layout,
@@ -226,19 +257,9 @@ final class PersistentDownloadArtifactStore
     );
     final recoveryRequired = await recoveryMarker.exists();
     if (recoveryRequired) {
-      String? previousOwner;
-      try {
-        previousOwner = (await recoveryMarker.readAsString()).trim();
-      } on Object {
-        // An unreadable marker is still crash evidence. Recovery below is the
-        // conservative path instead of silently ignoring an unclean close.
-      }
-      if (previousOwner == _processRecoveryOwner) {
-        await index.close();
-        throw StateError(
-          'persistent artifact store is already open for ${layout.root}',
-        );
-      }
+      // Marker contents are not live-owner evidence. Existence alone means the
+      // previous lifecycle did not reach clean close; process ownership is
+      // exclusively enforced by the metadata owner acquired above.
       try {
         await StartupRecovery(
           layout: layout,
@@ -253,8 +274,9 @@ final class PersistentDownloadArtifactStore
       }
     }
     // Promotion recovery can mutate artifact/replica authority. Run it only
-    // after the same-process open guard above has ruled out a concurrent store
-    // owner. Dirty StartupRecovery already protects both journal locators, so
+    // after the metadata process owner above has ruled out a concurrent store
+    // owner. The recovery marker is crash evidence only; it is not a live-owner
+    // lock. Dirty StartupRecovery already protects both journal locators, so
     // ordering this after its orphan pass is safe and avoids a second opener
     // committing another owner's in-flight promotion.
     await _ArtifactPromotionRecovery._recoverPendingArtifactPromotions(index);
@@ -290,6 +312,8 @@ final class PersistentDownloadArtifactStore
       ),
       bytes: resolvedBytes,
       recoveryMarker: recoveryMarker,
+      metadataOwnerLock: ownerLock,
+      metadataOwnerKey: resolvedIndexPath,
       storageWriteScheduler: resolvedStorageWriteScheduler,
       safTreeIo: safMirror,
       safTreeUri: safTreeUri,
@@ -297,9 +321,25 @@ final class PersistentDownloadArtifactStore
       traceSink: traceSink,
       clock: resolvedClock,
     );
-    resolved._scheduleCleanupDebtDrain();
-    resolved._scheduleRedundantPhysicalPartialSweep();
-    return resolved;
+      await resolved._recoverStructuredSafManifestTransactions();
+      resolved._scheduleCleanupDebtDrain();
+      resolved._scheduleRedundantPhysicalPartialSweep();
+      return resolved;
+    } on Object {
+      try {
+        await index.close();
+      } on Object {
+        // Preserve the original open failure.
+      }
+      try {
+        await ownerLock.unlock();
+      } on Object {
+        // A failed open never hands the owner lock to a store instance.
+      }
+      await ownerLock.close();
+      _processMetadataOwners.remove(resolvedIndexPath);
+      rethrow;
+    }
   }
 
   /// The SAF tree finals mirror into; null keeps everything local.
@@ -1892,6 +1932,8 @@ final class PersistentDownloadArtifactStore
   final CacheOps _cacheOps;
   final ArtifactBytes _bytes;
   final File _recoveryMarker;
+  final RandomAccessFile _metadataOwnerLock;
+  final String _metadataOwnerKey;
   final StorageWriteScheduler _storageWriteScheduler;
   final _StoreLifetimeTaskControl _deferredRecencyTouchControl =
       _StoreLifetimeTaskControl();
@@ -1947,6 +1989,7 @@ final class PersistentDownloadArtifactStore
   bool _closed = false;
 
   static const String _recoveryMarkerName = '.zic-cache-recovery-required';
+  static final Set<String> _processMetadataOwners = <String>{};
   static final RegExp _crc32ChecksumPattern = RegExp(r'^[0-9a-fA-F]{8}$');
   static final String _processRecoveryOwner =
       '${pid}-${DateTime.now().toUtc().microsecondsSinceEpoch}';
@@ -7540,6 +7583,7 @@ final class PersistentDownloadArtifactStore
     }
     _deferredRecencyTouchControl.cancel();
     _closed = true;
+    try {
     // Public methods reject new work after _closed, but operations that were
     // already admitted can still enqueue a per-id/path tail while their
     // current callback is awaiting I/O. Drain every tail before disposing the
@@ -7576,9 +7620,18 @@ final class PersistentDownloadArtifactStore
         // The drainer records per-item failures and must not weaken close.
       }
     }
-    await _managementProjectionChanges.close();
-    await _registry.dispose();
-    await _index.close();
+    try {
+      await _managementProjectionChanges.close();
+    } finally {
+      try {
+        await _registry.dispose();
+      } finally {
+        // The metadata process owner MUST outlive the SQLite handle even when
+        // an earlier close stage fails; otherwise another process could enter
+        // recovery while this process still owns an open database connection.
+        await _index.close();
+      }
+    }
     try {
       if (await _recoveryMarker.exists()) {
         await _recoveryMarker.delete();
@@ -7602,6 +7655,17 @@ final class PersistentDownloadArtifactStore
         );
       } on Object {
         // Diagnostics must not turn a clean store close into a failure.
+      }
+    }
+    } finally {
+      try {
+        await _metadataOwnerLock.unlock();
+      } finally {
+        try {
+          await _metadataOwnerLock.close();
+        } finally {
+          _processMetadataOwners.remove(_metadataOwnerKey);
+        }
       }
     }
   }

@@ -1961,8 +1961,8 @@ SAF 任一侧参与时 UI 禁用 automatic migration；provider replace/跨进�
 `DownloadRegistry.layoutResolver` 只决定该 source 新 artifact/partial 写入哪个根。
 durable sealed 读取始终由索引中的 artifact/replica locator 裁决，因此旧位置字节保持可读且无需启动期重建历史 READY session；
 该 per-source 切换不做迁移。插件管理不再批量改写同一插件全部 source 的目录。
-持久store打开期间在cache root保留`.zic-cache-recovery-required`脏关闭标记；
-正常关闭删除，下一次仅在发现遗留标记时运行`StartupRecovery`的authority-aware local cleanup scan，普通冷启动不得支付全量扫描成本。
+持久store打开期间在cache root保留`.zic-cache-recovery-required`脏关闭标记；同一 App-private download metadata DB 还由 absolute index path 的进程内 owner 与 `<index>.owner.lock` OS lock 共同排他，且该锁必须先于 SQLite open/recovery 获取，避免另一活进程被误判成 crash owner。
+正常关闭删除 recovery marker 并释放 metadata owner；下一次仅在发现遗留 marker 时运行`StartupRecovery`的authority-aware local cleanup scan，普通冷启动不得支付全量扫描成本。
 该 scan 对 sealed READY 只保护 DB-authoritative locator并清理无authority orphan，不执行 READY registry restore；
 mutable partial 的 demand-time adoption/resume仍由其独立 physical/index owner负责。
 非权威exact locator的crash清理由download-cache schema16 `storage_cleanup_debt`独立拥有且永不取得正文authority：
@@ -2006,8 +2006,8 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 当前支持 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF，ISO-BMFF 必须命中明确 AVIF/HEIF brand，generic `ftyp` 不得猜作 AVIF。
 已进入结构化图片导出的正文若无任一支持签名 MUST 作为 `artifactCorruption` 拒绝，`ContentKindHint` 不得覆盖实际非图片 bytes。
 每个目录的 `.zic.json` 描述当前 owner、稳定章节目录映射、单调 generation 与内容 fingerprint，placement 镜像最近提交 token；
-POSIX 通过目录锁串行提交，SAF 校验 record tree URI 并用临时文件加 replace/recover 协议提交，
-但 manifest 字节、placement 与 SQLite binding 尚未形成跨进程单一事务。
+POSIX 继续通过目录锁串行提交。SAF manifest 由 structured placement owner 在任何 SAF mutation 前先 flush App-private transaction intent，再以 deterministic `.zic.json.zic-old` + `DownloadPlacement` commit point 做 recoverable replace/delete；恢复只接受 intent 或 legacy backup 的 exact token 证据，禁止按“target generation 更高”猜测 forward。该协议位于唯一 metadata process owner 内并按 exact manifest path 串行，见 ADR 0342。
+generic page/partial SAF replace 仍不具备 provider-independent crash transaction；不得把 manifest/placement 已闭合解释成 DocumentFile replace 已原子化。
 整本队列把执行期 `ErrorCode.policy` 提升为持久化 `requiresUserAction` 阶段，保存冲突目录、existing/request owner 和触发章节，停止后续调度；
 详情页再次发起整本下载时必须重新弹出冲突对比并以新 placement 重建任务，管理页不得把该阶段当普通失败直接重试。
 长期数据模型仍需进一步把物理 artifact、逻辑版本 binding 与 export binding 彻底解耦。

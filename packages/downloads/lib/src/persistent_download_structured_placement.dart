@@ -1,5 +1,134 @@
 part of 'chapter_downloads.dart';
 
+enum _SafManifestTransactionOperation { replace, delete }
+
+final class _SafManifestTransactionIntent {
+  const _SafManifestTransactionIntent({
+    required this.operation,
+    required this.treeUri,
+    required this.manifestPath,
+    required this.sourceId,
+    required this.comicId,
+    required this.oldPlacementGeneration,
+    required this.oldPlacementFingerprint,
+    required this.hadTarget,
+    required this.oldManifestGeneration,
+    required this.oldManifestFingerprint,
+    this.newGeneration,
+    this.newFingerprint,
+  });
+
+  factory _SafManifestTransactionIntent.decode(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map<String, dynamic> || value['version'] != 1) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest transaction intent is invalid',
+      );
+    }
+    final operationName = value['operation'];
+    final operation = _SafManifestTransactionOperation.values.where(
+      (candidate) => candidate.name == operationName,
+    );
+    final treeUri = value['treeUri'];
+    final manifestPath = value['manifestPath'];
+    final sourceId = value['sourceId'];
+    final comicId = value['comicId'];
+    final oldPlacementGeneration = value['oldPlacementGeneration'];
+    final oldPlacementFingerprint = value['oldPlacementFingerprint'];
+    final hadTarget = value['hadTarget'];
+    final oldManifestGeneration = value['oldManifestGeneration'];
+    final oldManifestFingerprint = value['oldManifestFingerprint'];
+    final newGeneration = value['newGeneration'];
+    final newFingerprint = value['newFingerprint'];
+    if (operation.length != 1 ||
+        treeUri is! String ||
+        treeUri.isEmpty ||
+        manifestPath is! String ||
+        manifestPath.isEmpty ||
+        sourceId is! String ||
+        sourceId.isEmpty ||
+        comicId is! String ||
+        comicId.isEmpty ||
+        oldPlacementGeneration is! int ||
+        hadTarget is! bool ||
+        (oldPlacementFingerprint != null && oldPlacementFingerprint is! String) ||
+        (oldManifestGeneration != null && oldManifestGeneration is! int) ||
+        (oldManifestFingerprint != null && oldManifestFingerprint is! String) ||
+        (newGeneration != null && newGeneration is! int) ||
+        (newFingerprint != null && newFingerprint is! String)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest transaction intent has invalid fields',
+      );
+    }
+    if (hadTarget != (oldManifestGeneration != null) ||
+        hadTarget != (oldManifestFingerprint != null)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest transaction intent has incomplete old target',
+      );
+    }
+    if (operation.single == _SafManifestTransactionOperation.replace &&
+        (newGeneration == null || newFingerprint == null)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest replace intent has no target token',
+      );
+    }
+    if (operation.single == _SafManifestTransactionOperation.delete &&
+        (newGeneration != null || newFingerprint != null || !hadTarget)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete intent has invalid target state',
+      );
+    }
+    return _SafManifestTransactionIntent(
+      operation: operation.single,
+      treeUri: treeUri,
+      manifestPath: manifestPath,
+      sourceId: sourceId,
+      comicId: comicId,
+      oldPlacementGeneration: oldPlacementGeneration,
+      oldPlacementFingerprint: oldPlacementFingerprint as String?,
+      hadTarget: hadTarget,
+      oldManifestGeneration: oldManifestGeneration as int?,
+      oldManifestFingerprint: oldManifestFingerprint as String?,
+      newGeneration: newGeneration as int?,
+      newFingerprint: newFingerprint as String?,
+    );
+  }
+
+  final _SafManifestTransactionOperation operation;
+  final String treeUri;
+  final String manifestPath;
+  final String sourceId;
+  final String comicId;
+  final int oldPlacementGeneration;
+  final String? oldPlacementFingerprint;
+  final bool hadTarget;
+  final int? oldManifestGeneration;
+  final String? oldManifestFingerprint;
+  final int? newGeneration;
+  final String? newFingerprint;
+
+  String encode() => jsonEncode(<String, Object?>{
+        'version': 1,
+        'operation': operation.name,
+        'treeUri': treeUri,
+        'manifestPath': manifestPath,
+        'sourceId': sourceId,
+        'comicId': comicId,
+        'oldPlacementGeneration': oldPlacementGeneration,
+        'oldPlacementFingerprint': oldPlacementFingerprint,
+        'hadTarget': hadTarget,
+        'oldManifestGeneration': oldManifestGeneration,
+        'oldManifestFingerprint': oldManifestFingerprint,
+        'newGeneration': newGeneration,
+        'newFingerprint': newFingerprint,
+      });
+}
+
 mixin _PersistentDownloadStructuredPlacementMixin {
   SqliteIndex get _index;
   DownloadRegistry get _registry;
@@ -9,6 +138,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   SafTreeIo? get safTreeIo;
   String? get safTreeUri;
   CacheLayout get layout;
+  String get _metadataOwnerKey;
 
   CacheLayout layoutFor(DownloadId id);
   CacheLayout layoutForSource(String sourceId);
@@ -61,6 +191,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
 
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
+  final Object _structuredWriteZoneKey = Object();
   final Map<String, String> _structuredDirectoriesByOwner = <String, String>{};
   final Map<String, String> _structuredOwnersByDirectory = <String, String>{};
   final Map<String, DownloadPlacement> _claimedPlacementsByOwner =
@@ -68,6 +199,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   final Set<String> _sessionPlacementClaims = <String>{};
   bool _placementClaimsLoaded = false;
   final Map<String, Future<void>> _placementWrites = <String, Future<void>>{};
+  int _safManifestIntentSerial = 0;
 
   /// Migrates user-materialized direct-root artifacts without moving mutable
   /// transfer spools or automatic-cache-only replicas.
@@ -359,9 +491,13 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     Future<T> Function() operation,
   ) {
     final previous = _structuredWriteTails[path] ?? Future<void>.value();
+    Future<T> runOperation() => runZoned<Future<T>>(
+      operation,
+      zoneValues: <Object?, Object?>{_structuredWriteZoneKey: path},
+    );
     final current = previous.then<T>(
-      (_) => operation(),
-      onError: (Object _, StackTrace __) => operation(),
+      (_) => runOperation(),
+      onError: (Object _, StackTrace __) => runOperation(),
     );
     late final Future<void> tail;
     tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
@@ -754,7 +890,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
                   (f) =>
                   !f.isDirectory &&
                   !f.name.endsWith('.zic.lock') &&
-                  !f.name.endsWith(comicManifestFileName) &&
+                  !f.name.startsWith('$comicManifestFileName.') &&
+                  f.name != comicManifestFileName &&
                       f.length > 0,
                 );
             } else {
@@ -763,7 +900,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
               for (final e in entities) {
                 if (e is File &&
                     !e.path.endsWith('.zic.lock') &&
-                    !e.path.endsWith(comicManifestFileName)) {
+                    !e.path.endsWith(comicManifestFileName) &&
+                    !e.path.contains('$comicManifestFileName.')) {
                   if (await e.length() > 0) {
                     hasRealImages = true;
                     break;
@@ -1536,6 +1674,11 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         directories.remove(entry.chapter.chapterId);
       }
       final placement = await resolveDownloadPlacement(entry);
+      final previousGeneration =
+          isSameComic ? previous.generation : placement.generation;
+      final baseGeneration = previousGeneration > placement.generation
+          ? previousGeneration
+          : placement.generation;
       final draft = ComicFolderManifest(
         comicTitle: entry.chapter.comicTitle,
         comicId: entry.chapter.comicId,
@@ -1544,8 +1687,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         chapterDirectories: directories,
         chapterTitles: titles,
         chapterSequences: sequences,
-          generation:
-              (isSameComic ? previous.generation : placement.generation) + 1,
+        generation: baseGeneration + 1,
         pageOrder: placement.pageOrder,
         updatedAt: DateTime.now(),
       );
@@ -1566,16 +1708,15 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       );
       final safIo = safTreeIo;
       if (safIo != null && safTreeUri != null) {
-        await _writeBytesToSafTracked(
-          safIo,
-          manifestPath,
-          Uint8List.fromList(utf8.encode(manifest.encode())),
-        );
         final committedPlacement = placement.copyWith(
           generation: manifest.generation,
           fingerprint: manifest.fingerprint,
         );
-        await _persistPlacement(committedPlacement);
+        await _commitSafManifestAndPlacement(
+          manifestPath: manifestPath,
+          manifest: manifest,
+          placement: committedPlacement,
+        );
         _claimedPlacementsByOwner[placement.ownerKey] = committedPlacement;
         return;
       }
@@ -1713,10 +1854,22 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           .where(remaining.contains)
           .toList(growable: false);
       if (chapters.isEmpty) {
+        final owner =
+            '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}';
         final safIo = safTreeIo;
         if (safIo != null && safTreeUri != null) {
-          await safIo.delete('$comicDir/$comicManifestFileName');
-          await safIo.delete(comicDir);
+          final placement = await resolveDownloadPlacement(entry);
+          await _commitSafManifestDeletion(
+            manifestPath: '$comicDir/$comicManifestFileName',
+            manifest: existing,
+            placement: placement,
+          );
+          try {
+            await safIo.delete(comicDir);
+          } on Object {
+            // Placement removal is the delete commit point. Empty directory
+            // cleanup is not allowed to resurrect manifest authority.
+          }
         } else {
           final file = File(
             '${rootLayout.root}/$comicDir/$comicManifestFileName',
@@ -1725,20 +1878,18 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           final dir = Directory('${rootLayout.root}/$comicDir');
           if (await dir.exists()) {
             final entities = await dir.list(followLinks: false).toList();
-              final nonLock = entities
-                  .where((e) => !e.path.endsWith('.zic.lock'))
-                  .toList();
+            final nonLock = entities
+                .where((e) => !e.path.endsWith('.zic.lock'))
+                .toList();
             if (nonLock.isEmpty) {
               await dir.delete(recursive: true);
             }
           }
+          await _index.removePlacement(
+            sourceId: entry.chapter.sourceId,
+            comicId: entry.chapter.comicId,
+          );
         }
-          final owner =
-              '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}';
-        await _index.removePlacement(
-          sourceId: entry.chapter.sourceId,
-          comicId: entry.chapter.comicId,
-        );
         _claimedPlacementsByOwner.remove(owner);
         _structuredDirectoriesByOwner.remove(owner);
         _structuredOwnersByDirectory.remove(
@@ -1761,6 +1912,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           if (existing.chapterSequences[id] != null)
             id: existing.chapterSequences[id]!,
       };
+      final placement = await resolveDownloadPlacement(entry);
+      final baseGeneration = existing.generation > placement.generation
+          ? existing.generation
+          : placement.generation;
       final draft = ComicFolderManifest(
         format: existing.format,
         sourceId: existing.sourceId,
@@ -1771,7 +1926,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         chapterDirectories: directories,
         chapterTitles: titles,
         chapterSequences: sequences,
-        generation: existing.generation + 1,
+        generation: baseGeneration + 1,
         updatedAt: DateTime.now(),
       );
       final next = ComicFolderManifest(
@@ -1788,14 +1943,17 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         fingerprint: draft.computedFingerprint,
         updatedAt: draft.updatedAt,
       );
-      final bytes = Uint8List.fromList(utf8.encode(next.encode()));
       final safIo = safTreeIo;
+      final committedPlacement = placement.copyWith(
+        generation: next.generation,
+        fingerprint: next.fingerprint,
+      );
       if (safIo != null && safTreeUri != null) {
-          await _writeBytesToSafTracked(
-            safIo,
-            '$comicDir/$comicManifestFileName',
-            bytes,
-          );
+        await _commitSafManifestAndPlacement(
+          manifestPath: '$comicDir/$comicManifestFileName',
+          manifest: next,
+          placement: committedPlacement,
+        );
       } else {
         final file = File(
           '${rootLayout.root}/$comicDir/$comicManifestFileName',
@@ -1818,12 +1976,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           }
         }
       }
-      final placement = await resolveDownloadPlacement(entry);
-      final committedPlacement = placement.copyWith(
-        generation: next.generation,
-        fingerprint: next.fingerprint,
-      );
-      await _persistPlacement(committedPlacement);
+      if (safIo == null || safTreeUri == null) {
+        await _persistPlacement(committedPlacement);
+      }
       _claimedPlacementsByOwner[placement.ownerKey] = committedPlacement;
       }),
     );
@@ -1847,43 +2002,659 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     }
   }
 
+  Future<void> _awaitStructuredWrite(String path) async {
+    if (Zone.current[_structuredWriteZoneKey] == path) return;
+    while (true) {
+      final pending = _structuredWriteTails[path];
+      if (pending == null) return;
+      await pending;
+    }
+  }
+
+  Future<ComicFolderManifest?> _readSafComicFolderManifestAt(
+    SafTreeIo io,
+    String path,
+  ) async {
+    if (!await io.exists(path)) return null;
+    final handle = await io.open(path, mode: SafWriteMode.read);
+    if (handle == null) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'comic folder manifest disappeared while opening',
+      );
+    }
+    try {
+      final length = await io.length(handle) ?? 0;
+      if (length <= 0) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'comic folder manifest is empty',
+        );
+      }
+      final bytes = await io.read(handle, length);
+      final manifest = ComicFolderManifest.decode(utf8.decode(bytes));
+      if (manifest == null) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'comic folder manifest is invalid',
+        );
+      }
+      if (!manifest.fingerprintValid) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'comic folder manifest fingerprint mismatch',
+        );
+      }
+      _validateComicFolderManifest(manifest);
+      return manifest;
+    } finally {
+      await io.close(handle);
+    }
+  }
+
+  bool _manifestMatchesPlacement(
+    ComicFolderManifest manifest,
+    DownloadPlacement placement,
+  ) =>
+      manifest.sourceId == placement.sourceId &&
+      manifest.comicId == placement.comicId &&
+      manifest.generation == placement.generation &&
+      manifest.fingerprint == placement.fingerprint;
+
+  bool _placementMatchesToken(
+    DownloadPlacement? placement, {
+    required String sourceId,
+    required String comicId,
+    required int generation,
+    required String? fingerprint,
+  }) =>
+      placement != null &&
+      placement.sourceId == sourceId &&
+      placement.comicId == comicId &&
+      placement.generation == generation &&
+      placement.fingerprint == fingerprint;
+
+  bool _manifestMatchesToken(
+    ComicFolderManifest? manifest, {
+    required String sourceId,
+    required String comicId,
+    required int generation,
+    required String fingerprint,
+  }) =>
+      manifest != null &&
+      manifest.sourceId == sourceId &&
+      manifest.comicId == comicId &&
+      manifest.generation == generation &&
+      manifest.fingerprint == fingerprint;
+
+  Directory get _safManifestTransactionDirectory =>
+      Directory('$_metadataOwnerKey.saf-manifest-transactions');
+
+  Future<File> _writeSafManifestTransactionIntent(
+    _SafManifestTransactionIntent intent,
+  ) async {
+    final directory = _safManifestTransactionDirectory;
+    await directory.create(recursive: true);
+    final serial = _safManifestIntentSerial++;
+    final stem = 'txn-$pid-${DateTime.now().toUtc().microsecondsSinceEpoch}-$serial';
+    final temporary = File('${directory.path}/.$stem.tmp');
+    final target = File('${directory.path}/$stem.json');
+    await temporary.writeAsString(intent.encode(), flush: true);
+    await temporary.rename(target.path);
+    return target;
+  }
+
+  Future<List<(File, _SafManifestTransactionIntent)>>
+      _loadSafManifestTransactionIntents() async {
+    final directory = _safManifestTransactionDirectory;
+    if (!await directory.exists()) {
+      return const <(File, _SafManifestTransactionIntent)>[];
+    }
+    final result = <(File, _SafManifestTransactionIntent)>[];
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (name.startsWith('.') && name.endsWith('.tmp')) {
+        try {
+          await entity.delete();
+        } on Object {
+          // A temp intent is written before any SAF mutation. Failure to retire
+          // the harmless local temp must not manufacture transaction evidence.
+        }
+        continue;
+      }
+      if (!name.endsWith('.json')) continue;
+      final intent = _SafManifestTransactionIntent.decode(
+        await entity.readAsString(),
+      );
+      result.add((entity, intent));
+    }
+    return result;
+  }
+
+  Future<void> _retireSafManifestTransactionIntent(File file) async {
+    if (await file.exists()) await file.delete();
+    final directory = _safManifestTransactionDirectory;
+    if (!await directory.exists()) return;
+    try {
+      if (await directory.list(followLinks: false).isEmpty) {
+        await directory.delete();
+      }
+    } on Object {
+      // Empty local journal-directory cleanup is not an authority mutation.
+    }
+  }
+
+  Future<void> _deleteSafPathExactly(
+    SafTreeIo io,
+    String path, {
+    required String failureMessage,
+  }) async {
+    if (!await io.exists(path)) return;
+    await io.delete(path);
+    if (await io.exists(path)) {
+      throw Failure(code: ErrorCode.policy, message: failureMessage);
+    }
+  }
+
+  Future<ComicFolderManifest?> _recoverSafManifestIntent(
+    File intentFile,
+    _SafManifestTransactionIntent intent, {
+    bool requireWritable = false,
+  }) async {
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (io == null || treeUri == null || intent.treeUri != treeUri) return null;
+    final manifestPath = intent.manifestPath;
+    final backupPath = '$manifestPath.zic-old';
+    final placement = await _index.getPlacement(
+      sourceId: intent.sourceId,
+      comicId: intent.comicId,
+    );
+    final oldPlacementMatches = _placementMatchesToken(
+      placement,
+      sourceId: intent.sourceId,
+      comicId: intent.comicId,
+      generation: intent.oldPlacementGeneration,
+      fingerprint: intent.oldPlacementFingerprint,
+    );
+
+    if (intent.operation == _SafManifestTransactionOperation.replace) {
+      final newPlacementMatches = _placementMatchesToken(
+        placement,
+        sourceId: intent.sourceId,
+        comicId: intent.comicId,
+        generation: intent.newGeneration!,
+        fingerprint: intent.newFingerprint,
+      );
+      if (newPlacementMatches) {
+        final target = await _readSafComicFolderManifestAt(io, manifestPath);
+        if (!_manifestMatchesToken(
+          target,
+          sourceId: intent.sourceId,
+          comicId: intent.comicId,
+          generation: intent.newGeneration!,
+          fingerprint: intent.newFingerprint!,
+        )) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'committed SAF manifest target disagrees with intent',
+          );
+        }
+        try {
+          await _deleteSafPathExactly(
+            io,
+            backupPath,
+            failureMessage: 'committed SAF manifest backup could not be retired',
+          );
+          await _retireSafManifestTransactionIntent(intentFile);
+        } on Object {
+          if (requireWritable) rethrow;
+        }
+        return target;
+      }
+      if (!oldPlacementMatches) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'SAF manifest replace intent disagrees with placement',
+        );
+      }
+      if (!intent.hadTarget) {
+        await _deleteSafPathExactly(
+          io,
+          manifestPath,
+          failureMessage: 'uncommitted first SAF manifest could not be retired',
+        );
+        await _retireSafManifestTransactionIntent(intentFile);
+        return null;
+      }
+      if (await io.exists(backupPath)) {
+        await _deleteSafPathExactly(
+          io,
+          manifestPath,
+          failureMessage: 'uncommitted SAF manifest target could not be retired',
+        );
+        if (!await io.rename(backupPath, manifestPath)) {
+          throw const Failure(
+            code: ErrorCode.policy,
+            message: 'committed SAF manifest backup could not be restored',
+          );
+        }
+      }
+      final restored = await _readSafComicFolderManifestAt(io, manifestPath);
+      if (!_manifestMatchesToken(
+        restored,
+        sourceId: intent.sourceId,
+        comicId: intent.comicId,
+        generation: intent.oldManifestGeneration!,
+        fingerprint: intent.oldManifestFingerprint!,
+      )) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'rolled-back SAF manifest disagrees with intent',
+        );
+      }
+      await _retireSafManifestTransactionIntent(intentFile);
+      return restored;
+    }
+
+    if (placement == null) {
+      try {
+        await _deleteSafPathExactly(
+          io,
+          manifestPath,
+          failureMessage: 'committed SAF manifest delete target still exists',
+        );
+        await _deleteSafPathExactly(
+          io,
+          backupPath,
+          failureMessage: 'committed SAF manifest delete backup still exists',
+        );
+        await _retireSafManifestTransactionIntent(intentFile);
+      } on Object {
+        if (requireWritable) rethrow;
+      }
+      return null;
+    }
+    if (!oldPlacementMatches) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete intent disagrees with placement',
+      );
+    }
+    if (await io.exists(backupPath)) {
+      if (await io.exists(manifestPath)) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'SAF manifest delete rollback has target and backup',
+        );
+      }
+      if (!await io.rename(backupPath, manifestPath)) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'deleted SAF manifest backup could not be restored',
+        );
+      }
+    }
+    final restored = await _readSafComicFolderManifestAt(io, manifestPath);
+    if (!_manifestMatchesToken(
+      restored,
+      sourceId: intent.sourceId,
+      comicId: intent.comicId,
+      generation: intent.oldManifestGeneration!,
+      fingerprint: intent.oldManifestFingerprint!,
+    )) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete rollback disagrees with intent',
+      );
+    }
+    await _retireSafManifestTransactionIntent(intentFile);
+    return restored;
+  }
+
+  Future<ComicFolderManifest?> _recoverLegacySafManifestBackup(
+    String manifestPath, {
+    bool requireWritable = false,
+  }) async {
+    final io = safTreeIo;
+    if (io == null || safTreeUri == null) return null;
+    final backupPath = '$manifestPath.zic-old';
+    if (!await io.exists(backupPath)) {
+      return _readSafComicFolderManifestAt(io, manifestPath);
+    }
+    ComicFolderManifest? target;
+    try {
+      target = await _readSafComicFolderManifestAt(io, manifestPath);
+    } on Object {
+      // A committed backup may still be the exact placement authority below.
+    }
+    if (target != null) {
+      final placement = await _index.getPlacement(
+        sourceId: target.sourceId,
+        comicId: target.comicId,
+      );
+      if (placement != null && _manifestMatchesPlacement(target, placement)) {
+        try {
+          await _deleteSafPathExactly(
+            io,
+            backupPath,
+            failureMessage: 'stale SAF manifest backup could not be retired',
+          );
+        } on Object {
+          if (requireWritable) rethrow;
+        }
+        return target;
+      }
+    }
+    final backup = await _readSafComicFolderManifestAt(io, backupPath);
+    if (backup == null) return target;
+    final placement = await _index.getPlacement(
+      sourceId: backup.sourceId,
+      comicId: backup.comicId,
+    );
+    if (placement == null || !_manifestMatchesPlacement(backup, placement)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'legacy SAF manifest backup disagrees with placement',
+      );
+    }
+    await _deleteSafPathExactly(
+      io,
+      manifestPath,
+      failureMessage: 'legacy uncommitted SAF manifest could not be retired',
+    );
+    if (!await io.rename(backupPath, manifestPath)) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'legacy committed SAF manifest backup could not be restored',
+      );
+    }
+    return backup;
+  }
+
+  Future<ComicFolderManifest?> _recoverSafManifestCommit(
+    String manifestPath, {
+    bool requireWritable = false,
+  }) async {
+    final treeUri = safTreeUri;
+    if (safTreeIo == null || treeUri == null) return null;
+    File? match;
+    _SafManifestTransactionIntent? matchedIntent;
+    for (final entry in await _loadSafManifestTransactionIntents()) {
+      final (file, intent) = entry;
+      if (intent.treeUri != treeUri || intent.manifestPath != manifestPath) {
+        continue;
+      }
+      if (match != null) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'multiple SAF manifest transaction intents exist',
+        );
+      }
+      match = file;
+      matchedIntent = intent;
+    }
+    if (match != null && matchedIntent != null) {
+      return _recoverSafManifestIntent(
+        match,
+        matchedIntent,
+        requireWritable: requireWritable,
+      );
+    }
+    return _recoverLegacySafManifestBackup(
+      manifestPath,
+      requireWritable: requireWritable,
+    );
+  }
+
+  Future<void> _recoverStructuredSafManifestTransactions() async {
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (io == null || treeUri == null) return;
+    for (final entry in await _loadSafManifestTransactionIntents()) {
+      final (file, intent) = entry;
+      if (intent.treeUri != treeUri) continue;
+      await _serializeStructuredWrite(
+        intent.manifestPath,
+        () => _recoverSafManifestIntent(file, intent),
+      );
+    }
+    for (final placement in await _index.listPlacements()) {
+      if (placement.storageRootId != treeUri &&
+          placement.storageRootId != 'default') {
+        continue;
+      }
+      final directory = placement.relativeDirectory.trim();
+      if (!_isSafeComicDirectoryName(directory)) continue;
+      final manifestPath = '$directory/$comicManifestFileName';
+      if (!await io.exists('$manifestPath.zic-old')) continue;
+      await _serializeStructuredWrite(
+        manifestPath,
+        () => _recoverLegacySafManifestBackup(manifestPath),
+      );
+    }
+  }
+
+  Future<void> _commitSafManifestAndPlacement({
+    required String manifestPath,
+    required ComicFolderManifest manifest,
+    required DownloadPlacement placement,
+  }) async {
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (io == null || treeUri == null) {
+      throw StateError('SAF manifest commit requires a configured tree');
+    }
+    await _recoverSafManifestCommit(manifestPath, requireWritable: true);
+    final targetFingerprint = manifest.fingerprint;
+    if (targetFingerprint == null) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest commit requires a content fingerprint',
+      );
+    }
+    final currentPlacement = await _index.getPlacement(
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+    );
+    if (currentPlacement == null) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest commit has no placement authority',
+      );
+    }
+    final previousManifest = await _readSafComicFolderManifestAt(
+      io,
+      manifestPath,
+    );
+    if (previousManifest != null &&
+        (previousManifest.sourceId != manifest.sourceId ||
+            previousManifest.comicId != manifest.comicId)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest commit target has another owner',
+      );
+    }
+    final intent = _SafManifestTransactionIntent(
+      operation: _SafManifestTransactionOperation.replace,
+      treeUri: treeUri,
+      manifestPath: manifestPath,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      oldPlacementGeneration: currentPlacement.generation,
+      oldPlacementFingerprint: currentPlacement.fingerprint,
+      hadTarget: previousManifest != null,
+      oldManifestGeneration: previousManifest?.generation,
+      oldManifestFingerprint: previousManifest?.fingerprint,
+      newGeneration: manifest.generation,
+      newFingerprint: targetFingerprint,
+    );
+    final intentFile = await _writeSafManifestTransactionIntent(intent);
+    final backupPath = '$manifestPath.zic-old';
+    try {
+      if (previousManifest != null) {
+        if (await io.exists(backupPath) ||
+            !await io.rename(manifestPath, backupPath)) {
+          throw const Failure(
+            code: ErrorCode.policy,
+            message: 'SAF manifest provider refused backup rename',
+          );
+        }
+      }
+      await _writeBytesToSafTracked(
+        io,
+        manifestPath,
+        Uint8List.fromList(utf8.encode(manifest.encode())),
+      );
+      final installed = await _readSafComicFolderManifestAt(io, manifestPath);
+      if (!_manifestMatchesToken(
+        installed,
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        generation: manifest.generation,
+        fingerprint: targetFingerprint,
+      )) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'SAF manifest changed before placement commit',
+        );
+      }
+      await _persistPlacementExact(placement);
+    } catch (_) {
+      try {
+        await _recoverSafManifestIntent(
+          intentFile,
+          intent,
+          requireWritable: true,
+        );
+      } on Object {
+        // Keep the durable intent as the next-open recovery authority.
+      }
+      rethrow;
+    }
+    try {
+      await _deleteSafPathExactly(
+        io,
+        backupPath,
+        failureMessage: 'committed SAF manifest backup could not be retired',
+      );
+      await _retireSafManifestTransactionIntent(intentFile);
+    } on Object {
+      // Placement is already the commit point. The durable intent keeps the
+      // cleanup replayable without rolling authority back.
+    }
+  }
+
+  Future<void> _commitSafManifestDeletion({
+    required String manifestPath,
+    required ComicFolderManifest manifest,
+    required DownloadPlacement placement,
+  }) async {
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (io == null || treeUri == null) {
+      throw StateError('SAF manifest delete requires a configured tree');
+    }
+    await _recoverSafManifestCommit(manifestPath, requireWritable: true);
+    final targetFingerprint = manifest.fingerprint;
+    if (targetFingerprint == null) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete requires a content fingerprint',
+      );
+    }
+    final currentPlacement = await _index.getPlacement(
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+    );
+    if (!_placementMatchesToken(
+      currentPlacement,
+      sourceId: placement.sourceId,
+      comicId: placement.comicId,
+      generation: placement.generation,
+      fingerprint: placement.fingerprint,
+    )) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete placement changed before transaction',
+      );
+    }
+    final currentManifest = await _readSafComicFolderManifestAt(
+      io,
+      manifestPath,
+    );
+    if (!_manifestMatchesToken(
+      currentManifest,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      generation: manifest.generation,
+      fingerprint: targetFingerprint,
+    )) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'SAF manifest delete target changed before transaction',
+      );
+    }
+    final intent = _SafManifestTransactionIntent(
+      operation: _SafManifestTransactionOperation.delete,
+      treeUri: treeUri,
+      manifestPath: manifestPath,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      oldPlacementGeneration: currentPlacement!.generation,
+      oldPlacementFingerprint: currentPlacement.fingerprint,
+      hadTarget: true,
+      oldManifestGeneration: currentManifest!.generation,
+      oldManifestFingerprint: currentManifest.fingerprint,
+    );
+    final intentFile = await _writeSafManifestTransactionIntent(intent);
+    final backupPath = '$manifestPath.zic-old';
+    try {
+      if (await io.exists(backupPath) ||
+          !await io.rename(manifestPath, backupPath)) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'SAF manifest delete could not retain rollback backup',
+        );
+      }
+      await _index.removePlacement(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+      );
+    } catch (_) {
+      try {
+        await _recoverSafManifestIntent(
+          intentFile,
+          intent,
+          requireWritable: true,
+        );
+      } on Object {
+        // Keep the durable intent as the next-open recovery authority.
+      }
+      rethrow;
+    }
+    try {
+      await _deleteSafPathExactly(
+        io,
+        backupPath,
+        failureMessage: 'committed SAF manifest delete backup still exists',
+      );
+      await _retireSafManifestTransactionIntent(intentFile);
+    } on Object {
+      // Logical deletion is committed. Startup will retry physical cleanup.
+    }
+  }
+
   Future<ComicFolderManifest?> _readComicFolderManifest(
     String comicDir, {
     CacheLayout? rootLayout,
   }) async {
     final manifestPath = '$comicDir/$comicManifestFileName';
+    await _awaitStructuredWrite(manifestPath);
     final safIo = safTreeIo;
     if (safIo != null && safTreeUri != null) {
-      if (!await safIo.exists(manifestPath)) return null;
-      final handle = await safIo.open(manifestPath, mode: SafWriteMode.read);
-      if (handle == null) return null;
-      try {
-        final length = await safIo.length(handle) ?? 0;
-        if (length <= 0) {
-          throw const Failure(
-            code: ErrorCode.artifactCorruption,
-            message: 'comic folder manifest is empty',
-          );
-        }
-        final bytes = await safIo.read(handle, length);
-        final manifest = ComicFolderManifest.decode(utf8.decode(bytes));
-        if (manifest == null) {
-          throw const Failure(
-            code: ErrorCode.artifactCorruption,
-            message: 'comic folder manifest is invalid',
-          );
-        }
-        if (!manifest.fingerprintValid) {
-          throw const Failure(
-            code: ErrorCode.artifactCorruption,
-            message: 'comic folder manifest fingerprint mismatch',
-          );
-        }
-        _validateComicFolderManifest(manifest);
-        return manifest;
-      } finally {
-        await safIo.close(handle);
-      }
+      return _readSafComicFolderManifestAt(safIo, manifestPath);
     }
     final file = File(
       '${(rootLayout ?? _registry.layout).root}/$comicDir/$comicManifestFileName',
@@ -1925,6 +2696,24 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         );
       }
     }
+  }
+
+  Future<void> _persistPlacementExact(DownloadPlacement placement) {
+    final owner = placement.ownerKey;
+    _sessionPlacementClaims.add(owner);
+    final previous = _placementWrites[owner] ?? Future<void>.value();
+    final current = previous.then<void>(
+      (_) => _index.putPlacement(placement),
+      onError: (Object _, StackTrace __) => _index.putPlacement(placement),
+    );
+    late final Future<void> tail;
+    tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _placementWrites[owner] = tail;
+    return current.whenComplete(() {
+      if (identical(_placementWrites[owner], tail)) {
+        _placementWrites.remove(owner);
+      }
+    });
   }
 
   Future<void> _persistPlacement(DownloadPlacement placement) {

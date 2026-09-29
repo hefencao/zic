@@ -1850,6 +1850,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   路径被复用、内容改变或hot session重新接管旧path时 MUST保留新/活跃内容并撤销旧cleanup intent。
   跨locator physical partial copy MUST NOT以较短失败staging覆盖较长旧prefix，
   legacy exact Direct→SAF若旧root不可安全检查 MUST fail closed。
+  同一 App-private download metadata DB MUST先取得 absolute index path 的进程内 owner 与 OS exclusive file lock，再允许 SQLite open、dirty recovery、promotion recovery 或 SAF manifest recovery；live second owner MUST fail closed。
   store open MAY异步枚举debt rows并经`StorageWriteScheduler`定向删除，但 MUST NOT因此枚举SAF tree。
   SAF debt只有record tree与当前可访问tree一致时 MAY删除；access/I/O failure MUST保留debt且不得损害已提交target。
   schema9 migration `copying` temp MUST保留用于resume，只有当前可访问的`cleanupPending` MAY由同一异步drainer复用既有cleanup。
@@ -1864,7 +1865,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   物理目录缺失（`!dirExists`）或无真实图片（`!hasRealImages`）且无活跃会话认领时，MUST 无条件判定为空闲并释放历史游标，优先分配纯标题目录；
   物理存在的非空目录冲突时弹出用户选择，严禁静默重命名或让历史 SQLite 幽灵记录阻断纯标题目录。
   每本漫画根目录 MUST 写入 `.zic.json`，提交前 MUST 重新校验 owner，不同 comicId 不得 last-writer-wins；
-  manifest MUST 保存单调 generation、内容 fingerprint、`pageOrder` 和稳定 chapter-id→directory 映射，损坏 fingerprint MUST 拒绝。
+  manifest MUST 保存单调 generation、内容 fingerprint、`pageOrder` 和稳定 chapter-id→directory 映射，损坏 fingerprint MUST 拒绝。SAF manifest replace/delete MUST 在任何 SAF mutation 前 flush App-private transaction intent，并保留 deterministic `.zic.json.zic-old` 直到 `DownloadPlacement` commit point；重启 MUST 以 intent + exact token 决定 rollback/forward。无 intent 的较新 target MUST NOT 仅因 generation 更高而推进 placement。generic SAF page/partial replace 不因该协议获得原子性。
   单章漫画 MAY 将页面直接放在漫画根目录且省略该章 directory mapping；
   首次进入多章布局时只有缺失 directory mapping 的既有章节 MAY 进入 flat→subdirectory 可重入迁移，
   现代 manifest 已有 mapping 的章节 MUST 视为已提交布局、后续新增章节不得再逐章全量扫描 cache index。
