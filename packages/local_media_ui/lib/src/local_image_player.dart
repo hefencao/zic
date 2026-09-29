@@ -66,6 +66,18 @@ final class LocalImagePlayer extends StatefulWidget {
   State<LocalImagePlayer> createState() => _LocalImagePlayerState();
 }
 
+final class _PresentationAttempt {
+  const _PresentationAttempt({
+    required this.loadEpoch,
+    required this.token,
+    required this.presentationIdentity,
+    required this.authority,
+  });
+  final int loadEpoch;
+  final MediaLoadToken token;
+  final Object? presentationIdentity;
+  final PipelinePresentationArtifactAuthority? authority;
+}
 final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late ImagePreviewState _state;
   late LocalImageFormat _detectedFormat;
@@ -75,23 +87,45 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _loadEpoch = 0;
   int _scheduledStaticFrameLoadEpoch = -1;
   late MediaLoadToken _loadToken;
-  bool _reportedFirstFrame = false;
+  int _reportedFirstFrameLoadEpoch = -1;
   PipelinePageStreamListener? _pageStreamingListener;
   PipelinePageOutputListener? _pageOutputListener;
   PipelinePageOutputSnapshot? _pageOutputSnapshot;
   bool _externalPresentationAvailable = false;
   Object? _scheduledOutputPresentationIdentity;
-  bool _streamingPrefixSyncing = false;
   int _streamingPrefixRequestedLength = 0;
-  int _streamingPrefixRequestedRevision = 0;
-  int _streamingPrefixReadRevision = 0;
   Object? _externalPresentationAttemptIdentity;
   PipelinePresentationArtifactAuthority? _presentationRecoveryAuthority;
-  bool _recoveryInFlight = false;
+  int? _recoveryLoadEpoch;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
   bool? _reportedPlaybackCapability;
   ValueChanged<bool>? _reportedPlaybackCapabilityCallback;
+  bool get _recoveryInFlight => _recoveryLoadEpoch != null;
+
+  void _advanceLoadEpoch() {
+    _loadEpoch++;
+    if (_recoveryLoadEpoch != null && _recoveryLoadEpoch != _loadEpoch) {
+      _recoveryLoadEpoch = null;
+    }
+  }
+
+  _PresentationAttempt _capturePresentationAttempt() => _PresentationAttempt(
+        loadEpoch: _loadEpoch,
+        token: _loadToken,
+        presentationIdentity:
+            widget.pageOutput?.externalPresentationCacheIdentity,
+        authority: _presentationRecoveryAuthority,
+      );
+
+  bool _isCurrentPresentationAttempt(_PresentationAttempt attempt) =>
+      mounted &&
+      attempt.loadEpoch == _loadEpoch &&
+      identical(attempt.token, _loadToken) &&
+      identical(
+        attempt.presentationIdentity,
+        widget.pageOutput?.externalPresentationCacheIdentity,
+      );
 
   @override
   void initState() {
@@ -145,10 +179,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         oldWidget.image.format != widget.image.format ||
         oldWidget.pageStream != widget.pageStream ||
         oldWidget.pageOutput != widget.pageOutput) {
-      _loadEpoch++;
+      _advanceLoadEpoch();
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
-      _reportedFirstFrame = false;
+      _reportedFirstFrameLoadEpoch = -1;
       _scheduledStaticFrameLoadEpoch = -1;
       _releasePresentationFileLease();
       _bytes = null;
@@ -177,10 +211,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _pageOutputSnapshot = null;
       _externalPresentationAvailable = false;
       _scheduledOutputPresentationIdentity = null;
-      _streamingPrefixSyncing = false;
       _streamingPrefixRequestedLength = 0;
-      _streamingPrefixRequestedRevision = 0;
-      _streamingPrefixReadRevision = 0;
       final streaming = widget.pageStream;
       if (streaming != null) {
         _attachPageStreaming(streaming);
@@ -225,7 +256,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
         }
-        _requestStreamingWebpPrefix(stream, snapshot);
+        _requestStreamingWebpPrefix(stream);
         return;
       }
       if (kind == PipelinePageContentKind.fallback) {
@@ -247,59 +278,25 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     stream.addListener(listener);
   }
 
-  void _requestStreamingWebpPrefix(
-    PipelinePageStream stream,
-    PipelinePageStreamSnapshot snapshot,
-  ) {
+  void _requestStreamingWebpPrefix(PipelinePageStream stream) {
     final requested = stream.metadataPrefixLength;
     if (requested <= _streamingPrefixRequestedLength) {
       return;
     }
     _streamingPrefixRequestedLength = requested;
-    _streamingPrefixRequestedRevision++;
-    if (_streamingPrefixSyncing ||
-        _streamingPrefixRequestedLength < 20 ||
-        _streamingPrefixRequestedRevision <= _streamingPrefixReadRevision) {
-      return;
-    }
-    unawaited(_drainStreamingWebpPrefix(stream));
-  }
-
-  Future<void> _drainStreamingWebpPrefix(PipelinePageStream stream) async {
-    if (_streamingPrefixSyncing) {
-      return;
-    }
-    _streamingPrefixSyncing = true;
+    if (requested < 20) return;
     try {
-      while (mounted && widget.pageStream == stream) {
-        final requested = _streamingPrefixRequestedLength;
-        final requestedRevision = _streamingPrefixRequestedRevision;
-        if (requested < 20 ||
-            requestedRevision <= _streamingPrefixReadRevision) {
-          return;
-        }
-        try {
-          final prefix = stream.readMetadataPrefix();
-          if (!mounted || widget.pageStream != stream) {
-            return;
-          }
-          _streamingPrefixReadRevision = requestedRevision;
-          final info = parseWebpPrefixInfo(prefix);
-          if (info != null) {
-            _reportDimensions(info.width, info.height);
-          }
-        } on Object {
-          // Wait for the next source lifecycle revision before retrying.
-          _streamingPrefixReadRevision = requestedRevision;
-        }
+      // readMetadataPrefix is synchronous. The old async drain had no await,
+      // so its syncing/revision loop could not actually interleave with a new
+      // source event; it only duplicated this monotonic length guard.
+      final prefix = stream.readMetadataPrefix();
+      if (!mounted || widget.pageStream != stream) return;
+      final info = parseWebpPrefixInfo(prefix);
+      if (info != null) {
+        _reportDimensions(info.width, info.height);
       }
-    } finally {
-      _streamingPrefixSyncing = false;
-      if (mounted &&
-          widget.pageStream == stream &&
-          _streamingPrefixRequestedRevision > _streamingPrefixReadRevision) {
-        unawaited(_drainStreamingWebpPrefix(stream));
-      }
+    } on Object {
+      // A longer source prefix will trigger the next parse attempt.
     }
   }
 
@@ -395,7 +392,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _retireExternalPresentationBinding() {
-    _loadEpoch++;
+    _advanceLoadEpoch();
     _loadToken.cancel();
     _loadToken = MediaLoadToken();
     _releasePresentationFileLease();
@@ -407,9 +404,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _maybeStartExternalPresentationLoad(PipelinePageOutputStream output) {
-    if (_recoveryInFlight ||
-        (!output.externalPresentationRequested &&
-            !output.externalPresentationReady)) {
+    if (!output.externalPresentationRequested &&
+        !output.externalPresentationReady) {
       return;
     }
     final presentationIdentity = output.externalPresentationCacheIdentity;
@@ -427,7 +423,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final resident = pipelinePresentationRasterCache
         .residentProviderForIdentity(presentationIdentity);
     if (resident != null) {
-      _loadEpoch++;
+      _advanceLoadEpoch();
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
       _releasePresentationFileLease();
@@ -441,7 +437,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   Future<void> _load() async {
-    final loadEpoch = ++_loadEpoch;
+    _advanceLoadEpoch();
+    final loadEpoch = _loadEpoch;
     final token = _loadToken;
     _releasePresentationFileLease();
     try {
@@ -589,13 +586,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           token.isCancelled) {
         return;
       }
-      if (await _tryAutomaticRecovery(error)) {
+      final attempt = _capturePresentationAttempt();
+      if (await _tryAutomaticRecovery(error, attempt: attempt)) {
         return;
       }
-      if (!mounted ||
-          loadEpoch != _loadEpoch ||
-          token != _loadToken ||
-          token.isCancelled) {
+      if (!_isCurrentPresentationAttempt(attempt) || token.isCancelled) {
         return;
       }
       _publish(ImagePreviewState.invalid(_detectedFormat, error));
@@ -606,11 +601,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     PipelinePageStream stream,
     Object error,
   ) async {
-    final loadEpoch = _loadEpoch;
-    final recovered = await _tryAutomaticRecovery(error, restartLoad: false);
+    final attempt = _capturePresentationAttempt();
+    final recovered = await _tryAutomaticRecovery(
+      error,
+      restartLoad: false,
+      attempt: attempt,
+    );
     if (recovered ||
-        !mounted ||
-        loadEpoch != _loadEpoch ||
+        !_isCurrentPresentationAttempt(attempt) ||
         widget.pageStream != stream ||
         stream.snapshot.state != PipelinePageTransferState.failed) {
       return;
@@ -621,18 +619,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   Future<bool> _tryAutomaticRecovery(
     Object error, {
     bool restartLoad = true,
+    _PresentationAttempt? attempt,
   }) async {
     final recover = widget.onRecoverPresentationFailure;
-    if (recover == null || _recoveryInFlight) return false;
-    final loadEpoch = _loadEpoch;
-    final token = _loadToken;
-    _recoveryInFlight = true;
+    if (recover == null) return false;
+    final activeAttempt = attempt ?? _capturePresentationAttempt();
+    if (!_isCurrentPresentationAttempt(activeAttempt)) return false;
+    if (_recoveryLoadEpoch == activeAttempt.loadEpoch) {
+      // This attempt already has a recovery owner. Treat duplicate error
+      // delivery as handled instead of letting a second caller publish an
+      // invalid state while the first recovery is still pending.
+      return true;
+    }
+    _recoveryLoadEpoch = activeAttempt.loadEpoch;
     try {
-      final recovered = await recover(error, _presentationRecoveryAuthority);
-      if (!mounted ||
-          loadEpoch != _loadEpoch ||
-          token != _loadToken ||
-          !recovered) {
+      final recovered = await recover(error, activeAttempt.authority);
+      if (!_isCurrentPresentationAttempt(activeAttempt) || !recovered) {
         return false;
       }
       if (restartLoad) {
@@ -642,7 +644,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     } on Object {
       return false;
     } finally {
-      _recoveryInFlight = false;
+      if (_recoveryLoadEpoch == activeAttempt.loadEpoch) {
+        _recoveryLoadEpoch = null;
+      }
     }
   }
 
@@ -651,15 +655,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final retryWithError = widget.onRetryWithError;
     if ((retry == null && retryWithError == null) || _recoveryInFlight) return;
     final prior = _state;
-    final loadEpoch = _loadEpoch;
-    final token = _loadToken;
-    _recoveryInFlight = true;
+    final attempt = _capturePresentationAttempt();
+    _recoveryLoadEpoch = attempt.loadEpoch;
     _publish(ImagePreviewState.loading(_detectedFormat));
     try {
       final recovered = retryWithError != null
           ? await retryWithError(prior.error)
           : await retry!();
-      if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
+      if (!_isCurrentPresentationAttempt(attempt)) {
         return;
       }
       if (recovered) {
@@ -673,17 +676,19 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } on Object catch (error) {
-      if (mounted && loadEpoch == _loadEpoch && token == _loadToken) {
+      if (_isCurrentPresentationAttempt(attempt)) {
         _publish(ImagePreviewState.invalid(prior.format, error));
       }
     } finally {
-      _recoveryInFlight = false;
+      if (_recoveryLoadEpoch == attempt.loadEpoch) {
+        _recoveryLoadEpoch = null;
+      }
     }
   }
 
   void _restartLoadAfterRecovery() {
     if (!mounted) return;
-    _loadEpoch++;
+    _advanceLoadEpoch();
     _loadToken.cancel();
     _loadToken = MediaLoadToken();
     _releasePresentationFileLease();
@@ -715,7 +720,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       output.removeListener(outputListener);
     }
 
-    _loadEpoch++;
+    _advanceLoadEpoch();
     _loadToken.cancel();
     _releasePresentationFileLease();
     super.dispose();
@@ -866,10 +871,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _reportFirstFrame() {
-    if (_reportedFirstFrame) {
+    if (_reportedFirstFrameLoadEpoch == _loadEpoch) {
       return;
     }
-    _reportedFirstFrame = true;
+    _reportedFirstFrameLoadEpoch = _loadEpoch;
     try {
       widget.onFirstFrame?.call();
     } on Object catch (error) {
@@ -877,20 +882,23 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
-  void _scheduleError(Object error) {
+  void _scheduleError(Object error, _PresentationAttempt attempt) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        unawaited(_handlePresentedDecodeFailure(error));
+      if (_isCurrentPresentationAttempt(attempt)) {
+        unawaited(_handlePresentedDecodeFailure(error, attempt));
       }
     });
   }
 
-  Future<void> _handlePresentedDecodeFailure(Object error) async {
+  Future<void> _handlePresentedDecodeFailure(
+    Object error,
+    _PresentationAttempt attempt,
+  ) async {
+    if (!_isCurrentPresentationAttempt(attempt)) return;
     _releasePresentationFileLease();
-    if (await _tryAutomaticRecovery(error)) return;
-    if (mounted) {
-      _publish(ImagePreviewState.invalid(_detectedFormat, error));
-    }
+    if (await _tryAutomaticRecovery(error, attempt: attempt)) return;
+    if (!_isCurrentPresentationAttempt(attempt)) return;
+    _publish(ImagePreviewState.invalid(_detectedFormat, error));
   }
 
   void _onWebpState(WebpPreviewState state) {
@@ -919,14 +927,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   void _schedulePipelineOutputFirstFrame(PipelinePageSurface surface) {
     final presentationIdentity = surface.presentationIdentity;
-    if (_reportedFirstFrame ||
+    if (_reportedFirstFrameLoadEpoch == _loadEpoch ||
         identical(_scheduledOutputPresentationIdentity, presentationIdentity)) {
       return;
     }
     _scheduledOutputPresentationIdentity = presentationIdentity;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
-          _reportedFirstFrame ||
+          _reportedFirstFrameLoadEpoch == _loadEpoch ||
           !identical(
             _pageOutputSnapshot?.surface?.presentationIdentity,
             presentationIdentity,
@@ -983,7 +991,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _onControlledError(Object error) {
-    unawaited(_handlePresentedDecodeFailure(error));
+    final attempt = _capturePresentationAttempt();
+    unawaited(_handlePresentedDecodeFailure(error, attempt));
   }
 
   Widget _loadingIndicator() => const Center(
@@ -994,6 +1003,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   Widget build(BuildContext context) {
     final bytes = _bytes;
     final imageProvider = _imageProvider;
+    final presentationAttempt = _capturePresentationAttempt();
     final usesManagedExternalStaticPresentation =
         widget.pageOutput != null &&
         _detectedFormat != LocalImageFormat.webp &&
@@ -1129,7 +1139,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return child;
         },
         errorBuilder: (context, error, stackTrace) {
-          _scheduleError(error);
+          _scheduleError(error, presentationAttempt);
           return const SizedBox.shrink();
         },
       );

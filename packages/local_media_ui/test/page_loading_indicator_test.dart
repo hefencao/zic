@@ -339,4 +339,65 @@ void main() {
     );
   });
 
+  testWidgets(
+      'stale presented decode failure cannot invalidate replacement image',
+      (tester) async {
+    final valid = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+      'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    final corrupt = Uint8List.fromList(valid.sublist(0, 33));
+    final recovery = Completer<bool>();
+    var recoveryCalls = 0;
+    final imageA = PickedImage(
+      file: XFile('presented-a.png'),
+      format: LocalImageFormat.png,
+      displayName: 'presented-a.png',
+      sourceId: 'memory:presented-a.png',
+    );
+    final imageB = PickedImage(
+      file: XFile('presented-b.png'),
+      format: LocalImageFormat.png,
+      displayName: 'presented-b.png',
+      sourceId: 'memory:presented-b.png',
+    );
+
+    Widget player(PickedImage image, Uint8List bytes) => MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 360,
+            child: LocalImagePlayer(
+              image: image,
+              bytesLoader: (_) async => bytes,
+              onRecoverPresentationFailure: (_, __) {
+                recoveryCalls++;
+                return recovery.future;
+              },
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(player(imageA, corrupt));
+    for (var turn = 0; turn < 40 && recoveryCalls == 0; turn++) {
+      await tester.pump(const Duration(milliseconds: 5));
+    }
+    expect(recoveryCalls, 1);
+
+    await tester.pumpWidget(player(imageB, valid));
+    await tester.pumpAndSettle();
+    expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+    expect(find.byKey(imageFolderFlutterPreviewKey), findsOneWidget);
+
+    recovery.complete(false);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(imageFolderPreviewErrorKey),
+      findsNothing,
+      reason:
+          'A decode/recovery completion is scoped to A presentation attempt '
+          'and cannot publish failure into the already-ready B attempt',
+    );
+    expect(find.byKey(imageFolderFlutterPreviewKey), findsOneWidget);
+  });
+
 }

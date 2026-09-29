@@ -97,8 +97,11 @@ final class _NativeDecodeWorkerPool {
       Queue<_PendingNativeDecode>();
   final List<_NativeDecodeWorker> _workers = <_NativeDecodeWorker>[];
   Future<void>? _starting;
+  Future<void>? _replenishing;
   Future<void>? _shutdown;
+  bool _started = false;
   bool _shuttingDown = false;
+  int _activeRuns = 0;
 
   Future<void> prewarm() => _ensureStarted();
 
@@ -121,6 +124,14 @@ final class _NativeDecodeWorkerPool {
         // A failed startup already closes any workers it managed to create.
       }
     }
+    final replenishing = _replenishing;
+    if (replenishing != null) {
+      try {
+        await replenishing;
+      } on Object {
+        // Replacement failure is already delivered to queued callers.
+      }
+    }
     if (_currentPending.isNotEmpty || _nonCurrentPending.isNotEmpty) {
       final failure = StateError('native decode worker pool shut down');
       for (final pending in <_PendingNativeDecode>[
@@ -134,7 +145,7 @@ final class _NativeDecodeWorkerPool {
       _currentPending.clear();
       _nonCurrentPending.clear();
     }
-    if (_workers.any((worker) => worker.busy)) {
+    if (_activeRuns > 0) {
       throw StateError(
         'cannot shut down native decode workers while decode work is active',
       );
@@ -171,9 +182,10 @@ final class _NativeDecodeWorkerPool {
       workerReady: Stopwatch()..start(),
     );
     _enqueue(pending);
-    if (_workers.length == _nativeDecodeWorkerCount) {
+    if (_started) {
       pending.markWorkersReady();
       _pump();
+      _ensureWorkerCapacity();
     } else {
       unawaited(
         _ensureStarted().catchError((Object error, StackTrace stack) {
@@ -251,6 +263,10 @@ final class _NativeDecodeWorkerPool {
         started.add(await _spawnWorker(index));
       }
       _workers.addAll(started);
+      _started = true;
+      for (final worker in started) {
+        worker.attachExitHandler(_handleWorkerExit);
+      }
       _markQueuedWorkersReady();
       _pump();
     } on Object {
@@ -299,8 +315,8 @@ final class _NativeDecodeWorkerPool {
   }
 
   void _pump() {
-    for (final worker in _workers) {
-      if (worker.busy) {
+    for (final worker in _workers.toList(growable: false)) {
+      if (worker.busy || worker.exited) {
         continue;
       }
       final pending = _takePending();
@@ -311,6 +327,7 @@ final class _NativeDecodeWorkerPool {
       worker.executionClass = pending.executionClass;
       worker.cursorAddress = pending.cursorAddress;
       worker.epoch = pending.epoch;
+      _activeRuns++;
       unawaited(_run(worker, pending));
     }
   }
@@ -321,15 +338,77 @@ final class _NativeDecodeWorkerPool {
     }
     final nonCurrentBusy = _workers.where(
       (worker) =>
+          !worker.exited &&
           worker.busy &&
           worker.executionClass == DecodeExecutionClass.nonCurrent,
     ).length;
+    final liveWorkerCount =
+        _workers.where((worker) => !worker.exited).length;
     if (_nonCurrentPending.isNotEmpty &&
         _nonCurrentPending.first.workersReady &&
-        nonCurrentBusy < _nativeDecodeWorkerCount - 1) {
+        nonCurrentBusy < liveWorkerCount - 1) {
       return _nonCurrentPending.removeFirst();
     }
     return null;
+  }
+
+  void _handleWorkerExit(_NativeDecodeWorker worker) {
+    final removed = _workers.remove(worker);
+    if (!removed || _shuttingDown) return;
+    _pump();
+    _ensureWorkerCapacity();
+  }
+
+  void _ensureWorkerCapacity() {
+    if (_shuttingDown || !_started ||
+        _workers.length >= _nativeDecodeWorkerCount ||
+        _replenishing != null) {
+      return;
+    }
+    late final Future<void> replenishing;
+    replenishing = _replenishWorkers().whenComplete(() {
+      if (identical(_replenishing, replenishing)) {
+        _replenishing = null;
+      }
+    });
+    _replenishing = replenishing;
+    unawaited(replenishing);
+  }
+
+  Future<void> _replenishWorkers() async {
+    while (!_shuttingDown && _workers.length < _nativeDecodeWorkerCount) {
+      final occupied = _workers.map((worker) => worker.index).toSet();
+      var index = 0;
+      while (occupied.contains(index)) {
+        index++;
+      }
+      try {
+        final worker = await _spawnWorker(index);
+        if (_shuttingDown) {
+          await worker.close();
+          return;
+        }
+        _workers.add(worker);
+        worker.attachExitHandler(_handleWorkerExit);
+      } on Object catch (error, stack) {
+        final failure = StateError(
+          'native decode worker replacement failed: $error',
+        );
+        for (final pending in <_PendingNativeDecode>[
+          ..._currentPending,
+          ..._nonCurrentPending,
+        ]) {
+          if (!pending.completer.isCompleted) {
+            pending.completer.completeError(failure, stack);
+          }
+        }
+        _currentPending.clear();
+        _nonCurrentPending.clear();
+        return;
+      }
+    }
+    _markQueuedWorkersReady();
+    _pump();
   }
 
   Future<void> _run(
@@ -397,6 +476,7 @@ final class _NativeDecodeWorkerPool {
     } on Object catch (error, stack) {
       pending.completer.completeError(error, stack);
     } finally {
+      _activeRuns--;
       worker.busy = false;
       worker.executionClass = null;
       worker.cursorAddress = null;
@@ -446,7 +526,19 @@ final class _NativeDecodeWorker {
     this.isolate,
   ) {
     isolate.addOnExitListener(_exitPort.sendPort);
-    _exited = _exitPort.first.then<void>((_) {}).whenComplete(_exitPort.close);
+    _exitPort.listen((_) {
+      if (exited) return;
+      exited = true;
+      final active = _activeResponse;
+      if (active != null && !active.isCompleted) {
+        active.complete(_decodeWorkerExitedSignal);
+      }
+      if (!_exitCompleter.isCompleted) {
+        _exitCompleter.complete();
+      }
+      _exitPort.close();
+      _onExit?.call(this);
+    });
   }
 
   final SendPort port;
@@ -454,19 +546,33 @@ final class _NativeDecodeWorker {
   final int placementStatus;
   final Isolate isolate;
   final ReceivePort _exitPort = ReceivePort();
-  late final Future<void> _exited;
+  final Completer<void> _exitCompleter = Completer<void>();
+  Completer<Object?>? _activeResponse;
+  void Function(_NativeDecodeWorker worker)? _onExit;
+  bool exited = false;
   bool busy = false;
   DecodeExecutionClass? executionClass;
   int? cursorAddress;
   int? epoch;
 
+  void attachExitHandler(void Function(_NativeDecodeWorker worker) onExit) {
+    _onExit = onExit;
+    if (exited) {
+      onExit(this);
+    }
+  }
+
   Future<void> close() async {
+    if (exited) {
+      await _exitCompleter.future;
+      return;
+    }
     port.send('close');
     try {
-      await _exited.timeout(const Duration(milliseconds: 500));
+      await _exitCompleter.future.timeout(const Duration(milliseconds: 500));
     } on TimeoutException {
       isolate.kill(priority: Isolate.immediate);
-      await _exited;
+      await _exitCompleter.future;
     }
   }
 
@@ -475,8 +581,22 @@ final class _NativeDecodeWorker {
     required int epoch,
     required int maxFrames,
   }) async {
+    if (exited) {
+      throw StateError('native decode worker exited before request');
+    }
+    if (_activeResponse != null) {
+      throw StateError('native decode worker received concurrent request');
+    }
     final response = ReceivePort();
+    final completed = Completer<Object?>();
+    _activeResponse = completed;
     final workerRoundTrip = Stopwatch()..start();
+    late final StreamSubscription<Object?> responseSubscription;
+    responseSubscription = response.listen((value) {
+      if (!completed.isCompleted) {
+        completed.complete(value);
+      }
+    });
     try {
       port.send(<Object?>[
         response.sendPort,
@@ -484,10 +604,7 @@ final class _NativeDecodeWorker {
         epoch,
         maxFrames,
       ]);
-      final value = await Future.any<Object?>(<Future<Object?>>[
-        response.first,
-        _exited.then<Object?>((_) => _decodeWorkerExitedSignal),
-      ]);
+      final value = await completed.future;
       if (identical(value, _decodeWorkerExitedSignal)) {
         throw StateError('native decode worker exited before responding');
       }
@@ -538,6 +655,10 @@ final class _NativeDecodeWorker {
       }
       return List<_NativeDecodeResult>.unmodifiable(results);
     } finally {
+      if (identical(_activeResponse, completed)) {
+        _activeResponse = null;
+      }
+      await responseSubscription.cancel();
       response.close();
     }
   }

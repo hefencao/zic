@@ -805,6 +805,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `PipelinePresentationRasterCache` 的 ordinary residency eviction / demand loss MUST NOT 旋转 presentation identity；
   Pipeline 只撤销该 identity 的 external-presentation request/ready satisfaction，mounted adapter MUST 释放本地 resident binding/attempt，
   并允许 later same-identity staged grant 重新 attach/decode。detached resident provider 已是 exact managed raster，mounted 路径 MUST NOT 再次 resize 或 `providerFor`。
+  external presentation 的 `requested/ready` MUST作为一个完整状态原子发布；首帧完成 MUST直接从 requested 切到 ready，不得通过两个同步setter暴露瞬时双false revoke。
+  mounted adapter 的 first-frame/error/recovery/final-state MUST绑定当前不可变 presentation attempt（local epoch/token + opaque identity + exact read authority）；same-identity later grant取得新attempt后 MUST重新拥有一次 first-frame acknowledgement，旧attempt任意异步结果在失去current身份后 MUST静默退出。
+  managed raster decode failure MUST先保留当前consumer的error channel与原read authority，MUST NOT在error交付前伪装成ordinary residency eviction同步撤下consumer。
   raster residency 消失本身不是 encoded-body failure，也不是 SourceEpoch / ArtifactCache mutation-generation change；
   无 exact artifact authority 的 presentation error MUST NOT 自动 reset durable/source generation。
   只有当失败携带该次 presentation read 的 exact `ArtifactCacheManager` authority 时，Pipeline MAY 每页每 Reader session 至多自动执行一次 durable artifact 自愈；
@@ -2260,8 +2263,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     `DownloadIngressProjectionRegistry` 只拥有有界 replay operation queue（默认最多2个）与实时 priority 排序，
     MUST NOT再实现 `>=1000 / 780..999 / <780` role gate或独立 memory-pressure eligibility。
     其 scheduler-owned `TaskControl` MUST贯穿 background Ingress/source execution；native source-write worker MAY并行执行已接纳的 reserve/copy/direct-file range，但 pending queue MUST消费同一动态 priority/cancellation，MUST NOT退化为独立FIFO scheduler，且取消后的in-flight native operation MUST真实退出后才释放worker capacity。
-    native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；每个in-flight request MUST同时观察response与真实worker exit，worker异常退出不得让`response.first`永久悬挂，且busy capacity只能在exit已真实发生后结算。
-    NativeCursor若在batch decode等待期间dispose，batch返回的所有尚未转交frame MUST立即release，不得把prefetched native frame写回已dispose cursor。
+    native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；worker exit MUST由各自pool的单一长期listener拥有，该listener直接结算至多一个current active request并退休dead worker。每请求 MUST只持有短命response port/subscription，不得向process-lifetime exit Future注册request-local continuation；pool MUST从live scheduling set移除exited worker并在仍存活时有界补位。busy/capacity MUST按真实active-run unwind结算，不能因worker先从列表移除就提前释放；decode仅剩一个live worker时non-current MUST让出最后slot给current。
+    NativeCursor若在batch decode等待期间dispose，batch返回的所有尚未转交frame MUST立即release，不得把prefetched native frame写回已dispose cursor。详见 ADR 0338。
     SQLite artifact authority metadata MUST由 `SqliteIndex` owner connection 在一个短read transaction中返回object/replica/root一致snapshot，不得仅为该sub-millisecond查询建立常驻read worker；recency write MAY在既有 `StorageWriteScheduler` admission 后由专用worker执行。详见 ADR 0328。
     FrameBudgeter/memory pressure 只裁决native decoded/upload residency与media资源释放，
     MUST NOT再调整encoded/network flow credit；

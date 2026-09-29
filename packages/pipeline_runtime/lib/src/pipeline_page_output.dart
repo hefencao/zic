@@ -105,28 +105,28 @@ final class PipelinePageOutputStream {
   Object? get externalPresentationCacheIdentity =>
       _externalPresentationCacheIdentity;
 
-  /// Read-only presentation permission projected from the staged decode
-  /// waterline for formats rendered outside the native WebP output path.
+  /// Publishes the complete external-static presentation state atomically.
   ///
-  /// This does not perform I/O or choose eligibility. It only wakes an
-  /// attached presentation adapter after LiveCoordinator has selected this
-  /// exact DecodeId as the next one-frame refill.
-  void _setExternalPresentationRequested(bool requested) {
+  /// [requested] is the current mounted presentation permission projected
+  /// from the staged decode waterline. [ready] is the scheduler satisfaction
+  /// fact that the composition cache has completed the first static raster.
+  /// Neither flag is byte-integrity proof or raster-residency authority.
+  ///
+  /// These values must never be published as two independent transitions:
+  /// `requested -> ready` is one state handoff. A transient `(false, false)`
+  /// between them looks exactly like a real revocation to the presentation
+  /// adapter and used to tear down/recreate a healthy raster at first frame.
+  void _setExternalPresentationState({
+    required bool requested,
+    required bool ready,
+  }) {
     _requireOpen();
-    if (_externalPresentationRequested == requested) return;
-    _externalPresentationRequested = requested;
-    for (final listener in _listeners.toList(growable: false)) {
-      listener(_snapshot);
+    assert(!(requested && ready));
+    if (_externalPresentationRequested == requested &&
+        _externalPresentationReady == ready) {
+      return;
     }
-  }
-
-  /// Read-only scheduler satisfaction fact: the composition cache reported
-  /// a first static raster ready for this exact DecodeId/presentation identity.
-  /// It is not byte-integrity proof and does not own raster residency; cache
-  /// invalidation clears it before a later same-generation grant can refill.
-  void _setExternalPresentationReady(bool ready) {
-    _requireOpen();
-    if (_externalPresentationReady == ready) return;
+    _externalPresentationRequested = requested;
     _externalPresentationReady = ready;
     for (final listener in _listeners.toList(growable: false)) {
       listener(_snapshot);

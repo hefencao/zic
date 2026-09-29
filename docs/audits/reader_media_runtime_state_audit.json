@@ -1,27 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.2.0",
-  "last_updated": "2026-09-28T20:31:00+08:00",
-  "baseline_commit": "522da3d4",
+  "audit_version": "1.3.0",
+  "last_updated": "2026-09-29T08:57:00+08:00",
+  "baseline_commit": "27467b96",
   "system": "zic-reader-media-runtime",
-  "scope": "Reader navigation truth, external-static presentation ownership, Pipeline presentation recovery, native decode/source-write lifecycle, GIF presentation lifecycle",
+  "scope": "Reader navigation truth, external-static presentation ownership/state handoff, Pipeline presentation recovery, native decode/source-write worker lifecycle, GIF presentation lifecycle",
   "summary": {
-    "total_issues": 12,
-    "confirmed": 12,
-    "resolved": 10,
+    "total_issues": 19,
+    "confirmed": 19,
+    "resolved": 17,
     "deleted_candidates": 2,
     "full_validation_pending": false,
-    "profile_device_validation_pending": false
+    "profile_device_validation_pending": false,
+    "open_confirmed": 0
   },
   "governance": {
-    "status": "in_progress",
+    "status": "completed_current_scope",
     "rule": "先以当前代码/失败回归/设备trace确认所有权边界，再修改；禁止新增第二套scheduler、presentation cache或navigation authority。",
     "preserve": [
       "NetLane仍是网络执行权威",
       "取消后容量必须等待真实operation/worker退出后才能释放",
       "native decode前释放source read lock的现有边界不得回退",
       "7/3 Download membership与既有bounded decode/upload/presentation窗口不得因本审计扩大"
-    ]
+    ],
+    "current_focus": "RMR-011..017已按presentation attempt/worker lifecycle owner收口；RMR-CLEAN-002全局cache注入与RMR-CLEAN-003 native pending cancel作为非阻塞后续边界单独治理。"
   },
   "issues": [
     {
@@ -143,6 +145,76 @@
       "owner": "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
       "plan": "删除第二个重复direct-local分支并保持现有首个fast path。",
       "remediation_applied": "删除promotion之后重复的residentBodyBacked && direct-local分支；保留前置唯一direct immutable fast path。"
+    },
+    {
+      "id": "RMR-011",
+      "severity": "P1",
+      "title": "同一presentation generation重新grant后首帧确认仍被widget生命周期门闩吞掉",
+      "status": "resolved",
+      "evidence": "27467b96中LocalImagePlayer._reportedFirstFrame只在didUpdateWidget资源替换时清零；ordinary raster invalidation通过_retireExternalPresentationBinding只增长_loadEpoch，不清该门闩。同generation later regrant即使重新得到UI frame，_reportFirstFrame仍直接return，因此Pipeline的requested可保持true而ready保持false。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart + packages/pipeline_runtime/lib/src/pipeline_page_output.dart",
+      "plan": "首帧确认改为当前presentation grant/load-attempt级别，而非widget生命周期级别；与RMR-013一起让grant状态一次发布，same-generation regrant必须获得新的确认资格。",
+      "remediation_applied": "首帧去重改为load/presentation attempt epoch；ordinary same-generation regrant会先退休旧attempt并取得新epoch，因此可再次向Pipeline确认首帧。"
+    },
+    {
+      "id": "RMR-012",
+      "severity": "P1",
+      "title": "managed raster解码失败被同步cache invalidation先撤销展示绑定，错误通道失去原读取authority",
+      "status": "resolved",
+      "evidence": "PipelinePresentationRasterCache._admit先在completer注册firstFrame listener；其onError同步_eviction(notify:true)，Pipeline invalidation同步发布requested=false/ready=false，LocalImagePlayer立即退休provider/lease并撤下错误节点。mounted raster自己的errorBuilder随后可能已失去当前绑定，无法把原presentation authority交给恢复回调。",
+      "owner": "packages/local_media_ui/lib/src/presentation_raster_cache.dart + local_image_player.dart",
+      "plan": "区分“raster residency eviction”和“raster decode failure”：失败只退休cache内部entry，不先发ordinary residency invalidation；让当前presentation attempt/error channel携带原读取authority完成一次交付。",
+      "remediation_applied": "managed raster decode onError只退休失败cache entry，不同步伪装成ordinary residency invalidation；当前mounted error/authority先完成交付。"
+    },
+    {
+      "id": "RMR-013",
+      "severity": "P1",
+      "title": "external presentation requested->ready分步同步通知制造瞬时unavailable并触发错误退休/重载",
+      "status": "resolved",
+      "evidence": "PipelineReaderSession.reportPresentationFrameReady依次调用_setExternalPresentationRequested(false)与_setExternalPresentationReady(true)，两个setter各自同步通知。LocalImagePlayer将available定义为requested||ready，因此第一通知观察到双false并执行_retireExternalPresentationBinding，第二通知又重新grant；正常首帧完成本身即可制造一次多余重载。",
+      "owner": "packages/pipeline_runtime/lib/src/pipeline_page_output.dart + pipeline_reader_session.dart + packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "把external presentation grant状态收口为一次原子状态提交（unavailable/requested/ready）；UI不再从两个分步布尔通知推断生命周期。",
+      "remediation_applied": "PipelinePageOutputStream用_setExternalPresentationState一次提交requested/ready；所有ReaderSession写入改为完整状态，requested->ready不再经过双false。"
+    },
+    {
+      "id": "RMR-014",
+      "severity": "P1",
+      "title": "widget级recoveryInFlight可吞掉恢复期间到达的新presentation grant",
+      "status": "resolved",
+      "evidence": "_maybeStartExternalPresentationLoad在任何_recoveryInFlight期间直接return；恢复finally只清bool，不重新消费当前pageOutput。若同一页在恢复期间发生DecodeTarget/presentation identity变更，新grant通知只有一次，结束后没有重放入口。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "恢复绑定到不可变presentation attempt(loadEpoch/token/cacheIdentity/authority)，只抑制同attempt重复恢复；新grant可直接supersede旧attempt，恢复退出不再依赖widget级门闩。",
+      "remediation_applied": "_recoveryInFlight改为attempt epoch ownership；新presentation identity/load epoch可supersede旧恢复，不再阻断新grant。"
+    },
+    {
+      "id": "RMR-015",
+      "severity": "P1",
+      "title": "旧presentation渲染错误的异步恢复结束后仍可把新attempt发布为invalid",
+      "status": "resolved",
+      "evidence": "_handlePresentedDecodeFailure等待_tryAutomaticRecovery后只检查mounted；_tryAutomaticRecovery内部虽能因loadEpoch/token变化返回false，但外层把这个false继续解释为“当前图片恢复失败”并_publish invalid。旧A错误因此可在B已ready后污染B。",
+      "owner": "packages/local_media_ui/lib/src/local_image_player.dart",
+      "plan": "错误调度、authority、恢复和最终状态发布共享同一个不可变attempt context；任何await后先验证attempt仍为current，stale结果不得发布当前UI状态。",
+      "remediation_applied": "渲染error调度、authority、recovery与最终invalid发布共享不可变_PresentationAttempt；任何await后先验证attempt仍current。"
+    },
+    {
+      "id": "RMR-016",
+      "severity": "P1",
+      "title": "native decode/source-write每请求向长期_exited Future挂then导致监听链随成功请求累计",
+      "status": "resolved",
+      "evidence": "_NativeDecodeWorker.decodeBatch与_NativeSourceWriteWorker.run每次Future.any都创建_exited.then(...)；正常response先完成时该then仍挂在进程级worker的未完成exit Future上，直到worker退出才释放，生命周期与请求数量线性增长。",
+      "owner": "packages/bridge/lib/src/native_decode_pool.dart + native_source_write_pool.dart",
+      "plan": "worker只安装一次exit listener，并由worker级active request completer结算当前请求；每请求只监听自己的短命response port，不再竞争长期Future。",
+      "remediation_applied": "worker安装单一exit listener；exit直接结算worker当前_activeResponse；每请求只持短命response subscription，不再向process-lifetime exit Future挂then。"
+    },
+    {
+      "id": "RMR-017",
+      "severity": "P1",
+      "title": "已退出native worker未从pool可调度集合退休，后续请求可持续命中死worker",
+      "status": "resolved",
+      "evidence": "decode/source-write pool的_run finally都无条件busy=false并继续_pump，但worker exit不会从_workers移除或补位；对已完成的_exited Future，下一次请求会立刻得到worker-exited错误。decode pool按列表顺序泵任务时可反复把串行请求交给同一个死worker。",
+      "owner": "packages/bridge/lib/src/native_decode_pool.dart + native_source_write_pool.dart",
+      "plan": "pool统一拥有worker exit：原子retire失效worker、结算其active request、从可调度集合移除并补齐worker数量；只有真实live worker可恢复idle并接新任务。",
+      "remediation_applied": "pool在单一exit callback中移除dead worker、结算active capacity并异步补位；pump明确跳过exited worker，degraded期间保留current decode slot。"
     }
   ],
   "validation": {
@@ -153,7 +225,10 @@
       "./tool/check.sh --require-toolchains: exit 0 in 200.809s; repository/documentation guards, full Dart/Flutter suites, Android three-ABI debug build, and Rust media_core 22/22 passed",
       "current-tree Profile build/install preflight: authoritative Home in 1.342s on M2007J1SC",
       "Profile trace zic-debug-trace-2026-09-28T12-30-02.jsonl: held scrub UI pages 74 and 113 publish physical logical positions 73.5 and 112.5 with velocity 0 before pointer-up; first idle observations are identical, delta 0",
-      "same Profile trace: 48 presentation source reads / 38 unique identities; 10 repeated reads are only later revisits with minimum repeat gap 45.634s, zero same-identity repeats under 5s, taskFailed=0"
+      "same Profile trace: 48 presentation source reads / 38 unique identities; 10 repeated reads are only later revisits with minimum repeat gap 45.634s, zero same-identity repeats under 5s, taskFailed=0",
+      "post-27467b96 focused presentation/cache/recovery suites all passed；packages/bridge native contract 3/3 passed；tool/test_native_worker_exit_ownership.py passed",
+      "Profile build/install on M2007J1SC: authoritative Home ready in 1.287s；trace zic-debug-trace-2026-09-29T00-52-07.jsonl has external-presentation-requested=33 and external-presentation-first-frame=33, mounted requests without later mounted first-frame=0, sourceRead 33/22 unique with repeat<5s=0, taskFailed=0, manual-force-reload=0, presentation-artifact-recovery=0",
+      "./tool/check.sh --require-toolchains: exit 0 in 193.331s；all repository/documentation/ownership checks, Dart/Flutter suites, three-ABI Android debug build and Rust media_core tests passed"
     ],
     "pending": []
   },
@@ -188,5 +263,48 @@
       "interpretation": "remaining repeats are deliberate far-window revisits after raster residency can legitimately be evicted; no immediate mounted-after-prewarm reopen remains in this run"
     },
     "task_failures": 0
+  },
+  "cleanup_review": [
+    {
+      "id": "RMR-CLEAN-001",
+      "title": "WebP metadata-prefix drain保留无await异步外壳",
+      "verdict": "confirmed_removed",
+      "evidence": "_drainStreamingWebpPrefix声明async但函数体无await；单isolate执行期间syncing/revision/while/递归补调度无法与新的stream event交错，只重复了metadataPrefixLength单调去重。",
+      "action": "删除async drain、syncing与双revision状态；保留同步readMetadataPrefix + 最小20B门槛 + 单调requestedLength去重。"
+    },
+    {
+      "id": "RMR-CLEAN-002",
+      "title": "UI/prewarmer直接引用全局presentation raster cache而Pipeline使用可注入authority",
+      "verdict": "confirmed_coupling_deferred_not_current_dual_owner",
+      "evidence": "LocalImagePlayer与prewarmPipelineExternalStaticPresentation直接引用pipelinePresentationRasterCache；PipelineReaderSessionFactory支持注入presentationCacheAuthority。但production apps/app/lib/local_media_composition.dart同时把同一个pipelinePresentationRasterCache实例注入Pipeline，因此当前生产并不存在两套raster owner。",
+      "action": "本轮不为消除global引用而新增跨package cache接口或第二owner。后续若要支持替换cache实现，应在App composition提供typed final-presentation capability并同时供mounted与detached消费者使用。"
+    },
+    {
+      "id": "RMR-CLEAN-003",
+      "title": "native decode pending queue缺少request级cancel control",
+      "verdict": "confirmed_gap_deferred_separate_scheduler_change",
+      "evidence": "DecodeSession在await decodeNextScheduled前后检查CancelToken，ScheduledFrameCursor只传current/nonCurrent；native decode pool pending item当前没有TaskControl/cancel token。priority已有queued current promotion，但尚不能直接从native pending queue移除已取消decode。",
+      "action": "不与worker-exit修复混在一起扩ScheduledFrameCursor ABI；后续单独把既有scheduler cancellation/priority fact贯穿pending decode，in-flight FFI仍必须等真实退出后释放capacity。"
+    }
+  ],
+  "presentation_governance_trace": {
+    "file": "zic-debug-trace-2026-09-29T00-52-07.jsonl",
+    "build": "Profile Dart + release native media",
+    "authoritative_home_seconds": 1.287,
+    "page_current_events": 20,
+    "first_frame_ready_events": 27,
+    "external_presentation_requested": 33,
+    "external_presentation_first_frame": 33,
+    "external_presentation_visible_first_frame": 28,
+    "external_static_mounted_image_frame": 31,
+    "mounted_requests_without_later_mounted_first_frame": 0,
+    "presentation_source_reads": 33,
+    "unique_presentation_source_identities": 22,
+    "source_read_repeat_pairs_under_5s": 0,
+    "task_failures": 0,
+    "manual_force_reload": 0,
+    "presentation_artifact_recovery": 0,
+    "raster_cache_invalidations": 0,
+    "interpretation": "正常Profile前后向阅读验证atomic requested→ready与当前grant首帧回执：本次所有mounted presentation request均得到后续mounted first-frame，且没有短时重复encoded reopen。该run没有故意制造raster eviction、corrupt body或worker crash；这些边界分别由确定性回归/ownership guard验证，不能冒充真机fault injection。"
   }
 }

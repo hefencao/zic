@@ -33,10 +33,13 @@ final class _NativeSourceWriteWorkerPool {
   final List<_PendingNativeSourceWrite> _pending = <_PendingNativeSourceWrite>[];
   final List<_NativeSourceWriteWorker> _workers = <_NativeSourceWriteWorker>[];
   Future<void>? _starting;
+  Future<void>? _replenishing;
   Future<void>? _shutdown;
   Completer<void>? _idleCompleter;
+  bool _started = false;
   bool _shuttingDown = false;
   int _nextSequence = 0;
+  int _activeRuns = 0;
 
   Future<void> prewarm() => _ensureStarted();
 
@@ -129,8 +132,9 @@ final class _NativeSourceWriteWorkerPool {
         }
       }));
     }
-    if (_workers.length == _nativeSourceWriteWorkerCount) {
+    if (_started) {
       _pump();
+      _ensureWorkerCapacity();
     } else {
       unawaited(
         _ensureStarted().catchError((Object error, StackTrace stack) {
@@ -162,6 +166,14 @@ final class _NativeSourceWriteWorkerPool {
         // Startup failure is already delivered to queued callers.
       }
     }
+    final replenishing = _replenishing;
+    if (replenishing != null) {
+      try {
+        await replenishing;
+      } on Object {
+        // Replacement failure is already delivered to queued callers.
+      }
+    }
     await _idle();
     final workers = _workers.toList(growable: false);
     _workers.clear();
@@ -172,7 +184,7 @@ final class _NativeSourceWriteWorkerPool {
   }
 
   Future<void> _idle() {
-    if (_pending.isEmpty && _workers.every((worker) => !worker.busy)) {
+    if (_pending.isEmpty && _activeRuns == 0) {
       return Future<void>.value();
     }
     return (_idleCompleter ??= Completer<void>()).future;
@@ -193,6 +205,10 @@ final class _NativeSourceWriteWorkerPool {
         started.add(await _spawnWorker(index));
       }
       _workers.addAll(started);
+      _started = true;
+      for (final worker in started) {
+        worker.attachExitHandler(_handleWorkerExit);
+      }
       _pump();
     } on Object {
       await Future.wait<void>(
@@ -217,21 +233,78 @@ final class _NativeSourceWriteWorkerPool {
         isolate.kill(priority: Isolate.immediate);
         throw StateError('native source write worker failed to start: $value');
       }
-      return _NativeSourceWriteWorker(value, isolate);
+      return _NativeSourceWriteWorker(value, index, isolate);
     } finally {
       ready.close();
     }
   }
 
   void _pump() {
-    for (final worker in _workers) {
-      if (worker.busy || _pending.isEmpty) continue;
+    for (final worker in _workers.toList(growable: false)) {
+      if (worker.busy || worker.exited || _pending.isEmpty) continue;
       final pending = _takeNextPending();
       if (pending == null) continue;
       worker.busy = true;
+      _activeRuns++;
       unawaited(_run(worker, pending));
     }
     _notifyIdle();
+  }
+
+  void _handleWorkerExit(_NativeSourceWriteWorker worker) {
+    final removed = _workers.remove(worker);
+    if (!removed || _shuttingDown) return;
+    _pump();
+    _ensureWorkerCapacity();
+  }
+
+  void _ensureWorkerCapacity() {
+    if (_shuttingDown || !_started ||
+        _workers.length >= _nativeSourceWriteWorkerCount ||
+        _replenishing != null) {
+      return;
+    }
+    late final Future<void> replenishing;
+    replenishing = _replenishWorkers().whenComplete(() {
+      if (identical(_replenishing, replenishing)) {
+        _replenishing = null;
+      }
+    });
+    _replenishing = replenishing;
+    unawaited(replenishing);
+  }
+
+  Future<void> _replenishWorkers() async {
+    while (!_shuttingDown &&
+        _workers.length < _nativeSourceWriteWorkerCount) {
+      final occupied = _workers.map((worker) => worker.index).toSet();
+      var index = 0;
+      while (occupied.contains(index)) {
+        index++;
+      }
+      try {
+        final worker = await _spawnWorker(index);
+        if (_shuttingDown) {
+          await worker.close();
+          return;
+        }
+        _workers.add(worker);
+        worker.attachExitHandler(_handleWorkerExit);
+      } on Object catch (error, stack) {
+        final failure = StateError(
+          'native source write worker replacement failed: $error',
+        );
+        for (final pending in _pending) {
+          if (!pending.completer.isCompleted) {
+            pending.completer.completeError(failure, stack);
+          }
+        }
+        _pending.clear();
+        _notifyIdle();
+        return;
+      }
+    }
+    _pump();
   }
 
   _PendingNativeSourceWrite? _takeNextPending() {
@@ -276,13 +349,14 @@ final class _NativeSourceWriteWorkerPool {
         pending.completer.completeError(error, stack);
       }
     } finally {
+      _activeRuns--;
       worker.busy = false;
       _pump();
     }
   }
 
   void _notifyIdle() {
-    if (_pending.isNotEmpty || _workers.any((worker) => worker.busy)) return;
+    if (_pending.isNotEmpty || _activeRuns > 0) return;
     final completer = _idleCompleter;
     _idleCompleter = null;
     if (completer != null && !completer.isCompleted) completer.complete();
@@ -317,19 +391,58 @@ final class _PendingNativeSourceWrite {
 }
 
 final class _NativeSourceWriteWorker {
-  _NativeSourceWriteWorker(this.port, this.isolate) {
+  _NativeSourceWriteWorker(this.port, this.index, this.isolate) {
     isolate.addOnExitListener(_exitPort.sendPort);
-    _exited = _exitPort.first.then<void>((_) {}).whenComplete(_exitPort.close);
+    _exitPort.listen((_) {
+      if (exited) return;
+      exited = true;
+      final active = _activeResponse;
+      if (active != null && !active.isCompleted) {
+        active.complete(_sourceWriteWorkerExitedSignal);
+      }
+      if (!_exitCompleter.isCompleted) {
+        _exitCompleter.complete();
+      }
+      _exitPort.close();
+      _onExit?.call(this);
+    });
   }
 
   final SendPort port;
+  final int index;
   final Isolate isolate;
   final ReceivePort _exitPort = ReceivePort();
-  late final Future<void> _exited;
+  final Completer<void> _exitCompleter = Completer<void>();
+  Completer<Object?>? _activeResponse;
+  void Function(_NativeSourceWriteWorker worker)? _onExit;
+  bool exited = false;
   bool busy = false;
 
+  void attachExitHandler(
+    void Function(_NativeSourceWriteWorker worker) onExit,
+  ) {
+    _onExit = onExit;
+    if (exited) {
+      onExit(this);
+    }
+  }
+
   Future<int> run(_PendingNativeSourceWrite pending) async {
+    if (exited) {
+      throw StateError('native source write worker exited before request');
+    }
+    if (_activeResponse != null) {
+      throw StateError('native source write worker received concurrent request');
+    }
     final response = ReceivePort();
+    final completed = Completer<Object?>();
+    _activeResponse = completed;
+    late final StreamSubscription<Object?> responseSubscription;
+    responseSubscription = response.listen((value) {
+      if (!completed.isCompleted) {
+        completed.complete(value);
+      }
+    });
     try {
       port.send(<Object?>[
         response.sendPort,
@@ -342,27 +455,32 @@ final class _NativeSourceWriteWorker {
         pending.path,
         pending.fileOffset,
       ]);
-      final value = await Future.any<Object?>(<Future<Object?>>[
-        response.first,
-        _exited.then<Object?>((_) => _sourceWriteWorkerExitedSignal),
-      ]);
+      final value = await completed.future;
       if (identical(value, _sourceWriteWorkerExitedSignal)) {
         throw StateError('native source write worker exited before responding');
       }
       if (value is int) return value;
       throw StateError('invalid native source write response: $value');
     } finally {
+      if (identical(_activeResponse, completed)) {
+        _activeResponse = null;
+      }
+      await responseSubscription.cancel();
       response.close();
     }
   }
 
   Future<void> close() async {
+    if (exited) {
+      await _exitCompleter.future;
+      return;
+    }
     port.send('close');
     try {
-      await _exited.timeout(const Duration(milliseconds: 500));
+      await _exitCompleter.future.timeout(const Duration(milliseconds: 500));
     } on TimeoutException {
       isolate.kill(priority: Isolate.immediate);
-      await _exited;
+      await _exitCompleter.future;
     }
   }
 }

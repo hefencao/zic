@@ -143,10 +143,17 @@ App build：0.31.0+328
   真机验收中发现`prepare_reader_device_test.py`只是“安装现有APK+readiness preflight”，不会构建；因此前两份误装13:44旧Profile APK的样本作废。
   重新执行`./tool/build_android.sh profile`并安装后，11-57-54 Profile Trace中held target118先稳定为logical=118.5/velocity=0，约5.25s后仍为118.5/0；pointer-up后的idle仍为118.5/0，页码119→119不漂移。
   同一新Profile Trace的artifact-cache presentation-file-lease为26次/26个unique identity、重复读取0；同任务pre-fix 11-18-08为64次/37个unique、27次额外重复读取，重复identity累计readMicros约531.5ms。说明resident-raster mounted attach已切断“prepared后再重开encoded file”的重复路径。
-  对`522da3d4`后的Reader/media runtime另做了生命周期反审计并记录到`docs/audits/reader_media_runtime_state_audit.json`：8项报告问题与2项删除候选均由当前代码确认。
-  实现已收口direct dispose的presentation listener/claim释放、NativeCursor batch-return-after-dispose frame释放、presentation read exact `storageId+generation` authority回传（删除page→latest-authority镜像）、late file lease finally；
-  GIF单一frame fetch与稳定媒体子树identity、旧recovery/retry generation guard、decode/source-write worker exit结算也已收口；
-  同时删除纯写`_prewarmedSizes`及不可达第二个direct-local分支。affected Reader/local-media/Pipeline/native/reader-runtime tests为177 passed，bridge为3 passed；最终`./tool/check.sh --require-toolchains`在当前树exit 0（200.809s），三ABI debug与Rust 22/22通过。
+  Reader/media runtime持续反审计统一记录到`docs/audits/reader_media_runtime_state_audit.json`。在`27467b96`上重新核对后，新增RMR-011..017七项均由current source独立确认。
+  presentation侧包括：same-generation first-frame仍按widget lifetime去重；managed raster decode error被同步eviction先撤下error/authority；requested→ready分步通知制造瞬时双false；widget级recovery gate会吞新grant；旧rendered error可污染新attempt。
+  worker侧包括：每请求向长期exit Future挂continuation；dead worker退出后仍留在可调度集合。
+  当前external presentation改为一次完整`requested/ready` state commit，并以不可变`_PresentationAttempt(loadEpoch, token, opaque identity, exact read authority)`统一first-frame/error/recovery/final publish。
+  same-generation regrant取得新的local attempt但不旋转presentation identity；managed raster decode failure先保留当前error channel而不是伪装成ordinary residency eviction。WebP metadata prefix旧async drain无await，已删除syncing/双revision/递归外壳，只保留同步prefix读取与单调length去重（ADR0337）。
+  native decode/source-write worker现在各只安装一次exit listener；worker持有至多一个current active-response completer，真实exit结算当前请求后由pool退休dead worker并有界补位。
+  request只持短命response subscription，不再向process-lifetime exit Future持续注册then；真实capacity由active-run unwind结算，decode退化为单live worker时non-current让出最后slot（ADR0338）。
+  global presentation cache引用确有composition耦合，但production Pipeline/UI/prewarmer使用同一`pipelinePresentationRasterCache`实例，本轮不制造第二cache abstraction。
+  最终Profile authoritative Home 1.287s；`zic-debug-trace-2026-09-29T00-52-07.jsonl`中external request/first-frame=33/33、mounted request无后续first-frame=0。
+  同一Trace的sourceRead为33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
+  decode pending queue尚缺request-level cancel control，作为后续独立scheduler ABI治理，不和worker-exit混修。相关presentation/cache/recovery focused suites、bridge contract 3/3及native worker ownership guard均通过；最终`./tool/check.sh --require-toolchains` exit 0（193.331s）。
   当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
   presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，

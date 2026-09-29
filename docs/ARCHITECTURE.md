@@ -743,7 +743,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   presentation decode失败必须回传原authority，禁止按page id查询“最近一次读取”的generation后再失效缓存。manual force reload没有旧read token时才由cache owner解析当前authority。
   external-static 的 presentation generation 与 raster residency 必须分离：`PipelineReaderSession`拥有 DecodeId/source/fit 对应的 opaque presentation identity，
   `PipelinePresentationRasterCache`独占 decoded raster 的 residency/LRU/keepAlive。ordinary eviction/demand loss 不旋转 identity；mounted adapter 必须撤销本地 attempt/provider 后允许同 identity regrant，且 detached resident provider 必须直接 handoff、禁止再次 resize/providerFor。
-  没有 exact artifact authority 的 presentation error 不得据此 reset durable/source generation；只有带原 read `storageId + mutation generation` 的拒绝才进入 `DownloadTransferOwner` destructive artifact recovery。
+  `PipelinePageOutputStream` 的 external presentation permission/satisfaction 只能作为一个完整状态原子发布；`requested -> ready` 不得分两次同步通知制造可观察的 `(false,false)` revoke。
+  `LocalImagePlayer` 的 first-frame 去重、error、recovery 与最终状态发布都绑定不可变 presentation attempt（local load epoch/token + opaque identity + exact read authority），不能绑定整个 widget lifetime；later same-identity regrant会取得新的 local attempt，因此必须能再次确认本次 first frame。旧 attempt 的异步结果在任何 await 后若已失去 current 身份就只能退出。
+  managed raster decode error 与 ordinary residency eviction 也是两个事件：cache entry 可以退休，但不得在当前 consumer 收到 error/原 read authority 前同步发 eviction 销毁错误通道。没有 exact artifact authority 的 presentation error 不得据此 reset durable/source generation；只有带原 read `storageId + mutation generation` 的拒绝才进入 `DownloadTransferOwner` destructive artifact recovery。详见 ADR 0337。
   `PipelineReaderSession.dispose()`必须与retention共用claim释放边界，并额外注销composition presentation-cache invalidation listener；全局cache不得因已销毁session遗留listener/claim而保活Reader。
   `LocalImagePlayer`取得file lease后立即进入finally保护，late cancellation不能漏lease；widget async load 只使用本地 `loadEpoch + token` 作为 race fence，禁止把它解释成 source/artifact/presentation generation。
   GIF的Flutter codec由单一串行frame-fetch生命周期拥有；pause/resume只能改变循环输入，不得并发调用同一codec的`getNextFrame()`，loading→ready也不得通过widget key变化重建codec。
@@ -1445,7 +1447,7 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   该seam只传播既有scheduler事实，不取消/重开already-admitted read，也不产生Reader-owned gate或第二local scheduler。
   Reader-local native source replay 的后台 reserve/copy/file-range 同样只能作为 execution seam：`DownloadIngressProjectionRegistry` 的 scheduler-owned control 必须贯穿 `Ingress -> BackgroundWritableEncodedSource -> native source-write worker`；
   pending worker 必须按实时 priority 排序并响应 queued cancellation，in-flight native operation 仍须真实退出后释放 slot。decode worker 与 source-write worker lifecycle 必须显式分离，由 composition 并列 prewarm/shutdown，不得用 decode API 暗中拥有 source mutation worker。
-  每个worker request同时观察response与真实isolate exit；异常退出必须结算等待者，但只有exit已发生后才释放busy capacity。NativeCursor在batch decode等待期间被dispose时，返回批次中尚未转交的所有native frame立即release，不能写回已dispose的prefetch queue。
+  worker isolate exit 由各自 pool 安装一次 process-lifetime listener：worker 至多持有一个当前 active-response completer，exit 直接结算该请求并把 dead worker 从 live scheduling set 退休；每请求只拥有短命 response port/subscription，禁止再把长期 exit Future 通过 `then/Future.any` 挂到每个请求。pool 在仍存活时有界补齐 worker，`pump` 不得再次调度 exited worker；真实 capacity 用 active-run lifecycle 结算，worker identity 先退休也不能让尚未 unwind 的 FFI 被当成已释放。decode pool 临时只剩一个 live worker 时 non-current 不能占最后slot。NativeCursor在batch decode等待期间被dispose时，返回批次中尚未转交的所有native frame立即release，不能写回已dispose的prefetch queue。详见 ADR 0338。
   durable artifact authority 的 metadata snapshot 仍由 `SqliteIndex` 唯一拥有；artifact object/replica/storage-root 直接在 owner connection 的一个短 read transaction 中形成同一 snapshot。约0.13ms的该查询不再常驻 background read isolate；真正的body/access I/O仍走既有异步边界，recency touch仍在 `StorageWriteScheduler` admission 后交给专用 SQLite worker。详见 ADR 0328。
   durable cold-partial只读lookup必须由persistent index/file直接裁决，
   hit/miss均不得为读取或存在性探测materialize durable-store `DownloadSession`；store session只允许用于durable mutation。

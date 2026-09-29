@@ -80,6 +80,18 @@ void main() {
       session.accept(_observation(chapter));
 
       await _pumpUntil(tester, () => loads >= 1);
+      await _pumpUntil(
+        tester,
+        () => output.externalPresentationReady &&
+            !output.externalPresentationRequested,
+      );
+      expect(
+        loads,
+        1,
+        reason:
+            'requested -> ready is one presentation-state handoff; first-frame '
+            'completion must not transiently revoke and reload the healthy raster',
+      );
       final firstIdentity = output.externalPresentationCacheIdentity;
       expect(firstIdentity, isNotNull);
 
@@ -239,6 +251,11 @@ void main() {
         tester,
         () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
       );
+      await _pumpUntil(
+        tester,
+        () => output.externalPresentationReady &&
+            !output.externalPresentationRequested,
+      );
       expect(
         identical(
           presentationIdentity,
@@ -248,6 +265,13 @@ void main() {
         reason:
             'ordinary raster eviction and later regrant must keep the '
             'immutable presentation generation stable',
+      );
+      expect(
+        output.externalPresentationReady,
+        isTrue,
+        reason:
+            'same-generation regrant must receive a fresh mounted first-frame '
+            'acknowledgement instead of being suppressed by widget lifetime',
       );
       expect(
         presentationFileOpens + byteLoads,
@@ -388,6 +412,209 @@ void main() {
       );
       await session.dispose();
       await tester.pump(const Duration(milliseconds: 150));
+    },
+  );
+
+  testWidgets(
+    'managed raster decode failure preserves the mounted error authority',
+    (tester) async {
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(() {
+        pipelinePresentationRasterCache.clearPresentationRasters();
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+      });
+      final valid = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final corrupt = Uint8List.fromList(valid.sublist(0, 33));
+      final uri = Uri.parse('asset:///managed-corrupt.png');
+      final chapter = _chapter(uri);
+      final asset = chapter.pages.single;
+      final authority = PipelinePresentationArtifactAuthority(
+        storageId: DownloadId(
+          content: const ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: 'page-0',
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: uri,
+        ),
+        generation: 7,
+      );
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _RuntimeFactory(),
+        pageDownloadLane: NetLane(maxActive: 2),
+        presentationCacheAuthority: pipelinePresentationRasterCache,
+        loaderSources: <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'managed-corrupt-r1',
+            loadBytes: () async => valid,
+          ),
+        },
+      ).create(
+        chapter: chapter,
+        sessionId: 'managed-corrupt-error-channel-test',
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+      final output = session.pageOutput(asset);
+      final stream = session.pageStream(asset);
+      var recoveries = 0;
+      PipelinePresentationArtifactAuthority? rejectedAuthority;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 360,
+            child: LocalImagePlayer(
+              image: PickedImage(
+                file: XFile('managed-corrupt.png'),
+                format: LocalImageFormat.png,
+                displayName: 'managed-corrupt.png',
+                sourceId: uri.toString(),
+              ),
+              presentationBytesLoader: (_, token) async {
+                token.throwIfCancelled();
+                return PipelinePresentationBytes(
+                  bytes: corrupt,
+                  authority: authority,
+                );
+              },
+              onRecoverPresentationFailure: (_, rejected) async {
+                recoveries++;
+                rejectedAuthority = rejected;
+                return false;
+              },
+              onFirstFrame: () => session.reportPresentationFrameReady(asset),
+              pageStream: stream,
+              pageOutput: output,
+            ),
+          ),
+        ),
+      );
+      session.accept(_observation(chapter));
+
+      await _pumpUntil(tester, () => recoveries == 1);
+      await _pumpUntil(
+        tester,
+        () => find.byKey(imageFolderPreviewErrorKey).evaluate().isNotEmpty,
+      );
+      expect(identical(rejectedAuthority, authority), isTrue);
+      expect(find.byKey(imageFolderPreviewErrorKey), findsOneWidget);
+      expect(
+        output.externalPresentationRequested,
+        isTrue,
+        reason:
+            'decode failure is delivered through the current presentation '
+            'attempt before Pipeline treats the raster as ordinary residency loss',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      for (var turn = 0; turn < 2; turn++) {
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+        await tester.pump(const Duration(milliseconds: 1));
+      }
+    },
+  );
+
+  testWidgets(
+    'new presentation grant supersedes an older in-flight recovery',
+    (tester) async {
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(() {
+        pipelinePresentationRasterCache.clearPresentationRasters();
+        while (SchedulerBinding.instance.handleEventLoopCallback()) {}
+      });
+      final valid = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final corrupt = Uint8List.fromList(valid.sublist(0, 33));
+      final uri = Uri.parse('asset:///recovery-supersede.png');
+      final chapter = _chapter(uri);
+      final asset = chapter.pages.single;
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _RuntimeFactory(),
+        pageDownloadLane: NetLane(maxActive: 2),
+        presentationCacheAuthority: pipelinePresentationRasterCache,
+        loaderSources: <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'recovery-supersede-r1',
+            loadBytes: () async => valid,
+          ),
+        },
+      ).create(
+        chapter: chapter,
+        sessionId: 'recovery-supersede-widget-test',
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+      final output = session.pageOutput(asset);
+      final stream = session.pageStream(asset);
+      final recovery = Completer<bool>();
+      var recoveries = 0;
+      var loads = 0;
+      var fresh = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 360,
+            child: LocalImagePlayer(
+              image: PickedImage(
+                file: XFile('recovery-supersede.png'),
+                format: LocalImageFormat.png,
+                displayName: 'recovery-supersede.png',
+                sourceId: uri.toString(),
+              ),
+              presentationBytesLoader: (_, token) async {
+                token.throwIfCancelled();
+                loads++;
+                return PipelinePresentationBytes(
+                  bytes: fresh ? valid : corrupt,
+                );
+              },
+              onRecoverPresentationFailure: (_, __) {
+                recoveries++;
+                return recovery.future;
+              },
+              onFirstFrame: () => session.reportPresentationFrameReady(asset),
+              pageStream: stream,
+              pageOutput: output,
+            ),
+          ),
+        ),
+      );
+      session.accept(_observation(chapter));
+      await _pumpUntil(tester, () => recoveries == 1);
+      final firstIdentity = output.externalPresentationCacheIdentity;
+
+      fresh = true;
+      session.updateDecodeTarget(
+        DecodeTarget(physicalWidth: 640, physicalHeight: 960),
+      );
+      session.accept(_observation(chapter));
+      await _pumpUntil(tester, () => loads >= 2);
+      await _pumpUntil(
+        tester,
+        () => output.externalPresentationReady &&
+            !output.externalPresentationRequested,
+      );
+      expect(
+        identical(firstIdentity, output.externalPresentationCacheIdentity),
+        isFalse,
+      );
+
+      recovery.complete(false);
+      await tester.pumpAndSettle();
+      expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+      expect(output.externalPresentationReady, isTrue);
+      expect(loads, 2);
     },
   );
 }

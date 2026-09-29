@@ -269,7 +269,13 @@ final class PipelinePresentationRasterCache
       onError: (Object error, StackTrace? stackTrace) {
         completer.removeListener(firstFrame);
         if (identical(_entries[key], entry)) {
-          _evict(key, notify: true);
+          // Decode failure is not an ordinary residency revocation. The
+          // mounted/detached consumer still owns the error channel and, for a
+          // mounted presentation, the exact encoded-read authority needed to
+          // decide whether recovery may mutate durable state. Retire only the
+          // failed cache entry here; notifying Pipeline first would synchronously
+          // unmount that consumer and swallow the authoritative error.
+          _evict(key, notify: false);
         }
       },
     );
