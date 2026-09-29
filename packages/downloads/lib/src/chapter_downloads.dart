@@ -28,6 +28,7 @@ part 'persistent_download_artifact_store.dart';
 part 'persistent_chapter_download_service.dart';
 part 'persistent_download_partial_resume.dart';
 part 'persistent_download_structured_placement.dart';
+part 'persistent_download_saf_body_transaction.dart';
 
 enum ChapterDownloadPhase { idle, downloading, complete, failed, cancelled }
 

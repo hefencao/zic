@@ -156,19 +156,6 @@ class SafStore {
     );
   }
 
-  /// Returns false when the provider cannot perform an atomic replacement.
-  /// Callers must then retain the old document rather than delete it first.
-  Future<bool> replace(String relativePath, String newRelativePath) {
-    return _invoke<bool>(
-      (channel) => channel.invokeMethod('safReplace', <String, Object?>{
-        'treeUri': treeUri,
-        'relativePath': relativePath,
-        'newRelativePath': newRelativePath,
-      }),
-      () => false,
-      (raw) => raw == true,
-    );
-  }
 
   Future<bool> exists(String relativePath) {
     return _invoke<bool>(

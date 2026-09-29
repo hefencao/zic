@@ -24,10 +24,14 @@ def function_body(name: str) -> str:
                 return TEXT[brace:i + 1]
     raise SystemExit(f'{name} body is unterminated')
 
-for name in ('safOpen', 'safDelete', 'safRename', 'safReplace'):
+for name in ('safOpen', 'safDelete', 'safRename'):
     body = function_body(name)
     if 'clearSafPathCache(treeUri)' in body:
         raise SystemExit(f'{name} must not invalidate the entire SAF tree cache')
+
+
+if 'private fun safReplace(' in TEXT or '"safReplace"' in TEXT:
+    raise SystemExit('hidden SAF overwrite bridge must remain deleted')
 
 read_body = function_body('openSafReadDescriptorUnlocked')
 if 'invalidateSafReadParentListing(treeUri, relativePath)' not in read_body:
@@ -35,7 +39,7 @@ if 'invalidateSafReadParentListing(treeUri, relativePath)' not in read_body:
 if read_body.count('clearSafPathCache(treeUri)') != 1:
     raise SystemExit('SAF read recovery must keep exactly one full-tree final fallback')
 
-for name in ('safDelete', 'safRename', 'safReplace'):
+for name in ('safDelete', 'safRename'):
     if 'invalidateSafDirectoryListing' not in function_body(name):
         raise SystemExit(f'{name} must invalidate affected directory listings')
 

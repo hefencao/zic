@@ -549,13 +549,6 @@ abstract interface class SafTreeIo {
   Future<List<SafTreeFile>> list(String relativePath);
 }
 
-/// Optional provider capability for replacing an existing document without
-/// deleting the old authority first. Implementations that cannot provide this
-/// guarantee must return false; callers then keep the old binding untouched.
-abstract interface class SafTreeAtomicReplace {
-  Future<bool> replace(String temporaryPath, String targetPath);
-}
-
 final class SafTreeFile {
   const SafTreeFile({
     required this.name,
@@ -905,20 +898,9 @@ Future<void> commitSafTemporary(
   String targetPath,
 ) async {
   if (await io.rename(temporaryPath, targetPath)) return;
-  if (io is SafTreeAtomicReplace) {
-    final atomic = io as SafTreeAtomicReplace;
-    if (await atomic.replace(temporaryPath, targetPath)) return;
-    throw StateError(
-      'SAF provider cannot atomically replace $targetPath; old authority retained',
-    );
-  }
-  // Test/local adapters predating the capability can still exercise the
-  // protocol. Production adapters implement SafTreeAtomicReplace and never
-  // enter this delete-then-rename compatibility path.
-  if (await io.exists(targetPath)) await io.delete(targetPath);
-  if (!await io.rename(temporaryPath, targetPath)) {
-    throw StateError('SAF tree refused commit for $targetPath');
-  }
+  throw StateError(
+    'SAF staged commit requires an unused target: $targetPath',
+  );
 }
 
 Future<void> _writeSafAtomically(

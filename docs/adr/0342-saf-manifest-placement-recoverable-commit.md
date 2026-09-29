@@ -17,7 +17,7 @@ The manifest already carries a monotonic `generation` and content `fingerprint`,
 5. A valid newer target without a durable intent MUST NOT advance placement merely because its generation is higher. This prevents external or unrelated file changes from being mistaken for an interrupted zic transaction. A placement generation newer than the manifest remains legal; the next writer uses `max(manifest.generation, placement.generation) + 1`.
 6. Reads wait for the in-store structured-write tail for that exact manifest path, so the same process cannot observe the temporary target/backup window as a committed manifest.
 7. Startup enumerates only the small App-private pending-intent directory, then performs exact-path probes for legacy deterministic backups referenced by persisted placements. It does not enumerate the SAF tree. Legacy backup recovery is allowed only when an exact placement token matches the target or backup; it never uses a target-ahead heuristic.
-8. This decision closes only the structured manifest/placement owner boundary. Generic page/partial `SafTreeAtomicReplace` still depends on DocumentFile rename behavior and has no equivalent durable journal. It remains governed by DL-DIR-019 and MUST NOT be described as atomic or crash-complete.
+8. This decision closes only the structured manifest/placement owner boundary. Page/partial bodies use the separate recoverable index-authority switch defined by ADR 0343; they MUST NOT reuse `DownloadPlacement` generation/fingerprint as body commit evidence.
 
 ## Validation contract
 

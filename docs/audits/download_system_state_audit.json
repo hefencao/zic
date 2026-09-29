@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.25.0",
-  "last_updated": "2026-09-29T23:06:24+08:00",
+  "audit_version": "1.27.0",
+  "last_updated": "2026-09-30T07:50:27+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -20,26 +20,28 @@
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-29T23:06:24+08:00",
-    "review_basis": "按 main@54efc050 之后的 SAF durable-owner 最终工作树完成反审计与治理。metadata DB 在 SQLite/recovery 前取得 absolute index-path 的进程内 owner + OS FileLock；SAF .zic.json replace/delete 在任何 SAF mutation 前先 flush App-private transaction intent，DownloadPlacement 是唯一 commit point。恢复分别绑定 old placement token 与 old manifest token，首次写、覆盖写、最后删除均可 deterministic rollback/forward；无 intent 的较新 target 不按 generation 猜测推进。focused owner/manifest 13/13、downloads 478/478、ownership/repo/docs/diff guards 与最终 ./tool/check.sh --require-toolchains 均通过。",
+    "reviewed_at": "2026-09-30T07:50:27+08:00",
+    "review_basis": "按 main@52b40a41 之后的 generic SAF body replace 最终代码树继续治理。生产 SafTreeAtomicReplace / safReplace 已删除；page/partial 在完整 staging 后先 flush App-private body intent，再以 deterministic target.zic-old 保留旧正文，并把现有 CacheRec / PhysicalPartialRecord 的稳定新 authority 作为唯一 commit point。partial staging 已把同步累计的 CRC32 持久化进新 row，恢复比较 path/bytes/checksum/algorithm/root 等稳定字段，不依赖 touchedUs/pinned。启动恢复在 cleanup debt 前执行，只枚举本地 intent 并 exact-probe SAF path；transient staging temp 具备进程内 active lease，而 resumable replica-migration temp 保持原 durable owner。body crash/reopen 9/9、downloads 487/487、body/path-cache/Android ownership guards 已通过；真实 DocumentsProvider kill/reopen 仍因当前安装无 persisted SAF tree grant 未验证。",
     "closure_blockers": [
-      "DL-DIR-019 / DL-DIR-017：generic SAF page/partial provider replace 仍依赖 DocumentFile rename 行为，没有与 manifest 等价的 durable journal；仍需真实 provider 崩溃/rename 证据",
+      "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理",
       "DL-DIR-007：ready 读取的同长度损坏发现策略、PageAsset checksum 与 artifact CRC32 算法语义仍需单独闭合",
       "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
     ]
   },
   "validation": {
     "passed": [
-      "packages/downloads persistent_store_owner_lock_test + saf_manifest_transaction_test: 13/13 passed; covers in-process/cross-process metadata exclusion, malformed-intent owner release, no-intent target-ahead non-adoption, first-write rollback, overwrite rollback/roll-forward, split placement/manifest generations, corrupt target/backup, delete rollback/commit, and live final deletion",
-      "packages/downloads: 478/478 passed with the final explicit-intent and delete-transaction regressions included",
-      "python3 tool/test_saf_manifest_transaction_ownership.py: passed; App-private intent must precede SAF target mutation and placement commit/removal, direct manifest deletion bypass is forbidden, and generation-ahead adoption is forbidden",
-      "python3 tool/check_repo.py + python3 tool/check_documentation.py + git diff --check: passed",
-      "./tool/check.sh --require-toolchains: exit 0 in 244.754s on the final 478/478 tree; repository/documentation/ownership guards, Dart/Flutter analyses/tests and Android build gates passed",
-      "Android final gate produced armeabi-v7a, arm64-v8a and x86_64 debug split APKs",
-      "cargo test -p media_core --quiet after the final gate: 22/22 passed; existing unused/dead-code warnings only"
+      "packages/downloads saf_body_transaction_test: 9/9 passed; malformed-intent owner release, orphan intent-temp cleanup, backup-only rollback, same-length rollback, committed-target mismatch fail-closed, later-touch committed recovery, physical-partial stable authority, committed forward cleanup and first-write rollback",
+      "packages/downloads focused SAF/partial/chapter regression set: passed after stable CRC32 authority and non-authoritative sidecar replacement changes",
+      "packages/downloads: 487/487 passed; includes resumable replica-migration temp, concurrent structured page writes, manifest transactions, partial handoff and SAF body crash/reopen cases",
+      "python3 tool/test_saf_body_transaction_ownership.py: passed; production safReplace/SafTreeAtomicReplace forbidden, low-level staging create-only, body order intent->backup->install->index fixed and touchedUs forbidden as commit evidence",
+      "python3 tool/test_saf_path_cache_scope.py + python3 tool/test_android_saf_executor_boundary.py: passed after removing the obsolete safReplace platform path",
+      "bash ./tool/check.sh --require-toolchains: exit 0 in 196.002s on the exact final 487/487 tree after the Kotlin route cleanup and final indentation-only review; repository/documentation/ownership guards, Dart/Flutter suites, Android debug build gates and Rust media_core completed successfully",
+      "Android exact-final outputs: armeabi-v7a 98188308 bytes, arm64-v8a 122306670 bytes, x86_64 109873877 bytes",
+      "cargo test -p media_core --quiet after exact final gate: 22/22 passed; existing unused/dead-code warnings only"
     ],
     "failed_or_unverified": [
-      "DL-DIR-019 generic page/partial SAF replace still lacks provider-independent durable recovery and fresh real-device crash/kill/reopen evidence"
+      "Fresh Android DocumentsProvider crash/kill/reopen remains unverified: adb device 72b08a1c is online and dev.zic.zic is installed/running, but dumpsys package/activity providers exposes no reusable persisted SAF tree URI permission for the app; existing user storage was not repurposed for destructive fault injection",
+      "Legacy random .zic-old-* files from pre-ADR0343 builds cannot be safely inspected without a granted SAF tree; current production no longer creates them"
     ],
     "code_changes_in_this_audit": true
   },
@@ -99,7 +101,7 @@
       ],
       "status": "in_progress",
       "remediation_applied": "已打通 ComicVersionRelationKind（incomingIsNewer / existingIsNewer / sameVersion / unknown）与 knownPredecessorComicIds / knownSuccessorComicIds；探查时匹配已下载目录 manifest.comicId 与版本前驱/后继关系。弹窗重构为「下载任务处理」：新版发起下载时默认 FilledButton 为「新任务替换旧任务」，取消为副操作；本地已有新版时默认 FilledButton 为「保持现有版本（什么都不做）」，「仍要替换为旧版本」为副操作；底部收纳为「新建任务（可展开对比）」ExpansionTile，展开后展示对比卡片及「另存为新目录并新建任务」按钮。overwrite/saveAsNew 贯穿单章与整本执行，并在 WholeComicDownloadQueue 中实现新任务入队时自动取消并置换旧版本整本任务，PersistentChapterDownloadService 同步取消旧版本在途令牌，writeComicFolderManifest 隔离异版元数据继承；已在 apps/app 及 downloads 包补齐 widget 与单元测试回归。",
-      "remaining_work": "manifest/placement 的 SAF 跨进程提交已由 ADR0342 闭合；仍需处理 exact match saveAsNew 可能沿用原推荐目录、自定义冲突目录无 title candidate 时 forcePrompt 缺口，以及详情页整本任务回调仅按 comicId 而非 sourceId+comicId 识别的风险。generic SAF page overwrite 的 provider replace crash 边界继续归 DL-DIR-019。"
+      "remaining_work": "manifest/placement 的 SAF 跨进程提交已由 ADR0342 闭合；仍需处理 exact match saveAsNew 可能沿用原推荐目录、自定义冲突目录无 title candidate 时 forcePrompt 缺口，以及详情页整本任务回调仅按 comicId 而非 sourceId+comicId 识别的风险。generic SAF body replace 代码协议已由 ADR0343 闭合；真实 provider kill/reopen 证据继续归 DL-DIR-019。"
     },
     {
       "id": "DL-DIR-007",
@@ -154,8 +156,8 @@
         "packages/downloads/lib/src/whole_comic_downloads.dart"
       ],
       "status": "in_progress",
-      "remediation_applied": "目标路径串行锁、exact owner、持久化 placement、提交前 owner 复查、manifest generation/fingerprint、稳定章节目录映射、逐页 CRC32 记录、无扫描重试和跨版本自包含物化已接入；生产整本 enqueue 同步保存目录、模式与 observed owner。同进程旧 owner 认领仅可由精确匹配 observedOwnerKey 的 overwrite 替换。已落地 ContentId/DownloadId/DecodeId 长度前缀 Framing 编码（_frame(s) => '${s.length}:$s'），彻底杜绝由特殊字符和分隔符碰撞导致的不同实体被合并；SqliteIndex 启动时通过 _migrateDownloadIdentityKeys 自动兼容迁移旧 row；DownloadRegistry.restoreIndexed 对确定性 partial/final 路径基于 CacheRec.path 绝对路径推导旧 root 恢复物理文件，杜绝目录切换或插件级 layoutResolver 误绑新根；SqliteIndex.putPlacement 将主键/所有者归属修正为 (source_id, comic_id) 避免 placement_id 变更冲突；_putArtifactObject 增设 _artifactObjectDiffers 校验字节数与 CRC32，防止内容篡改与错误绑定。 补充治理：修复存储与下载权威层符号链接校验递归越界问题。在 Android 等 OS 下，内部私有存储根 /data/user/0 与外部存储 /storage/emulated/0 属于系统级软链/挂载点；此前 _rejectLink / _rejectPathLinks / _rejectDirectoryPathLinks / _rejectLocalPathLinks 无界遍历父级直至系统根 / 导致在真机上正常文件操作全量误判为 Failure(artifactCorruption)；现将符号链接校验范围严格收敛至下载存储自身管辖的目录树与直接容器内，并在 storage 补齐祖先挂载点软链回归测试。 本轮新增 metadata index 的单一 process owner，并把 SAF `.zic.json` replace/delete 改为 App-private intent + deterministic backup + `DownloadPlacement` commit point 的可恢复协议；manifest 不再通过 generic SafTreeAtomicReplace 提交，也不再用 generation-ahead 猜测恢复。",
-      "remaining_work": "manifest/placement 跨进程 owner 与 replace/delete crash protocol 已闭合。剩余 P0 只指向人类可读 page/partial 的 generic SAF provider replace：DocumentFile rename/overwrite 没有 durable journal，进程崩溃窗口仍需与 DL-DIR-019 一起治理和真机验证。"
+      "remediation_applied": "目标路径串行锁、exact owner、持久化 placement、提交前 owner 复查、manifest generation/fingerprint、稳定章节目录映射、逐页 CRC32 记录、无扫描重试和跨版本自包含物化已接入；生产整本 enqueue 同步保存目录、模式与 observed owner。同进程旧 owner 认领仅可由精确匹配 observedOwnerKey 的 overwrite 替换。已落地 ContentId/DownloadId/DecodeId 长度前缀 Framing 编码（_frame(s) => '${s.length}:$s'），彻底杜绝由特殊字符和分隔符碰撞导致的不同实体被合并；SqliteIndex 启动时通过 _migrateDownloadIdentityKeys 自动兼容迁移旧 row；DownloadRegistry.restoreIndexed 对确定性 partial/final 路径基于 CacheRec.path 绝对路径推导旧 root 恢复物理文件，杜绝目录切换或插件级 layoutResolver 误绑新根；SqliteIndex.putPlacement 将主键/所有者归属修正为 (source_id, comic_id) 避免 placement_id 变更冲突；_putArtifactObject 增设 _artifactObjectDiffers 校验字节数与 CRC32，防止内容篡改与错误绑定。 补充治理：修复存储与下载权威层符号链接校验递归越界问题。在 Android 等 OS 下，内部私有存储根 /data/user/0 与外部存储 /storage/emulated/0 属于系统级软链/挂载点；此前 _rejectLink / _rejectPathLinks / _rejectDirectoryPathLinks / _rejectLocalPathLinks 无界遍历父级直至系统根 / 导致在真机上正常文件操作全量误判为 Failure(artifactCorruption)；现将符号链接校验范围严格收敛至下载存储自身管辖的目录树与直接容器内，并在 storage 补齐祖先挂载点软链回归测试。 本轮新增 metadata index 的单一 process owner，并把 SAF `.zic.json` replace/delete 改为 App-private intent + deterministic backup + `DownloadPlacement` commit point 的可恢复协议；manifest 不再通过 generic SafTreeAtomicReplace 提交，也不再用 generation-ahead 猜测恢复。 本轮进一步关闭 generic SAF body 覆盖窗口：READY page、exact partial、physical partial 均先 staging 并写 App-private body intent，旧 target 固定改名为 target.zic-old；只有现有 CacheRec/PhysicalPartialRecord 的稳定新 authority（含 staging 时已计算并持久化的 CRC32）提交后才前滚清理，否则重启恢复旧 target；恢复不依赖可变 touchedUs/pinned。生产 SafTreeAtomicReplace/safReplace 已删除；transient staging temp 与 resumable migration temp 的生命周期也已拆开。",
+      "remaining_work": "代码级 page/partial replace crash protocol 已闭合；剩余仅为真实 DocumentsProvider kill/reopen 设备证据及旧版本随机 .zic-old-* 遗留观察，与 DL-DIR-019 共用验证项。"
     },
     {
       "id": "DL-DIR-018",
@@ -179,15 +181,18 @@
       "severity": "P0",
       "title": "SAF tree identity 已校验但 provider 替换与 owner 提交仍非强原子",
       "locations": [
-        "packages/downloads/lib/src/artifact_bytes.dart:108-181",
-        "packages/downloads/lib/src/chapter_downloads.dart",
-        "apps/app/lib/saf_store.dart"
+        "packages/downloads/lib/src/persistent_download_saf_body_transaction.dart",
+        "packages/downloads/lib/src/artifact_bytes.dart",
+        "packages/downloads/lib/src/persistent_download_artifact_store.dart",
+        "packages/downloads/lib/src/persistent_download_structured_placement.dart",
+        "apps/app/lib/saf_store.dart",
+        "apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt"
       ],
-      "root_cause": "SafArtifactBytes 已拒绝 treeUri 错配，copy/write 先写同目录临时文件。结构化 `.zic.json` 已脱离 generic replace，并由 App-private metadata 单一 process owner + durable transaction intent + deterministic backup + placement commit point 恢复。剩余根因是通用 page/partial `SafTreeAtomicReplace`：Android DocumentFile adapter 仍通过 target->`.zic-old-*`、temporary->target、best-effort delete/rollback 完成替换，但没有持久 journal/启动恢复，provider rename 也不具备可证明的 POSIX 原子语义。",
-      "impact": "manifest replace/delete 已可在进程崩溃后按显式 intent 与 exact token 定向 rollback/forward，跨进程 metadata writer 也已排他；无 intent 的较新 target 不会被自动认领。但 generic page/partial replace 若进程死在 old-target rename 窗口，仍可能遗留 `.zic-old-*` 或缺失最终 target。真实 provider 的 rename/replace 行为仍未验证。",
+      "root_cause": "旧实现的根因是 provider-level safReplace 把 target->随机 backup->temporary->target 隐藏在 Android MethodChannel 内，SQLite 无法在进程死亡后证明 backup 名称和 commit 状态；同时 generic temporary cleanup debt 缺少 live-vs-orphan 区分，会在长一点的 staging/intent flush 窗口误回收仍在使用的 temp。两项代码根因均已按 ADR0343 移除/收口。",
+      "impact": "生产已无 hidden provider overwrite：old target 在 deterministic backup 中保留到既有 index authority commit；old index 时 rollback，精确新 index 时 forward cleanup，同长度 partial 不按长度猜测。运行期 journal reader 不删除并发 writer 的 .tmp，启动期才清 orphan intent temp；replica migration resumable temp 不受 transient active lease 影响。剩余不确定性只来自真实 DocumentsProvider rename/kill 行为与旧版本遗留随机 backup。",
       "status": "in_progress",
-      "remediation_applied": "SAF record 读、长读和删除校验 treeUri；metadata DB 在 recovery 前取得进程级 owner；`.zic.json` replace/delete 使用 ADR0342 的 App-private intent + placement commit point 独立恢复，不再依赖 generic `safReplace`。页面/partial 仍采用临时文件并保留旧 authority 直到 provider replacement 尝试。",
-      "remediation_plan": "为 generic page/partial replacement 建立可持久恢复的 replace intent 或改为不需要覆盖 rename 的 authority-switch 设计；随后在支持与不支持 rename 的真实 SAF provider 上验证 crash/kill/reopen，并清理 Android `.zic-old-*` 无主窗口。不得把 manifest 的 placement token 协议直接套到正文。"
+      "remediation_applied": "新增独立 App-private SAF body intent；READY page 以 CacheRec、exact partial 以新 CacheRec、physical partial 以 PhysicalPartialRecord 为唯一 commit point。partial staging 同步累计 CRC32 并持久化，恢复比较稳定 locator/content authority 而不是 touchedUs。低层 commitSafTemporary 只允许空 target rename，Dart/Android SafTreeAtomicReplace/safReplace 全部删除；body recovery 在 cleanup debt 前执行并只 exact-probe intent 路径。transient SAF temp 持有进程内 active lease，crash 后 lease 消失而 durable cleanup debt 保留；journal .tmp 只在 store-open owner 阶段清理；validator sidecar 属于非权威加速元数据，更新时可先删除旧 sidecar 再 create-only 写入。",
+      "remediation_plan": "在独立 SAF 测试 tree grant 上做真实 Android DocumentsProvider kill/reopen：覆盖 target->backup 后、new target install 后、index commit 后三个窗口；同时扫描验证旧版本随机 .zic-old-* 是否存在且是否需要一次性安全清理。当前连接设备无可复用 persisted tree grant，因此不以现有用户目录做 fault injection。"
     },
     {
       "id": "DL-MGR-005",

@@ -148,6 +148,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     String accessLocator, {
     required String storageRootId,
   });
+  Future<StorageCleanupDebtRecord> _registerActiveTemporaryCleanupDebt(
+    String accessLocator, {
+    required String storageRootId,
+  });
   Future<void> _forgetStorageCleanupDebt(String accessLocator);
   Future<void> _writeBytesToSafTracked(
     SafTreeIo io,
@@ -200,6 +204,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   bool _placementClaimsLoaded = false;
   final Map<String, Future<void>> _placementWrites = <String, Future<void>>{};
   int _safManifestIntentSerial = 0;
+  int _safBodyIntentSerial = 0;
 
   /// Migrates user-materialized direct-root artifacts without moving mutable
   /// transfer spools or automatic-cache-only replicas.
@@ -2115,12 +2120,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       if (entity is! File) continue;
       final name = entity.uri.pathSegments.last;
       if (name.startsWith('.') && name.endsWith('.tmp')) {
-        try {
-          await entity.delete();
-        } on Object {
-          // A temp intent is written before any SAF mutation. Failure to retire
-          // the harmless local temp must not manufacture transaction evidence.
-        }
+        // Runtime readers must not delete a concurrent manifest writer's local
+        // staging file. Store-open recovery retires orphan temps before writes.
         continue;
       }
       if (!name.endsWith('.json')) continue;
@@ -2130,6 +2131,21 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       result.add((entity, intent));
     }
     return result;
+  }
+
+  Future<void> _retireOrphanSafManifestIntentTemps() async {
+    final directory = _safManifestTransactionDirectory;
+    if (!await directory.exists()) return;
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (!name.startsWith('.') || !name.endsWith('.tmp')) continue;
+      try {
+        await entity.delete();
+      } on Object {
+        // Harmless local staging cleanup is retried by a later clean open.
+      }
+    }
   }
 
   Future<void> _retireSafManifestTransactionIntent(File file) async {
@@ -2412,6 +2428,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     final io = safTreeIo;
     final treeUri = safTreeUri;
     if (io == null || treeUri == null) return;
+    await _retireOrphanSafManifestIntentTemps();
     for (final entry in await _loadSafManifestTransactionIntents()) {
       final (file, intent) = entry;
       if (intent.treeUri != treeUri) continue;
@@ -2804,25 +2821,73 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   Future<void> _copyFileIntoSafTracked(
     SafTreeIo io,
     File sourceFile,
-    String relativePath,
-  ) {
+    String relativePath, {
+    required CacheRec expectedAuthority,
+    required Future<void> Function() commitAuthority,
+  }) async {
     final treeUri = safTreeUri;
     if (treeUri == null) {
       throw StateError('tracked SAF copy requires a configured tree');
     }
-    return copyFileIntoSaf(
-      io,
-      sourceFile,
-      relativePath,
-      beforeTemporaryCreate: (temporaryPath) =>
-          _registerTemporaryCleanupDebt(
-        encodeSafRecordPath(treeUri: treeUri, relativePath: temporaryPath),
-        storageRootId: treeUri,
-      ),
-      afterTemporaryAbsent: (temporaryPath) => _forgetStorageCleanupDebt(
-        encodeSafRecordPath(treeUri: treeUri, relativePath: temporaryPath),
-      ),
+    final temporaryPath =
+        '$relativePath.zic-tmp-${DateTime.now().microsecondsSinceEpoch}';
+    final temporaryRecordPath = encodeSafRecordPath(
+      treeUri: treeUri,
+      relativePath: temporaryPath,
     );
+    await _registerActiveTemporaryCleanupDebt(
+      temporaryRecordPath,
+      storageRootId: treeUri,
+    );
+    final handle = await _withStorageWriteQuantum(
+      () => io.open(temporaryPath, mode: SafWriteMode.writeTruncate),
+    );
+    if (handle == null) {
+      throw StateError('SAF tree refused create for $temporaryPath');
+    }
+    final crc = Crc32();
+    var bytes = 0;
+    try {
+      final source = await sourceFile.open();
+      try {
+        while (true) {
+          final chunk = await source.read(512 * 1024);
+          if (chunk.isEmpty) break;
+          crc.add(chunk);
+          bytes += chunk.lengthInBytes;
+          await _withStorageWriteQuantum(() => io.write(handle, chunk));
+        }
+      } finally {
+        await source.close();
+      }
+    } finally {
+      await _withStorageWriteQuantum(() => io.close(handle));
+    }
+    try {
+      if (bytes != expectedAuthority.bytes ||
+          crc.hex != expectedAuthority.checksum) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'SAF staged page disagrees with sealed source proof',
+        );
+      }
+      await _commitSafBodyReplacement<void>(
+        targetPath: relativePath,
+        temporaryPath: temporaryPath,
+        bodyBytes: bytes,
+        bodyChecksum: crc.hex,
+        verifyChecksum: true,
+        expectedCacheAuthority: expectedAuthority,
+        commitAuthority: commitAuthority,
+      );
+    } finally {
+      if (await _withStorageWriteQuantum(() => io.exists(temporaryPath))) {
+        await _withStorageWriteQuantum(() => io.delete(temporaryPath));
+      }
+      if (!await _withStorageWriteQuantum(() => io.exists(temporaryPath))) {
+        await _forgetStorageCleanupDebt(temporaryRecordPath);
+      }
+    }
   }
 
   List<String> downloadedChapterIdsFromRecords(
@@ -3575,36 +3640,34 @@ mixin _PersistentDownloadStructuredPlacementMixin {
             );
           }
         }
-        await _copyFileIntoSafTracked(safIo, local, relativePath);
-        final proof = await _artifactProof(recordPath);
-        if (!_proofMatchesRecord(proof, rec)) {
-          await _bytes.delete(recordPath);
-          throw Failure(
-            code: ErrorCode.artifactCorruption,
-            message: 'structured target failed verification: $relativePath',
-          );
-        }
         final committed = rec.copyWith(
           path: recordPath,
           pinned: true,
           storageRootId: entry == null ? safTreeUri! : storageRootIdFor(entry),
         );
-        await _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
-          oldAccessLocator: rec.path,
-          oldStorageRootId: rec.storageRootId,
-          expectedBytes: rec.bytes,
-          expectedChecksum: rec.checksum,
-          expectedChecksumAlgorithm: rec.checksumAlgorithm,
-          commit: () async {
-            if (placement?.mode == DownloadPlacementMode.overwrite) {
-              await _index.replacePathBindings(
-                record: committed,
-                path: recordPath,
-              );
-            } else {
-              await _index.put(committed);
-            }
-          },
+        await _copyFileIntoSafTracked(
+          safIo,
+          local,
+          relativePath,
+          expectedAuthority: committed,
+          commitAuthority: () =>
+              _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
+            oldAccessLocator: rec.path,
+            oldStorageRootId: rec.storageRootId,
+            expectedBytes: rec.bytes,
+            expectedChecksum: rec.checksum,
+            expectedChecksumAlgorithm: rec.checksumAlgorithm,
+            commit: () async {
+              if (placement?.mode == DownloadPlacementMode.overwrite) {
+                await _index.replacePathBindings(
+                  record: committed,
+                  path: recordPath,
+                );
+              } else {
+                await _index.put(committed);
+              }
+            },
+          ),
         );
       });
     } else if (entry != null && pageIndex != null) {
@@ -3877,7 +3940,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       treeUri: treeUri,
       relativePath: temporaryPath,
     );
-    await _registerTemporaryCleanupDebt(
+    await _registerActiveTemporaryCleanupDebt(
       temporaryRecordPath,
       storageRootId: treeUri,
     );

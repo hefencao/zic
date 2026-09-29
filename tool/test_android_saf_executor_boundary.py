@@ -62,11 +62,13 @@ for method in (
 for method in (
     "safDelete",
     "safRename",
-    "safReplace",
     "safExists",
     "safList",
 ):
     if f'"{method}"' in routing:
         raise SystemExit(f"path operation incorrectly routed as descriptor I/O: {method}")
+
+if '"safReplace"' in text or 'private fun safReplace(' in text:
+    raise SystemExit('hidden SAF overwrite bridge must remain deleted')
 
 print("Android SAF path/striped-descriptor executor boundary: OK")

@@ -226,7 +226,6 @@ class MainActivity : FlutterActivity() {
      * safWrite(handle, bytes); safSeek(handle, position);
      * safLength(handle) → long; safClose(handle);
      * safDelete(treeUri, relativePath); safRename(treeUri, relativePath, newRelativePath);
-     * safReplace(treeUri, relativePath, newRelativePath);
      * safExists(treeUri, relativePath).
      */
     private val safDescriptors = java.util.concurrent.ConcurrentHashMap<Int, android.os.ParcelFileDescriptor>()
@@ -370,8 +369,6 @@ class MainActivity : FlutterActivity() {
                     "safDelete" -> runCatching { withSafNamespaceWrite { safDelete(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRename" -> runCatching { withSafNamespaceWrite { safRename(call) } }
-                        .fold({ true to it }, { false to safBridgeFailure(it) })
-                    "safReplace" -> runCatching { withSafNamespaceWrite { safReplace(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safExists" -> runCatching { safExists(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
@@ -1036,67 +1033,6 @@ class MainActivity : FlutterActivity() {
         return true
     }
 
-    /**
-     * Commits a staged document only when the provider can rename into an
-     * unused destination. Generic DocumentFile providers do not expose an
-     * atomic overwrite primitive; returning false preserves the previous
-     * document and lets the caller choose retry or save-as-new.
-     */
-    private fun safReplace(call: MethodCall): Boolean {
-        val treeUri = requireNotNull(call.argument<String>("treeUri"))
-        val relativePath = requireNotNull(call.argument<String>("relativePath"))
-        val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
-        if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
-        val root = safTreeRoot(treeUri) ?: return false
-        val source = resolvePath(root, relativePath) ?: return false
-        val sourceParentPath = parentRelativePath(relativePath)
-        val sourceParent = if (sourceParentPath.isEmpty()) {
-            root
-        } else {
-            resolvePath(root, sourceParentPath) ?: return false
-        }
-        val segments = newRelativePath.split('/').filter { it.isNotEmpty() }
-        if (segments.isEmpty()) return false
-        val parentPath = segments.dropLast(1).joinToString("/")
-        val parent = if (parentPath.isBlank()) {
-            root
-        } else {
-            resolvePath(root, parentPath) ?: return false
-        }
-        val targetName = segments.last()
-        val existing = parent.findFile(targetName)
-        if (existing?.uri == source.uri) return true
-        var mutated = false
-        try {
-            if (existing == null) {
-                val committed = source.renameTo(targetName)
-                mutated = committed
-                return committed
-            }
-            val backupName = "$targetName.zic-old-${System.nanoTime()}"
-            if (!existing.renameTo(backupName)) return false
-            mutated = true
-            val committed = source.renameTo(targetName)
-            if (!committed) {
-                val backup = parent.findFile(backupName)
-                if (backup != null && parent.findFile(targetName) == null) {
-                    backup.renameTo(targetName)
-                }
-                return false
-            }
-            parent.findFile(backupName)?.delete()
-            return true
-        } finally {
-            if (mutated) {
-                forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
-                forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
-                invalidateSafDirectoryListing(treeUri, sourceParent)
-                if (parent.uri != sourceParent.uri) {
-                    invalidateSafDirectoryListing(treeUri, parent)
-                }
-            }
-        }
-    }
 
     private fun safExists(call: MethodCall): Boolean {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))

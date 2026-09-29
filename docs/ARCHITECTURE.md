@@ -1954,7 +1954,7 @@ download-cache schema 12在既有logical/artifact/replica表上只增加`cache_e
 再 checkpoint 并关闭 queue/cache coordinator；已有 App-private metadata 时，当前 `PersistentDownloadComposition` 排空 transfer consumer 后直接复用唯一 `PersistentDownloadArtifactStore` 做 explicit Direct-root migration。
 迁移只选择 verified READY + explicit manual/offline retention 的 sealed replica，并逐个复用 schema-9 `migrateArtifactReplica`：目标 bytes proof 先成立，destination replica/root authority 提交后才删除 source，`replica_id` 保持不变；automatic-cache-only bytes 与 mutable partial/spool 不参与根迁移，继续由原 indexed locator 读取。
 全部选中 replica 提交后才 durable copy/verify `.zic.json` 并推进 `DownloadPlacement` generation/root；placement commit 后旧 manifest 仅作 best-effort cleanup。中途失败保留 pending intent 并重开 source layout，已提交到目标的 replica 不回滚，冷启动只打开同一 App-private artifact store 继续剩余迁移。
-SAF 任一侧参与时 UI 禁用 automatic migration；provider replace/跨进程 owner 语义继续由独立 SAF 治理。`moveChapterDownloadStore`/`settleChapterDownloadDirectory` 仅保留给 private metadata 出现前的 legacy 整树恢复/升级兼容，不得重新进入当前 runtime 的 private-metadata root switch。
+SAF 任一侧参与时 UI 禁用 automatic migration；body replace 已由 ADR0343 收口，真实 DocumentsProvider kill/reopen 仍作为独立设备证据。`moveChapterDownloadStore`/`settleChapterDownloadDirectory` 仅保留给 private metadata 出现前的 legacy 整树恢复/升级兼容，不得重新进入当前 runtime 的 private-metadata root switch。
 整本任务活跃或 transfer consumer 未退出时拒绝切换；
 `durableZicStateExists` 优先识别 App-private chapter metadata，同时仅为升级兼容探测 legacy 生效根 `cache.sqlite`。
 源设置为每个 source 提供独立下载目录：偏好映射 `sourceDownloadDirectories` 按稳定 source identity 记录物理根，
@@ -2007,7 +2007,7 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 已进入结构化图片导出的正文若无任一支持签名 MUST 作为 `artifactCorruption` 拒绝，`ContentKindHint` 不得覆盖实际非图片 bytes。
 每个目录的 `.zic.json` 描述当前 owner、稳定章节目录映射、单调 generation 与内容 fingerprint，placement 镜像最近提交 token；
 POSIX 继续通过目录锁串行提交。SAF manifest 由 structured placement owner 在任何 SAF mutation 前先 flush App-private transaction intent，再以 deterministic `.zic.json.zic-old` + `DownloadPlacement` commit point 做 recoverable replace/delete；恢复只接受 intent 或 legacy backup 的 exact token 证据，禁止按“target generation 更高”猜测 forward。该协议位于唯一 metadata process owner 内并按 exact manifest path 串行，见 ADR 0342。
-generic page/partial SAF replace 仍不具备 provider-independent crash transaction；不得把 manifest/placement 已闭合解释成 DocumentFile replace 已原子化。
+page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。真实 DocumentsProvider kill/reopen 证据继续作为设备验证项。
 整本队列把执行期 `ErrorCode.policy` 提升为持久化 `requiresUserAction` 阶段，保存冲突目录、existing/request owner 和触发章节，停止后续调度；
 详情页再次发起整本下载时必须重新弹出冲突对比并以新 placement 重建任务，管理页不得把该阶段当普通失败直接重试。
 长期数据模型仍需进一步把物理 artifact、逻辑版本 binding 与 export binding 彻底解耦。

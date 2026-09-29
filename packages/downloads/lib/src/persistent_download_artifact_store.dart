@@ -321,10 +321,11 @@ final class PersistentDownloadArtifactStore
       traceSink: traceSink,
       clock: resolvedClock,
     );
-      await resolved._recoverStructuredSafManifestTransactions();
-      resolved._scheduleCleanupDebtDrain();
-      resolved._scheduleRedundantPhysicalPartialSweep();
-      return resolved;
+    await resolved._recoverSafBodyTransactions();
+    await resolved._recoverStructuredSafManifestTransactions();
+    resolved._scheduleCleanupDebtDrain();
+    resolved._scheduleRedundantPhysicalPartialSweep();
+    return resolved;
     } on Object {
       try {
         await index.close();
@@ -1248,6 +1249,22 @@ final class PersistentDownloadArtifactStore
         kind: StorageCleanupDebtKind.temporary,
       );
 
+  Future<StorageCleanupDebtRecord> _registerActiveTemporaryCleanupDebt(
+    String accessLocator, {
+    required String storageRootId,
+  }) async {
+    _activeTemporaryCleanupLocators.add(accessLocator);
+    try {
+      return await _registerTemporaryCleanupDebt(
+        accessLocator,
+        storageRootId: storageRootId,
+      );
+    } on Object {
+      _activeTemporaryCleanupLocators.remove(accessLocator);
+      rethrow;
+    }
+  }
+
   Future<StorageCleanupDebtRecord> _registerObsoleteSealedSourceCleanupDebt(
     String accessLocator, {
     required String storageRootId,
@@ -1394,6 +1411,7 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<void> _forgetStorageCleanupDebt(String accessLocator) async {
+    _activeTemporaryCleanupLocators.remove(accessLocator);
     try {
       await _index.removeStorageCleanupDebt(accessLocator);
     } on Object catch (error, stackTrace) {
@@ -1574,7 +1592,8 @@ final class PersistentDownloadArtifactStore
     StorageCleanupDebtRecord debt,
   ) async {
     if (debt.kind != StorageCleanupDebtKind.temporary ||
-        !_isGeneratedTemporaryLocator(debt.accessLocator)) {
+        !_isGeneratedTemporaryLocator(debt.accessLocator) ||
+        _activeTemporaryCleanupLocators.contains(debt.accessLocator)) {
       return false;
     }
     for (final candidate in await _equivalentStorageRootLocators(
@@ -1624,18 +1643,25 @@ final class PersistentDownloadArtifactStore
   Future<void> _writeBytesToSafTracked(
     SafTreeIo io,
     String relativePath,
-    Uint8List bytes,
-  ) {
+    Uint8List bytes, {
+    bool replaceNonAuthoritative = false,
+  }) async {
     final treeUri = safTreeUri;
     if (treeUri == null) {
       throw StateError('tracked SAF write requires a configured tree');
     }
-    return writeBytesToSaf(
+    if (replaceNonAuthoritative && await io.exists(relativePath)) {
+      await io.delete(relativePath);
+      if (await io.exists(relativePath)) {
+        throw StateError('SAF metadata target could not be retired: $relativePath');
+      }
+    }
+    await writeBytesToSaf(
       io,
       relativePath,
       bytes,
       beforeTemporaryCreate: (temporaryPath) =>
-          _registerTemporaryCleanupDebt(
+          _registerActiveTemporaryCleanupDebt(
         encodeSafRecordPath(treeUri: treeUri, relativePath: temporaryPath),
         storageRootId: treeUri,
       ),
@@ -1986,6 +2012,7 @@ final class PersistentDownloadArtifactStore
   static final Object _artifactReplicaMutationZoneKey = Object();
   final Set<DownloadId> _borrowedPartialIds = <DownloadId>{};
   final Set<PhysicalMediaId> _borrowedPhysicalPartialIds = <PhysicalMediaId>{};
+  final Set<String> _activeTemporaryCleanupLocators = <String>{};
   bool _closed = false;
 
   static const String _recoveryMarkerName = '.zic-cache-recovery-required';
@@ -5771,7 +5798,7 @@ final class PersistentDownloadArtifactStore
         treeUri: treeUri,
         relativePath: temporaryPath,
       );
-      await _registerTemporaryCleanupDebt(
+      await _registerActiveTemporaryCleanupDebt(
         temporaryRecordPath,
         storageRootId: treeUri,
       );
@@ -5781,11 +5808,13 @@ final class PersistentDownloadArtifactStore
       if (handle == null) {
         throw StateError('SAF tree refused create for $temporaryPath');
       }
+      final crc = Crc32();
       var written = 0;
       try {
         await for (final chunk in entry.open(start: 0)) {
           if (chunk.isEmpty) continue;
           final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+          crc.add(bytes);
           await _withStorageWriteQuantum(() => io.write(handle, bytes));
           written += chunk.length;
           if (written >= entry.length) break;
@@ -5800,8 +5829,24 @@ final class PersistentDownloadArtifactStore
             '${physicalId.key}: $written/${entry.length}',
           );
         }
-        await _withStorageWriteQuantum(
-          () => commitSafTemporary(io, temporaryPath, relativePath),
+        final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+        final authority = PhysicalPartialRecord(
+          id: physicalId,
+          path: recordPath,
+          bytes: written,
+          checksum: crc.hex,
+          createdUs: existing?.createdUs ?? now,
+          touchedUs: now,
+          storageRootId: treeUri,
+        );
+        await _commitSafBodyReplacement<void>(
+          targetPath: relativePath,
+          temporaryPath: temporaryPath,
+          bodyBytes: written,
+          bodyChecksum: crc.hex,
+          verifyChecksum: false,
+          expectedPhysicalAuthority: authority,
+          commitAuthority: () => _index.putPhysicalPartial(authority),
         );
       } finally {
         if (await _withStorageWriteQuantum(() => io.exists(temporaryPath))) {
@@ -5811,18 +5856,6 @@ final class PersistentDownloadArtifactStore
           await _forgetStorageCleanupDebt(temporaryRecordPath);
         }
       }
-      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
-      await _index.putPhysicalPartial(
-        PhysicalPartialRecord(
-          id: physicalId,
-          path: recordPath,
-          bytes: written,
-          checksum: '',
-          createdUs: existing?.createdUs ?? now,
-          touchedUs: now,
-          storageRootId: treeUri,
-        ),
-      );
       try {
         await _withStorageWriteQuantum(
           () => _writeBytesToSafTracked(
@@ -5840,6 +5873,7 @@ final class PersistentDownloadArtifactStore
                 }),
               ),
             ),
+            replaceNonAuthoritative: true,
           ),
         );
       } on Object {
@@ -6336,7 +6370,7 @@ final class PersistentDownloadArtifactStore
         treeUri: treeUri,
         relativePath: temporaryPath,
       );
-      await _registerTemporaryCleanupDebt(
+      await _registerActiveTemporaryCleanupDebt(
         temporaryRecordPath,
         storageRootId: treeUri,
       );
@@ -6346,11 +6380,13 @@ final class PersistentDownloadArtifactStore
       if (handle == null) {
         throw StateError('SAF tree refused create for $temporaryPath');
       }
+      final crc = Crc32();
       var written = 0;
       try {
         await for (final chunk in entry.open(start: 0)) {
           if (chunk.isEmpty) continue;
           final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+          crc.add(bytes);
           await _withStorageWriteQuantum(() => io.write(handle, bytes));
           written += chunk.length;
         }
@@ -6374,8 +6410,60 @@ final class PersistentDownloadArtifactStore
             message: 'SAF partial artifact owner changed before commit',
           );
         }
-        await _withStorageWriteQuantum(
-          () => commitSafTemporary(io, temporaryPath, relativePath),
+        final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+        final record = CacheRec(
+          id: id,
+          state: CacheState.partial,
+          path: recordPath,
+          bytes: written,
+          checksum: crc.hex,
+          createdUs: previous?.createdUs ?? now,
+          touchedUs: now,
+          pinned: false,
+          storageRootId: treeUri,
+        );
+        StorageCleanupDebtRecord? previousCleanupDebt;
+        if (previous != null &&
+            previous.state == CacheState.partial &&
+            previous.path != recordPath &&
+            parseSafRecordPath(previous.path) == null) {
+          if (!await _cleanupLocatorIsAvailable(
+            previous.path,
+            previous.storageRootId,
+          )) {
+            throw const Failure(
+              code: ErrorCode.policy,
+              message:
+                  'previous exact partial root is unavailable for safe replacement',
+            );
+          }
+          previousCleanupDebt = await _snapshotObsoletePartialSourceCleanupDebt(
+            accessLocator: previous.path,
+            storageRootId: previous.storageRootId,
+          );
+        }
+        await _commitSafBodyReplacement<void>(
+          targetPath: relativePath,
+          temporaryPath: temporaryPath,
+          bodyBytes: written,
+          bodyChecksum: crc.hex,
+          verifyChecksum: false,
+          expectedCacheAuthority: record,
+          commitAuthority: () async {
+            try {
+              await _index.put(record);
+            } on Object {
+              if (previousCleanupDebt != null) {
+                await _forgetStorageCleanupDebt(
+                  previousCleanupDebt.accessLocator,
+                );
+              }
+              rethrow;
+            }
+            if (previousCleanupDebt != null) {
+              await _cleanupObsoleteSourceNow(previousCleanupDebt);
+            }
+          },
         );
       } finally {
         final temporaryExists = await _withStorageWriteQuantum(
@@ -6388,18 +6476,6 @@ final class PersistentDownloadArtifactStore
           await _forgetStorageCleanupDebt(temporaryRecordPath);
         }
       }
-      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
-      final record = CacheRec(
-        id: id,
-        state: CacheState.partial,
-        path: recordPath,
-        bytes: written,
-        checksum: '',
-        createdUs: previous?.createdUs ?? now,
-        touchedUs: now,
-        pinned: false,
-        storageRootId: treeUri,
-      );
       // Metadata is an optimization for validator-bound resume. A provider
       // failure here must not discard the newly committed media prefix.
       try {
@@ -6418,41 +6494,11 @@ final class PersistentDownloadArtifactStore
                 }),
               ),
             ),
+            replaceNonAuthoritative: true,
           ),
         );
       } on Object {
         // The indexed partial remains resumable without validators.
-      }
-      StorageCleanupDebtRecord? previousCleanupDebt;
-      if (previous != null &&
-          previous.state == CacheState.partial &&
-          previous.path != recordPath &&
-          parseSafRecordPath(previous.path) == null) {
-        if (!await _cleanupLocatorIsAvailable(
-          previous.path,
-          previous.storageRootId,
-        )) {
-          throw const Failure(
-            code: ErrorCode.policy,
-            message:
-                'previous exact partial root is unavailable for safe replacement',
-          );
-        }
-        previousCleanupDebt = await _snapshotObsoletePartialSourceCleanupDebt(
-          accessLocator: previous.path,
-          storageRootId: previous.storageRootId,
-        );
-      }
-      try {
-        await _index.put(record);
-      } on Object {
-        if (previousCleanupDebt != null) {
-          await _forgetStorageCleanupDebt(previousCleanupDebt.accessLocator);
-        }
-        rethrow;
-      }
-      if (previousCleanupDebt != null) {
-        await _cleanupObsoleteSourceNow(previousCleanupDebt);
       }
     });
   }

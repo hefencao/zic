@@ -1104,8 +1104,7 @@ class _SafTreeIoAdapter
     implements
         SafTreeIo,
         SafTreeRandomRead,
-        SafTreeReadPrewarmer,
-        SafTreeAtomicReplace {
+        SafTreeReadPrewarmer {
   _SafTreeIoAdapter(this._store);
 
   final SafStore _store;
@@ -1184,10 +1183,6 @@ class _SafTreeIoAdapter
   @override
   Future<bool> rename(String relativePath, String newRelativePath) =>
       _store.rename(relativePath, newRelativePath);
-
-  @override
-  Future<bool> replace(String relativePath, String newRelativePath) =>
-      _store.replace(relativePath, newRelativePath);
 
   @override
   Future<int?> length(int handle) =>

@@ -19,7 +19,6 @@ export 'src/artifact_bytes.dart'
         SafTreeReadPrewarmer,
         SafTreeRandomRead,
         SafTreeAccessFailure,
-        SafTreeAtomicReplace,
         SafTreeFile,
         SafWriteMode,
         copyFileIntoSaf,
