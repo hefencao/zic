@@ -1,22 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.6.0",
-  "last_updated": "2026-09-29T14:31:00+08:00",
+  "audit_version": "1.7.0",
+  "last_updated": "2026-09-29T17:39:42+08:00",
   "baseline_commit": "e4a1111d",
   "system": "zic-reader-media-runtime",
   "scope": "Reader navigation truth, external-static presentation ownership/state handoff, Pipeline presentation recovery, native decode/source-write worker lifecycle, GIF presentation lifecycle",
   "summary": {
     "total_issues": 25,
     "confirmed": 25,
-    "resolved": 21,
+    "resolved": 23,
     "deleted_candidates": 2,
     "full_validation_pending": false,
     "profile_device_validation_pending": false,
     "open_confirmed": 0,
-    "open_structural": 2
+    "open_structural": 0
   },
   "governance": {
-    "status": "completed_confirmed_defects_structural_followups_open",
+    "status": "completed_all_confirmed_items",
     "rule": "先以当前代码/失败回归/设备trace确认所有权边界，再修改；禁止新增第二套scheduler、presentation cache或navigation authority。",
     "preserve": [
       "NetLane仍是网络执行权威",
@@ -24,7 +24,7 @@
       "native decode前释放source read lock的现有边界不得回退",
       "7/3 Download membership与既有bounded decode/upload/presentation窗口不得因本审计扩大"
     ],
-    "current_focus": "RMR-019/020 P2与RMR-021 numeric-priority mirror已治理并验证；RMR-022/023仍为已确认但未复现当前浏览故障的presentation projection/cache-boundary结构债，后续必须先建立不可变grant/capability边界和行为回归，再删除UI镜像判断。"
+    "current_focus": "RMR-011..023 已全部治理；RMR-022 保持 opaque immutable grant 边界，RMR-023 保持唯一 raster cache owner + presentation adapter。最终全仓 toolchain gate 已通过；后续只在 fresh 行为/trace 证据下重新打开问题。"
   },
   "issues": [
     {
@@ -264,21 +264,23 @@
       "id": "RMR-022",
       "severity": "cleanup",
       "title": "external presentation grant只局部原子化，identity/requested/ready/ack凭据仍分散",
-      "status": "open",
+      "status": "resolved",
       "classification": "confirmed_structural_debt",
       "evidence": "PipelinePageOutputStream已有_setExternalPresentationState一次发布requested/ready，但_externalPresentationCacheIdentity仍由独立setter通知；PipelineReaderSession.pageOutput/_syncPageOutputs/rotate路径均先写identity再写state。LocalImagePlayer listener继续从两个bool推导available，并另外维护_externalPresentationAttemptIdentity、loadEpoch与recovery epoch。reportPresentationFrameReady(PageAsset)只带asset，接收端遍历当前decodeDemands寻找DecodeId。该分散状态具备瞬时对账复杂度，但本轮没有fresh trace证明其仍造成浏览故障。",
       "owner": "packages/pipeline_runtime presentation projection + local_media_ui presentation adapter",
-      "plan": "不要删除现有attempt stale-result guards。后续先定义不可变presentation grant projection，至少共同携带DecodeId/cacheIdentity/state/ack token，再把first-frame ack绑定到该grant；用行为回归证明identity rotation/same-generation regrant后再逐步删除UI镜像判断。"
+      "plan": "不要删除现有attempt stale-result guards。定义不可变presentation grant：内部私有绑定exact DecodeId，对Presentation仅暴露cacheIdentity/state/ack token，再把first-frame ack绑定到该grant；用行为回归证明identity rotation/same-generation regrant后再删除UI镜像判断，且保持ADR 0061的opaque output边界。",
+      "remediation_applied": "PipelinePageOutputStream 现只保存一个不可变 PipelineExternalPresentationGrant，原先 requested/ready/cacheIdentity 兼容 getter 全部由 grant 派生；grant内部私有绑定exact DecodeId，对Presentation不提供DecodeId getter。每次 available grant 携带 acknowledgement token，requested->ready 保留 token，而 ordinary same-cache-identity revoke/regrant 取得新 token。mounted first-frame 将实际消费的 grant 交回 output，output 先验证 token 仍 current，pipeline_runtime再读取grant._identity；删除按 PageAsset 遍历当前 decodeDemands 反查 DecodeId 的路径。LocalImagePlayer 的 attempt/error/recovery/first-frame/cacheIdentity 消费统一绑定捕获的 _pageOutputGrant，不再混用 current getter。stale acknowledgement 确定性回归证明旧 grant 不能满足 replacement regrant；dev.77 guard继续禁止Presentation公开DecodeId。"
     },
     {
       "id": "RMR-023",
       "severity": "cleanup",
       "title": "LocalImagePlayer仍直接理解全局raster cache与resident provider实现类型",
-      "status": "open",
+      "status": "resolved",
       "classification": "confirmed_structural_debt",
       "evidence": "local_image_player.dart:423直接访问pipelinePresentationRasterCache.residentProviderForIdentity，:801读取global cache diagnostics；MediaRasterImage在:1189通过image is _ResidentPresentationImageProvider决定跳过resize/二次providerFor，并在:1227再次直接调用global cache。这个分支曾为修复nested managed key所需，但现在把cache接管规则泄漏到展示组件。未发现它本身在当前Profile trace制造新故障。",
       "owner": "packages/local_media_ui presentation adapter/composition boundary",
-      "plan": "在RMR-022的grant/projection边界稳定后，让presentation adapter/注入的cache capability返回最终prepared provider与必要diagnostics，UI只消费展示资源，不按私有provider类型决定cache/resize ownership。不得因此创建第二raster cache或Reader-local residency owner。"
+      "plan": "在RMR-022的grant/projection边界稳定后，让presentation adapter/注入的cache capability返回最终prepared provider与必要diagnostics，UI只消费展示资源，不按私有provider类型决定cache/resize ownership。不得因此创建第二raster cache或Reader-local residency owner。",
+      "remediation_applied": "PipelinePresentationRasterCache 继续是唯一 process raster residency/LRU/keepAlive owner；local_media_ui 在同一 owner 文件内增加 presentation-facing _PipelinePresentationRasterAdapter，统一 resident lookup、diagnostics 与 providerForViewport。LocalImagePlayer 和 detached prewarmer 只消费该 capability；private resident-provider 类型判断被收进 adapter，exact resident 直接 handoff，普通 provider 才执行与 detached 路径一致的 resize + managed-cache wrapping。未增加第二 cache、Reader-local residency owner 或 scheduler；dev.114 guard 禁止 mounted UI/prewarmer 再直接引用 process-global cache/private provider，并禁止 LocalImagePlayer 回退到 requested/ready/cacheIdentity 镜像判断。"
     }
   ],
   "validation": {
@@ -303,7 +305,9 @@
       "RMR-019 deterministic 7MiB+ SAF regression: hot restore returns while the second SAF body pass is blocked; takeover consumes exactly 1x old prefix, background delete-time proof is the second pass, and a later fresh Direct adoption adds 0 SAF body reads",
       "RMR-020/021 focused ownership validation: native worker exit/degraded-capacity guard, native decode control guard, dev.128 priority-migration guard and bridge native_contract 3/3 pass; surviving-worker replacement branch contains no pending clear/completeError and decode rank is selection-time TaskControl state",
       "current-source Profile build/install succeeded with release native media; authoritative Home 1.283s. zic-debug-trace-2026-09-29T06-32-20.jsonl enters Reader, reaches presentation-widget-first-frame, has taskFailed=0, and reuses multiple multi-MiB Direct physical partials through adopted-physical. No canonical SAF physical partial remained on-device to re-exercise SAF migration, so SAF read-count/cancellation is covered by deterministic fake-SAF regression rather than misreported as device evidence",
-      "./tool/check.sh --require-toolchains: exit 0 in 243.121s on the final refined governance tree; repository/documentation/ownership gates, Dart/Flutter suites, Android build gates and Rust media_core suite passed"
+      "./tool/check.sh --require-toolchains: exit 0 in 243.121s on the final refined governance tree; repository/documentation/ownership gates, Dart/Flutter suites, Android build gates and Rust media_core suite passed",
+      "RMR-022/023 focused closure: packages/pipeline_runtime media_runtime_ownership 33/33 passed; packages/local_media_ui external-presentation/raster/prewarmer suites 16/16 passed; dev.77/dev.114 ownership guards pass, preserving opaque DecodeId while forbidding LocalImagePlayer grant mirrors and mounted/detached direct cache/private-provider access",
+      "./tool/check.sh --require-toolchains: exit 0 in 172.550s on RMR-022/023 closure tree; all ownership/repository/documentation guards, Dart/Flutter suites, Android three-ABI debug build and Rust media_core 22/22 passed"
     ],
     "pending": []
   },
@@ -432,13 +436,10 @@
       "RMR-019": "resolved P2 defect",
       "RMR-020": "resolved P2 defect",
       "RMR-021": "resolved structural debt",
-      "RMR-022": "open structural debt; no fresh browser failure",
-      "RMR-023": "open structural debt; no fresh browser failure"
+      "RMR-022": "resolved structural debt",
+      "RMR-023": "resolved structural debt"
     },
-    "governance_order": [
-      "RMR-022",
-      "RMR-023"
-    ],
+    "governance_order": [],
     "constraints": [
       "recorded before production edits",
       "do not broaden 7/3 or 2/1 windows",

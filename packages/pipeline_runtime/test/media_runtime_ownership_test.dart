@@ -1835,9 +1835,99 @@ void main() {
           'a detached optimization miss must hand the existing exact grant to the mounted consumer',
     );
 
-    session.reportPresentationFrameReady(page);
+    final grant = output.externalPresentationGrant;
+    expect(grant, isNotNull);
+    output.reportExternalPresentationFrameReady(grant!);
     expect(output.externalPresentationRequested, isFalse);
     expect(output.externalPresentationReady, isTrue);
+    },
+  );
+
+  test(
+    'stale first-frame acknowledgement cannot satisfy same-identity regrant',
+    () async {
+      final uri = Uri.parse('asset:///stale-presentation-ack-page');
+      final authority = _FakePresentationCacheAuthority();
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: _Factory(_Runtime()),
+        pageDownloadLane: NetLane(maxActive: 5),
+        presentationCacheAuthority: authority,
+        externalPresentationPrewarmer: (_) async {
+          throw UnsupportedError('force mounted presentation');
+        },
+        loaderSources: <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'stale-presentation-ack-r1',
+            loadBytes: () async => Uint8List.fromList(const <int>[
+              0xff,
+              0xd8,
+              0xff,
+              0xe0,
+              0x00,
+              0x10,
+              0x4a,
+              0x46,
+              0x49,
+              0x46,
+              0x00,
+              0x01,
+            ]),
+          ),
+        },
+      ).create(
+        chapter: _chapter(
+          uri: uri,
+          contentKindHint: ContentKindHint.unknown,
+        ),
+        sessionId: 'stale-presentation-ack-test',
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+
+      final page = session.chapter.pages.single;
+      final output = session.pageOutput(page);
+      void listener(PipelinePageOutputSnapshot _) {}
+      output.addListener(listener);
+      addTearDown(() => output.removeListener(listener));
+      session.accept(_currentObservation(session.chapter));
+
+      final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!output.externalPresentationRequested) {
+        if (DateTime.now().isAfter(firstDeadline)) {
+          fail('initial mounted presentation grant was not requested');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      final first = output.externalPresentationGrant!;
+      expect(first.requested, isTrue);
+
+      authority.invalidatePresentationIdentity(first.cacheIdentity);
+
+      final regrantDeadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!(output.externalPresentationGrant?.requested ?? false) ||
+          identical(
+            output.externalPresentationGrant?.acknowledgementToken,
+            first.acknowledgementToken,
+          )) {
+        if (DateTime.now().isAfter(regrantDeadline)) {
+          fail('same-identity presentation was not regranted');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      final regrant = output.externalPresentationGrant!;
+      expect(identical(regrant.cacheIdentity, first.cacheIdentity), isTrue);
+      expect(
+        identical(regrant.acknowledgementToken, first.acknowledgementToken),
+        isFalse,
+      );
+
+      output.reportExternalPresentationFrameReady(first);
+      expect(output.externalPresentationRequested, isTrue);
+      expect(output.externalPresentationReady, isFalse);
+
+      output.reportExternalPresentationFrameReady(regrant);
+      expect(output.externalPresentationRequested, isFalse);
+      expect(output.externalPresentationReady, isTrue);
     },
   );
 

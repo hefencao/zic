@@ -39,6 +39,37 @@ typedef PipelinePageOutputListener = void Function(
   PipelinePageOutputSnapshot snapshot,
 );
 
+enum PipelineExternalPresentationGrantState { unavailable, requested, ready }
+
+/// Immutable projection of one exact external-static presentation attempt.
+///
+/// The grant is internally bound to one exact Pipeline decode generation while
+/// exposing only presentation-safe projection state. [cacheIdentity] names the
+/// composition raster generation. An unavailable projection retains those
+/// immutable bindings but has no acknowledgement token. Each later grant gets a
+/// fresh token, including ordinary same-cache-identity regrant, so a late
+/// first-frame callback cannot acknowledge a replacement grant. Requested ->
+/// ready keeps the same acknowledgement token.
+final class PipelineExternalPresentationGrant {
+  const PipelineExternalPresentationGrant._({
+    required DecodeId identity,
+    required this.cacheIdentity,
+    required this.state,
+    required this.acknowledgementToken,
+  }) : _identity = identity;
+
+  final DecodeId _identity;
+  final Object cacheIdentity;
+  final PipelineExternalPresentationGrantState state;
+  final Object? acknowledgementToken;
+
+  bool get available =>
+      state != PipelineExternalPresentationGrantState.unavailable;
+  bool get requested =>
+      state == PipelineExternalPresentationGrantState.requested;
+  bool get ready => state == PipelineExternalPresentationGrantState.ready;
+}
+
 /// Read-only projection of one Pipeline-owned page output.
 ///
 /// Mutation methods are library-private. Presentation cannot claim, present,
@@ -53,6 +84,8 @@ final class PipelinePageOutputStream {
     void Function()? onPlaybackWakeChanged,
     void Function(DecodeId? identity, bool available)?
         onExternalPresentationConsumerChanged,
+    void Function(PipelineExternalPresentationGrant grant)?
+        onExternalPresentationFrameReady,
   })  : _uploads = uploads,
         _decodes = decodes,
         _outputs = outputs,
@@ -60,6 +93,7 @@ final class PipelinePageOutputStream {
         _onPlaybackWakeChanged = onPlaybackWakeChanged,
         _onExternalPresentationConsumerChanged =
             onExternalPresentationConsumerChanged,
+        _onExternalPresentationFrameReady = onExternalPresentationFrameReady,
         _snapshot = PipelinePageOutputSnapshot(
           state: PipelinePageOutputState.idle,
           surface: null,
@@ -78,6 +112,8 @@ final class PipelinePageOutputStream {
   final void Function()? _onPlaybackWakeChanged;
   final void Function(DecodeId? identity, bool available)?
       _onExternalPresentationConsumerChanged;
+  final void Function(PipelineExternalPresentationGrant grant)?
+      _onExternalPresentationFrameReady;
   final Set<PipelinePageOutputListener> _listeners =
       <PipelinePageOutputListener>{};
   final Set<PresentClaim> _deferredClaims = <PresentClaim>{};
@@ -85,9 +121,7 @@ final class PipelinePageOutputStream {
   bool _presentationAfterFrameScheduled = false;
   bool _detachedPrewarmEnabled = false;
   bool _detachedPrewarmActive = false;
-  bool _externalPresentationRequested = false;
-  bool _externalPresentationReady = false;
-  Object? _externalPresentationCacheIdentity;
+  PipelineExternalPresentationGrant? _externalPresentationGrant;
 
   PipelinePageOutputSnapshot _snapshot;
   DecodeId? _identity;
@@ -100,46 +134,89 @@ final class PipelinePageOutputStream {
   bool _disposed = false;
 
   PipelinePageOutputSnapshot get snapshot => _snapshot;
-  bool get externalPresentationRequested => _externalPresentationRequested;
-  bool get externalPresentationReady => _externalPresentationReady;
+  PipelineExternalPresentationGrant? get externalPresentationGrant =>
+      _externalPresentationGrant;
+  bool get externalPresentationRequested =>
+      _externalPresentationGrant?.requested ?? false;
+  bool get externalPresentationReady =>
+      _externalPresentationGrant?.ready ?? false;
   Object? get externalPresentationCacheIdentity =>
-      _externalPresentationCacheIdentity;
+      _externalPresentationGrant?.cacheIdentity;
 
-  /// Publishes the complete external-static presentation state atomically.
-  ///
-  /// [requested] is the current mounted presentation permission projected
-  /// from the staged decode waterline. [ready] is the scheduler satisfaction
-  /// fact that the composition cache has completed the first static raster.
-  /// Neither flag is byte-integrity proof or raster-residency authority.
-  ///
-  /// These values must never be published as two independent transitions:
-  /// `requested -> ready` is one state handoff. A transient `(false, false)`
-  /// between them looks exactly like a real revocation to the presentation
-  /// adapter and used to tear down/recreate a healthy raster at first frame.
-  void _setExternalPresentationState({
+  /// Publishes one complete external-static presentation grant atomically.
+  void _setExternalPresentationGrant({
+    required DecodeId? identity,
+    required Object? cacheIdentity,
     required bool requested,
     required bool ready,
   }) {
     _requireOpen();
     assert(!(requested && ready));
-    if (_externalPresentationRequested == requested &&
-        _externalPresentationReady == ready) {
+    final prior = _externalPresentationGrant;
+    PipelineExternalPresentationGrant? next;
+    if (identity != null || cacheIdentity != null) {
+      if (identity == null || cacheIdentity == null) {
+        throw StateError('external presentation projection is incomplete');
+      }
+      final state = ready
+          ? PipelineExternalPresentationGrantState.ready
+          : requested
+              ? PipelineExternalPresentationGrantState.requested
+              : PipelineExternalPresentationGrantState.unavailable;
+      final sameAttempt = state !=
+              PipelineExternalPresentationGrantState.unavailable &&
+          prior != null &&
+          prior.available &&
+          prior._identity == identity &&
+          identical(prior.cacheIdentity, cacheIdentity) &&
+          prior.acknowledgementToken != null;
+      next = PipelineExternalPresentationGrant._(
+        identity: identity,
+        cacheIdentity: cacheIdentity,
+        state: state,
+        acknowledgementToken: state ==
+                PipelineExternalPresentationGrantState.unavailable
+            ? null
+            : sameAttempt
+                ? prior.acknowledgementToken
+                : Object(),
+      );
+    }
+    if (prior == null && next == null) return;
+    if (prior != null &&
+        next != null &&
+        prior._identity == next._identity &&
+        identical(prior.cacheIdentity, next.cacheIdentity) &&
+        prior.state == next.state &&
+        identical(
+          prior.acknowledgementToken,
+          next.acknowledgementToken,
+        )) {
       return;
     }
-    _externalPresentationRequested = requested;
-    _externalPresentationReady = ready;
+    _externalPresentationGrant = next;
     for (final listener in _listeners.toList(growable: false)) {
       listener(_snapshot);
     }
   }
 
-  void _setExternalPresentationCacheIdentity(Object? identity) {
-    _requireOpen();
-    if (identical(_externalPresentationCacheIdentity, identity)) return;
-    _externalPresentationCacheIdentity = identity;
-    for (final listener in _listeners.toList(growable: false)) {
-      listener(_snapshot);
+  /// Acknowledges an actually presented mounted static frame for [grant].
+  void reportExternalPresentationFrameReady(
+    PipelineExternalPresentationGrant grant,
+  ) {
+    if (_disposed) return;
+    final current = _externalPresentationGrant;
+    if (current == null ||
+        !current.available ||
+        current.acknowledgementToken == null ||
+        grant.acknowledgementToken == null ||
+        !identical(
+          current.acknowledgementToken,
+          grant.acknowledgementToken,
+        )) {
+      return;
     }
+    _onExternalPresentationFrameReady?.call(grant);
   }
 
   // Detached output streams are retained only while they still own a
@@ -227,9 +304,7 @@ final class PipelinePageOutputStream {
     if (hasConsumer && priorIdentity != null) {
       _onExternalPresentationConsumerChanged?.call(priorIdentity, false);
     }
-    _externalPresentationRequested = false;
-    _externalPresentationReady = false;
-    _externalPresentationCacheIdentity = null;
+    _externalPresentationGrant = null;
     _identity = identity;
     if (hasConsumer && identity != null) {
       _onExternalPresentationConsumerChanged?.call(identity, true);
@@ -649,9 +724,7 @@ final class PipelinePageOutputStream {
     _presentationAfterFrameScheduled = false;
     _detachedPrewarmActive = false;
     _detachedPrewarmEnabled = false;
-    _externalPresentationRequested = false;
-    _externalPresentationReady = false;
-    _externalPresentationCacheIdentity = null;
+    _externalPresentationGrant = null;
     _surfaceIdentity = null;
     _releaseClaim();
     for (final claim in _deferredClaims.toList(growable: false)) {

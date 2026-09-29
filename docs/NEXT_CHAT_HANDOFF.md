@@ -50,7 +50,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..021已治理；RMR-022/023是未复现浏览故障的presentation projection/cache-boundary结构债，禁止无证据删attempt guard或制造第二cache owner。
+  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..023均已治理；022收口immutable grant/ack，023让mounted/detached共用唯一raster cache adapter。继续禁止删attempt stale-result guard、制造第二cache owner或把cache/retry/scheduler权威上移Reader。
   canonical SAF physical partial先由persistent store迁到Direct staging再borrow hot session；copy同步累计obsolete-prefix CRC，authority提交后cleanup debt异步复核/删除旧SAF，hot takeover不做pre-scan或等待cleanup；provider忽略Range后的full-body catchup仍是独立transport能力。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。

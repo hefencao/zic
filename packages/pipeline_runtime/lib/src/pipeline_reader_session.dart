@@ -1634,6 +1634,22 @@ final class PipelineReaderSession {
     );
   }
 
+  void _publishExternalPresentationGrant(
+    PipelinePageOutputStream output,
+    DecodeId? identity, {
+    required bool requested,
+    required bool ready,
+  }) {
+    output._setExternalPresentationGrant(
+      identity: identity,
+      cacheIdentity: identity == null
+          ? null
+          : _externalPresentationCacheIdentityFor(identity),
+      requested: requested,
+      ready: ready,
+    );
+  }
+
   PipelinePageOutputStream pageOutput(PageAsset asset) {
     _requireOpen();
     final id = readerPageDownloadId(chapter, asset);
@@ -1645,14 +1661,11 @@ final class PipelineReaderSession {
           ? _staticPresentationContinuityIdentity(id)
           : null,
     );
-    output._setExternalPresentationCacheIdentity(
-      outputIdentity == null
-          ? null
-          : _externalPresentationCacheIdentityFor(outputIdentity),
-    );
     final externalReady = outputIdentity != null &&
         _externalPresentationReadyForOutput(outputIdentity);
-    output._setExternalPresentationState(
+    _publishExternalPresentationGrant(
+      output,
+      outputIdentity,
       requested: !externalReady &&
           outputIdentity != null &&
           _externalPresentationRequests.contains(outputIdentity) &&
@@ -1667,17 +1680,23 @@ final class PipelineReaderSession {
   /// already owned by UploadRegistry/PresentClaim. A detached managed-raster
   /// warm may already have satisfied the staged watermark; the visible frame still
   /// gets traced, but it does not manufacture a second coordinator completion.
-  void reportPresentationFrameReady(PageAsset asset) {
+  void _handleExternalPresentationFrameReady(
+    PipelineExternalPresentationGrant grant,
+  ) {
     if (_disposed) return;
-    final download = readerPageDownloadId(chapter, asset);
-    DecodeId? identity;
-    for (final candidate in _coordinator.decodeDemands.keys) {
-      if (candidate.download == download) {
-        identity = candidate;
-        break;
-      }
+    final identity = grant._identity;
+    final download = identity.download;
+    final output = _pageOutputs[download.key];
+    final currentGrant = output?.externalPresentationGrant;
+    if (output == null ||
+        output._identity != identity ||
+        currentGrant == null ||
+        !identical(
+          currentGrant.acknowledgementToken,
+          grant.acknowledgementToken,
+        )) {
+      return;
     }
-    if (identity == null) return;
     final firstVisible = _externalPresentationVisibleFrames.add(identity);
     if (firstVisible) {
       _syncTransferProgressPresentationSatisfaction(download);
@@ -1690,8 +1709,12 @@ final class PipelineReaderSession {
       _externalPresentationRequests.remove(identity);
       _externalPresentationReady.add(identity);
       _externalPresentationPrewarmTokens.remove(identity)?.cancel();
-      final output = _pageOutputs[download.key];
-      output?._setExternalPresentationState(requested: false, ready: true);
+      _publishExternalPresentationGrant(
+        output,
+        identity,
+        requested: false,
+        ready: true,
+      );
       if (_coordinator.completeExternalPresentation(sessionId, identity)) {
         _recordExternalPresentationFirstFrame(
           identity,
@@ -1732,6 +1755,7 @@ final class PipelineReaderSession {
       onPlaybackWakeChanged: _ensurePlaybackTicker,
       onExternalPresentationConsumerChanged:
           _handleExternalPresentationConsumerChanged,
+      onExternalPresentationFrameReady: _handleExternalPresentationFrameReady,
     );
     if (detachedPrewarm) {
       output._enableDetachedPrewarm();
@@ -3024,10 +3048,12 @@ final class PipelineReaderSession {
 
     final output = _pageOutputs[invalidated.download.key];
     if (output != null && output._identity == invalidated) {
-      output._setExternalPresentationCacheIdentity(
-        _externalPresentationCacheIdentityFor(invalidated),
+      _publishExternalPresentationGrant(
+        output,
+        invalidated,
+        requested: false,
+        ready: false,
       );
-      output._setExternalPresentationState(requested: false, ready: false);
     }
     if (_lastControlCurrentDownload == invalidated.download) {
       _syncTransferProgressPresentationSatisfaction(invalidated.download);
@@ -3067,10 +3093,9 @@ final class PipelineReaderSession {
     final output = _pageOutputs[download.key];
     final outputIdentity = output?._identity;
     if (output != null && outputIdentity != null) {
-      output._setExternalPresentationCacheIdentity(
-        _externalPresentationCacheIdentityFor(outputIdentity),
-      );
-      output._setExternalPresentationState(
+      _publishExternalPresentationGrant(
+        output,
+        outputIdentity,
         requested: output.externalPresentationRequested,
         ready: false,
       );
@@ -3126,10 +3151,14 @@ final class PipelineReaderSession {
         _externalPresentationPrewarmTokens.remove(id)?.cancel();
       }
       final ready = _externalPresentationReadyForOutput(id);
-      output?._setExternalPresentationState(
-        requested: !ready && pending && !preferDetached,
-        ready: ready,
-      );
+      if (output != null) {
+        _publishExternalPresentationGrant(
+          output,
+          id,
+          requested: !ready && pending && !preferDetached,
+          ready: ready,
+        );
+      }
       if (preferDetached) {
         _startExternalPresentationPrewarm(id, revision);
       }
@@ -3148,7 +3177,14 @@ final class PipelineReaderSession {
     }
     _externalPresentationRequests.remove(id);
     final output = _pageOutputs[id.download.key];
-    output?._setExternalPresentationState(requested: false, ready: false);
+    if (output != null) {
+      _publishExternalPresentationGrant(
+        output,
+        id,
+        requested: false,
+        ready: false,
+      );
+    }
     _coordinator.updateExternalPresentationAvailability(
       sessionId,
       id,
@@ -3170,10 +3206,14 @@ final class PipelineReaderSession {
       final mountedOwnsRequest = mounted && !preferDetached;
       final output = _pageOutputs[id.download.key];
       final ready = _externalPresentationReadyForOutput(id);
-      output?._setExternalPresentationState(
-        requested: !ready && mountedOwnsRequest,
-        ready: ready,
-      );
+      if (output != null) {
+        _publishExternalPresentationGrant(
+          output,
+          id,
+          requested: !ready && mountedOwnsRequest,
+          ready: ready,
+        );
+      }
       trace.record(
         traceEvent(
           clock: clock,
@@ -3256,10 +3296,14 @@ final class PipelineReaderSession {
         final completed =
             _coordinator.completeExternalPresentation(sessionId, id);
         final ready = _externalPresentationReadyForOutput(id);
-        output?._setExternalPresentationState(
-          requested: false,
-          ready: ready,
-        );
+        if (output != null) {
+          _publishExternalPresentationGrant(
+            output,
+            id,
+            requested: false,
+            ready: ready,
+          );
+        }
         if (completed) {
           _recordExternalPresentationFirstFrame(
             id,
@@ -3280,12 +3324,16 @@ final class PipelineReaderSession {
           // path finish the same coordinator request.
           final output = _pageOutputs[id.download.key];
           final ready = _externalPresentationReadyForOutput(id);
-          output?._setExternalPresentationState(
-            requested: !ready &&
-                _externalPresentationRequests.contains(id) &&
-                _coordinator.externalPresentationPendingFor(id),
-            ready: ready,
-          );
+          if (output != null) {
+            _publishExternalPresentationGrant(
+              output,
+              id,
+              requested: !ready &&
+                  _externalPresentationRequests.contains(id) &&
+                  _coordinator.externalPresentationPendingFor(id),
+              ready: ready,
+            );
+          }
           _coordinator.updateExternalPresentationAvailability(
             sessionId,
             id,
@@ -3293,10 +3341,15 @@ final class PipelineReaderSession {
           );
         } else {
           _externalPresentationRequests.remove(id);
-          _pageOutputs[id.download.key]?._setExternalPresentationState(
-            requested: false,
-            ready: false,
-          );
+          final output = _pageOutputs[id.download.key];
+          if (output != null) {
+            _publishExternalPresentationGrant(
+              output,
+              id,
+              requested: false,
+              ready: false,
+            );
+          }
           _coordinator.updateExternalPresentationAvailability(
             sessionId,
             id,
@@ -3745,11 +3798,6 @@ final class PipelineReaderSession {
             ? _staticPresentationContinuityIdentity(output.download)
             : null,
       );
-      output._setExternalPresentationCacheIdentity(
-        outputIdentity == null
-            ? null
-            : _externalPresentationCacheIdentityFor(outputIdentity),
-      );
       final externalPending =
           outputIdentity != null &&
           _externalPresentationRequests.contains(outputIdentity) &&
@@ -3766,7 +3814,9 @@ final class PipelineReaderSession {
       }
       final ready = outputIdentity != null &&
           _externalPresentationReadyForOutput(outputIdentity);
-      output._setExternalPresentationState(
+      _publishExternalPresentationGrant(
+        output,
+        outputIdentity,
         requested: !ready &&
             externalPending &&
             output._listeners.isNotEmpty &&

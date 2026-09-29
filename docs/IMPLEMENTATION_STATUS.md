@@ -166,7 +166,7 @@ App build：0.31.0+328
   hot takeover/取消不再等待第三遍SAF扫描。稳定7MiB+回归证明takeover返回时SAF正文仅读1遍，delete-time proof为后台第2遍，后续Direct adoption不再读SAF。
   worker replacement失败也已收窄：只要仍有live worker，decode/source-write pending均保留并继续degraded执行；decode单live worker仍保留current-only最后slot。live worker为0且补位失败才终止无法执行的pending。
   native decode numeric priority不再镜像到pending或订阅`priorityChanges`，selection时直接读取同一TaskControl实时priority；queued cancellation与显式current promotion不变（ADR0338/0339）。
-  RMR-022/023仍作为结构债保留：presentation grant identity/state/ack尚未形成单一不可变snapshot，LocalImagePlayer仍直接理解global raster cache/private resident provider。当前无fresh浏览故障证据，本轮不以行为补丁强行删除attempt guard或另造cache abstraction。
+  RMR-022/023已闭合：opaque grant内部绑定DecodeId、UI只见cache/state/ack；唯一PipelinePresentationRasterCache未变，mounted/detached共用owner adapter。focused 33/33+16/16、dev.77/80/114及最终`--require-toolchains` 172.55s均通过，无新增Reader owner。
   current-source Profile使用release native重新构建/安装，authoritative Home 1.283s；`zic-debug-trace-2026-09-29T06-32-20.jsonl`进入Reader并达到`presentation-widget-first-frame`，`taskFailed=0`，多个multi-MiB Direct physical partial正常`adopted-physical`。
   设备当前已无可复现canonical SAF physical partial，因此SAF读取次数/取消边界只按确定性fake-SAF回归记账，不冒充真机证据。
   本轮最终`./tool/check.sh --require-toolchains` exit 0（243.121s）；repository/docs/ownership gates、Dart/Flutter suites、Android build gates与Rust media_core suite通过。

@@ -13,6 +13,11 @@ def require(text: str, token: str, owner: str) -> None:
     if token not in text:
         raise SystemExit(f"{owner} is missing dev.114 contract: {token}")
 
+
+def forbid(text: str, token: str, owner: str) -> None:
+    if token in text:
+        raise SystemExit(f"{owner} violates dev.114 contract: {token}")
+
 reader = read("packages/reader/lib/src/reader_view.dart")
 geometry = read("packages/reader/lib/src/vertical_reader_geometry.dart")
 window = read("packages/pipeline/lib/src/role_window.dart")
@@ -22,6 +27,7 @@ refill_test = read("packages/sessions/test/decode_refill_policy_test.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 output = read("packages/pipeline_runtime/lib/src/pipeline_page_output.dart")
 player = read("packages/local_media_ui/lib/src/local_image_player.dart")
+prewarmer = read("packages/local_media_ui/lib/src/pipeline_external_static_prewarmer.dart")
 memory = read("apps/app/lib/presentation_memory_policy.dart")
 app_runtime = read("apps/app/lib/app_runtime.dart")
 cache_maintenance = read(
@@ -76,20 +82,41 @@ for token in (
 ):
     require(coordinator, token, "external fallback presentation owner")
 for token in (
+    "PipelineExternalPresentationGrantState",
+    "PipelineExternalPresentationGrant",
+    "acknowledgementToken",
+    "reportExternalPresentationFrameReady",
     "externalPresentationRequested",
     "externalPresentationReady",
 ):
     require(output, token, "Pipeline external presentation projection")
 for token in (
     "_maybeStartExternalPresentationLoad(output)",
-    "output.externalPresentationRequested",
-    "output.externalPresentationReady",
-    "output.externalPresentationCacheIdentity",
-    "_externalPresentationAttemptIdentity",
+    "output.externalPresentationGrant",
+    "_externalPresentationAttemptToken",
     "_retireExternalPresentationBinding()",
-    "identical(",
+    "reportExternalPresentationFrameReady(grant)",
+    "_pipelinePresentationRasterAdapter",
 ):
     require(player, token, "LocalImagePlayer revocable external presentation gate")
+for token in (
+    "pipelinePresentationRasterCache",
+    "_ResidentPresentationImageProvider",
+    "externalPresentationRequested",
+    "externalPresentationReady",
+    "externalPresentationCacheIdentity",
+):
+    forbid(player, token, "LocalImagePlayer grant/cache implementation boundary")
+for token in (
+    "pipelinePresentationRasterCache",
+    "_ResidentPresentationImageProvider",
+):
+    forbid(prewarmer, token, "detached prewarmer cache implementation boundary")
+for token in (
+    "reportPresentationFrameReady(PageAsset asset)",
+    "for (final candidate in _coordinator.decodeDemands.keys)",
+):
+    forbid(runtime, token, "grant-scoped external presentation acknowledgement")
 generation_test = read(
     "packages/local_media_ui/test/external_presentation_generation_test.dart"
 )
@@ -102,6 +129,11 @@ require(
     generation_test,
     "same generation regrants after eviction",
     "same-generation residency regrant regression",
+)
+require(
+    read("packages/pipeline_runtime/test/media_runtime_ownership_test.dart"),
+    "stale first-frame acknowledgement cannot satisfy same-identity regrant",
+    "grant-token stale acknowledgement regression",
 )
 for token in (
     "pipelinePresentationRasterMaximumBytes",
@@ -128,6 +160,8 @@ for token in (
     "PipelinePresentationCacheClaim.speculative",
     "_syncGlobalImageCacheBudget()",
     "PresentationRasterCacheMaintenance",
+    "_PipelinePresentationRasterAdapter",
+    "providerForViewport",
 ):
     require(presentation_cache, token, "unified presentation raster cache owner")
 for owner, text in (

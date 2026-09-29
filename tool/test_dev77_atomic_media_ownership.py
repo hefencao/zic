@@ -62,7 +62,13 @@ for token in ('final EncodedSource', 'EncodedSource? get source', 'source: _sess
     forbid(stream, token, 'mutable encoded source projection')
 for token in ('textureId', 'handleAddress', 'Pointer<'):
     forbid(capability, token, 'public platform handle')
-for token in ('final DecodeId? identity', 'required this.identity'):
+for token in (
+    'final DecodeId identity;',
+    'final DecodeId? identity',
+    'DecodeId get identity',
+    'DecodeId? get identity',
+    'required this.identity',
+):
     forbid(output, token, 'Presentation decode identity leak')
 
 for token in ('NativeSourceFactory()', 'NativeCursorFactory()', 'AndroidTexturePresenter', '_AndroidTextureUploader', '_FlutterImageUploader'):

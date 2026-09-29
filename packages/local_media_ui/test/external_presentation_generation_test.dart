@@ -69,8 +69,6 @@ void main() {
                 loads++;
                 return Uint8List.fromList(bytes);
               },
-              onFirstFrame: () =>
-                  session.reportPresentationFrameReady(asset),
               pageStream: stream,
               pageOutput: output,
             ),
@@ -203,8 +201,6 @@ void main() {
                 byteLoads++;
                 return Uint8List.fromList(bytes);
               },
-              onFirstFrame: () =>
-                  session.reportPresentationFrameReady(asset),
               pageStream: stream,
               pageOutput: output,
             ),
@@ -342,8 +338,6 @@ void main() {
                 loads++;
                 return Uint8List.fromList(bytes);
               },
-              onFirstFrame: () =>
-                  session.reportPresentationFrameReady(asset),
               pageStream: stream,
               pageOutput: output,
             ),
@@ -489,7 +483,6 @@ void main() {
                 rejectedAuthority = rejected;
                 return false;
               },
-              onFirstFrame: () => session.reportPresentationFrameReady(asset),
               pageStream: stream,
               pageOutput: output,
             ),
@@ -583,7 +576,6 @@ void main() {
                 recoveries++;
                 return recovery.future;
               },
-              onFirstFrame: () => session.reportPresentationFrameReady(asset),
               pageStream: stream,
               pageOutput: output,
             ),

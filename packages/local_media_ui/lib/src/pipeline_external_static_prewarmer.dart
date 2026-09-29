@@ -65,16 +65,13 @@ Future<void> prewarmPipelineExternalStaticPresentation(
         'external static prewarm requires intrinsic dimensions',
       );
     }
-    provider = _mediaRasterProviderForPresentation(
+    provider = _pipelinePresentationRasterAdapter.providerForViewport(
       image: provider,
       sourceWidth: sourceWidth,
       sourceHeight: sourceHeight,
       maxPhysicalWidth: request.maxPhysicalWidth,
       maxPhysicalHeight: request.maxPhysicalHeight,
       fit: request.fit,
-    );
-    provider = pipelinePresentationRasterCache.providerFor(
-      provider: provider,
       presentationIdentity: request.cacheIdentity,
     );
 

@@ -803,10 +803,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - Reader presentation 对实际取得的页面正文发生文件头、decode 或 presentation 语义拒绝时 MUST 把失败报告回 Pipeline，而不是只在 UI 显示错误；
   `ContentKind.fallback` 或“不是 WebP/GIF”本身 MUST NOT 被当作 artifact 损坏证据。
   `PipelinePresentationRasterCache` 的 ordinary residency eviction / demand loss MUST NOT 旋转 presentation identity；
-  Pipeline 只撤销该 identity 的 external-presentation request/ready satisfaction，mounted adapter MUST 释放本地 resident binding/attempt，
-  并允许 later same-identity staged grant 重新 attach/decode。detached resident provider 已是 exact managed raster，mounted 路径 MUST NOT 再次 resize 或 `providerFor`。
-  external presentation 的 `requested/ready` MUST作为一个完整状态原子发布；首帧完成 MUST直接从 requested 切到 ready，不得通过两个同步setter暴露瞬时双false revoke。
-  mounted adapter 的 first-frame/error/recovery/final-state MUST绑定当前不可变 presentation attempt（local epoch/token + opaque identity + exact read authority）；same-identity later grant取得新attempt后 MUST重新拥有一次 first-frame acknowledgement，旧attempt任意异步结果在失去current身份后 MUST静默退出。
+  Pipeline 只撤销该 identity 的 external-presentation satisfaction，mounted adapter MUST释放本地 binding/attempt并允许later same-identity grant重新attach/decode。presentation widget MUST NOT识别private resident-provider类型或直接访问process-global raster cache；local_media_ui composition adapter统一返回最终provider：exact resident handoff原样返回，否则才执行viewport resize并wrap入唯一managed cache。mounted UI MUST NOT再次实现resize/cache ownership分支。
+  external presentation MUST以单个不可变 grant 原子发布：grant MUST内部绑定exact `DecodeId`，Presentation可见投影仅含cacheIdentity、unavailable/requested/ready与acknowledgementToken；兼容requested/ready/cacheIdentity只可由该grant派生。首帧完成 MUST从requested直接切到ready并保留同一ack token，不得通过分步setter暴露瞬时双false revoke；ordinary same-cache-identity revoke/regrant MUST取得新token。
+  mounted first-frame MUST把实际消费的grant交回`PipelinePageOutputStream.reportExternalPresentationFrameReady(grant)`；output MUST先验证ack token仍为current，随后由pipeline_runtime读取grant内部私有DecodeId完成session satisfaction。Presentation MUST NOT获得DecodeId getter，也 MUST NOT只凭PageAsset反查“当前”DecodeId。mounted adapter 的 first-frame/error/recovery/final-state MUST绑定当前不可变 presentation attempt（local epoch/token + grant token + exact read authority）；旧attempt异步结果在失去current身份后 MUST静默退出。
   managed raster decode failure MUST先保留当前consumer的error channel与原read authority，MUST NOT在error交付前伪装成ordinary residency eviction同步撤下consumer。
   raster residency 消失本身不是 encoded-body failure，也不是 SourceEpoch / ArtifactCache mutation-generation change；
   无 exact artifact authority 的 presentation error MUST NOT 自动 reset durable/source generation。

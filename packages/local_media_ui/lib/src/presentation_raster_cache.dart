@@ -598,6 +598,73 @@ final class _ResidentPresentationImageProvider
   }
 }
 
+/// Presentation-facing capability over the single process raster-cache owner.
+///
+/// Widgets consume this adapter rather than branching on cache/provider
+/// implementation details. It owns the two composition decisions that must stay
+/// identical for detached prewarm and mounted presentation: exact resident
+/// handoff, and viewport resize + managed-cache wrapping.
+///
+/// This is not a second cache or scheduler. All residency/LRU/keepAlive state
+/// continues to live in [PipelinePresentationRasterCache].
+final class _PipelinePresentationRasterAdapter {
+  const _PipelinePresentationRasterAdapter(this._cache);
+
+  final PipelinePresentationRasterCache _cache;
+
+  ImageProvider<Object>? residentProvider(Object presentationIdentity) =>
+      _cache.residentProviderForIdentity(presentationIdentity);
+
+  PresentationRasterCacheUsage inspect() => _cache.inspectPresentationRasters();
+
+  ImageProvider<Object> providerForViewport({
+    required ImageProvider<Object> image,
+    required int? sourceWidth,
+    required int? sourceHeight,
+    required int? maxPhysicalWidth,
+    required int? maxPhysicalHeight,
+    required PipelineExternalPresentationFit fit,
+    Object? presentationIdentity,
+  }) {
+    // A resident handoff already names the exact managed raster admitted by
+    // the cache owner. Re-resizing or re-wrapping it would manufacture a nested
+    // key and silently create a second residency interpretation.
+    if (image is _ResidentPresentationImageProvider) {
+      return image;
+    }
+
+    var provider = image;
+    if (sourceWidth != null &&
+        sourceHeight != null &&
+        maxPhysicalWidth != null &&
+        maxPhysicalHeight != null &&
+        sourceWidth > 0 &&
+        sourceHeight > 0 &&
+        maxPhysicalWidth > 0 &&
+        maxPhysicalHeight > 0) {
+      provider = _mediaRasterProviderForPresentation(
+        image: provider,
+        sourceWidth: sourceWidth,
+        sourceHeight: sourceHeight,
+        maxPhysicalWidth: maxPhysicalWidth,
+        maxPhysicalHeight: maxPhysicalHeight,
+        fit: fit,
+      );
+    }
+
+    if (presentationIdentity != null) {
+      provider = _cache.providerFor(
+        provider: provider,
+        presentationIdentity: presentationIdentity,
+      );
+    }
+    return provider;
+  }
+}
+
 /// One process-wide cache authority shared by mounted Reader pages, detached
 /// Pipeline prewarm, settings maintenance and memory-pressure handling.
 final pipelinePresentationRasterCache = PipelinePresentationRasterCache();
+
+final _pipelinePresentationRasterAdapter =
+    _PipelinePresentationRasterAdapter(pipelinePresentationRasterCache);

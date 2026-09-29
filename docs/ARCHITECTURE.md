@@ -743,8 +743,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   presentation decode失败必须回传原authority，禁止按page id查询“最近一次读取”的generation后再失效缓存。manual force reload没有旧read token时才由cache owner解析当前authority。
   external-static 的 presentation generation 与 raster residency 必须分离：`PipelineReaderSession`拥有 DecodeId/source/fit 对应的 opaque presentation identity，
   `PipelinePresentationRasterCache`独占 decoded raster 的 residency/LRU/keepAlive。ordinary eviction/demand loss 不旋转 identity；mounted adapter 必须撤销本地 attempt/provider 后允许同 identity regrant，且 detached resident provider 必须直接 handoff、禁止再次 resize/providerFor。
-  `PipelinePageOutputStream` 的 external presentation permission/satisfaction 只能作为一个完整状态原子发布；`requested -> ready` 不得分两次同步通知制造可观察的 `(false,false)` revoke。
-  `LocalImagePlayer` 的 first-frame 去重、error、recovery 与最终状态发布都绑定不可变 presentation attempt（local load epoch/token + opaque identity + exact read authority），不能绑定整个 widget lifetime；later same-identity regrant会取得新的 local attempt，因此必须能再次确认本次 first frame。旧 attempt 的异步结果在任何 await 后若已失去 current 身份就只能退出。
+  `PipelinePageOutputStream` 的 external presentation grant 必须作为一个不可变投影原子发布：grant内部绑定exact `DecodeId`，Presentation只看到cache identity、unavailable/requested/ready与acknowledgement token；兼容requested/ready/cacheIdentity getter只从grant派生。`requested -> ready`保留同一ack token，不得分步通知制造可观察的`(false,false)`；ordinary same-cache-identity revoke/regrant必须得到新token。
+  mounted first-frame 必须携带实际消费的grant回到`PipelinePageOutputStream.reportExternalPresentationFrameReady(grant)`，由output先验证ack token仍为current，再由pipeline_runtime读取grant内部私有的exact `DecodeId`完成session satisfaction；Presentation不得获得DecodeId getter，也禁止仅按PageAsset反查“当前”DecodeId。`LocalImagePlayer`的first-frame去重、error、recovery与最终状态发布都绑定不可变presentation attempt（local load epoch/token + grant token + exact read authority），不能绑定整个widget lifetime；旧attempt异步结果在任何await后若已失去current身份就只能退出。
   managed raster decode error 与 ordinary residency eviction 也是两个事件：cache entry 可以退休，但不得在当前 consumer 收到 error/原 read authority 前同步发 eviction 销毁错误通道。没有 exact artifact authority 的 presentation error 不得据此 reset durable/source generation；只有带原 read `storageId + mutation generation` 的拒绝才进入 `DownloadTransferOwner` destructive artifact recovery。详见 ADR 0337。
   `PipelineReaderSession.dispose()`必须与retention共用claim释放边界，并额外注销composition presentation-cache invalidation listener；全局cache不得因已销毁session遗留listener/claim而保活Reader。
   `LocalImagePlayer`取得file lease后立即进入finally保护，late cancellation不能漏lease；widget async load 只使用本地 `loadEpoch + token` 作为 race fence，禁止把它解释成 source/artifact/presentation generation。
@@ -761,7 +761,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   禁止 stale grant 继续制造黑屏。
   这只修正 geometry observation→Pipeline staging，不给 Reader/UI 增加 decode/network/retry owner。
   native decoded/upload residency 由 `FrameBudgeter` 拥有；
-  Reader external-static fallback raster residency 由 composition `PipelinePresentationRasterCache` 拥有，并通过 `ResourceCacheCoordinator.presentationRasters` 统一 inspect/trim/clear；
+  Reader external-static fallback raster residency 由 composition `PipelinePresentationRasterCache` 拥有，并通过 `ResourceCacheCoordinator.presentationRasters` 统一 inspect/trim/clear；mounted UI不得直接识别private resident-provider或process-global cache。local_media_ui composition只暴露`_PipelinePresentationRasterAdapter`给presentation widget/prewarmer：adapter统一做resident lookup与`providerForViewport`，exact resident直接handoff，否则才按同一规则resize并wrap进唯一managed cache，不建立第二份residency owner。
   generic Flutter 图片缓存与该 managed raster plane 共享 100MiB/1000-entry presentation 总额度，但不参与 Reader role/claim 决策；
   encoded speculative I/O 继续由共享 `SpeculativeEncodedReadBudget` 拥有。
 - Reader navigation只提交 observation/用户命令并消费只读输出，不直接操作 transport/session/artifact/lane/frame/texture。

@@ -59,8 +59,7 @@ owner 内防止旧工作越过更新边界。
 3. `LocalImagePlayer` 的去重字段降级为“当前 residency grant attempt”：
    cache-owner revocation 时必须清除 attempt、取消旧 load、释放 file lease，并清理 UI 持有的
    bytes/provider；later same-identity grant 必须能够重新 attach/decode。
-4. exact `_ResidentPresentationImageProvider` 已经是 cache owner 产生的最终 resized managed raster。
-   mounted `MediaRasterImage` 必须直接 resolve 它，不得再次 resize 或 `providerFor`。
+4. exact resident handoff 已经是 cache owner 产生的最终 resized managed raster。`LocalImagePlayer` / `MediaRasterImage` 不得识别 private resident-provider 类型，也不得直接调用 process-global cache；统一 `_PipelinePresentationRasterAdapter` 负责 resident lookup 与 `providerForViewport`。adapter 若收到 exact resident handoff 必须原样返回，否则才执行与 detached prewarm 相同的 resize + managed-cache wrapping。这样 mounted UI 只消费 prepared provider，不再拥有 cache implementation 分支。
 5. 删除 ADR 0335 新增的 authority-less automatic raster-generation recovery。
    无 exact artifact authority 的 presentation error 不再凭空旋转 presentation generation；
    exact artifact read rejection 仍可按原 `storageId + mutation generation` 条件进入
