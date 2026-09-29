@@ -47,12 +47,12 @@
   每漫画“使用自适应设置”独立于手动 override master，清除手动覆盖不清 adaptive policy/profile。全局分页方向默认 LTR；`ReaderModeSettings` 分 paged/continuous，双击两级 slider 与独立长按倍率按 mode 保存。
   点击区域按当前 mode 保存；Reader 内用当前页面沉浸覆层编辑，可拖两横两竖线；grid 与真实 hit-test 共用 authority，覆层 cell 覆盖完整 viewport 截获编辑输入且不改变 ReaderView ancestry，drag 只更新 overlay-local State。PageHost 仍唯一负责手势消歧；顶部强制重载、本漫画底栏设置及杂项 Web 入口不变。
   2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
-  loading/frame jank 已分开归因：fresh JM source open 261–798ms（raw 58–481 + collect 44–74 + transform 158–174ms）；promotion 后 active session 直接用 current exact non-durable hot generation，两次 reload 比 store 早 63/57ms；失败/换代撤销，durable lookup 不继承。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..018已治理（ADR0337–0340）；native decode pending control沿同一DecodeLane TaskControl贯穿queue。
-  canonical SAF physical partial先由persistent store迁到Direct transfer staging再borrow hot session，禁止经DownloadSession从0本地重放。03-35-53 Profile已在原page79 7,708,375-byte partial上验证；provider忽略Range后的full-body catchup是独立transport能力，不得误删partial。
+  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..021已治理；RMR-022/023是未复现浏览故障的presentation projection/cache-boundary结构债，禁止无证据删attempt guard或制造第二cache owner。
+  canonical SAF physical partial先由persistent store迁到Direct staging再borrow hot session；copy同步累计obsolete-prefix CRC，authority提交后cleanup debt异步复核/删除旧SAF，hot takeover不做pre-scan或等待cleanup；provider忽略Range后的full-body catchup仍是独立transport能力。
+  native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。

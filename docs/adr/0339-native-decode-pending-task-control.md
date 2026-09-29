@@ -22,9 +22,9 @@
 1. `ScheduledFrameCursor.decodeNextScheduled()` 接受可选 `TaskControl`。
    `DecodeSession` 必须把当前 DecodeLane `CancelToken` 原样传下去，`NativeCursor` 再原样传给
    native decode pool。该 control 是只读 projection，不把 scheduling authority 转移给 bridge。
-2. native decode pending item 可以在**尚未 worker admission**时观察：
+2. native decode pending item 在**尚未 worker admission**时只持有原 scheduler `TaskControl`：
    - `TaskControl.whenCancelled`：移除该 queued item，并以原 typed cancellation 结算；
-   - `PriorityObservableTaskControl.priorityChanges`：更新同一 queued item 的 numeric rank。
+   - numeric rank 不再复制到 pending 字段，也不建立 request-local `priorityChanges` subscription；每次真正选取 pending 时直接读取 `TaskControl.priority`。这样 priority 的事实仍来自同一个 scheduler owner，但 bridge 不再维护第二份镜像状态和订阅生命周期。
 3. native pool 仍保留两类 execution class：
    - `current` 始终先于 `nonCurrent`；
    - `nonCurrent` 在只剩一个 live worker 时不得占最后一个 slot。
@@ -32,8 +32,7 @@
 4. PageRole 迁移到 current 时，`LiveCoordinator` 必须先把新的 numeric priority 写回
    `DecodeLane`，再把同一 pending native request 从 nonCurrent 迁移为 current。
    禁止用 `addFirst` 之类 native-side shortcut 代替 scheduler rank。
-5. priority observer 只活到 pending item 被取消、失败清理或真正取得 worker 为止。
-   worker admission 后 pool 不再重新排序该 operation。
+5. bridge 不拥有 numeric-priority observer；selection-time live read 足以覆盖 worker busy 后的动态 rank，因为真正 admission 只发生在 `_takeBestReady`。execution-class promotion仍由显式 `promotePendingDecodeToCurrent` 驱动并立即 `_pump()`，不依赖 numeric-rank subscription 触发调度。
 6. **in-flight cancellation 不提前释放 capacity。** request 一旦交给 worker，cancel signal 只会让
    上层在真实 worker response 之后丢弃结果；`_activeRuns`、worker busy state 与 cursor/source
    lifetime 都必须等实际 native operation unwind。

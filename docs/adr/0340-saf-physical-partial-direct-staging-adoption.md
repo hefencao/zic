@@ -33,15 +33,16 @@ durable-authority gap 不是同一问题。
    App-private Direct transfer staging，再把该 spool 借给 `DownloadSession`。
 2. 迁移必须完全由 `PersistentDownloadArtifactStore` 的 per-physical serializer 拥有。Reader、
    Pipeline 与 `DownloadSession` 不得建立第二份 partial authority，也不得自行复制 SAF body。
-3. authority switch 继续复用既有跨-locator physical-partial migration：
-   - 旧 SAF prefix checksum/locator proof；
+3. authority switch 继续复用既有跨-locator physical-partial migration。对于本 ADR 的 canonical SAF takeover，`entry` 就是旧 SAF authority 自身，因此不得为了同一旧 prefix 再做独立 pre-copy checksum 扫描；复制 SAF body 到 Direct staging 时 MUST 同步累计该次旧 prefix 的 CRC32，并以 copy 实际消费的 length+CRC 注册 `obsoletePartialSource` cleanup debt。
+   这样成功 takeover 对旧 SAF body只需要一次正文读取。其他 transfer-checkpoint replacement 若 `entry` 不是旧 locator 本身，不能偷用新 entry 的 prefix 当旧 locator cleanup proof，仍须单独证明旧 locator 内容。
    - Direct staging body；
+   - copy 中累计的旧-prefix cleanup proof；
    - 新 physical-partial row 提交；
    - obsolete-source cleanup debt；
-   - 只有新 authority 提交后才退休旧 SAF locator。
+   - 只有新 authority 提交后旧 SAF locator 才成为可退休对象。
 4. local-prepare 的 scheduler `TaskControl` 必须进入这次 migration。取消发生在 authority switch
    之前时，较短/未完成 staging 不得覆盖旧 SAF authority；若 Direct authority 已完整提交，则后续
-   retry 直接从该 Direct spool adoption，不得回到 SAF whole-prefix replay。
+   retry 直接从该 Direct spool adoption，不得回到 SAF whole-prefix replay。新 Direct authority metadata 提交后，旧 locator 的删除属于 durable cleanup owner，不得同步阻塞 hot takeover 或让 Reader cancellation等待 delete-time checksum；已有 cleanup-debt drain 在后台重新验证 locator 非authority、length与CRC 后再删除。
 5. migration 完成后使用既有 `DownloadSession.adoptDurablePartialBacking()`，所以 session 一次获得
    已提交的完整 partial length，并保持 idle；禁止为了本地 SAF 搬运把 session 伪装成
    `receiving from 0`。

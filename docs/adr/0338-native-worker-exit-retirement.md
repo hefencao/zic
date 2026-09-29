@@ -34,8 +34,8 @@ lifecycle owner 缺失。
    但 shutdown/idle 只有在原 `_run` 真正 unwind 后才认为 capacity 已释放。
 5. decode pool 降级到单一 live worker时，background/non-current 不得占用最后一个 slot；
    current work 继续保留唯一 live capacity，直到 replacement worker ready。
-6. replacement 仍由同一个 pool 创建，不增加第二 scheduler、retry owner 或无界队列。
-   decode 与 source-write lifecycle 继续分离；source-write pending priority/cancellation contract 不变。
+6. replacement 仍由同一个 pool 创建，不增加第二 scheduler、retry owner 或无界队列。若 replacement spawn 失败但 pool 仍有至少一个 live worker，失败只表示 capacity 暂时降级：pending MUST 保留并继续由 surviving worker 执行，禁止把一次补位失败升级为全部 queued request failure。只有 live worker 已降为0且 replacement 也无法启动时，pool 才能以 replacement failure 结算尚无法执行的 pending。
+   decode 与 source-write lifecycle 继续分离；decode 单一 live worker 时仍保留 current-only 最后 slot，source-write surviving worker 继续顺序 drain queued writes。
 7. 不用 timeout 假装 native work 已退出；in-flight FFI 的资源释放语义仍要求真实 worker/operation exit。
 
 ## Regression / governance guard
@@ -47,6 +47,7 @@ private pool 没有向产品 API 暴露“杀一个 worker”的 test hook；本
 - pool 必须拥有 exit retirement 与 bounded replacement；
 - scheduler 必须排除 `worker.exited`；
 - active capacity 必须独立于 live worker list 结算；
+- replacement 失败且仍有 surviving worker 时不得 clear pending 或批量 completeError，必须继续 pump degraded capacity；
 - 禁止恢复 request-local `Future.any(... _exited.then(...))`。
 
 普通 native contract、完整 Dart/Flutter gate 与 Rust/native build继续验证正常执行路径。

@@ -66,9 +66,15 @@ void main() {
       final physicalIndex = store.index as PhysicalPartialIndex;
       final safRecord = await physicalIndex.getPhysicalPartial(physical);
       expect(safRecord, isNotNull);
-      expect(parseSafRecordPath(safRecord!.path), isNotNull);
+      final parsedSafRecord = parseSafRecordPath(safRecord!.path);
+      expect(parsedSafRecord, isNotNull);
+      final cleanupGate = Completer<void>();
+      saf.blockBodyReadsAfterFirstPass = cleanupGate;
+      addTearDown(() {
+        if (!cleanupGate.isCompleted) cleanupGate.complete();
+      });
 
-      Future<({int safReads, String directPath})> restoreOnce() async {
+      Future<String> restoreOnce() async {
         final trace = MemoryTraceSink();
         final registry = DownloadRegistry(
           layout: CacheLayout(hotRoot.path),
@@ -115,23 +121,48 @@ void main() {
         final directPath = session.artifact.partialPath;
         await handoff.close();
         await registry.dispose();
-        return (safReads: saf.readCalls, directPath: directPath);
+        return directPath;
       }
 
-      final first = await restoreOnce();
+      final firstDirectPath = await restoreOnce().timeout(
+        const Duration(seconds: 2),
+      );
+      await saf.blockedBodyReadEntered.future.timeout(
+        const Duration(seconds: 1),
+      );
+      expect(
+        saf.bodyReadBytes,
+        bytes.lengthInBytes,
+        reason: 'hot takeover must read the SAF prefix only once; cleanup is '
+            'durable background maintenance',
+      );
       final migrated = await physicalIndex.getPhysicalPartial(physical);
       expect(migrated, isNotNull);
       expect(parseSafRecordPath(migrated!.path), isNull);
       expect(migrated.storageRootId, store.layout.root);
-      expect(migrated.path, first.directPath);
+      expect(migrated.path, firstDirectPath);
       expect(await File(migrated.path).readAsBytes(), orderedEquals(bytes));
 
-      final readsAfterMigration = first.safReads;
-      final second = await restoreOnce();
-      expect(second.directPath, first.directPath);
+      cleanupGate.complete();
+      for (var attempt = 0;
+          attempt < 100 &&
+              safStorage.containsKey(parsedSafRecord!.relativePath);
+          attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(safStorage.containsKey(parsedSafRecord!.relativePath), isFalse);
       expect(
-        second.safReads,
-        readsAfterMigration,
+        saf.bodyReadBytes,
+        bytes.lengthInBytes * 2,
+        reason: 'delete-time proof may reread the obsolete SAF body only after '
+            'the Direct authority is already usable',
+      );
+      final bodyReadBytesAfterCleanup = saf.bodyReadBytes;
+      final secondDirectPath = await restoreOnce();
+      expect(secondDirectPath, firstDirectPath);
+      expect(
+        saf.bodyReadBytes,
+        bodyReadBytesAfterCleanup,
         reason: 'later visits must adopt direct staging without replaying SAF',
       );
     },
@@ -3006,8 +3037,13 @@ final class _PhysicalPartialMemorySafIo implements SafTreeIo {
   final Map<String, Uint8List> storage;
   final Map<int, ({String path, int pos})> _handles =
       <int, ({String path, int pos})>{};
+  final Set<int> _bodyReadHandles = <int>{};
   int _nextHandle = 1;
   int readCalls = 0;
+  int bodyReadPasses = 0;
+  int bodyReadBytes = 0;
+  Completer<void>? blockBodyReadsAfterFirstPass;
+  final Completer<void> blockedBodyReadEntered = Completer<void>();
 
   @override
   Future<int?> open(String relativePath, {SafWriteMode? mode}) async {
@@ -3032,11 +3068,24 @@ final class _PhysicalPartialMemorySafIo implements SafTreeIo {
     final state = _handles[handle];
     if (state == null) throw StateError('invalid SAF handle');
     readCalls++;
+    final bodyRead = state.path.endsWith('.part');
+    if (bodyRead && _bodyReadHandles.add(handle)) {
+      bodyReadPasses++;
+      final gate = blockBodyReadsAfterFirstPass;
+      if (bodyReadPasses > 1 && gate != null) {
+        if (!blockedBodyReadEntered.isCompleted) {
+          blockedBodyReadEntered.complete();
+        }
+        await gate.future;
+      }
+    }
     final bytes = storage[state.path]!;
     final start = state.pos;
     final end = (start + length).clamp(0, bytes.lengthInBytes);
     _handles[handle] = (path: state.path, pos: end);
-    return Uint8List.fromList(bytes.sublist(start, end));
+    final result = Uint8List.fromList(bytes.sublist(start, end));
+    if (bodyRead) bodyReadBytes += result.lengthInBytes;
+    return result;
   }
 
   @override

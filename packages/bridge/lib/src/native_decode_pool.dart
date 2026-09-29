@@ -130,7 +130,8 @@ final class _NativeDecodeWorkerPool {
       try {
         await replenishing;
       } on Object {
-        // Replacement failure is already delivered to queued callers.
+        // A terminal no-worker failure is already delivered to queued callers;
+        // degraded pools with surviving workers keep their queue intact.
       }
     }
     if (_currentPending.isNotEmpty || _nonCurrentPending.isNotEmpty) {
@@ -139,7 +140,6 @@ final class _NativeDecodeWorkerPool {
         ..._currentPending,
         ..._nonCurrentPending,
       ]) {
-        pending.detachPriorityObserver();
         if (!pending.completer.isCompleted) {
           pending.completer.completeError(failure);
         }
@@ -191,7 +191,6 @@ final class _NativeDecodeWorkerPool {
       completer: completer,
       workerReady: Stopwatch()..start(),
       control: control,
-      priority: control?.priority ?? 0,
       sequence: _nextSequence++,
     );
     _enqueue(pending);
@@ -257,12 +256,7 @@ final class _NativeDecodeWorkerPool {
   }
 
   bool _removePending(_PendingNativeDecode pending) {
-    final removed =
-        _currentPending.remove(pending) || _nonCurrentPending.remove(pending);
-    if (removed) {
-      pending.detachPriorityObserver();
-    }
-    return removed;
+    return _currentPending.remove(pending) || _nonCurrentPending.remove(pending);
   }
 
   void _observePendingControl(_PendingNativeDecode pending) {
@@ -281,19 +275,7 @@ final class _NativeDecodeWorkerPool {
         }
       }),
     );
-    if (control is PriorityObservableTaskControl) {
-      pending.prioritySubscription = control.priorityChanges.listen((priority) {
-        if (!_isPending(pending)) {
-          return;
-        }
-        pending.priority = priority;
-        _pump();
-      });
-    }
   }
-
-  bool _isPending(_PendingNativeDecode pending) =>
-      _currentPending.contains(pending) || _nonCurrentPending.contains(pending);
 
   void _completeCancelledPending(_PendingNativeDecode pending) {
     if (pending.completer.isCompleted) {
@@ -433,7 +415,6 @@ final class _NativeDecodeWorkerPool {
     for (final pending in List<_PendingNativeDecode>.of(queue)) {
       if (pending.control?.cancelled == true) {
         if (queue.remove(pending)) {
-          pending.detachPriorityObserver();
           _completeCancelledPending(pending);
         }
         continue;
@@ -441,9 +422,11 @@ final class _NativeDecodeWorkerPool {
       if (!pending.workersReady) {
         continue;
       }
+      final pendingPriority = pending.control?.priority ?? 0;
+      final bestPriority = best?.control?.priority ?? 0;
       if (best == null ||
-          pending.priority > best.priority ||
-          (pending.priority == best.priority &&
+          pendingPriority > bestPriority ||
+          (pendingPriority == bestPriority &&
               pending.sequence < best.sequence)) {
         best = pending;
       }
@@ -452,7 +435,6 @@ final class _NativeDecodeWorkerPool {
       return null;
     }
     queue.remove(best);
-    best.detachPriorityObserver();
     return best;
   }
 
@@ -495,6 +477,16 @@ final class _NativeDecodeWorkerPool {
         _workers.add(worker);
         worker.attachExitHandler(_handleWorkerExit);
       } on Object catch (error, stack) {
+        if (_workers.isNotEmpty) {
+          // Capacity repair failed, but the surviving worker is still a valid
+          // execution owner. Keep queued work intact and continue in degraded
+          // mode. The final live decode slot remains reserved for current work
+          // by _takePending(); a later submission/worker event may retry
+          // replenishment without turning one spawn failure into page failures.
+          _markQueuedWorkersReady();
+          _pump();
+          return;
+        }
         final failure = StateError(
           'native decode worker replacement failed: $error',
         );
@@ -502,7 +494,6 @@ final class _NativeDecodeWorkerPool {
           ..._currentPending,
           ..._nonCurrentPending,
         ]) {
-          pending.detachPriorityObserver();
           if (!pending.completer.isCompleted) {
             pending.completer.completeError(failure, stack);
           }
@@ -602,7 +593,6 @@ final class _PendingNativeDecode {
     required this.completer,
     required this.workerReady,
     required this.control,
-    required this.priority,
     required this.sequence,
   });
 
@@ -613,9 +603,7 @@ final class _PendingNativeDecode {
   final Completer<List<_NativeDecodeResult>> completer;
   final Stopwatch workerReady;
   final TaskControl? control;
-  int priority;
   final int sequence;
-  StreamSubscription<int>? prioritySubscription;
   int workerReadyMicros = 0;
   Stopwatch? queued;
   bool workersReady = false;
@@ -627,14 +615,6 @@ final class _PendingNativeDecode {
     workersReady = true;
     workerReadyMicros = workerReady.elapsedMicroseconds;
     queued = Stopwatch()..start();
-  }
-
-  void detachPriorityObserver() {
-    final subscription = prioritySubscription;
-    prioritySubscription = null;
-    if (subscription != null) {
-      unawaited(subscription.cancel());
-    }
   }
 }
 

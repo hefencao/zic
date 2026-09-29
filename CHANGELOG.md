@@ -1,3 +1,8 @@
+## Unreleased — partial takeover and native worker degradation closure
+
+- Reduce canonical SAF physical-partial takeover from three old-body passes to one hot-path copy: accumulate the obsolete-prefix CRC while copying into Direct staging, commit cleanup debt with that proof, and move delete-time SAF verification/removal to the existing asynchronous cleanup owner.
+- Keep queued decode/source-write work when worker replacement fails but another worker is still live; decode preserves its final-slot current reservation. Decode pending rank now reads the existing scheduler `TaskControl.priority` at selection time instead of mirroring priority through a second subscription lifecycle.
+
 ## Unreleased — background execution ownership closure
 
 - Re-audit background execution by measured blocking cost instead of defaulting to workers: remove version-candidate `Isolate.run` preparation/two-phase demand commit and the extra deferred source-wake queue; both are short owner-local control work and remain synchronous.

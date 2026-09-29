@@ -52,4 +52,38 @@ for path, signal in (
         f"_exited.then<Object?>((_) => {signal})",
     )
 
+decode_pool = read("packages/bridge/lib/src/native_decode_pool.dart")
+decode_degraded = decode_pool.split("if (_workers.isNotEmpty) {", 1)[1].split(
+    "final failure = StateError(", 1
+)[0]
+for token in (
+    "_currentPending.clear()",
+    "_nonCurrentPending.clear()",
+    "pending.completer.completeError",
+):
+    if token in decode_degraded:
+        raise SystemExit(
+            "FAIL: surviving decode workers must retain queued requests after "
+            f"replacement failure; found {token!r}"
+        )
+if "_markQueuedWorkersReady();" not in decode_degraded or "_pump();" not in decode_degraded:
+    raise SystemExit(
+        "FAIL: surviving decode workers must continue degraded queue execution"
+    )
+
+source_pool = read("packages/bridge/lib/src/native_source_write_pool.dart")
+source_degraded = source_pool.split("if (_workers.isNotEmpty) {", 1)[1].split(
+    "final failure = StateError(", 1
+)[0]
+for token in ("_pending.clear()", "pending.completer.completeError"):
+    if token in source_degraded:
+        raise SystemExit(
+            "FAIL: surviving source-write workers must retain queued requests "
+            f"after replacement failure; found {token!r}"
+        )
+if "_pump();" not in source_degraded:
+    raise SystemExit(
+        "FAIL: surviving source-write workers must continue degraded queue execution"
+    )
+
 print("native worker exit listener/retirement ownership: OK")

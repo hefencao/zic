@@ -162,8 +162,14 @@ App build：0.31.0+328
   现在persistent store在per-physical serializer内先将SAF authority安全迁到App-private Direct transfer staging，再borrow给hot session，generic fallback不变（ADR0340）。
   current-source Profile `zic-debug-trace-2026-09-29T03-35-53.jsonl`直接命中同一7,708,375-byte SAF partial：`accessMode=saf/adoptable=true -> adopted-physical`，local hydration结束仍为idle且未发生本地`receiving from 0`；随后03-54-39同页直接`adopted-posix-spool`。
   provider之后对`Range: bytes=7642839-`返回HTTP 200而触发full-body-prefix-catchup属于独立Range rejection；partial仍被保留，不与authority-loss混写。
-  ADR0340最终`./tool/check.sh --require-toolchains` exit 0（162.134s）；三ABI Android debug构建与Rust media_core 22/22通过。
-  当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
+  ADR0340后续反审计确认首次SAF→Direct接管仍有冗余I/O：旧prefix曾被pre-copy CRC、copy、同步cleanup CRC各完整读取一次。当前实现删除pre-copy扫描，在实际copy中累计cleanup CRC；新Direct authority提交后只登记durable cleanup debt并异步drain。
+  hot takeover/取消不再等待第三遍SAF扫描。稳定7MiB+回归证明takeover返回时SAF正文仅读1遍，delete-time proof为后台第2遍，后续Direct adoption不再读SAF。
+  worker replacement失败也已收窄：只要仍有live worker，decode/source-write pending均保留并继续degraded执行；decode单live worker仍保留current-only最后slot。live worker为0且补位失败才终止无法执行的pending。
+  native decode numeric priority不再镜像到pending或订阅`priorityChanges`，selection时直接读取同一TaskControl实时priority；queued cancellation与显式current promotion不变（ADR0338/0339）。
+  RMR-022/023仍作为结构债保留：presentation grant identity/state/ack尚未形成单一不可变snapshot，LocalImagePlayer仍直接理解global raster cache/private resident provider。当前无fresh浏览故障证据，本轮不以行为补丁强行删除attempt guard或另造cache abstraction。
+  current-source Profile使用release native重新构建/安装，authoritative Home 1.283s；`zic-debug-trace-2026-09-29T06-32-20.jsonl`进入Reader并达到`presentation-widget-first-frame`，`taskFailed=0`，多个multi-MiB Direct physical partial正常`adopted-physical`。
+  设备当前已无可复现canonical SAF physical partial，因此SAF读取次数/取消边界只按确定性fake-SAF回归记账，不冒充真机证据。
+  本轮最终`./tool/check.sh --require-toolchains` exit 0（243.121s）；repository/docs/ownership gates、Dart/Flutter suites、Android build gates与Rust media_core suite通过。
   presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，
   但严格max2会让第二个900按stable claim顺序多等约3.7–15.4ms。ADR 0334不全局扩容，而只给同Reader/revision、三者均`localOnly + viewportVisible`的cohort一个第三operation handoff；

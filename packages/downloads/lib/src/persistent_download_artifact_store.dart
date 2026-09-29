@@ -5258,6 +5258,7 @@ final class PersistentDownloadArtifactStore
       providerHint: requestId,
       entry: source,
       preferDirectStaging: true,
+      entryReplaysExistingAuthority: true,
       control: control,
     );
     control?.throwIfCancelled();
@@ -5372,6 +5373,7 @@ final class PersistentDownloadArtifactStore
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
     required bool preferDirectStaging,
+    bool entryReplaysExistingAuthority = false,
     TaskControl? control,
   }) async {
     _requireOpen();
@@ -5411,17 +5413,18 @@ final class PersistentDownloadArtifactStore
           control: control,
         );
       } else {
-        final obsoleteChecksum = existing == null
-            ? null
-            : await _migrationRangeChecksum(
-                _bytes.readChunks(
-                  existing.path,
-                  start: 0,
-                  endExclusive: existing.bytes,
-                ),
-                expectedBytes: existing.bytes,
-                control: control,
-              );
+        final obsoleteChecksum =
+            existing == null || entryReplaysExistingAuthority
+                ? null
+                : await _migrationRangeChecksum(
+                    _bytes.readChunks(
+                      existing.path,
+                      start: 0,
+                      endExclusive: existing.bytes,
+                    ),
+                    expectedBytes: existing.bytes,
+                    control: control,
+                  );
         control?.throwIfCancelled();
         await _storePhysicalPartialDirect(
           physicalId: physicalId,
@@ -5431,6 +5434,8 @@ final class PersistentDownloadArtifactStore
           createdUsOverride: existing?.createdUs,
           obsoleteSource: existing,
           obsoleteSourceChecksum: obsoleteChecksum,
+          deriveObsoleteSourceChecksumFromCopy:
+              existing != null && entryReplaysExistingAuthority,
           control: control,
         );
       }
@@ -5472,6 +5477,7 @@ final class PersistentDownloadArtifactStore
     int? createdUsOverride,
     PhysicalPartialRecord? obsoleteSource,
     String? obsoleteSourceChecksum,
+    bool deriveObsoleteSourceChecksumFromCopy = false,
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
@@ -5490,8 +5496,13 @@ final class PersistentDownloadArtifactStore
       }
       targetLayout = CacheLayout(root);
     }
-    if ((obsoleteSource == null) != (obsoleteSourceChecksum == null)) {
-      throw StateError('partial replacement cleanup proof is incomplete');
+    if (obsoleteSource == null) {
+      if (obsoleteSourceChecksum != null || deriveObsoleteSourceChecksumFromCopy) {
+        throw StateError('partial replacement cleanup proof has no source');
+      }
+    } else if (deriveObsoleteSourceChecksumFromCopy ==
+        (obsoleteSourceChecksum != null)) {
+      throw StateError('partial replacement cleanup proof is ambiguous');
     }
     final artifact = targetLayout.artifactForPhysical(physicalId);
     if (existing != null &&
@@ -5517,14 +5528,26 @@ final class PersistentDownloadArtifactStore
       }
     }
 
+    final obsoletePrefixChecksum = deriveObsoleteSourceChecksumFromCopy
+        ? Crc32()
+        : null;
+    var obsoletePrefixChecksumBytes = 0;
+
     Future<void> commitCurrentPartialAuthority() async {
       StorageCleanupDebtRecord? cleanupDebt;
       if (obsoleteSource != null) {
+        if (deriveObsoleteSourceChecksumFromCopy &&
+            obsoletePrefixChecksumBytes != obsoleteSource.bytes) {
+          throw StateError(
+            'partial replacement cleanup proof is incomplete: '
+            '$obsoletePrefixChecksumBytes/${obsoleteSource.bytes}',
+          );
+        }
         cleanupDebt = await _registerObsoletePartialSourceCleanupDebt(
           accessLocator: obsoleteSource.path,
           storageRootId: obsoleteSource.storageRootId,
           expectedBytes: obsoleteSource.bytes,
-          checksum: obsoleteSourceChecksum!,
+          checksum: obsoleteSourceChecksum ?? obsoletePrefixChecksum!.hex,
         );
       }
       try {
@@ -5544,7 +5567,12 @@ final class PersistentDownloadArtifactStore
         rethrow;
       }
       if (cleanupDebt != null) {
-        await _cleanupObsoleteSourceNow(cleanupDebt);
+        // The Direct staging body is already authoritative. Retiring the old
+        // locator is durable maintenance, not part of the Reader takeover
+        // transaction. Keep the cleanup debt's delete-time ownership/length/
+        // checksum proof, but do not hold request cancellation behind another
+        // full SAF scan.
+        _scheduleCleanupDebtDrain();
       }
     }
 
@@ -5570,11 +5598,29 @@ final class PersistentDownloadArtifactStore
         control?.throwIfCancelled();
       }
       var offset = artifact.committedLength;
+      if (deriveObsoleteSourceChecksumFromCopy && offset != 0) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'cross-locator physical partial staging must start at zero',
+        );
+      }
       try {
         await for (final chunk in entry.open(start: offset)) {
           control?.throwIfCancelled();
           if (chunk.isEmpty) continue;
           await artifact.append(offset, chunk);
+          final cleanupProof = obsoletePrefixChecksum;
+          if (cleanupProof != null &&
+              obsoletePrefixChecksumBytes < obsoleteSource!.bytes) {
+            final remaining = obsoleteSource.bytes - obsoletePrefixChecksumBytes;
+            if (chunk.length <= remaining) {
+              cleanupProof.add(chunk);
+              obsoletePrefixChecksumBytes += chunk.length;
+            } else {
+              cleanupProof.add(chunk.sublist(0, remaining));
+              obsoletePrefixChecksumBytes += remaining;
+            }
+          }
           control?.throwIfCancelled();
           offset += chunk.length;
           if (offset >= entry.length) break;

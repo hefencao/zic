@@ -171,7 +171,8 @@ final class _NativeSourceWriteWorkerPool {
       try {
         await replenishing;
       } on Object {
-        // Replacement failure is already delivered to queued callers.
+        // A terminal no-worker failure is already delivered to queued callers;
+        // degraded pools with surviving workers keep their queue intact.
       }
     }
     await _idle();
@@ -291,6 +292,14 @@ final class _NativeSourceWriteWorkerPool {
         _workers.add(worker);
         worker.attachExitHandler(_handleWorkerExit);
       } on Object catch (error, stack) {
+        if (_workers.isNotEmpty) {
+          // Replacement capacity is optional while a live write worker still
+          // owns execution. Preserve queued writes and let the surviving worker
+          // drain them instead of promoting one spawn failure to unrelated
+          // source-write failures.
+          _pump();
+          return;
+        }
         final failure = StateError(
           'native source write worker replacement failed: $error',
         );

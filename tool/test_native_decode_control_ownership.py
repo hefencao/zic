@@ -42,23 +42,23 @@ require(
     "packages/bridge/lib/src/native_decode_pool.dart",
     "TaskControl? control",
     "control.whenCancelled.then",
-    "control is PriorityObservableTaskControl",
-    "control.priorityChanges.listen",
-    "pending.priority > best.priority",
+    "pending.control?.priority ?? 0",
     "pending.sequence < best.sequence",
     "nonCurrentBusy >= liveWorkerCount - 1",
-    "pending.detachPriorityObserver()",
     "_removePending(pending)",
 )
 forbid(
     "packages/bridge/lib/src/native_decode_pool.dart",
     "_nonCurrentPending.removeFirst()",
     "_currentPending.removeFirst()",
+    "prioritySubscription",
+    "control.priorityChanges.listen",
+    "int priority;",
 )
 
 pool = read("packages/bridge/lib/src/native_decode_pool.dart")
 cancel_block = pool.split("control.whenCancelled.then", 1)[1].split(
-    "if (control is PriorityObservableTaskControl)", 1
+    "void _completeCancelledPending", 1
 )[0]
 if "worker.busy = false" in cancel_block or "_activeRuns--" in cancel_block:
     raise SystemExit(
