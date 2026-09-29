@@ -153,7 +153,11 @@ App build：0.31.0+328
   global presentation cache引用确有composition耦合，但production Pipeline/UI/prewarmer使用同一`pipelinePresentationRasterCache`实例，本轮不制造第二cache abstraction。
   最终Profile authoritative Home 1.287s；`zic-debug-trace-2026-09-29T00-52-07.jsonl`中external request/first-frame=33/33、mounted request无后续first-frame=0。
   同一Trace的sourceRead为33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
-  decode pending queue尚缺request-level cancel control，作为后续独立scheduler ABI治理，不和worker-exit混修。相关presentation/cache/recovery focused suites、bridge contract 3/3及native worker ownership guard均通过；最终`./tool/check.sh --require-toolchains` exit 0（193.331s）。
+  decode pending queue的request-level control已独立治理：`DecodeLane CancelToken`经`DecodeSession -> ScheduledFrameCursor -> NativeCursor`原样进入native pool。
+  queued cancellation可直接移除pending，动态numeric priority由同一control驱动class内排序，current/nonCurrent仍只表达execution class；role promotion先迁移DecodeLane rank再迁移同一request class。
+  in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。focused DecodeSession/LiveCoordinator回归与native decode ownership guard已通过。
+  最终Profile authoritative Home 1.245s；`zic-debug-trace-2026-09-29T02-34-05.jsonl`完成4次forward+4次reverse，含2次stable `previous` 起手，`taskFailed=0`、decode recovery=0、priority promotion 1次且为active迁移。
+  最终`./tool/check.sh --require-toolchains` exit 0（177.969s），Rust media_core 22/22。
   当前树Profile安装后authoritative Home为1.342s；12-30-02真机Trace两次held scrub分别为UI页74/internal73与UI页113/internal112，pointer-up前最后logical=73.5/112.5、velocity=0，首个idle仍完全相同、delta=0。
   presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，

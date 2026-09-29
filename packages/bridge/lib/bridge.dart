@@ -12,6 +12,7 @@ export 'package:media/media.dart'
         FramePacing,
         FrameRef,
         ScheduledFrameCursor,
+        TaskControl,
         LoopCursor,
         PixelFrame,
         PrioritizableScheduledFrameCursor,

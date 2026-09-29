@@ -42,7 +42,7 @@ for token in (
     "DecodePriorityPromotion promotePendingDecodeToCurrent({",
     "_nonCurrentPending.remove(pending)",
     "pending.executionClass = DecodeExecutionClass.current",
-    "_currentPending.addFirst(pending)",
+    "_currentPending.addLast(pending)",
     "worker.cursorAddress != cursorAddress",
     "worker.executionClass = DecodeExecutionClass.current",
     "_markQueuedWorkersReady()",

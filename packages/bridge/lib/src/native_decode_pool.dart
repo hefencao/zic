@@ -101,6 +101,7 @@ final class _NativeDecodeWorkerPool {
   Future<void>? _shutdown;
   bool _started = false;
   bool _shuttingDown = false;
+  int _nextSequence = 0;
   int _activeRuns = 0;
 
   Future<void> prewarm() => _ensureStarted();
@@ -138,6 +139,7 @@ final class _NativeDecodeWorkerPool {
         ..._currentPending,
         ..._nonCurrentPending,
       ]) {
+        pending.detachPriorityObserver();
         if (!pending.completer.isCompleted) {
           pending.completer.completeError(failure);
         }
@@ -163,6 +165,7 @@ final class _NativeDecodeWorkerPool {
     required int epoch,
     required DecodeExecutionClass executionClass,
     required int maxFrames,
+    TaskControl? control,
   }) {
     if (_shuttingDown) {
       return Future<List<_NativeDecodeResult>>.error(
@@ -172,6 +175,13 @@ final class _NativeDecodeWorkerPool {
     if (maxFrames <= 0 || maxFrames > 2) {
       throw ArgumentError.value(maxFrames, 'maxFrames', 'must be 1 or 2');
     }
+    if (control?.cancelled == true) {
+      try {
+        control!.throwIfCancelled();
+      } on Object catch (error, stack) {
+        return Future<List<_NativeDecodeResult>>.error(error, stack);
+      }
+    }
     final completer = Completer<List<_NativeDecodeResult>>();
     final pending = _PendingNativeDecode(
       cursorAddress: cursorAddress,
@@ -180,8 +190,12 @@ final class _NativeDecodeWorkerPool {
       maxFrames: maxFrames,
       completer: completer,
       workerReady: Stopwatch()..start(),
+      control: control,
+      priority: control?.priority ?? 0,
+      sequence: _nextSequence++,
     );
     _enqueue(pending);
+    _observePendingControl(pending);
     if (_started) {
       pending.markWorkersReady();
       _pump();
@@ -204,12 +218,18 @@ final class _NativeDecodeWorkerPool {
     required int epoch,
   }) {
     for (final pending in List<_PendingNativeDecode>.of(_nonCurrentPending)) {
+      if (pending.control?.cancelled == true) {
+        if (_removePending(pending)) {
+          _completeCancelledPending(pending);
+        }
+        continue;
+      }
       if (pending.cursorAddress != cursorAddress || pending.epoch != epoch) {
         continue;
       }
       _nonCurrentPending.remove(pending);
       pending.executionClass = DecodeExecutionClass.current;
-      _currentPending.addFirst(pending);
+      _currentPending.addLast(pending);
       _pump();
       return DecodePriorityPromotion.queued;
     }
@@ -236,9 +256,64 @@ final class _NativeDecodeWorkerPool {
     }
   }
 
-  void _removePending(_PendingNativeDecode pending) {
-    _currentPending.remove(pending);
-    _nonCurrentPending.remove(pending);
+  bool _removePending(_PendingNativeDecode pending) {
+    final removed =
+        _currentPending.remove(pending) || _nonCurrentPending.remove(pending);
+    if (removed) {
+      pending.detachPriorityObserver();
+    }
+    return removed;
+  }
+
+  void _observePendingControl(_PendingNativeDecode pending) {
+    final control = pending.control;
+    if (control == null) {
+      return;
+    }
+    unawaited(
+      control.whenCancelled.then((_) {
+        if (!_removePending(pending)) {
+          return;
+        }
+        _completeCancelledPending(pending);
+        if (!_shuttingDown) {
+          _pump();
+        }
+      }),
+    );
+    if (control is PriorityObservableTaskControl) {
+      pending.prioritySubscription = control.priorityChanges.listen((priority) {
+        if (!_isPending(pending)) {
+          return;
+        }
+        pending.priority = priority;
+        _pump();
+      });
+    }
+  }
+
+  bool _isPending(_PendingNativeDecode pending) =>
+      _currentPending.contains(pending) || _nonCurrentPending.contains(pending);
+
+  void _completeCancelledPending(_PendingNativeDecode pending) {
+    if (pending.completer.isCompleted) {
+      return;
+    }
+    final control = pending.control;
+    if (control == null || !control.cancelled) {
+      pending.completer.completeError(
+        StateError('native decode request left the queue without admission'),
+      );
+      return;
+    }
+    try {
+      control.throwIfCancelled();
+      pending.completer.completeError(
+        StateError('native decode cancellation signal was inconsistent'),
+      );
+    } on Object catch (error, stack) {
+      pending.completer.completeError(error, stack);
+    }
   }
 
   Future<void> _ensureStarted() {
@@ -333,8 +408,9 @@ final class _NativeDecodeWorkerPool {
   }
 
   _PendingNativeDecode? _takePending() {
-    if (_currentPending.isNotEmpty && _currentPending.first.workersReady) {
-      return _currentPending.removeFirst();
+    final current = _takeBestReady(_currentPending);
+    if (current != null) {
+      return current;
     }
     final nonCurrentBusy = _workers.where(
       (worker) =>
@@ -344,12 +420,40 @@ final class _NativeDecodeWorkerPool {
     ).length;
     final liveWorkerCount =
         _workers.where((worker) => !worker.exited).length;
-    if (_nonCurrentPending.isNotEmpty &&
-        _nonCurrentPending.first.workersReady &&
-        nonCurrentBusy < liveWorkerCount - 1) {
-      return _nonCurrentPending.removeFirst();
+    if (nonCurrentBusy >= liveWorkerCount - 1) {
+      return null;
     }
-    return null;
+    return _takeBestReady(_nonCurrentPending);
+  }
+
+  _PendingNativeDecode? _takeBestReady(
+    Queue<_PendingNativeDecode> queue,
+  ) {
+    _PendingNativeDecode? best;
+    for (final pending in List<_PendingNativeDecode>.of(queue)) {
+      if (pending.control?.cancelled == true) {
+        if (queue.remove(pending)) {
+          pending.detachPriorityObserver();
+          _completeCancelledPending(pending);
+        }
+        continue;
+      }
+      if (!pending.workersReady) {
+        continue;
+      }
+      if (best == null ||
+          pending.priority > best.priority ||
+          (pending.priority == best.priority &&
+              pending.sequence < best.sequence)) {
+        best = pending;
+      }
+    }
+    if (best == null) {
+      return null;
+    }
+    queue.remove(best);
+    best.detachPriorityObserver();
+    return best;
   }
 
   void _handleWorkerExit(_NativeDecodeWorker worker) {
@@ -398,6 +502,7 @@ final class _NativeDecodeWorkerPool {
           ..._currentPending,
           ..._nonCurrentPending,
         ]) {
+          pending.detachPriorityObserver();
           if (!pending.completer.isCompleted) {
             pending.completer.completeError(failure, stack);
           }
@@ -496,6 +601,9 @@ final class _PendingNativeDecode {
     required this.maxFrames,
     required this.completer,
     required this.workerReady,
+    required this.control,
+    required this.priority,
+    required this.sequence,
   });
 
   final int cursorAddress;
@@ -504,6 +612,10 @@ final class _PendingNativeDecode {
   final int maxFrames;
   final Completer<List<_NativeDecodeResult>> completer;
   final Stopwatch workerReady;
+  final TaskControl? control;
+  int priority;
+  final int sequence;
+  StreamSubscription<int>? prioritySubscription;
   int workerReadyMicros = 0;
   Stopwatch? queued;
   bool workersReady = false;
@@ -515,6 +627,14 @@ final class _PendingNativeDecode {
     workersReady = true;
     workerReadyMicros = workerReady.elapsedMicroseconds;
     queued = Stopwatch()..start();
+  }
+
+  void detachPriorityObserver() {
+    final subscription = prioritySubscription;
+    prioritySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
   }
 }
 

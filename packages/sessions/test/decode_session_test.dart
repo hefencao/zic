@@ -81,6 +81,7 @@ void main() {
     );
 
     final readyDepths = <int>[];
+    final control = CancelToken();
     final result = await session.fill(
       demand: const DecodeDemand(
         role: PageRole.current,
@@ -90,7 +91,7 @@ void main() {
         expirationRevision: 2,
       ),
       revision: 1,
-      cancel: CancelToken(),
+      cancel: control,
       onFrameReady: (snapshot) => readyDepths.add(snapshot.depth),
     );
 
@@ -107,6 +108,14 @@ void main() {
         DecodeExecutionClass.current,
         DecodeExecutionClass.current,
       ],
+    );
+    expect(factory.cursors.single.controls, hasLength(2));
+    expect(
+      factory.cursors.single.controls.every(
+        (value) => identical(value, control),
+      ),
+      isTrue,
+      reason: 'DecodeSession must preserve the scheduler control into native work',
     );
 
     await download.reset();
@@ -323,6 +332,143 @@ void main() {
     factory.cursor.release.complete();
     final result = await fill;
     expect(result.depth, 1);
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('scheduled decode receives scheduler cancellation control', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_control_cancellation_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final factory = _CancellationAwareCursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: factory,
+      clock: _Clock(),
+    );
+    final control = CancelToken();
+
+    final fill = session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.far,
+        priority: 320,
+        targetWatermark: 1,
+        reason: 'queued-cancellation',
+        expirationRevision: 2,
+      ),
+      revision: 1,
+      cancel: control,
+    );
+    await factory.cursor.started.future;
+    expect(factory.cursor.control, same(control));
+
+    control.cancel();
+    await expectLater(
+      fill,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(factory.cursor.cancellationObserved, isTrue);
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('in-flight scheduled decode waits for real return after cancellation',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_inflight_cancellation_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final factory = _PromotableCursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: factory,
+      clock: _Clock(),
+    );
+    final control = CancelToken();
+    var settled = false;
+
+    final fill = session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.far,
+        priority: 320,
+        targetWatermark: 1,
+        reason: 'inflight-cancellation',
+        expirationRevision: 2,
+      ),
+      revision: 1,
+      cancel: control,
+    ).whenComplete(() {
+      settled = true;
+    });
+    await factory.cursor.started.future;
+    control.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      settled,
+      isFalse,
+      reason: 'cancellation must not fake completion of admitted native work',
+    );
+
+    factory.cursor.release.complete();
+    await expectLater(
+      fill,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
 
     session.dispose();
     await download.dispose();
@@ -1759,6 +1905,7 @@ final class _Cursor implements ScheduledFrameCursor {
   int next = 0;
   final List<DecodeExecutionClass> executionClasses =
       <DecodeExecutionClass>[];
+  final List<TaskControl?> controls = <TaskControl?>[];
 
   @override
   Future<CursorStep> decodeNext() =>
@@ -1766,9 +1913,11 @@ final class _Cursor implements ScheduledFrameCursor {
 
   @override
   Future<CursorStep> decodeNextScheduled(
-    DecodeExecutionClass executionClass,
-  ) async {
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  }) async {
     executionClasses.add(executionClass);
+    controls.add(control);
     return CursorStep.frame(_Frame(epoch, next++));
   }
 
@@ -1804,6 +1953,52 @@ final class _Frame implements FrameRef {
 }
 
 
+final class _CancellationAwareCursorFactory implements CursorFactory {
+  final _CancellationAwareCursor cursor = _CancellationAwareCursor();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) =>
+      CursorBinding(frames: cursor);
+}
+
+final class _CancellationAwareCursor implements ScheduledFrameCursor {
+  final Completer<void> started = Completer<void>();
+  TaskControl? control;
+  bool cancellationObserved = false;
+
+  @override
+  int get epoch => 0;
+
+  @override
+  Future<CursorStep> decodeNext() =>
+      decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  }) async {
+    this.control = control;
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    if (control == null) {
+      throw StateError('scheduled decode did not receive TaskControl');
+    }
+    await control.whenCancelled;
+    cancellationObserved = true;
+    control.throwIfCancelled();
+    throw StateError('cancelled TaskControl did not throw');
+  }
+
+  @override
+  void dispose() {}
+}
+
 final class _PromotableCursorFactory implements CursorFactory {
   final _PromotableCursor cursor = _PromotableCursor();
 
@@ -1830,8 +2025,9 @@ final class _PromotableCursor implements PrioritizableScheduledFrameCursor {
 
   @override
   Future<CursorStep> decodeNextScheduled(
-    DecodeExecutionClass executionClass,
-  ) async {
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  }) async {
     if (!started.isCompleted) {
       started.complete();
     }

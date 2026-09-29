@@ -187,6 +187,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       <DownloadId, DownloadSession>{};
   final Map<DownloadId, _SourceWatchBinding> _sourceWatches =
       <DownloadId, _SourceWatchBinding>{};
+  final Map<DownloadId, Object> _sourceRetirementTokens =
+      <DownloadId, Object>{};
   final Set<DownloadId> _sourceRebindWakes = <DownloadId>{};
   final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
   final Map<DownloadId, int> _sourceWakeLengths = <DownloadId, int>{};
@@ -461,6 +463,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       binding.projection.removeSourceListener(binding.listener);
     }
     _sourceWatches.clear();
+    _sourceRetirementTokens.clear();
     _observedDownloadSessions.clear();
     _sourceRebindWakes.clear();
     _sourceRevisions.clear();
@@ -617,19 +620,74 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     );
   }
 
+  bool _sourceStillUsed(DownloadId id) =>
+      _decodes.keys.any((candidate) => candidate.download == id) ||
+      _uploads.keys.any((candidate) => candidate.download == id) ||
+      (uploads?.hasRetainableStaticOutputForDownload(id) ?? false);
+
   void _releaseSourceIfUnused(DownloadId id) {
-    if (_decodes.keys.any((candidate) => candidate.download == id) ||
-        _uploads.keys.any((candidate) => candidate.download == id) ||
-        (uploads?.hasRetainableStaticOutputForDownload(id) ?? false)) {
+    if (_sourceStillUsed(id)) {
+      _sourceRetirementTokens.remove(id);
       return;
     }
-    final binding = _sourceWatches.remove(id);
+    final binding = _sourceWatches[id];
+    if (binding == null) {
+      _sourceRetirementTokens.remove(id);
+      _sourceRevisions.remove(id);
+      _sourceWakeLengths.remove(id);
+      _sourceRebindWakes.remove(id);
+      _forgetSourceKindWatch(id);
+      _clearExternalPresentationForDownload(id);
+      return;
+    }
+    final keys = <String>{
+      ...?decodes?.sessions
+          .where((session) => session.id.download == id)
+          .map((session) => session.id.key),
+      ...?uploads?.sessions
+          .where((session) => session.id.download == id)
+          .map((session) => session.id.key),
+    };
+    if (keys.isEmpty ||
+        (!decode.hasWorkFor(keys) && !upload.hasWorkFor(keys))) {
+      _releaseSourceNow(id, binding);
+      return;
+    }
+    final token = Object();
+    _sourceRetirementTokens[id] = token;
+    unawaited(_releaseSourceAfterLaneRetirement(id, binding, keys, token));
+  }
+
+  Future<void> _releaseSourceAfterLaneRetirement(
+    DownloadId id,
+    _SourceWatchBinding binding,
+    Set<String> keys,
+    Object token,
+  ) async {
+    await Future.wait<void>(<Future<void>>[
+      decode.idleKeys(keys),
+      upload.idleKeys(keys),
+    ]);
+    if (_disposed ||
+        !identical(_sourceRetirementTokens[id], token) ||
+        _sourceStillUsed(id) ||
+        !identical(_sourceWatches[id], binding)) {
+      return;
+    }
+    _releaseSourceNow(id, binding);
+  }
+
+  void _releaseSourceNow(DownloadId id, _SourceWatchBinding binding) {
+    if (!identical(_sourceWatches[id], binding) || _sourceStillUsed(id)) {
+      return;
+    }
+    _sourceRetirementTokens.remove(id);
+    _sourceWatches.remove(id);
     _sourceRevisions.remove(id);
     _sourceWakeLengths.remove(id);
     _sourceRebindWakes.remove(id);
     _forgetSourceKindWatch(id);
     _clearExternalPresentationForDownload(id);
-    if (binding == null) return;
     binding.projection.removeSourceListener(binding.listener);
     for (final decodeId
         in _decodeSourceRevisions.keys
@@ -637,17 +695,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         .toList(growable: false)) {
       _decodeSourceRevisions.remove(decodeId);
     }
-    // Native cursors and UploadSessions hold concrete source/decode generation
-    // ownership. Once no demand or retained static output authorizes that
-    // media generation, retire the full dependent chain before disposing the
-    // Reader-local ingress; otherwise stale cursors can pin encoded bytes or
-    // be reused against a later physical generation.
+    // Cancellation retires lane demand immediately but does not make an
+    // admitted native decode/upload disappear. Keep the concrete dependent
+    // chain and encoded source alive until both lane tasks have physically
+    // unwound; only then can the registries and ingress release the generation.
     uploads?.invalidateForDownload(id);
     decodes?.invalidateForDownload(id);
     ingresses?.release(binding.session);
   }
 
   void _watchSource(String sessionId, DownloadId id, DownloadSession session) {
+    // Any renewed media demand owns the existing source generation again. A
+    // previously scheduled retirement may still be waiting for an old lane
+    // task to unwind, so revoke that retirement before observing/reusing it.
+    _sourceRetirementTokens.remove(id);
     // Cached/promoted downloads keep rank authoritative in the transfer claim
     // without eagerly rewriting the physical DownloadSession on every viewport
     // shift. Crossing into real source work is the synchronization boundary.
@@ -888,6 +949,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         );
       }
       if (entry.value.role == PageRole.current) {
+        // The DecodeLane token is the numeric-rank authority consumed by an
+        // already-queued native request. Publish the new scheduler rank before
+        // migrating that same request into the current execution class; the
+        // native pool must not invent an addFirst-style priority shortcut.
+        decode.updatePriority(entry.key.key, entry.value.priority);
         _promoteDecodeToCurrent(sessionId, entry.key, demandRevision);
       }
       if (onDecode == null && decodes == null) {

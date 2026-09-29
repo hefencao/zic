@@ -29,7 +29,7 @@ require(
     '_currentPending',
     '_nonCurrentPending',
     'final liveWorkerCount =',
-    'nonCurrentBusy < liveWorkerCount - 1',
+    'nonCurrentBusy >= liveWorkerCount - 1',
     'worker.exited',
     'DecodeExecutionClass.current',
     'DecodeExecutionClass.nonCurrent',

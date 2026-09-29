@@ -165,8 +165,9 @@ final class NativeCursor
 
   @override
   Future<CursorStep> decodeNextScheduled(
-    DecodeExecutionClass executionClass,
-  ) async {
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  }) async {
     _requirePtr();
     if (_prefetched.isNotEmpty) {
       return _stepFromResult(_prefetched.removeFirst());
@@ -176,10 +177,12 @@ final class NativeCursor
     }
     _decodeInFlight = true;
     try {
+      control?.throwIfCancelled();
       final results = await _decodePool.decodeBatch(
         cursorAddress: _ptr.address,
         epoch: _epoch,
         executionClass: executionClass,
+        control: control,
         // Match VibeVenera's producer behavior: preserve the fastest possible
         // first frame, then amortize isolate/FFI dispatch for current playback.
         maxFrames: _frameCount == 0

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.3.0",
-  "last_updated": "2026-09-29T08:57:00+08:00",
+  "audit_version": "1.4.0",
+  "last_updated": "2026-09-29T10:38:02+08:00",
   "baseline_commit": "27467b96",
   "system": "zic-reader-media-runtime",
   "scope": "Reader navigation truth, external-static presentation ownership/state handoff, Pipeline presentation recovery, native decode/source-write worker lifecycle, GIF presentation lifecycle",
@@ -228,7 +228,10 @@
       "same Profile trace: 48 presentation source reads / 38 unique identities; 10 repeated reads are only later revisits with minimum repeat gap 45.634s, zero same-identity repeats under 5s, taskFailed=0",
       "post-27467b96 focused presentation/cache/recovery suites all passed；packages/bridge native contract 3/3 passed；tool/test_native_worker_exit_ownership.py passed",
       "Profile build/install on M2007J1SC: authoritative Home ready in 1.287s；trace zic-debug-trace-2026-09-29T00-52-07.jsonl has external-presentation-requested=33 and external-presentation-first-frame=33, mounted requests without later mounted first-frame=0, sourceRead 33/22 unique with repeat<5s=0, taskFailed=0, manual-force-reload=0, presentation-artifact-recovery=0",
-      "./tool/check.sh --require-toolchains: exit 0 in 193.331s；all repository/documentation/ownership checks, Dart/Flutter suites, three-ABI Android debug build and Rust media_core tests passed"
+      "./tool/check.sh --require-toolchains: exit 0 in 193.331s；all repository/documentation/ownership checks, Dart/Flutter suites, three-ABI Android debug build and Rust media_core tests passed",
+      "ADR0339 focused control/lifecycle validation: DecodeSession control propagation + queued cancellation + admitted cancellation real-exit tests passed; LiveCoordinator source-retirement barrier test passed; dev.96/dev.128/native-worker/native-decode ownership guards passed",
+      "final-source Profile build/install on M2007J1SC: authoritative Home ready in 1.245s; zic-debug-trace-2026-09-29T02-34-05.jsonl completed 4 forward + 4 reverse committed moves, including 2 stable previous-role starts; taskFailed=0, decode recoveries=0, decode priority promotion count=1 active=1 queued=0",
+      "./tool/check.sh --require-toolchains: exit 0 in 177.969s after ADR0339/source-retirement changes; repository/documentation/ownership gates, Dart/Flutter suites, Android toolchain/build checks and Rust media_core 22/22 passed"
     ],
     "pending": []
   },
@@ -282,9 +285,9 @@
     {
       "id": "RMR-CLEAN-003",
       "title": "native decode pending queue缺少request级cancel control",
-      "verdict": "confirmed_gap_deferred_separate_scheduler_change",
-      "evidence": "DecodeSession在await decodeNextScheduled前后检查CancelToken，ScheduledFrameCursor只传current/nonCurrent；native decode pool pending item当前没有TaskControl/cancel token。priority已有queued current promotion，但尚不能直接从native pending queue移除已取消decode。",
-      "action": "不与worker-exit修复混在一起扩ScheduledFrameCursor ABI；后续单独把既有scheduler cancellation/priority fact贯穿pending decode，in-flight FFI仍必须等真实退出后释放capacity。"
+      "verdict": "resolved_governed",
+      "evidence": "DecodeLane CancelToken现经DecodeSession/ScheduledFrameCursor/NativeCursor进入native decode pool。pending item在worker admission前观察同一whenCancelled和PriorityObservableTaskControl.priorityChanges；current/nonCurrent保持execution class，class内按scheduler numeric priority/sequence择优。admission后priority observer解除，cancel不能提前结算active worker。LiveCoordinator source retirement新增DecodeLane/UploadLane idleKeys barrier，避免取消后先dispose仍在FFI使用的cursor/source generation。",
+      "action": "已按ADR0339收口；不增加worker、不扩大2/1、不建立native第二scheduler。稳定guard固定跨层control、queued cancel/rank和last-slot reservation；行为回归固定同control传递、queued cancellation语义、in-flight真实退出barrier及source retirement barrier。"
     }
   ],
   "presentation_governance_trace": {
@@ -306,5 +309,36 @@
     "presentation_artifact_recovery": 0,
     "raster_cache_invalidations": 0,
     "interpretation": "正常Profile前后向阅读验证atomic requested→ready与当前grant首帧回执：本次所有mounted presentation request均得到后续mounted first-frame，且没有短时重复encoded reopen。该run没有故意制造raster eviction、corrupt body或worker crash；这些边界分别由确定性回归/ownership guard验证，不能冒充真机fault injection。"
+  },
+  "decode_pending_control_governance": {
+    "adr": "0339-native-decode-pending-task-control.md",
+    "scheduler_owner": "DecodeLane CancelToken",
+    "projection_path": "DecodeSession -> ScheduledFrameCursor -> NativeCursor -> native decode pool",
+    "queued_cancellation": "remove pending before worker admission and complete with the scheduler-owned typed cancellation",
+    "queued_rank": "current/nonCurrent execution class first; scheduler numeric priority descending then submission sequence ascending within class",
+    "promotion": "LiveCoordinator migrates DecodeLane numeric rank before migrating the same native request to current class",
+    "in_flight": "cancellation never marks worker idle or decrements activeRuns early; real native response/unwind remains the capacity boundary",
+    "generation_retirement": "source/decode generation waits for matching DecodeLane/UploadLane task retirement before invalidation",
+    "policy_unchanged": "2/1 decode window, worker count, current-only handoff, upload/frame/network policy unchanged"
+  },
+  "decode_pending_control_profile_trace": {
+    "file": "zic-debug-trace-2026-09-29T02-34-05.jsonl",
+    "build": "Profile Dart + release native media",
+    "authoritative_home_seconds": 1.245,
+    "committed_forward_moves": 4,
+    "committed_reverse_moves": 4,
+    "stable_previous_role_starts": 2,
+    "previous_mount_to_first_frame_ms": [
+      276.6,
+      161.8
+    ],
+    "task_failures": 0,
+    "decode_recoveries": 0,
+    "decode_priority_promotions": {
+      "count": 1,
+      "queued": 0,
+      "active": 1
+    },
+    "interpretation": "正常final-source双向Reader运行验证本轮scheduler-control/source-retirement改动未造成执行回归。该run未故意制造native queued cancellation、worker crash或in-flight cancellation；这些边界由确定性行为回归和ownership guards覆盖，不能把本Profile样本写成fault injection。"
   }
 }

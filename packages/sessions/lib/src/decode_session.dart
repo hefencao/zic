@@ -473,6 +473,7 @@ final class DecodeSession {
                 demand.role == PageRole.current
                     ? DecodeExecutionClass.current
                     : DecodeExecutionClass.nonCurrent,
+                control: cancel,
               )
             : await frames.decodeNext();
         final decodedAtMicros = clock.nowMicros();

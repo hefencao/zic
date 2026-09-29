@@ -2923,6 +2923,130 @@ void main() {
   },
   );
 
+  test('source retirement waits for cancelled decode work to physically exit',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_decode_retirement_barrier_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    await source.writeAsBytes('RIFF....WEBPpayload'.codeUnits);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'retirement-barrier',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'retirement-barrier',
+    );
+    final cursors = _RolePromotionCursorFactory();
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: cursors,
+      clock: clock,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      decodes: decodes,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'retirement-barrier',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'retirement-barrier',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await cursors.cursor.started.future;
+
+    final empty = DemandPlan.empty(revision: 2);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: empty,
+        diff: DemandDiff.between(plan, empty),
+        window: RoleWindow(const <int, PageRole>{}),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(coordinator.decode.isIdle, isFalse);
+    expect(
+      decodes.find(decodeId),
+      isNotNull,
+      reason: 'cancelled lane work still owns its concrete source generation',
+    );
+
+    cursors.cursor.release.complete();
+    await coordinator.idle();
+    expect(coordinator.decode.isIdle, isTrue);
+    expect(
+      decodes.find(decodeId),
+      isNull,
+      reason: 'source/decode generation retires only after real lane exit',
+    );
+  });
+
   test('source revisions arriving during decode are drained exactly once',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_growth_test_');
@@ -4851,8 +4975,9 @@ final class _RolePromotionCursor
 
   @override
   Future<CursorStep> decodeNextScheduled(
-    DecodeExecutionClass executionClass,
-  ) async {
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  }) async {
     if (!started.isCompleted) {
       started.complete();
     }

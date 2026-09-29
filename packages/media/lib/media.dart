@@ -1,4 +1,5 @@
-export 'package:domain/domain.dart' show DecodeId, TaskControl, TaskControlCancellation;
+export 'package:domain/domain.dart'
+    show DecodeId, PriorityObservableTaskControl, TaskControl, TaskControlCancellation;
 export 'src/frame.dart';
 export 'src/frame_pacing.dart';
 export 'src/ingress.dart';

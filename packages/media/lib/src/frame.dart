@@ -144,8 +144,9 @@ enum DecodePriorityPromotion { none, queued, active }
 /// cursor/pool remains the sole owner of worker slots and native execution.
 abstract interface class ScheduledFrameCursor implements FrameCursor {
   Future<CursorStep> decodeNextScheduled(
-    DecodeExecutionClass executionClass,
-  );
+    DecodeExecutionClass executionClass, {
+    TaskControl? control,
+  });
 }
 
 /// Optional capability for a cursor whose already-submitted native request can

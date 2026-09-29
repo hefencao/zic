@@ -545,6 +545,8 @@ final class DecodeLane implements TaskLane {
   bool get isIdle => _core.isIdle;
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
+  Future<void> idleKeys(Iterable<String> keys) => _core.idleKeys(keys);
+  bool hasWorkFor(Iterable<String> keys) => _core._containsAny(keys.toSet());
   @override
   void batch(void Function() action) => _core.batch(action);
   @override
@@ -593,6 +595,8 @@ final class UploadLane implements TaskLane {
   bool get isIdle => _core.isIdle;
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
+  Future<void> idleKeys(Iterable<String> keys) => _core.idleKeys(keys);
+  bool hasWorkFor(Iterable<String> keys) => _core._containsAny(keys.toSet());
   @override
   void batch(void Function() action) => _core.batch(action);
   @override

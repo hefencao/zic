@@ -51,7 +51,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..017已治理；presentation原子发布且error/recovery按attempt收口，worker单exit listener+退休补位（ADR0337/0338）。Profile request/frame=33/33、5s重复read=0、taskFailed=0；full gate exit0；defer项见audit。
+  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..017已治理（ADR0337/0338）；native decode pending control沿同一DecodeLane TaskControl贯穿queue，queued cancel/rank可见，in-flight真实退出后才释放capacity/source（ADR0339）。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
