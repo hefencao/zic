@@ -579,28 +579,47 @@ final class PersistentChapterDownloadService
         knownChapterIds: existingChapters,
       );
 
-      final pendingPages = <Future<void>>[];
+      final pendingPages = <
+          DownloadId,
+          Future<({DownloadId id, Object? failure, StackTrace? failureStack})>
+        >{};
       final pendingDemands = <DownloadId, TransferDemand>{};
-      Future<void> drainPendingPages() async {
-        if (pendingPages.isEmpty) return;
-        Object? failure;
-        StackTrace? failureStack;
+
+      Future<({DownloadId id, Object? failure, StackTrace? failureStack})>
+          observePendingPage(DownloadId id, Future<void> run) async {
         try {
-          await Future.wait<void>(
-            List<Future<void>>.of(pendingPages),
-            eagerError: false,
-          );
+          await run;
+          return (id: id, failure: null, failureStack: null);
         } on Object catch (error, stackTrace) {
-          failure = error;
-          failureStack = stackTrace;
-        } finally {
-          pendingPages.clear();
-          pendingDemands.clear();
-          consumer.replaceDemands(
-            identity,
-            ++revision,
-            const <DownloadId, TransferDemand>{},
-          );
+          return (id: id, failure: error, failureStack: stackTrace);
+        }
+      }
+
+      Future<({DownloadId id, Object? failure, StackTrace? failureStack})>
+          settleNextPendingPage() async {
+        final settled = await Future.any(pendingPages.values);
+        pendingPages.remove(settled.id);
+        pendingDemands.remove(settled.id);
+        consumer.replaceDemands(
+          identity,
+          ++revision,
+          Map<DownloadId, TransferDemand>.of(pendingDemands),
+        );
+        return settled;
+      }
+
+      Future<void> drainPendingPages({
+        ({DownloadId id, Object? failure, StackTrace? failureStack})?
+            initialFailure,
+      }) async {
+        Object? failure = initialFailure?.failure;
+        StackTrace? failureStack = initialFailure?.failureStack;
+        while (pendingPages.isNotEmpty) {
+          final settled = await settleNextPendingPage();
+          if (failure == null && settled.failure != null) {
+            failure = settled.failure;
+            failureStack = settled.failureStack;
+          }
         }
         if (failure != null) {
           Error.throwWithStackTrace(failure, failureStack!);
@@ -748,34 +767,31 @@ final class PersistentChapterDownloadService
           await session.reset();
         }
         consumer.refreshScheduling();
-        pendingPages.add(
-          _completeNetworkPage(
-            entry: entry,
-            id: id,
-            pageIndex: targetPageNumber - 1,
-            isSingleChapter: isSingleChapter,
-            comicDirectoryName: structuredComicDirectory,
-            chapterDirectoryName: chapterDirectoryName,
-            session: session,
-            token: token,
-            progress: progress,
-            consumer: consumer,
-          ).then((rec) {
-            if (rec != null) {
-              indexedRecords[id.key] = rec;
-            }
-          }),
-        );
+        final pageRun = _completeNetworkPage(
+          entry: entry,
+          id: id,
+          pageIndex: targetPageNumber - 1,
+          isSingleChapter: isSingleChapter,
+          comicDirectoryName: structuredComicDirectory,
+          chapterDirectoryName: chapterDirectoryName,
+          session: session,
+          token: token,
+          progress: progress,
+          consumer: consumer,
+        ).then((rec) {
+          if (rec != null) {
+            indexedRecords[id.key] = rec;
+          }
+        });
+        pendingPages[id] = observePendingPage(id, pageRun);
         if (pendingPages.length >= _chapterNetworkWindow) {
-          await drainPendingPages();
+          final settled = await settleNextPendingPage();
+          if (settled.failure != null) {
+            await drainPendingPages(initialFailure: settled);
+          }
         }
       }
       await drainPendingPages();
-      consumer.replaceDemands(
-        identity,
-        ++revision,
-        const <DownloadId, TransferDemand>{},
-      );
       await progress.flush();
       progress.close();
       token.throwIfCancelled();

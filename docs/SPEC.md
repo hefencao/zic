@@ -1470,6 +1470,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   already-admitted task在logical claim归零后 MUST迁移rank0而不是由Reader/session直接cancel；
   queued且从未admit的undemanded work MAY直接移除。普通可Range-resume的committed partial不得仅因字节较多自动变成不可抢占sunk cost；
   victim经济性仍由统一`NetPolicyRank`的真实不可恢复restart cost决定。consumer-bound transport真实dispose、任务错误、显式用户取消仍可硬终止。
+- 显式 chapter manual-download MAY在一个 command 内同时维持多个 exact page demand，但该编排 MUST复用同一个 composition `DownloadTransferConsumer` 与唯一 `NetLane`，不得创建 page pool/network executor。当前 chapter window 为2，且其 `downloadBucketLimitFor` MUST为2或更小；二者不得独立漂移。window MUST按 page operation 的完整 settle 滑动补位：一个 page 的 promotion、durable persist/structured materialization完成后即可移除其 demand并 admission 下一页，不得等待整批 page 全部结束。若任一已入场 page 首先失败，chapter owner MUST停止新 admission并drain已有 window，再按首个 failure结束；显式 cancel也 MUST等待/清理该 command 的已入场 work，不得留下独立 claim。该 window MUST NOT更改 NetLane normal/reserved slot、source bucket之外的scheduler、SpeculativeEncodedReadBudget、StorageWriteScheduler或partial-retention owner。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
 - 不得缩小**逻辑/retention 7/3或DownloadDemand 7/3**、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷；

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.33.0",
-  "last_updated": "2026-09-30T12:44:40+08:00",
+  "audit_version": "1.34.0",
+  "last_updated": "2026-09-30T15:46:44+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -11,8 +11,8 @@
     "medium_p2": 2,
     "governance_status": "in_progress",
     "review_status": "reconciled_with_open_findings",
-    "resolved_count": 10,
-    "deferred_count": 1,
+    "resolved_count": 11,
+    "deferred_count": 0,
     "pending_count": 0,
     "in_progress_count": 2
   },
@@ -20,8 +20,8 @@
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T12:44:40+08:00",
-    "review_basis": "继续治理 DL-PIPE-003。审计确认“SAF下partial仍在App-private”本身不是待修缺陷：production CompositionDownloadTransferRuntime 使用由application-support root稳定派生的recoverable transfer workspace，pure SAF合同也明确automatic cache/mutable partial默认留App-private；required completion正确绕过50MiB speculative-read gate，现有SAF partial writer采用temporary+whole-prefix transaction，不能拿来做每1/2MiB hot spill，否则形成O(n²) provider重写并把provider延迟塞回NetLane hot ingress。真正残留的容量根因在PhysicalTransferRetention：32-session/256MiB pressure victim成功handoff后调用retireIdlePhysical，但DownloadSession.dispose->Artifact.dispose仅关闭writer，不删除session-owned .part/.bin/meta，因此budget只收缩registry、不释放workspace正文，长运行/异常退出前可累积已cold-handoff的旧body。现增加显式discardOwnedArtifactBody retirement intent；只有promoted/partial durable handoff成功后的pressure retirement传true，DownloadSession仅在非borrowed、非resident时deleteAll session-owned Artifact。borrowed durable spool/resident body只release其它owner lease，不删除正文。回归确认partial victim的.part/meta与promoted victim的.bin在retire后消失，cold handoff保留，borrowed durable backing在同discard intent下仍存在。活跃required prefix与crash-recoverable deterministic prefix继续按设计占App-private，并非idle retention泄漏。",
+    "reviewed_at": "2026-09-30T15:46:44+08:00",
+    "review_basis": "继续推进独立 DL-PIPE-001 milestone。重新审计发现当前 PersistentChapterDownloadService 已不再严格单页串行：_chapterNetworkWindow=2、chapter consumer downloadBucketLimitFor=2，并把多个 required TransferDemand交给同一 composition DownloadTransferConsumer/DownloadTransferOwner/NetLane；但实现仍是固定2页batch barrier——pendingPages达到2后 Future.wait等待整批全部结束，快页完成时若另一页慢，第3页不能补位。现只改 chapter command bookkeeping 为2-wide sliding window，不新增scheduler：pendingPages按 DownloadId 跟踪，Future.any等待一个完整 page operation settle，随后移除该 exact demand并立即允许下一页 admission；NetLane仍唯一拥有network/source slot和retry/preemption。首个page failure后不再 admission 新页，并drain已入场页后重抛首个错误，cancel/finally继续由同一command consumer收敛claims。回归用两个受控source page证明第1页完成、第2页仍阻塞时第3页已open且最大open并发<=2；另一路证明第1页semantic terminal failure时第3页绝不admit、必须等第2页收敛后command失败。窗口未修改NetLane normal/reserved容量、50MiB speculative encoded budget、StorageWriteScheduler或partial-retention policy。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理"
     ]
@@ -68,7 +68,15 @@
       "DL-PIPE-003 repository-authoritative analyzer: tool/analyze.sh exit 0 with no error/warning on the closure tree",
       "dev.234/dev.285 retention guards were migrated from the old retireIdlePhysical source-shape assertion to the explicit default-false discardOwnedArtifactBody contract; both pass",
       "DL-PIPE-003 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 162.143s on the final production/test/docs tree",
-      "packages/sessions full suite in final gate: 376/376 passed"
+      "packages/sessions full suite in final gate: 376/376 passed",
+      "DL-PIPE-001 focused sliding-window validation: page 3 opens after page 1 fully completes while page 2 remains blocked; observed open concurrency never exceeds 2",
+      "DL-PIPE-001 failure-boundary validation: terminal page-1 failure stops page-3 admission and drains already-admitted page 2 before chapter failure",
+      "DL-PIPE-001 focused lifecycle validation: chapter cancellation/shared physical claim and physical-owner stall retry regressions pass",
+      "packages/downloads full suite on DL-PIPE-001 closure tree: 497/497 passed",
+      "tool/analyze.sh on DL-PIPE-001 closure tree: exit 0 with no error/warning",
+      "python3 tool/test_chapter_download_sliding_window_ownership.py: pass; window=2 stays aligned with chapter NetLane bucket=2 and batch Future.wait is forbidden",
+      "DL-PIPE-001 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 185.893s on the final production/test/docs tree",
+      "packages/downloads full suite in final gate: 497/497 passed"
     ],
     "failed_or_unverified": [
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
@@ -97,13 +105,16 @@
       "id": "DL-PIPE-001",
       "domain": "download_pipeline",
       "severity": "P1",
-      "title": "章节内页面严格单页串行遍历下载（流水线与网络并发瓶颈）",
+      "title": "章节内有界2页滑动下载窗口已闭合",
       "locations": [
-        "packages/downloads/lib/src/chapter_downloads.dart"
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart"
       ],
-      "status": "deferred_standalone_milestone",
-      "governance_note": "该问题牵涉 Pipeline/NetLane 调度权威、FlowGate 与内存水位，保持独立专项，禁止混入目录一致性修复。",
-      "remediation_plan": "设计受 NetLane 约束的有界多页滑动窗口并以基准和内存水位验证。"
+      "status": "resolved",
+      "remediation_plan": "",
+      "root_cause": "当前实现已具备2页并行demand，但达到窗口后用Future.wait等待整批完成，形成2-wide batch barrier；快页完成后不能在同窗慢页仍运行时补位，吞吐仍受页级长尾拖累。",
+      "impact": "chapter command现保持最多2个网络页operation在场；任一页完成即可补下一页，慢页不再阻塞整个batch。网络调度、retry/preemption、source bucket与资源水位仍由既有composition owner负责。",
+      "remediation_applied": "将pending page从Future list改为DownloadId->settlement future map，使用Future.any滑动等待完整page operation；settle后同步从consumer demand set移除该exact id再补下一页。首个failure停止后续admission并drain其余已入场work后重抛；窗口常量仍为2且chapter NetLane bucket limit仍为2。新增真实受控transport回归证明sliding overlap/max<=2与failure stop-admission，并加入chapter sliding-window ownership guard。",
+      "remaining_work": ""
     },
     {
       "id": "DL-PIPE-003",

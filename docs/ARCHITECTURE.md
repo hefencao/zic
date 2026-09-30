@@ -1531,6 +1531,7 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   平台不支持取消已提交`readAt`时只承诺“不再提交下一256KiB quantum”，不得把上层Future取消伪装成系统调用已中断。
   该预算与`cacheLimitMb`持久容量完全独立，也不是历史dev.247/248的page估算/eligibility budget；
   legacy `animatedWebpPrefetchBudgetMiB`继续失效。
+显式章节下载的多页编排只在同一个 composition `DownloadTransferConsumer` 上维护有界 network window；当前 `_chapterNetworkWindow=2` 与该 chapter consumer 的 source bucket limit 2 对齐。它不是第二个网络 scheduler：每页仍以 `TransferDemand(completionIntent=required)` 进入唯一 `DownloadTransferOwner/NetLane`，chapter 层只决定何时把下一个 exact page demand 加入同一 demand set。窗口采用 sliding refill 而非 batch barrier：任一已入场 page **完整完成 promotion + durable persist/materialization** 后，chapter owner 移除该 exact demand并立即允许下一页补位；不必等待同窗另一页结束。首个 page failure/cancel 后 MUST停止新 admission，并先等待已入场页收敛/取消后再结束 command，避免 zombie claim/writer。窗口不得扩大 NetLane normal/current 容量、storage-write quantum、50MiB speculative budget或partial-retention policy；窗口宽度变化也必须继续受这些既有资源 owner 约束。
 普通 response 进入 `DownloadJob` 后先合并 transport 的任意小块：
 首批约 16 KiB，后续按 64 KiB source-progress quantum 提交到 `DownloadSession`。这与 WebP decode-prefix hint 是两个独立概念：
 - local/content/file/asset prefix quantum：1 MiB；

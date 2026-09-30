@@ -2239,6 +2239,214 @@ void main() {
     serviceClosed = true;
   });
 
+  test('chapter network window slides when one of two pages completes', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-chapter-sliding-window-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uris = <Uri>[
+      for (var index = 0; index < 3; index++)
+        Uri.parse('https://example.test/sliding-$index.webp'),
+    ];
+    List<int> imageBytes(int marker) => <int>[
+          0x52, 0x49, 0x46, 0x46, 0x18, 0, 0, 0,
+          0x57, 0x45, 0x42, 0x50,
+          ...List<int>.filled(64, marker),
+        ];
+    final bodies = <Uint8List>[
+      for (var index = 0; index < 3; index++)
+        Uint8List.fromList(imageBytes(index + 1)),
+    ];
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:sliding-window',
+        displayName: '滑动窗口章节',
+        sourceId: 'venera:window-source',
+        comicId: 'window-comic',
+        comicTitle: '滑动窗口测试',
+        chapterId: 'window-chapter',
+        sourceRevision: 'window-r1',
+        pages: <ImportedPageRecord>[
+          for (var index = 0; index < 3; index++)
+            ImportedPageRecord(
+              displayName: '${index + 1}.webp',
+              sourceId: uris[index].toString(),
+              pageId: 'window-page-$index',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: bodies[index].length,
+            ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final opened = <Completer<void>>[
+      for (var index = 0; index < 3; index++) Completer<void>(),
+    ];
+    final releaseFirst = Completer<void>();
+    final releaseSecond = Completer<void>();
+    addTearDown(() {
+      if (!releaseFirst.isCompleted) releaseFirst.complete();
+      if (!releaseSecond.isCompleted) releaseSecond.complete();
+    });
+    var activeOpens = 0;
+    var maxActiveOpens = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openControlledResponse: (
+          sourceId,
+          requestUri, {
+          ByteRange? range,
+          Validators? validators,
+          TaskControl? control,
+        }) async {
+          final index = uris.indexOf(requestUri);
+          if (index < 0) throw StateError('unexpected URI $requestUri');
+          activeOpens++;
+          if (activeOpens > maxActiveOpens) maxActiveOpens = activeOpens;
+          if (!opened[index].isCompleted) opened[index].complete();
+          if (index == 0) {
+            await releaseFirst.future;
+          } else if (index == 1) {
+            await releaseSecond.future;
+          }
+          activeOpens--;
+          if (control?.cancelled ?? false) {
+            throw const Failure(
+              code: ErrorCode.cancelled,
+              message: 'sliding-window page cancelled',
+            );
+          }
+          return ByteResponse(
+            bytes: Stream<List<int>>.value(bodies[index]),
+            statusCode: 200,
+            rangeStart: 0,
+            totalLength: bodies[index].length,
+            validators: Validators(etag: 'window-$index'),
+            rangeSupported: false,
+          );
+        },
+      ),
+    );
+
+    final run = service.download(entry);
+    await opened[0].future.timeout(const Duration(seconds: 5));
+    await opened[1].future.timeout(const Duration(seconds: 5));
+    expect(opened[2].isCompleted, isFalse);
+    expect(maxActiveOpens, 2);
+
+    releaseFirst.complete();
+    await opened[2].future.timeout(const Duration(seconds: 5));
+    expect(releaseSecond.isCompleted, isFalse,
+        reason: 'page 3 must enter while page 2 is still blocked');
+    expect(maxActiveOpens, lessThanOrEqualTo(2));
+
+    releaseSecond.complete();
+    await run.timeout(const Duration(seconds: 5));
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.complete);
+    expect(snapshot.exactCompletedPages, 3);
+  });
+
+  test('chapter network window stops admission after the first page failure',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-chapter-window-failure-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uris = <Uri>[
+      for (var index = 0; index < 3; index++)
+        Uri.parse('https://example.test/window-failure-$index.webp'),
+    ];
+    final valid = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50,
+      ...List<int>.filled(64, 7),
+    ]);
+    final invalid = Uint8List.fromList(<int>[
+      ...'<html><body>source failure</body></html>'.codeUnits,
+      ...List<int>.filled(96, 32),
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:window-failure',
+        displayName: '滑动窗口失败章节',
+        sourceId: 'venera:window-failure-source',
+        comicId: 'window-failure-comic',
+        comicTitle: '滑动窗口失败测试',
+        chapterId: 'window-failure-chapter',
+        sourceRevision: 'window-failure-r1',
+        pages: <ImportedPageRecord>[
+          for (var index = 0; index < 3; index++)
+            ImportedPageRecord(
+              displayName: '${index + 1}.webp',
+              sourceId: uris[index].toString(),
+              pageId: 'window-failure-page-$index',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: index == 0 ? invalid.length : valid.length,
+            ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final opened = <Completer<void>>[
+      for (var index = 0; index < 3; index++) Completer<void>(),
+    ];
+    final releaseSecond = Completer<void>();
+    addTearDown(() {
+      if (!releaseSecond.isCompleted) releaseSecond.complete();
+    });
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openControlledResponse: (
+          sourceId,
+          requestUri, {
+          ByteRange? range,
+          Validators? validators,
+          TaskControl? control,
+        }) async {
+          final index = uris.indexOf(requestUri);
+          if (index < 0) throw StateError('unexpected URI $requestUri');
+          if (!opened[index].isCompleted) opened[index].complete();
+          if (index == 1) await releaseSecond.future;
+          final bytes = index == 0 ? invalid : valid;
+          return ByteResponse(
+            bytes: Stream<List<int>>.value(bytes),
+            statusCode: 200,
+            rangeStart: 0,
+            totalLength: bytes.length,
+            validators: Validators(etag: 'window-failure-$index'),
+            rangeSupported: false,
+          );
+        },
+      ),
+    );
+
+    final run = service.download(entry);
+    await opened[1].future.timeout(const Duration(seconds: 5));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(opened[2].isCompleted, isFalse,
+        reason: 'a failed page must stop sliding-window admission');
+
+    releaseSecond.complete();
+    await expectLater(
+      run.timeout(const Duration(seconds: 5)),
+      throwsA(
+        isA<Failure>()
+            .having((failure) => failure.code, 'code', ErrorCode.source)
+            .having(
+              (failure) => failure.details['sourceMediaSemanticRejected'],
+              'semantic rejection',
+              true,
+            ),
+      ),
+    );
+    expect(opened[2].isCompleted, isFalse);
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.failed);
+  });
+
   test(
       'force reload during chapter download keeps required claim on same physical owner',
       () async {
