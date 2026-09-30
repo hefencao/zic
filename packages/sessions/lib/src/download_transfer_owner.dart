@@ -257,7 +257,10 @@ final class DownloadTransferOwner {
   /// This method owns only scheduler/session bookkeeping. It intentionally
   /// does not know whether the caller persisted a partial, reused a durable
   /// artifact, or discarded an empty session.
-  Future<bool> retireIdlePhysical(DownloadId id) async {
+  Future<bool> retireIdlePhysical(
+    DownloadId id, {
+    bool discardOwnedArtifactBody = false,
+  }) async {
     if (_disposed) return false;
     final physicalId = registry.resolvePhysicalId(id);
     final session = registry.findExact(physicalId);
@@ -308,7 +311,9 @@ final class DownloadTransferOwner {
     _preparedAdmissionDeferrals.remove(physicalId);
     _cancelDownloadRetry(physicalId);
     _retireDownloadTracking(physicalId, session);
-    await session.dispose();
+    await session.dispose(
+      discardOwnedArtifactBody: discardOwnedArtifactBody,
+    );
     return true;
   }
 

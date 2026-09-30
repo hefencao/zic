@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.32.0",
-  "last_updated": "2026-09-30T12:25:14+08:00",
+  "audit_version": "1.33.0",
+  "last_updated": "2026-09-30T12:44:40+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -11,17 +11,17 @@
     "medium_p2": 2,
     "governance_status": "in_progress",
     "review_status": "reconciled_with_open_findings",
-    "resolved_count": 9,
+    "resolved_count": 10,
     "deferred_count": 1,
-    "pending_count": 1,
+    "pending_count": 0,
     "in_progress_count": 2
   },
   "governance": {
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T12:25:14+08:00",
-    "review_basis": "继续关闭 DL-DIR-006 的三个 remaining_work。重新审计确认 whole-comic identity 风险已是历史状态：WholeComicQueueSnapshot.jobFor 使用 comicLibraryIdentity(sourceId, comicId)，HomeDownloadCommands.cachedWholeComicJob 也同时比较 sourceId+comicId，本轮只补同 raw comicId/不同 source 的双 job 回归。另两项真实缺口已修复：forcePrompt 过去只按 title 重新探查，custom persisted placement 目录名不相似时会消失；现在当前 DownloadPlacement.relativeDirectory 作为 requiredDirectoryNames 贯穿 Home command -> ChapterDownloadService -> persistent placement owner -> POSIX/SAF inspector，durable placement claim 即使无物理目录/manifest 也可投影 observedOwnerKey，UI 不再从异常字符串或路径猜 owner。另一个缺口是 details 为隐藏 exact/self candidate 构造 filtered report 后丢掉 exact occupied recommended directory，saveAsNew 可能返回原目录；现在 ComicConflictReport 保留完整 occupiedDirectoryNames，filtered report 继承该集合，unique naming 必须避开所有占用名。overwrite 最终仍由 storage owner 对 observedOwnerKey 精确复核，没有新增第二 placement authority。",
+    "reviewed_at": "2026-09-30T12:44:40+08:00",
+    "review_basis": "继续治理 DL-PIPE-003。审计确认“SAF下partial仍在App-private”本身不是待修缺陷：production CompositionDownloadTransferRuntime 使用由application-support root稳定派生的recoverable transfer workspace，pure SAF合同也明确automatic cache/mutable partial默认留App-private；required completion正确绕过50MiB speculative-read gate，现有SAF partial writer采用temporary+whole-prefix transaction，不能拿来做每1/2MiB hot spill，否则形成O(n²) provider重写并把provider延迟塞回NetLane hot ingress。真正残留的容量根因在PhysicalTransferRetention：32-session/256MiB pressure victim成功handoff后调用retireIdlePhysical，但DownloadSession.dispose->Artifact.dispose仅关闭writer，不删除session-owned .part/.bin/meta，因此budget只收缩registry、不释放workspace正文，长运行/异常退出前可累积已cold-handoff的旧body。现增加显式discardOwnedArtifactBody retirement intent；只有promoted/partial durable handoff成功后的pressure retirement传true，DownloadSession仅在非borrowed、非resident时deleteAll session-owned Artifact。borrowed durable spool/resident body只release其它owner lease，不删除正文。回归确认partial victim的.part/meta与promoted victim的.bin在retire后消失，cold handoff保留，borrowed durable backing在同discard intent下仍存在。活跃required prefix与crash-recoverable deterministic prefix继续按设计占App-private，并非idle retention泄漏。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理"
     ]
@@ -60,7 +60,15 @@
       "python3 tool/test_download_conflict_resolution_ownership.py and dev.330 HomeShell download command boundary: pass; forcePrompt required target, observed owner, occupied-name and source-scoped whole-job contracts are guarded",
       "tool/analyze.sh on DL-DIR-006 closure tree: exit 0 with no error/warning",
       "DL-DIR-006 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 161.688s on the final production/test/docs tree; all repository/documentation/ownership guards and analyzers passed",
-      "packages/downloads full suite in final gate: 495/495 passed"
+      "packages/downloads full suite in final gate: 495/495 passed",
+      "DL-PIPE-003 focused physical retention regression: 21/21 passed; cold-handoff partial/promoted victims now release session-owned hot files",
+      "packages/sessions full suite and packages/downloads full suite (495/495) passed after explicit retirement discard boundary",
+      "borrowed durable backing regression passed with discardOwnedArtifactBody=true while preserving durable file",
+      "python3 tool/test_download_partial_staging_ownership.py and dev.279 continuity/recoverable staging guard: pass",
+      "DL-PIPE-003 repository-authoritative analyzer: tool/analyze.sh exit 0 with no error/warning on the closure tree",
+      "dev.234/dev.285 retention guards were migrated from the old retireIdlePhysical source-shape assertion to the explicit default-false discardOwnedArtifactBody contract; both pass",
+      "DL-PIPE-003 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 162.143s on the final production/test/docs tree",
+      "packages/sessions full suite in final gate: 376/376 passed"
     ],
     "failed_or_unverified": [
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
@@ -101,12 +109,16 @@
       "id": "DL-PIPE-003",
       "domain": "download_pipeline",
       "severity": "P2",
-      "title": "SAF 模式下 Partial 临时分块仍占用内部私有存储",
+      "title": "SAF mutable partial 的 App-private staging 与 retention 磁盘释放边界已闭合",
       "locations": [
         "packages/downloads/lib/src/chapter_downloads.dart"
       ],
-      "status": "pending",
-      "remaining_work": "评估 SAF 流式 partial 或内部暂存水位治理；不得让 encoded ingress 等待 decode/scale/composite 锁。"
+      "status": "resolved",
+      "remaining_work": "",
+      "root_cause": "旧issue把“SAF下partial使用App-private staging”与真实容量泄漏混在一起。App-private hot/recoverable staging是低延迟与崩溃恢复合同；真实缺陷是retention pressure成功cold handoff并退休session后只dispose Artifact而不删除其session-owned正文，导致32-session/256MiB只约束registry而不约束已退休hot文件。",
+      "impact": "不再尝试把network hot append同步写入SAF。idle promoted/partial victim在durable handoff成功后会立即释放自身App-private .part/.bin/sidecar，borrowed/resident authority保持不动；active required transfer和deterministic crash-recovery prefix仍可正常占用private staging。",
+      "remediation_applied": "DownloadTransferOwner.retireIdlePhysical新增显式discardOwnedArtifactBody意图；PhysicalTransferRetention只在automatic promoted handoff或partial persist成功后以该意图退休。DownloadSession.dispose默认行为不变，显式discard仅在既非borrowed durable backing也非resident body时调用Artifact.deleteAll。回归锁住partial/promoted victim文件真实消失、cold store仍有数据、borrowed durable file不被删除；新增download partial staging ownership guard并保留dev.279 recoverable staging连续性。",
+      "remediation_plan": ""
     },
     {
       "id": "DL-DIR-006",

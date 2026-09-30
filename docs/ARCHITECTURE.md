@@ -1589,6 +1589,7 @@ composition owner必须对idle physical registry执行有界retention：
 该预算只保留physical/session generation authority，不扩大Reader/Pipeline/NetLane窗口或复制第二份artifact正文。
 unfinished prefix在独立的32-session/256MiB hot partial预算受压或runtime真正dispose时，
 仍可经`PartialDownloadHandoff`进入cold durable store；普通App background/paused不得为了保住hot partial触发durable/SAF复制。
+该hot partial预算必须约束实际recoverable workspace正文，而不能只约束registry对象：pressure victim只有在promoted/partial handoff成功后才可退休，退休时必须同步删除session自己拥有的`.part/.bin`及sidecar。borrowed durable spool与resident body属于其它authority，retirement discard只能release lease、绝不能删除其正文。`DownloadSession.dispose()`默认仍只关闭生命周期；只有retention owner在durable handoff已证明后显式传入discard intent，避免把“dispose”等同于隐式文件删除。显式required completion可绕过50MiB speculative-read gate并保留当前active prefix；该active/recoverable正文是完成/崩溃恢复成本，不属于idle retention泄漏，也不得为了降低private占用把NetLane hot append改成同步SAF provider write。
 production composition的fresh mutable artifact使用由App私有support identity稳定派生的recoverable transfer workspace，
 而不是pid/nonce一次性Reader目录：
 任务界面移除或进程被杀而未执行Dart dispose时，下一runtime必须先以同一deterministic `DownloadId` artifact path执行`DownloadSession.restore()`，

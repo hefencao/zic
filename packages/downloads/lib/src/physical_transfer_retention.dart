@@ -274,7 +274,12 @@ final class PhysicalTransferRetention {
         }
         final bytes = session.committedLength;
         final residentBodyBacked = session.residentBodyBacked;
-        if (!await owner.retireIdlePhysical(session.id)) continue;
+        if (!await owner.retireIdlePhysical(
+          session.id,
+          discardOwnedArtifactBody: true,
+        )) {
+          continue;
+        }
         _forget(session);
         handoff.unobserve(session);
         _recordRetirement(
@@ -322,7 +327,12 @@ final class PhysicalTransferRetention {
         }
       }
       if (!_isIdle(victim.snapshot)) continue;
-      if (!await owner.retireIdlePhysical(victim.id)) continue;
+      if (!await owner.retireIdlePhysical(
+        victim.id,
+        discardOwnedArtifactBody: true,
+      )) {
+        continue;
+      }
       _forget(victim);
       artifactHandoff?.unobserve(victim);
       _recordRetirement(

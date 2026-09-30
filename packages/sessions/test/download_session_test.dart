@@ -202,8 +202,10 @@ void main() {
     expect(projection.snapshot.length, 64);
     expect(projection.snapshot.failure, isNull);
     await session.pause(writer);
-    await session.dispose();
+    await session.dispose(discardOwnedArtifactBody: true);
     expect(released, 1);
+    expect(await File(durablePartial).exists(), isTrue,
+        reason: 'retirement discard must never delete borrowed durable backing');
   });
 
   test('borrowed durable backing delegates later cache mutations to its owner',

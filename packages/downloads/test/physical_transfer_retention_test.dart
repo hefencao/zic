@@ -71,6 +71,8 @@ void main() {
     await first.promote();
     await runtime.settlePhysicalRetention();
     expect(runtime.registry.findExact(firstId), same(first));
+    final firstHotFinal = File(first.artifact.finalPath);
+    expect(await firstHotFinal.exists(), isTrue);
 
     final second = runtime.registry.get(secondId);
     final secondBytes = Uint8List.fromList(<int>[5, 6, 7, 8]);
@@ -86,6 +88,8 @@ void main() {
 
     expect(backend.artifacts[firstId], orderedEquals(firstBytes));
     expect(runtime.registry.findExact(firstId), isNull);
+    expect(await firstHotFinal.exists(), isFalse,
+        reason: 'durable retirement must release the old hot workspace body');
     expect(runtime.registry.findExact(secondId), same(second));
     expect(runtime.registry.sessions, hasLength(1));
   });
@@ -137,6 +141,9 @@ void main() {
     await _writePartial(first, <int>[1, 2, 3, 4]);
     await runtime.settlePhysicalRetention();
     expect(runtime.registry.findExact(firstId), same(first));
+    final firstHotPartial = File(first.artifact.partialPath);
+    final firstHotMeta = File(first.artifact.metaPath);
+    expect(await firstHotPartial.exists(), isTrue);
 
     final second = runtime.registry.get(secondId);
     await _writePartial(second, <int>[5, 6, 7, 8]);
@@ -144,6 +151,9 @@ void main() {
 
     expect(runtime.registry.findExact(firstId), isNull);
     expect(runtime.registry.findExact(secondId), same(second));
+    expect(await firstHotPartial.exists(), isFalse,
+        reason: 'cold-stored victim must release its hot workspace prefix');
+    expect(await firstHotMeta.exists(), isFalse);
     expect(
       backend.partials[firstId]?.bytes,
       orderedEquals(<int>[1, 2, 3, 4]),

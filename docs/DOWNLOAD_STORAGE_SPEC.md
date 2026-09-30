@@ -125,7 +125,7 @@ This document is normative for the detailed download/storage behavior.
 
 1. On a reliable direct POSIX root, automatic-cache objects MAY be colocated under a hidden ZIC-owned area so cache-to-export promotion on the same filesystem can use rename/reflink semantics.
 2. Hard-link promotion MUST NOT be the default because user edits to exported files would mutate the hidden cache authority.
-3. On pure SAF roots, automatic cache and mutable partials SHOULD remain in App-private storage unless a provider-specific cheap-move capability is proven.
+3. On pure SAF roots, automatic cache and mutable partials SHOULD remain in App-private storage unless a provider-specific cheap-move capability is proven. Hot recoverable transfer staging MAY therefore hold the active required-completion prefix outside the SAF tree. When an idle hot partial/promoted body has been durably handed off and its physical session is retired under retention pressure, the session-owned App-private body and sidecars MUST be deleted immediately; borrowed durable spools and resident bodies MUST NOT be deleted by that retirement. A provider-side partial writer that rewrites the full prefix transactionally MUST NOT be used as a per-stride hot spill mechanism.
 4. Private/direct-to-SAF materialization MUST be a single bounded streaming copy;
    the copy pass MUST establish the destination seal proof without a mandatory second whole-file readback on the Reader hot path.
 5. Automatic cache MUST NOT be eagerly migrated merely because the default export root changes.

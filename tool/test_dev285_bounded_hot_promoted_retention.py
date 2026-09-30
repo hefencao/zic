@@ -38,7 +38,8 @@ for marker in (
     "'maxIdlePromotedSessions': maxIdlePromotedSessions",
     "'retainedIdlePromotedSessions': idlePromoted.length",
     'await handoff.settleAutomatic(session)',
-    'await owner.retireIdlePhysical(session.id)',
+    'await owner.retireIdlePhysical(',
+    'discardOwnedArtifactBody: true',
 ):
     req(marker in retention, f'bounded promoted retention missing: {marker}')
 req('_retireIdlePromoted' not in retention,

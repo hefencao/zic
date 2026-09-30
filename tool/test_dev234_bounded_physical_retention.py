@@ -40,9 +40,11 @@ for token in ('PartialDownloadHandoff', 'PartialDownloadStore', 'ArtifactCacheMa
     forbid(registry, token, 'sessions registry durable/retention policy')
 
 for token in (
-    'Future<bool> retireIdlePhysical(DownloadId id)',
+    'Future<bool> retireIdlePhysical(',
+    'bool discardOwnedArtifactBody = false,',
     'final retired = registry.takeIdlePhysical(physicalId);',
-    'await session.dispose();',
+    'await session.dispose(',
+    'discardOwnedArtifactBody: discardOwnedArtifactBody',
 ):
     require(owner, token, 'scheduler-owned physical retirement')
 for token in ('PartialDownloadHandoff', 'PartialDownloadStore', 'ArtifactCacheManager', 'hot-retention-pressure'):

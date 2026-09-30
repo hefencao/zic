@@ -2524,7 +2524,7 @@ final class DownloadSession {
   /// race a stale index write from the retired generation.
   Future<void> settleCacheMutations() => _cacheMutationTail;
 
-  Future<void> dispose() async {
+  Future<void> dispose({bool discardOwnedArtifactBody = false}) async {
     if (_state == DownloadState.disposed) {
       return;
     }
@@ -2573,6 +2573,14 @@ final class DownloadSession {
       // touch the cache backend; the epoch guard above turns that operation
       // into a no-op, and awaiting the tail establishes the shutdown boundary.
       await _cacheMutationTail;
+      if (discardOwnedArtifactBody &&
+          _borrowedBackingRelease == null &&
+          !_residentBodyBacked) {
+        // Retention pressure may retire an already-handoff physical session.
+        // Only its session-owned staging body is disposable here. Borrowed
+        // durable spools and resident cache bodies belong to other owners.
+        await artifact.deleteAll();
+      }
       await artifact.dispose();
       final releaseBacking = _borrowedBackingRelease;
       if (releaseBacking != null) {

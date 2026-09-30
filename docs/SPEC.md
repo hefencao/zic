@@ -789,6 +789,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   下一runtime按同一deterministic `DownloadId` artifact path先执行`DownloadSession.restore()`恢复磁盘上实际存在的连续prefix。
   普通App background/paused MUST NOT为了保住hot partial复制整段正文到durable store/SAF；
   retention pressure、显式durable completion或真正runtime teardown仍 MAY按既有handoff持久化。
+  retention pressure 的 promoted/partial victim MUST在对应durable handoff成功后才退休；若其正文由session自己的recoverable Artifact持有，退休 MUST删除该hot `.part/.bin`与sidecar，使32-session/256MiB idle预算对应实际workspace正文而非仅registry数量。borrowed durable backing与resident body MUST只release lease/descriptor，MUST NOT由hot-retirement路径删除。`DownloadSession.dispose()`的普通默认行为 MUST继续只是生命周期关闭；hot body discard必须是retention owner在handoff成功后的显式意图。显式required completion MAY绕过50MiB speculative encoded budget并让active prefix超过该阈值；这不是idle retention额度，也 MUST NOT通过把每个network chunk同步写SAF来“修复”。现有SAF whole-prefix transactional partial writer MUST NOT被当作2MiB stride spill，因为反复从0重写会形成provider写放大。
   decoder MUST自行消费恢复出的partial并判断当前可解码边界；playable/needMoreData事实 MUST NOT成为partial persistence、
   checkpoint或network admission条件，transport续传仍只由既有demand/NetLane authority决定。
   无validator/Range被忽略而进入完整200正文catch-up时，只有在已完整读够旧partial长度且CRC明确证明新正文前缀与旧generation不一致后，
