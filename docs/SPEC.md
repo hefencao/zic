@@ -1992,6 +1992,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - 插件 MUST 在隔离、信任和权限门禁内执行，只返回 catalog 数据、request plan 或显式有界 transform 结果。
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；
   首播块 SHOULD 小于持续传输块，聚合不得改变字节顺序、取消、Range/validator、artifact或重试所有权。
+  `IoTransport`/平台 transport MUST保持通用 byte transport，不得拥有 image classifier、`ContentKind` 或 semantic retry。production composition 的 image physical transfer MUST在 `DownloadJob` admission 消费当前 `DownloadSession` generation-local bounded metadata prefix，并用共享 supported encoded-image signature classifier 验证新 source/local-transfer generation；prefix 达到 sniff 上限仍不匹配，或短 final body 结束仍不匹配时 MUST产生 `ErrorCode.source + sourceMediaSemanticRejected`，且新正文 MUST在 seal/promotion/READY authority 之前失败。`DownloadTransferOwner` MUST让 local-prepare completion、NetLane 前 local completion 与 source/network resident completion 共享该 gate，并在 terminal semantic rejection 后删除被拒 generation 的 partial/final authority再发布 failure。已经由 durable `artifactCache` 持有的 resident generation MUST继续交给既有 storageId+generation-aware presentation recovery；sessions 不得在缺少 cache-generation proof 时把普通 response rejection升级成 durable cache invalidation。合法 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF正文 MAY继续按既有 `fallback/webp/gif` 分类；opaque URI、扩展名和 Content-Type MUST NOT单独决定准入。
 - 插件不得访问导航、Reader、demand、artifact、App state 或底层缓存。
 - Cookie、token、脚本 payload 和 Base64 正文不得原样写入 Trace。
 - durable handoff 后已安装插件恢复 MAY 对互不相关的 runtime 使用最多 4 个并发激活 worker；

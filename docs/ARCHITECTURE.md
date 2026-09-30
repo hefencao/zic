@@ -1535,7 +1535,7 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
 首批约 16 KiB，后续按 64 KiB source-progress quantum 提交到 `DownloadSession`。这与 WebP decode-prefix hint 是两个独立概念：
 - local/content/file/asset prefix quantum：1 MiB；
 - remote prefix quantum：256 KiB。
-`DownloadSession` 保证连续前缀、单 writer、validator/range、seal 和 promotion。
+`DownloadSession` 保证连续前缀、单 writer、validator/range、seal 和 promotion。生产 composition 把这条物理链声明为 image transfer，但不把图片语义下推给 `IoTransport`：`DownloadJob` 只读当前 generation 的 bounded metadata prefix，并复用 `hasSupportedEncodedImageSignature` 做 image-body admission。prefix 已达到 sniff 上限仍无支持签名，或较短 final body 结束仍无支持签名时，统一产生 `sourceMediaSemanticRejected`；JPEG/PNG/AVIF/HEIF 等合法静态正文仍可保持 `ContentKind.fallback`，opaque URI 也不受影响。`DownloadTransferOwner` 的 local-prepare completion、NetLane 入场前 local completion 与新 source/network/resident generation 必须经过同一 gate；被拒 generation 先 reset 并删除 partial/final authority，再发布 terminal source failure，禁止把 HTML/JSON partial 留给下一次 Range resume。已有 durable `artifactCache` resident body 是例外：sessions 缺少精确 storageId+generation，不得抢占其 presentation generation-aware recovery；这类历史 carrier 继续由现有 cache recovery 精确失效。
 网络 attempt 生命周期与 playback artifact authority 分离：
 已有 committed partial 在 transport restart、无 validator 或 Range 拒绝时保持原文件、epoch 与匹配的内存 Ingress。
 strong validator 仍优先直接 Range resume；
@@ -2187,7 +2187,7 @@ Presentation 不得自行构造 HTTP client。
   该能力只属于host-private image binary seam，public `Network.fetchBinary/http_binary`继续允许任意binary：
   rangeStart=0的2xx正文若在image-private native/runtime边界已证明不具备受支持图片magic signature，
   必须在注册native-byte token/交给Dart之前判为image-load failure并失效该URL的runtime HTTP cache。
-  host direct/rhttp把这一事实标成`sourceMediaSemanticRejected`；
+  host direct/rhttp把这一事实标成`sourceMediaSemanticRejected`；普通 `IoTransport` 本身仍只传 bytes，但进入 composition image `DownloadJob` 后同样用 generation-local prefix 产生这一 semantic rejection，因此 direct URL 与 opaque plugin resource 在 transfer owner 处共享同一无效正文退休规则，而 transport 不形成第二 content owner。
   `SourceResourceTransport`由单一source-recovery owner在一次logical open内最多消费5个当前config的`retryResource/onLoadFailed` replacement，
   而不是因笼统`sourceMediaProtocolMismatch`把原locator送入full-runtime，也不得让provider RetryPolicy另起semantic retry层。
   `sourceClientStateRequired`才表示redirect/Cookie/interceptor/session state必须交给source-owned runtime client。

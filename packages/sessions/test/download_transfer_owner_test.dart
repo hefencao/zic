@@ -300,6 +300,71 @@ void main() {
   },
   );
 
+  test('composition image admission retires a non-image generation', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_non_image_admission_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('non-image-admission');
+    final body = <int>[
+      ...'<html><body>authentication required</body></html>'.codeUnits,
+      ...List<int>.filled(256, 32),
+    ];
+    final transport = _CountingBytesTransport(body);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-non-image-admission',
+      transportFor: (_) => transport,
+      traceSink: trace,
+      retry: const RetryPolicy(
+        maxAttempts: 1,
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+    );
+
+    consumer.replaceDemands(
+      'reader-non-image-admission',
+      1,
+      _desired(id, priority: 1000),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    final session = registry.get(id);
+    expect(session.state, DownloadState.failed);
+    expect(session.committedLength, 0);
+    expect(await File(session.artifact.partialPath).exists(), isFalse);
+    expect(await File(session.artifact.finalPath).exists(), isFalse);
+    final failure = session.snapshot.failure;
+    expect(failure, isA<Failure>());
+    expect(failure!.code, ErrorCode.source);
+    expect(failure.details['sourceMediaSemanticRejected'], isTrue);
+    expect(transport.opens, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'image-media-admission' &&
+            event.payload['action'] == 'rejected-generation-retired',
+      ),
+      isTrue,
+    );
+  });
+
   test('prepared local completion bypasses provider transport admission', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_completion_',
@@ -369,6 +434,79 @@ void main() {
     expect(shortCircuit.payload['committedLength'], bytes.length);
     },
   );
+
+  test('pre-admission complete non-image partial cannot promote locally', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_non_image_local_completion_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('non-image-local-completion');
+    final body = <int>[
+      ...'<html><body>cached auth failure</body></html>'.codeUnits,
+      ...List<int>.filled(128, 32),
+    ];
+    final session = registry.get(id);
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(etag: 'html'),
+      totalLength: body.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, body);
+    await session.pause(writer);
+    final transport = _CountingBytesTransport(_ownerAnimatedWebp(<int>[64]));
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-non-image-local-completion',
+      transportFor: (_) => transport,
+      traceSink: trace,
+      retry: const RetryPolicy(
+        maxAttempts: 1,
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+    );
+
+    consumer.replaceDemands(
+      'reader-non-image-local-completion',
+      1,
+      _desired(id, priority: 1000),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    expect(session.state, DownloadState.failed);
+    expect(session.committedLength, 0);
+    expect(transport.opens, 0,
+        reason: 'semantic local rejection is terminal, not a network retry');
+    expect(await File(session.artifact.partialPath).exists(), isFalse);
+    expect(await File(session.artifact.finalPath).exists(), isFalse);
+    final failure = session.snapshot.failure!;
+    expect(failure.code, ErrorCode.source);
+    expect(failure.details['sourceMediaSemanticRejected'], isTrue);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'image-media-admission' &&
+            event.payload['action'] == 'rejected-generation-retired',
+      ),
+      isTrue,
+    );
+  });
 
   test('promoted idle rank syncs only when physical work needs it', () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -2946,7 +3084,7 @@ void main() {
     });
 
     final id = _id('required-budget-bypass');
-    final bytes = List<int>.generate(192, (index) => index & 0xff);
+    final bytes = _ownerAnimatedWebp(<int>[192]);
     final transport = _FlowSuspendingTransport(bytes, chunkSize: 64);
     final reader = owner.attachConsumer(
       scopeId: 'reader-budgeted',
@@ -3105,11 +3243,7 @@ void main() {
     });
 
     final id = _id('required-completion');
-    final fullBytes = List<int>.generate(
-      2 * 1024 * 1024,
-      (index) => index & 0xff,
-      growable: false,
-    );
+    final fullBytes = _ownerAnimatedWebp(<int>[2 * 1024 * 1024]);
     final preservedLength = 1200 * 1024;
     final session = registry.get(id);
     await session.restore();
@@ -4037,7 +4171,7 @@ final class _ExactUriRangeTransport implements Transport {
 
 final class _PrefixThenBlockTransport implements ControlledTransport {
   _PrefixThenBlockTransport([List<int>? prefix])
-      : prefix = prefix ?? List<int>.filled(20 * 1024, 7);
+      : prefix = prefix ?? _ownerAnimatedWebp(<int>[20 * 1024]);
 
   final List<int> prefix;
   final Completer<void> opened = Completer<void>();

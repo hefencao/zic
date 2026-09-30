@@ -16,6 +16,29 @@ const int _validatorlessResumeProbeBytes = 64 * 1024;
 
 typedef FullBodyCatchupPermission = bool Function(int preservedLength);
 
+bool _deferImageAdmissionToArtifactCacheRecovery(
+  DownloadSession session,
+) =>
+    session.residentBodyBacked &&
+    session.residentBodyAuthority == ByteResponseBodyAuthority.artifactCache;
+
+void _requireSessionEncodedImageBody(
+  DownloadSession session, {
+  required bool finalBody,
+}) {
+  final prefix = session.readSourceMetadataPrefix();
+  if (!finalBody && prefix.length < encodedImageSniffPrefixLength) return;
+  if (hasSupportedEncodedImageSignature(prefix)) return;
+  throw Failure(
+    code: ErrorCode.source,
+    message: 'image transfer returned unsupported or non-image bytes',
+    details: const <String, Object?>{
+      'sourceMediaProtocolMismatch': true,
+      'sourceMediaSemanticRejected': true,
+    },
+  );
+}
+
 final class DownloadCatchupDeferred implements Exception {
   const DownloadCatchupDeferred({required this.preservedLength});
 
@@ -31,6 +54,7 @@ final class DownloadJob {
     this.allowFullBodyCatchup,
     this.attachLegacyDemand = true,
     this.publishAttemptFailures = true,
+    this.requireEncodedImageBody = false,
     this.speculativeEncodedReadAccount,
     this.readStallTimeout = defaultReadStallTimeout,
   });
@@ -50,6 +74,11 @@ final class DownloadJob {
   /// session state. Composition-owned transfers disable this so the physical
   /// owner can exhaust its retry policy before consumers observe `failed`.
   final bool publishAttemptFailures;
+
+  /// Enforces the image-transfer semantic boundary without teaching the
+  /// underlying Transport about media. Production composition enables this;
+  /// generic DownloadJob fixtures may keep byte-only behavior.
+  final bool requireEncodedImageBody;
 
   /// Exact source request identity selected by the active consumer.
   ///
@@ -118,9 +147,14 @@ final class DownloadJob {
     TaskControl? control,
     RunLease? expectedRun,
     bool verifyPromotedChecksum = true,
+    bool requireEncodedImageBody = false,
   }) async {
     control?.throwIfCancelled();
     if (session.state == DownloadState.promoted) {
+      if (requireEncodedImageBody &&
+          !_deferImageAdmissionToArtifactCacheRecovery(session)) {
+        _requireSessionEncodedImageBody(session, finalBody: true);
+      }
       // An in-memory promoted state is not, by itself, a proof that the
       // persisted final file is still the bytes that were sealed. Resident
       // bodies have no local Artifact to rehash; persisted promotions must
@@ -133,6 +167,11 @@ final class DownloadJob {
         control: control,
       );
       control?.throwIfCancelled();
+      if (restored.state == DownloadState.promoted &&
+          requireEncodedImageBody &&
+          !_deferImageAdmissionToArtifactCacheRecovery(session)) {
+        _requireSessionEncodedImageBody(session, finalBody: true);
+      }
       return restored.state == DownloadState.promoted;
     }
     if (session.committedLength <= 0 ||
@@ -143,6 +182,10 @@ final class DownloadJob {
     control?.throwIfCancelled();
     final writer = session.acquireWriter(expectedRun: expectedRun);
     try {
+      if (requireEncodedImageBody &&
+          !_deferImageAdmissionToArtifactCacheRecovery(session)) {
+        _requireSessionEncodedImageBody(session, finalBody: true);
+      }
       await session.seal(
         writer,
         expectedLength: session.totalLength,
@@ -181,6 +224,7 @@ final class DownloadJob {
       expectedChecksum: expectedChecksum,
       control: cancel,
       expectedRun: runLease,
+      requireEncodedImageBody: requireEncodedImageBody,
     )) {
       session.requireRun(runLease);
       return;
@@ -203,6 +247,7 @@ final class DownloadJob {
       expectedChecksum: expectedChecksum,
       control: cancel,
       expectedRun: runLease,
+      requireEncodedImageBody: requireEncodedImageBody,
     )) {
       session.requireRun(runLease);
       return;
@@ -593,6 +638,10 @@ final class DownloadJob {
           final chunk = residentIterator.current;
           if (chunk.isEmpty) continue;
           session.appendResidentImmutableIngress(residentOffset, chunk);
+          if (requireEncodedImageBody &&
+              response.bodyAuthority != ByteResponseBodyAuthority.artifactCache) {
+            _requireSessionEncodedImageBody(session, finalBody: false);
+          }
           residentOffset += chunk.length;
           networkCursor += chunk.length;
           session.advanceNetworkAttemptProgress(
@@ -601,6 +650,10 @@ final class DownloadJob {
           );
           await Future<void>.value();
           session.requireRun(runLease);
+        }
+        if (requireEncodedImageBody &&
+            response.bodyAuthority != ByteResponseBodyAuthority.artifactCache) {
+          _requireSessionEncodedImageBody(session, finalBody: true);
         }
         final residentScheme = _requestUri.scheme.toLowerCase();
         session.sealResidentImmutableIngress(
@@ -798,6 +851,9 @@ final class DownloadJob {
       final bytes = pending.takeBytes();
       await session.append(writer, offset, bytes);
       session.requireRun(runLease);
+      if (requireEncodedImageBody) {
+        _requireSessionEncodedImageBody(session, finalBody: false);
+      }
       offset += bytes.length;
       flushTarget = sourceProgressQuantumBytes;
     }
@@ -852,6 +908,9 @@ final class DownloadJob {
           code: ErrorCode.artifactCorruption,
           message: 'image response produced no bytes',
         );
+      }
+      if (requireEncodedImageBody) {
+        _requireSessionEncodedImageBody(session, finalBody: true);
       }
       await session.seal(
         writer,

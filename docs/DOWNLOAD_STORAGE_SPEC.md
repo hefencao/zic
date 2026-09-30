@@ -37,6 +37,7 @@ This document is normative for the detailed download/storage behavior.
    Structured image materialization MUST derive its final image extension from bounded byte signatures rather than filename/source hints;
    JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF are supported signature families,
    ISO-BMFF requires an explicit AVIF/HEIF brand, and unsupported/non-image bodies MUST fail as artifact corruption.
+   Live `IoTransport`/platform transport MUST remain byte-only and MUST NOT own image classification. Production composition MUST enable image-body admission on `DownloadJob`: new source/local-transfer generations are checked from the physical `DownloadSession` generation-local metadata prefix with the shared supported encoded-image signature classifier before seal/promotion. Once the bounded sniff prefix is available, or at final-body completion for a shorter body, unsupported/non-image source bytes MUST become `sourceMediaSemanticRejected`; the physical transfer owner MUST retire that rejected generation's partial/final authority before publishing the terminal source failure. An already-durable `artifactCache` resident body MUST keep the existing exact storageId+generation-aware presentation recovery owner rather than being invalidated by sessions without cache-generation proof. Opaque resource URIs and `ContentKind.fallback` remain valid when the bytes carry a supported static-image signature; filename, URI suffix and Content-Type are not admission proof.
 
 ## 2. Metadata, artifacts and replicas
 

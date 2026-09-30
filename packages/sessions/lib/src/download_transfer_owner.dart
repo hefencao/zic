@@ -2135,6 +2135,7 @@ final class DownloadTransferOwner {
         expectedChecksum: _expectedChecksum(id),
         control: control,
         verifyPromotedChecksum: false,
+        requireEncodedImageBody: true,
       );
       if (session.epoch != preparationEpoch) return;
     } on Object catch (error) {
@@ -2248,6 +2249,7 @@ final class DownloadTransferOwner {
         expectedChecksum: _expectedChecksum(id),
         control: token,
         verifyPromotedChecksum: false,
+        requireEncodedImageBody: true,
       )) {
         _record(
           claim,
@@ -2341,6 +2343,7 @@ final class DownloadTransferOwner {
             requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
             publishAttemptFailures: false,
+            requireEncodedImageBody: true,
             speculativeEncodedReadAccount: encodedBudgetAccount,
             readStallTimeout: readStallTimeout,
             allowFullBodyCatchup: (preservedLength) =>
@@ -2386,6 +2389,17 @@ final class DownloadTransferOwner {
           // cancellation flag is already set when the preemption/eviction
           // snapshot is attached, so the lower branch cannot observe it.
           if (session.epoch != taskEpoch || _isStaleLifecycleFailure(failure)) {
+            return;
+          }
+          if (_isSourceMediaSemanticRejection(failure)) {
+            await _retireSourceMediaSemanticRejection(
+              claim: claim,
+              id: id,
+              session: session,
+              failure: failure,
+              token: token,
+              attempt: attempt,
+            );
             return;
           }
           if (_isConfirmedFullBodyPrefixMismatch(failure) &&
@@ -2536,6 +2550,16 @@ final class DownloadTransferOwner {
         }
         return;
       }
+      if (_isSourceMediaSemanticRejection(failure)) {
+        await _retireSourceMediaSemanticRejection(
+          claim: failedClaim,
+          id: id,
+          session: session,
+          failure: failure,
+          token: token,
+        );
+        return;
+      }
       if (failedClaim != null) {
         _recordError(
           failedClaim,
@@ -2577,6 +2601,48 @@ final class DownloadTransferOwner {
     }
   }
 
+
+  Future<void> _retireSourceMediaSemanticRejection({
+    required _TransferClaim? claim,
+    required DownloadId id,
+    required DownloadSession session,
+    required Failure failure,
+    required CancelToken token,
+    int? attempt,
+  }) async {
+    final rejectedBytes = session.committedLength;
+    try {
+      await session.reset(
+        removeCacheRecord: true,
+        deleteFinalArtifact: true,
+      );
+    } on Object catch (resetError) {
+      _downloadTerminalFailures.add(id);
+      await session.failWithoutWriter(resetError);
+      return;
+    }
+    _downloadTerminalFailures.add(id);
+    if (claim != null) {
+      _record(
+        claim,
+        kind: TraceEventKind.artifactSource,
+        id: id,
+        payload: <String, Object?>{
+          'stage': 'image-media-admission',
+          'action': 'rejected-generation-retired',
+          'discardedBytes': rejectedBytes,
+          if (attempt != null) 'attempt': attempt,
+        },
+      );
+    }
+    if (!token.cancelled) {
+      await session.failWithoutWriter(failure);
+    }
+  }
+
+
+bool _isSourceMediaSemanticRejection(Failure failure) =>
+    failure.details['sourceMediaSemanticRejected'] == true;
 
 bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
     failure.code == ErrorCode.resumeRejected &&

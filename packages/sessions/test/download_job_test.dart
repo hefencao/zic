@@ -73,6 +73,76 @@ void main() {
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test('image admission classifies ordinary transport HTML as semantic source failure', () async {
+    final session = createSession();
+    final body = <int>[
+      ...'<html><body>login</body></html>'.codeUnits,
+      ...List<int>.filled(96, 32),
+    ];
+
+    await expectLater(
+      DownloadJob(
+        transport: _BytesTransport(body),
+        session: session,
+        requireEncodedImageBody: true,
+      ).run(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.source)
+            .having(
+              (error) => error.details['sourceMediaSemanticRejected'],
+              'semantic rejection',
+              true,
+            ),
+      ),
+    );
+    expect(session.state, DownloadState.failed);
+    expect(session.contentKind, ContentKind.fallback);
+  });
+
+  test('durable artifact-cache resident defers semantic media recovery', () async {
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final session = createSession();
+    final body = <int>[
+      ...'<html><body>legacy cached error</body></html>'.codeUnits,
+      ...List<int>.filled(96, 32),
+    ];
+
+    final result = await DownloadJob(
+      transport: _DurableBytesTransport(body),
+      session: session,
+      requireEncodedImageBody: true,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(session.residentBodyBacked, isTrue);
+    expect(
+      session.residentBodyAuthority,
+      ByteResponseBodyAuthority.artifactCache,
+      reason: 'existing durable cache keeps generation-aware presentation recovery ownership',
+    );
+  });
+
+  test('image admission accepts a static JPEG fallback body', () async {
+    final session = createSession();
+    final body = <int>[
+      0xff, 0xd8, 0xff, 0xe0,
+      ...List<int>.filled(96, 0),
+      0xff, 0xd9,
+    ];
+
+    final result = await DownloadJob(
+      transport: _BytesTransport(body),
+      session: session,
+      requireEncodedImageBody: true,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(result.contentKind, ContentKind.fallback);
+  });
+
   test('artifact-cache resident failure resets transfer without deleting cache binding',
       () async {
     final index = MemIndex();
@@ -1843,6 +1913,50 @@ final class _ConsumerPacedBodyTransport implements Transport {
       validators: const Validators(etag: 'pseudo-flow-v1'),
     );
   }
+}
+
+final class _BytesTransport implements Transport {
+  const _BytesTransport(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.length,
+        validators: const Validators(etag: 'bytes'),
+        rangeSupported: false,
+      );
+}
+
+final class _DurableBytesTransport implements Transport {
+  const _DurableBytesTransport(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.length,
+        validators: const Validators(etag: 'durable-bytes'),
+        rangeSupported: true,
+        disposition: ByteResponseDisposition.durableImmutable,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      );
 }
 
 final class _FailingDurableArtifactTransport implements Transport {

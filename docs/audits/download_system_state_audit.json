@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.29.0",
-  "last_updated": "2026-09-30T08:58:30+08:00",
+  "audit_version": "1.30.0",
+  "last_updated": "2026-09-30T09:54:41+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -11,20 +11,19 @@
     "medium_p2": 2,
     "governance_status": "in_progress",
     "review_status": "reconciled_with_open_findings",
-    "resolved_count": 6,
+    "resolved_count": 7,
     "deferred_count": 1,
     "pending_count": 1,
-    "in_progress_count": 5
+    "in_progress_count": 4
   },
   "governance": {
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T08:58:30+08:00",
-    "review_basis": "继续治理 DL-DIR-007 的显式 repair/audit 边界。发现 PageAsset checksum 在 ImportedPageRecord 持久链中被丢弃，现已补齐 remote import -> JSON/SQLite -> toManifest 的 source checksum namespace；普通 download/retry/Reader 仍无目录扫描。auditChapterFiles 成为 scanExistingPages 唯一生产调用者，由 ChapterDownloadService generation 持有 CancelToken，并通过 Download Manager/Home command boundary 显式触发/取消。audit 对 indexed READY 做 whole-file verification；unindexed 图片仅在 source-declared CRC32 与本地独立 CRC32（及可用 byteLength）匹配时复用既有 adoption authority，无 source proof 只报告 unproven。结构性失败退休最后 replica 时，SQLite zero-replica 条件事务同步移除 exact READY/physical bindings，不再依赖下一次 open 收敛。未新增 scheduler/cache/network authority；DL-DIR-007 仅余普通 IoTransport 未知媒体内容治理。",
+    "reviewed_at": "2026-09-30T09:54:41+08:00",
+    "review_basis": "继续关闭 DL-DIR-007 最后一个 ordinary transport 未知媒体缺口。根因不在 IoTransport：generic transport 正确只拥有 bytes；漏洞是 production composition 的 image DownloadJob 以前把最终非 WebP/GIF 且 >=12B 的任意正文都归为 ContentKind.fallback，因此 HTML/JSON 可 seal/promote 后才在 decoder/presentation 失败。现在 DownloadTransferOwner 在 local-prepare completion、NetLane 前 local completion 与新 source/network resident DownloadJob 路径都启用 requireEncodedImageBody；DownloadJob 只消费当前 DownloadSession generation-local bounded metadata prefix，并复用 supported encoded-image signature classifier。达到 sniff prefix 仍无签名或短 final body 结束仍无签名时复用既有 sourceMediaSemanticRejected；owner 先 reset 并删除该 generation partial/final authority，再发布 terminal source failure。已有 durable artifactCache resident generation 因 sessions 不持有 exact storageId+generation，继续交给既有 presentation generation-aware recovery，避免错误删除或旧 cache 永久回流。IoTransport 未增加 classifier/retry；opaque plugin URI 与 JPEG/PNG/AVIF/HEIF 等合法 fallback 只凭真实 bytes 准入。结合前一轮 source checksum/full-CRC/repair-audit，DL-DIR-007 已闭合。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理",
-      "DL-DIR-007：source checksum/artifact CRC32、同长度 sealed corruption、显式可取消 repair/audit 均已闭合；仅余普通 IoTransport 对未知媒体内容的统一拒绝/分类边界",
       "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
     ]
   },
@@ -38,10 +37,21 @@
       "bash ./tool/check.sh --require-toolchains: exit 0 in 168.385s on the exact final tree; repository/documentation/ownership guards, Dart/Flutter analyses and suites, apps/app suite, Android split debug build and Rust media_core all completed successfully",
       "apps/app full Flutter test in required-toolchain gate: 382 passed with 3 existing skips",
       "Android exact-final outputs: armeabi-v7a 98213163 bytes, arm64-v8a 122331525 bytes, x86_64 109898732 bytes",
-      "Rust media_core in required-toolchain gate: 22/22 passed; existing unused/dead-code warnings only"
+      "Rust media_core in required-toolchain gate: 22/22 passed; existing unused/dead-code warnings only",
+      "packages/sessions download_transfer_owner_test: 50/50 passed; non-image network and pre-admission complete partial generations are retired before durable promotion",
+      "packages/downloads source_resource_transport_test: 38/38 passed; existing opaque/runtime semantic recovery still uses sourceMediaSemanticRejected",
+      "packages/downloads persistent opaque plugin download regression: 1/1 passed; opaque resource URI remains valid when returned bytes have a supported image signature",
+      "python3 tool/test_download_media_admission_ownership.py: pass; IoTransport remains byte-only and all three production composition completion/admission paths are guarded",
+      "packages/sessions durable artifact-cache resident regression: existing cache-owned non-image body defers to the established storageId+generation-aware presentation recovery instead of sessions invalidating cache without authority",
+      "packages/sessions current DL-DIR-007 closure tree: 376/376 passed, including source HTML rejection, static JPEG fallback acceptance, pre-admission complete-partial rejection and durable artifact-cache recovery deferral",
+      "packages/downloads current DL-DIR-007 closure tree: 492/492 passed; ArtifactCacheTransport, opaque source resources, partial handoff, repair/audit and structured image materialization remain green",
+      "DL-DIR-007 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 161.017s on the final production/test tree; all repository/documentation/ownership guards and analyzers passed",
+      "apps/app full Flutter suite in final gate: 382 passed with 3 existing skips",
+      "Android final gate: split debug APKs built successfully for armeabi-v7a, arm64-v8a and x86_64",
+      "Rust media_core final gate: 22/22 passed; existing unused/dead-code warnings only",
+      "pipeline_runtime slow self-bounded source-open regression: 1/1 passed after replacing the old arbitrary 3-byte fixture with the same-length JPEG signature; deadline behavior is unchanged"
     ],
     "failed_or_unverified": [
-      "DL-DIR-007 ordinary IoTransport unknown-media classification/rejection governance remains open",
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
     ],
     "code_changes_in_this_audit": true
@@ -111,16 +121,17 @@
       "title": "已有部分文件场景下的增量下载与文件复用治理",
       "locations": [
         "packages/catalog/lib/src/imported_chapter.dart",
-        "packages/downloads/lib/src/chapter_downloads.dart",
         "packages/downloads/lib/src/persistent_chapter_download_service.dart",
         "packages/downloads/lib/src/persistent_download_artifact_store.dart",
+        "packages/sessions/lib/src/download_job.dart",
+        "packages/sessions/lib/src/download_transfer_owner.dart",
         "packages/storage/lib/src/sqlite_index.dart",
         "apps/app/lib/download_manager.dart",
         "apps/app/lib/home_download_commands.dart"
       ],
-      "status": "in_progress",
-      "remediation_applied": "普通下载、重试与 Reader 不扫描目录或收编未索引文件；scanExistingPages 仅由显式 auditChapterFiles 调用并继续以图片魔数拒绝伪图片。PageAsset source checksum 现经 ImportedPageRecord JSON/SQLite 持久化并由 toManifest 原样恢复算法命名空间。audit 由当前 ChapterDownloadService generation 持有 CancelToken，先 whole-file 验证 indexed READY；未索引图片只有 source-declared CRC32 与本地独立 CRC32（及可用 byteLength）一致才调用既有 adoptExistingPageRecord，缺少可比 source proof 时仅计为 unproven 且保持 unbound。Download Manager 通过 Home command owner 显式启动/取消，不持有 TaskControl。sealed hot stream 仍不重算 whole-file CRC；结构性校验退休最后 replica 时，SQLite 以 zero-replica 条件事务同步移除 exact READY/physical-media binding，存在健康 replica 时保持 logical authority。",
-      "remaining_work": "普通 IoTransport 尚未统一拒绝/分类未知媒体内容；repair/audit 子项已闭合。"
+      "status": "resolved",
+      "remediation_applied": "普通 download/retry/Reader 不扫描目录；显式 auditChapterFiles 是 scanExistingPages 唯一生产调用者，由当前 ChapterDownloadService generation 持有取消权。source checksum 经 ImportedPageRecord JSON/SQLite/toManifest 保持算法命名空间；unindexed 图片仅在 source CRC32 与本地独立 CRC32（及可用 byteLength）一致时走既有 adoption，无可比 source proof 保持 unbound。sealed hot stream 不重算 whole-file CRC；full verifier 可识别同长度 checksumMismatch，最后 structural replica 退休时 SQLite zero-replica 事务同步撤销 exact/physical binding。最后的未知媒体缺口也已闭合：IoTransport/平台 transport 保持 byte-only；production DownloadTransferOwner 的两条 local completion 与新 source/network resident DownloadJob 均启用 image-body admission，按 generation-local bounded prefix 的真实 supported image signature 拒绝 HTML/JSON，并复用 sourceMediaSemanticRejected。被拒 generation 在 terminal failure 前删除 partial/final authority；已有 durable artifactCache resident generation 则保留既有 exact storageId+generation-aware presentation recovery owner，sessions 不越权失效 cache。合法 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF 与 opaque plugin URI 仍按 bytes 准入，ContentKind.fallback/扩展名/Content-Type 单独均不作为 identity 或 corruption proof。",
+      "remaining_work": ""
     },
     {
       "id": "DL-DIR-009",

@@ -382,7 +382,7 @@ void main() {
               await Future<void>.delayed(const Duration(milliseconds: 180));
               control?.throwIfCancelled();
               return ByteResponse(
-                bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+                bytes: Stream<List<int>>.value(<int>[0xff, 0xd8, 0xff]),
                 statusCode: 200,
                 rangeStart: 0,
                 totalLength: 3,

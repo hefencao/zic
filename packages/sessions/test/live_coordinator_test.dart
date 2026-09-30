@@ -45,9 +45,10 @@ void main() {
       index: index,
     );
     addTearDown(registry.dispose);
+    final bytes = 'RIFF....WEBPpage'.codeUnits;
     final coordinator = LiveCoordinator(
       registry: registry,
-      transportFor: (_) => FakeTransport(bytes: <int>[1, 2, 3, 4]),
+      transportFor: (_) => FakeTransport(bytes: bytes),
       clock: clock,
       net: NetLane(maxActive: 1),
     );
@@ -79,8 +80,8 @@ void main() {
     expect(session?.state, DownloadState.promoted);
     expect(
       await File(session!.artifact.finalPath).readAsBytes(),
-      <int>[1, 2, 3, 4,
-      ]);
+      bytes,
+    );
     expect((await index.get(id.key))?.state, CacheState.ready);
   },
   );
@@ -1366,7 +1367,7 @@ void main() {
       index: index,
     );
     addTearDown(registry.dispose);
-    final transport = _FlakyTransport(<int>[1, 2, 3]);
+    final transport = _FlakyTransport('RIFF....WEBPretry'.codeUnits);
     final delays = <Duration>[];
     final coordinator = LiveCoordinator(
       registry: registry,
@@ -4419,7 +4420,7 @@ void main() {
       registry: registry,
       transportFor: (uri) => uri == nearId.canonicalUri
           ? nearTransport
-          : const _ImmediateTransport(<int>[1, 2, 3, 4]),
+          : _ImmediateTransport('RIFF....WEBPfar'.codeUnits),
       clock: clock,
       onDecode: (id, demand, token) async {
         if (id != nearDecode) return;
