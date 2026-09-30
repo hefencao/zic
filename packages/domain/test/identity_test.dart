@@ -154,6 +154,30 @@ void main() {
     expect(DownloadId.fromJson(withHint.toJson()).pageIndexHint, isNull);
   });
 
+  test('page source checksum stays scoped to its declared algorithm', () {
+    final page = PageAsset(
+      pageId: 'p1',
+      chapterId: 'chapter',
+      index: 0,
+      uri: Uri.parse('https://example.test/page.webp'),
+      checksum: ' A1B2C3D4 ',
+      checksumAlgorithm: ' CRC32 ',
+    );
+
+    expect(page.sourceChecksumForAlgorithm('crc32'), 'a1b2c3d4');
+    expect(page.sourceChecksumForAlgorithm('sha256'), isNull);
+    expect(
+      PageAsset(
+        pageId: 'p2',
+        chapterId: 'chapter',
+        index: 1,
+        uri: Uri.parse('https://example.test/page-2.webp'),
+        checksum: 'a1b2c3d4',
+      ).sourceChecksumForAlgorithm('crc32'),
+      isNull,
+    );
+  });
+
   test('decode identity includes physical target and renderer', () {
     const content = ContentId(
       sourceId: 'local',

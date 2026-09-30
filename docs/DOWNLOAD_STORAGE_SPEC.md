@@ -283,12 +283,11 @@ This document is normative for the detailed download/storage behavior.
    ArtifactCacheTransport MUST NOT splice an origin body behind that committed local prefix.
 4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob on a later Transfer attempt.
    The failing persistent read MAY be quarantined for the current transport lifetime so that retry selects origin rather than reopening the same replica.
-5. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` MUST invalidate the affected durable binding.
-   `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
+5. `missing`, `staleLocator`, `shortRead`, `lengthChanged`, and a whole-file `checksumMismatch` MUST retire the affected physical replica. A full verifier MUST continue with another sealed replica when one exists; it MUST NOT erase logical artifact authority merely because one replica failed. `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
 6. Resetting an ephemeral resident artifact-cache projection after body failure MUST NOT delete the external durable cache binding.
 7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access.
-   Length/access metadata is the normal hot-path check;
-   explicit repair/audit and materialization/seal boundaries own full checksum work.
+   Length/access metadata is the normal hot-path check; explicit repair/audit, full-read materialization and seal boundaries own full checksum work. A same-length body mutation is therefore detected when one of those explicit full-verification boundaries runs, not by taxing every Reader stream.
+   Source `PageAsset.checksum` is metadata in its declared algorithm namespace; even `crc32` becomes durable artifact proof only after the artifact owner independently hashes the sealed local bytes.
    The byte source MUST expose the integrity basis actually used by stream/full reads;
    `sourceRead` diagnostics MUST distinguish prior seal proof + current length/access preflight from a CRC recomputed during this read,
    and a joined read MUST inherit the basis of the operation that supplied its bytes.

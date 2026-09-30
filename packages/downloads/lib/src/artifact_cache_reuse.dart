@@ -836,16 +836,18 @@ Map<String, PageAsset> _uniquePages(ChapterManifest chapter) {
 /// Computes all content-based verified identities for a page asset (checksum,
 /// E-Hentai image key, and URI content hash).
 Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
-  final checksum = page.checksum?.trim().toLowerCase();
   final algorithm = page.checksumAlgorithm?.trim().toLowerCase();
+  final checksum = algorithm == null || algorithm.isEmpty
+      ? null
+      : page.sourceChecksumForAlgorithm(algorithm);
   // A digest without its algorithm is not a stable content identity: source
   // adapters have historically used the same field for MD5, SHA and opaque
   // provider tokens. Do not create a cross-version alias from an untyped
   // value ('checksum:$checksum'); strong URI/image identities below remain available.
-  if (checksum != null &&
-      checksum.isNotEmpty &&
-      algorithm != null &&
-      algorithm.isNotEmpty) {
+  // Even when the declared algorithm is crc32 this remains source metadata;
+  // it becomes durable artifact proof only after the local sealed bytes are
+  // independently hashed by the artifact owner.
+  if (checksum != null && algorithm != null && algorithm.isNotEmpty) {
     yield 'checksum:$algorithm:$checksum';
   }
   final segments = page.uri.pathSegments;

@@ -149,10 +149,28 @@ final class PageAsset {
   final bool animatedHint;
   final String? checksum;
 
-  /// Algorithm for [checksum]. Download artifacts use `crc32` internally;
-  /// source-provided hashes must declare their algorithm before they can be
-  /// used as a transport completion constraint.
+  /// Algorithm for [checksum]. This is source-provided metadata, not a
+  /// durable artifact integrity proof. Download artifacts establish their own
+  /// `crc32` proof when bytes are sealed.
+  ///
+  /// A source checksum may constrain transport completion only when the caller
+  /// explicitly selects the same declared algorithm.
   final String? checksumAlgorithm;
+
+  String? sourceChecksumForAlgorithm(String algorithm) {
+    final requested = algorithm.trim().toLowerCase();
+    final declared = checksumAlgorithm?.trim().toLowerCase();
+    final value = checksum?.trim().toLowerCase();
+    if (requested.isEmpty ||
+        declared == null ||
+        declared.isEmpty ||
+        declared != requested ||
+        value == null ||
+        value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
 
   String get assetKey => '$chapterId/$pageId';
 }

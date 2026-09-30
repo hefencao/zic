@@ -980,6 +980,64 @@ void main() {
         reason: 'one failed replica must not erase logical artifact authority');
   });
 
+  test('full CRC falls through a same-length corrupt replica to a sealed copy',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp(
+      'zic-replica-crc-fallback-app-',
+    );
+    final rootA = await Directory.systemTemp.createTemp(
+      'zic-replica-crc-fallback-a-',
+    );
+    final rootB = await Directory.systemTemp.createTemp(
+      'zic-replica-crc-fallback-b-',
+    );
+    addTearDown(() async {
+      for (final directory in <Directory>[appRoot, rootA, rootB]) {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+    });
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final id = _id('multi-replica-crc-fallback');
+    final bytes = Uint8List.fromList(<int>[2, 7, 1, 8, 2, 8]);
+    final corrupt = Uint8List.fromList(<int>[8, 2, 8, 1, 7, 2]);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: rootA.path,
+      indexPath: indexPath,
+    );
+    addTearDown(store.close);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final primary = (await store.artifactReplicasFor(id)).single;
+
+    final replicaFile = File(
+      '${rootB.path}${Platform.pathSeparator}replica.bin',
+    );
+    await replicaFile.writeAsBytes(bytes, flush: true);
+    final second = await store.registerVerifiedArtifactReplica(
+      id: id,
+      accessLocator: replicaFile.path,
+      storageRootId: rootB.path,
+    );
+    await replicaFile.writeAsBytes(corrupt, flush: true);
+
+    final entry = await store.openArtifactStream(id);
+    expect(entry, isNotNull);
+    final streamed = <int>[];
+    await for (final chunk in entry!.open(start: 0)) {
+      streamed.addAll(chunk);
+    }
+    expect(streamed, corrupt,
+        reason: 'ordinary stream keeps the selected sealed replica hot path');
+    expect(await entry.readAll!(), bytes,
+        reason: 'explicit full verification must continue to another replica');
+
+    final remaining = await store.artifactReplicasFor(id);
+    expect(remaining, hasLength(1));
+    expect(remaining.single.replicaId, primary.replicaId);
+    expect(remaining.single.replicaId, isNot(second.replicaId));
+    expect((await store.indexedRecords()).containsKey(id.key), isTrue);
+  });
+
   test('proven SAF locator for one Direct replica is not a second replica',
       () async {
     final appRoot = await Directory.systemTemp.createTemp('zic-replica-alias-app-');
@@ -1275,6 +1333,52 @@ void main() {
             ),
       ),
     );
+    expect((await store.indexedRecords()).containsKey(id.key), isFalse);
+  });
+
+  test('full CRC retires same-length corrupted sealed replica', () async {
+    final root = await Directory.systemTemp.createTemp('zic-replica-crc-');
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(() async {
+      await store.close();
+      await root.delete(recursive: true);
+    });
+    final id = _id('checksum-changed');
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+    final corrupt = Uint8List.fromList(<int>[6, 5, 4, 3, 2, 1]);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final record = (await store.indexedRecords()).values.single;
+    await File(record.path).writeAsBytes(corrupt, flush: true);
+
+    final entry = await store.openArtifactStream(id);
+    expect(entry, isNotNull,
+        reason: 'normal sealed open intentionally performs length/access preflight only');
+    final streamed = <int>[];
+    await for (final chunk in entry!.open(start: 0)) {
+      streamed.addAll(chunk);
+    }
+    expect(streamed, corrupt,
+        reason: 'ordinary Reader stream must not pay whole-file CRC on every access');
+
+    await expectLater(
+      entry.readAll!(),
+      throwsA(
+        isA<ArtifactReadFailure>()
+            .having(
+              (failure) => failure.kind,
+              'kind',
+              ArtifactReadFailureKind.checksumMismatch,
+            )
+            .having(
+              (failure) => failure.replicaId,
+              'replicaId',
+              record.effectiveArtifactId,
+            ),
+      ),
+    );
+    expect(await store.artifactReplicasFor(id), isEmpty);
+    expect(await store.openArtifactStream(id), isNull,
+        reason: 'a checksum-failed sealed replica must not remain reusable');
     expect((await store.indexedRecords()).containsKey(id.key), isFalse);
   });
 

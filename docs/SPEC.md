@@ -684,7 +684,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   artifact-cache durable body一旦确认authority MUST以`responseRetained=false`同时释放NetLane network body-read permit与transport/source lease并继续本地读取；
   其body带宽 MUST只由`ArtifactCacheReadScheduler`调度，不得与remote NetLane资源双重计数。
   sealed persistent stream MUST只依赖既有seal proof加本次locator/existence/exact-length preflight，
-  MUST NOT按Reader访问重算whole-file checksum；full-read校验 MAY重算CRC。
+  MUST NOT按Reader访问重算whole-file checksum；full-read校验 MAY重算CRC。显式full-read发现同长度CRC不一致时 MUST 以结构性`checksumMismatch`退休该物理replica，并在仍有sealed replica时继续验证，不得仅因一个副本损坏删除logical artifact authority。
+  `PageAsset.checksum` MUST 保持source-declared algorithm namespace；只有声明算法匹配且格式合法时 MAY约束transport completion，即使其算法为`crc32`也不得直接冒充artifact seal proof。
   backend MUST显式声明stream/full-read integrity basis，joined materialization MUST保留实际source operation的basis，
   Trace MUST区分`sealedMetadataLength`与`crc32Verified`且 MUST NOT据此形成调度策略。
   source-resident promotion MAY保持session artifact为空且不得因Reader展示自动持久化；

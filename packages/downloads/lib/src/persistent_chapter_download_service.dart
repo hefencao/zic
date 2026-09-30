@@ -1,5 +1,16 @@
 part of 'chapter_downloads.dart';
 
+String? _sourceCrc32Constraint(PageAsset page) {
+  final checksum = page.sourceChecksumForAlgorithm('crc32');
+  if (checksum == null) return null;
+  try {
+    Crc32.fromHex(checksum);
+    return checksum;
+  } on FormatException {
+    return null;
+  }
+}
+
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
@@ -713,10 +724,7 @@ final class PersistentChapterDownloadService
           'page': pageIndex,
           'targetPageNumber': targetPageNumber,
         });
-        final expectedChecksum =
-            page.checksumAlgorithm?.toLowerCase() == 'crc32'
-                ? page.checksum
-                : null;
+        final expectedChecksum = _sourceCrc32Constraint(page);
         pendingDemands[id] = TransferDemand(
           priority: 120,
           reason: 'chapter-download-command',

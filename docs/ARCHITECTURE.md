@@ -1379,7 +1379,8 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   exact/physical READY foreground open 的 LRU/recency `touch` 只属于 maintenance metadata，
   正文/descriptor authority 已成立后 MUST 立即返回给 presentation，
   recency 写入由既有 `StorageWriteScheduler` 合并异步提交，禁止让SQLite write pressure重新阻塞 `presentation-file-lease`；
-  只有明确full `readAll`验证路径才可声明本次`crc32Verified`。
+  只有明确full `readAll`验证路径才可声明本次`crc32Verified`。full-read按物理replica逐个重算artifact CRC32：同长度checksum不一致属于结构性`checksumMismatch`，只退休坏replica并继续尝试其他sealed copy；普通stream仍不增加whole-file hash。
+  `PageAsset.checksum`始终是来源声明的算法命名空间事实，即便声明`crc32`也只有在artifact owner对sealed本地bytes独立计算一致CRC后才成为durable artifact proof。
   `ArtifactCacheStreamEntry`必须显式携带stream/full-read integrity basis，
   joined read继承真正source operation的basis，`sourceRead` trace必须记录`artifactIntegrityBasis`与`artifactWholeChecksumVerifiedThisRead`，
   该观测不得反向影响cache admission/retry。Reader-local encoded source的生命周期由media plan拥有：

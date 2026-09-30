@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.27.0",
-  "last_updated": "2026-09-30T07:50:27+08:00",
+  "audit_version": "1.28.0",
+  "last_updated": "2026-09-30T08:13:03+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -20,28 +20,27 @@
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T07:50:27+08:00",
-    "review_basis": "按 main@52b40a41 之后的 generic SAF body replace 最终代码树继续治理。生产 SafTreeAtomicReplace / safReplace 已删除；page/partial 在完整 staging 后先 flush App-private body intent，再以 deterministic target.zic-old 保留旧正文，并把现有 CacheRec / PhysicalPartialRecord 的稳定新 authority 作为唯一 commit point。partial staging 已把同步累计的 CRC32 持久化进新 row，恢复比较 path/bytes/checksum/algorithm/root 等稳定字段，不依赖 touchedUs/pinned。启动恢复在 cleanup debt 前执行，只枚举本地 intent 并 exact-probe SAF path；transient staging temp 具备进程内 active lease，而 resumable replica-migration temp 保持原 durable owner。body crash/reopen 9/9、downloads 487/487、body/path-cache/Android ownership guards 已通过；真实 DocumentsProvider kill/reopen 仍因当前安装无 persisted SAF tree grant 未验证。",
+    "reviewed_at": "2026-09-30T08:13:03+08:00",
+    "review_basis": "按 main@dee35c1e 后的 DL-DIR-007 checksum/physical-integrity 边界继续治理。PageAsset checksum 现明确为 source-declared algorithm namespace；只有声明为合法 CRC32 时才可约束 transport completion，且不直接成为 durable artifact proof。sealed artifact 普通 stream 仍只做 locator/existence/exact-length preflight；显式 full-read 才逐 physical replica 重算 artifact CRC32，同长度 mismatch 以结构性 checksumMismatch 退休坏 replica，并在存在其他 sealed copy 时继续验证。没有新增 cache/network/download authority，也没有把 whole-file hash 放进 Reader hot path。focused domain/persistent/cache/transport 回归已通过，downloads 全包与最终 required-toolchain gate 待本树验证。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理",
-      "DL-DIR-007：ready 读取的同长度损坏发现策略、PageAsset checksum 与 artifact CRC32 算法语义仍需单独闭合",
+      "DL-DIR-007：source checksum/artifact CRC32 语义与同长度 sealed corruption 的显式 full-read 发现已闭合；仍需库外/旧版本无 checksum 文件的独立可取消 repair/audit，以及普通 IoTransport 未知媒体内容治理",
       "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
     ]
   },
   "validation": {
     "passed": [
-      "packages/downloads saf_body_transaction_test: 9/9 passed; malformed-intent owner release, orphan intent-temp cleanup, backup-only rollback, same-length rollback, committed-target mismatch fail-closed, later-touch committed recovery, physical-partial stable authority, committed forward cleanup and first-write rollback",
-      "packages/downloads focused SAF/partial/chapter regression set: passed after stable CRC32 authority and non-authoritative sidecar replacement changes",
-      "packages/downloads: 487/487 passed; includes resumable replica-migration temp, concurrent structured page writes, manifest transactions, partial handoff and SAF body crash/reopen cases",
-      "python3 tool/test_saf_body_transaction_ownership.py: passed; production safReplace/SafTreeAtomicReplace forbidden, low-level staging create-only, body order intent->backup->install->index fixed and touchedUs forbidden as commit evidence",
-      "python3 tool/test_saf_path_cache_scope.py + python3 tool/test_android_saf_executor_boundary.py: passed after removing the obsolete safReplace platform path",
-      "bash ./tool/check.sh --require-toolchains: exit 0 in 196.002s on the exact final 487/487 tree after the Kotlin route cleanup and final indentation-only review; repository/documentation/ownership guards, Dart/Flutter suites, Android debug build gates and Rust media_core completed successfully",
-      "Android exact-final outputs: armeabi-v7a 98188308 bytes, arm64-v8a 122306670 bytes, x86_64 109873877 bytes",
+      "packages/domain exact full gate: 14/14 passed, including source checksum algorithm namespace regression",
+      "packages/downloads persistent_artifact_failure_test: same-length single-replica retirement and multi-replica CRC fallback regressions passed (34/34)",
+      "packages/downloads artifact_cache_manager + artifact_cache_transport + persistent_artifact_failure focused set: 115/115 passed; ordinary streamed reads remain separate from explicit whole-file verification",
+      "packages/downloads: 489/489 passed on the exact final tree",
+      "bash ./tool/check.sh --require-toolchains: exit 0 in 184.470s on the exact final 489/489 tree; repository/documentation/ownership guards, Dart/Flutter suites, Android debug build gates and Rust media_core completed successfully",
+      "Android exact-final outputs: armeabi-v7a 98207804 bytes, arm64-v8a 122326166 bytes, x86_64 109893373 bytes",
       "cargo test -p media_core --quiet after exact final gate: 22/22 passed; existing unused/dead-code warnings only"
     ],
     "failed_or_unverified": [
-      "Fresh Android DocumentsProvider crash/kill/reopen remains unverified: adb device 72b08a1c is online and dev.zic.zic is installed/running, but dumpsys package/activity providers exposes no reusable persisted SAF tree URI permission for the app; existing user storage was not repurposed for destructive fault injection",
-      "Legacy random .zic-old-* files from pre-ADR0343 builds cannot be safely inspected without a granted SAF tree; current production no longer creates them"
+      "DL-DIR-007 remains in_progress for a standalone explicit cancellable repair/audit of legacy or external files without checksum proof and for ordinary IoTransport unknown-media governance",
+      "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
     ],
     "code_changes_in_this_audit": true
   },
@@ -115,8 +114,8 @@
         "packages/sessions/lib/src/download_job.dart"
       ],
       "status": "in_progress",
-      "remediation_applied": "普通下载与重试不再调用 scanExistingPages；本轮清除了代码更新中重新引入的物理目录枚举与未索引碰撞预扫，执行只按启动时 SQLite 中 ready+非空 CRC32 的记录分类。每页 seal/导出后立即增量持久化实际 bytes+CRC32，并发窗口中已完成的页可在授权 overwrite 重试时直接复用。显式 scanExistingPages 对 POSIX/SAF 候选统一执行图片魔数校验，即使扩展名看似图片也拒绝 HTML 或残损内容。无校验记录的历史文件在目标提交时按冲突处理，不能按页码、扩展名或长度收编。历史 placement 仅从唯一的已校验索引路径迁移。",
-      "remaining_work": "为库外或旧版本无 checksum 文件提供独立、显式、可取消的 repair/audit 操作；ready 读路径目前主要校验长度而非 checksum，同长度损坏无法及时发现；普通 IoTransport 尚未统一拒绝未知媒体内容；PageAsset.checksum 与 artifact CRC32 的算法语义未被协议明确区分。"
+      "remediation_applied": "普通下载与重试不再扫描目录或收编未索引文件，只消费 SQLite 中逐页持久化的 ready+非空 CRC32 记录；显式 scanExistingPages 继续以图片魔数拒绝伪图片。PageAsset checksum 现保持 source-declared algorithm namespace，只有声明为格式合法 CRC32 时才可形成 transport completion constraint，且来源 CRC32 不等于 durable artifact seal proof。sealed persistent hot stream 仍只做 locator/existence/exact-length preflight；显式 full-read 按 physical replica 独立重算 artifact CRC32，同长度 mismatch 产生结构性 checksumMismatch，仅退休坏 replica，并在存在其他 sealed copy 时继续验证。",
+      "remaining_work": "为库外或旧版本无 checksum 文件提供独立、显式、可取消的 repair/audit 操作；普通 IoTransport 尚未统一拒绝未知媒体内容。"
     },
     {
       "id": "DL-DIR-009",

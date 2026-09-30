@@ -10,6 +10,7 @@ enum ArtifactReadFailureKind {
   staleLocator,
   shortRead,
   lengthChanged,
+  checksumMismatch,
   ioFailure,
 }
 

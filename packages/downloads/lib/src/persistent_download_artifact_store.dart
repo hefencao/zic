@@ -3057,17 +3057,23 @@ final class PersistentDownloadArtifactStore
               start: start,
               endExclusive: endExclusive,
             ),
-        readAll: () => _readArtifactAllVerifiedCandidates(
-          selectedCandidates,
-          selected.length,
-          selectedAccess.checksum.trim().toLowerCase(),
+        readAll: () => _readArtifactAllVerifiedForArtifact(
+          artifactId: selectedAccess.artifactId,
+          preferredCandidates: selectedCandidates,
+          length: selected.length,
+          expectedChecksum: selectedAccess.checksum.trim().toLowerCase(),
+          checksumAlgorithm:
+              selectedAccess.checksumAlgorithm.trim().toLowerCase(),
         ),
         readAllControlled: ({required control}) =>
-            _readArtifactAllControlledCandidates(
-              selectedCandidates,
-              selected.length,
-              selectedAccess.checksum.trim().toLowerCase(),
-              control,
+            _readArtifactAllVerifiedForArtifact(
+              artifactId: selectedAccess.artifactId,
+              preferredCandidates: selectedCandidates,
+              length: selected.length,
+              expectedChecksum: selectedAccess.checksum.trim().toLowerCase(),
+              checksumAlgorithm:
+                  selectedAccess.checksumAlgorithm.trim().toLowerCase(),
+              control: control,
             ),
         openBoundRangeReader: () => _openBoundArtifactRangeReader(
           selectedCandidates,
@@ -3152,17 +3158,21 @@ final class PersistentDownloadArtifactStore
             start: start,
             endExclusive: endExclusive,
           ),
-      readAll: () => _readArtifactAllVerifiedCandidates(
-        candidates,
-        record.bytes,
-        record.checksum.trim().toLowerCase(),
+      readAll: () => _readArtifactAllVerifiedForArtifact(
+        artifactId: record.artifactId,
+        preferredCandidates: candidates,
+        length: record.bytes,
+        expectedChecksum: record.checksum.trim().toLowerCase(),
+        checksumAlgorithm: record.checksumAlgorithm.trim().toLowerCase(),
       ),
       readAllControlled: ({required control}) =>
-          _readArtifactAllControlledCandidates(
-            candidates,
-            record.bytes,
-            record.checksum.trim().toLowerCase(),
-            control,
+          _readArtifactAllVerifiedForArtifact(
+            artifactId: record.artifactId,
+            preferredCandidates: candidates,
+            length: record.bytes,
+            expectedChecksum: record.checksum.trim().toLowerCase(),
+            checksumAlgorithm: record.checksumAlgorithm.trim().toLowerCase(),
+            control: control,
           ),
       openBoundRangeReader: () async {
         try {
@@ -4585,7 +4595,8 @@ final class PersistentDownloadArtifactStore
       kind == ArtifactReadFailureKind.missing ||
       kind == ArtifactReadFailureKind.staleLocator ||
       kind == ArtifactReadFailureKind.shortRead ||
-      kind == ArtifactReadFailureKind.lengthChanged;
+      kind == ArtifactReadFailureKind.lengthChanged ||
+      kind == ArtifactReadFailureKind.checksumMismatch;
 
   Future<void> _retireArtifactReplica(
     String artifactId,
@@ -4749,17 +4760,23 @@ final class PersistentDownloadArtifactStore
           start: start,
           endExclusive: endExclusive,
         ),
-        readAll: () => _readArtifactAllVerifiedCandidates(
-          selectedCandidates,
-          selected.length,
-          selectedAccess.checksum.trim().toLowerCase(),
+        readAll: () => _readArtifactAllVerifiedForArtifact(
+          artifactId: selectedAccess.artifactId,
+          preferredCandidates: selectedCandidates,
+          length: selected.length,
+          expectedChecksum: selectedAccess.checksum.trim().toLowerCase(),
+          checksumAlgorithm:
+              selectedAccess.checksumAlgorithm.trim().toLowerCase(),
         ),
         readAllControlled: ({required control}) =>
-            _readArtifactAllControlledCandidates(
-              selectedCandidates,
-              selected.length,
-              selectedAccess.checksum.trim().toLowerCase(),
-              control,
+            _readArtifactAllVerifiedForArtifact(
+              artifactId: selectedAccess.artifactId,
+              preferredCandidates: selectedCandidates,
+              length: selected.length,
+              expectedChecksum: selectedAccess.checksum.trim().toLowerCase(),
+              checksumAlgorithm:
+                  selectedAccess.checksumAlgorithm.trim().toLowerCase(),
+              control: control,
             ),
         openBoundRangeReader: () => _openBoundArtifactRangeReader(
           selectedCandidates,
@@ -4791,50 +4808,178 @@ final class PersistentDownloadArtifactStore
     return null;
   }
 
-  Future<Uint8List> _readArtifactAllVerifiedCandidates(
-    List<_ArtifactAccessCandidate> candidates,
-    int length,
-    String expectedChecksum,
-  ) async {
-    final builder = BytesBuilder(copy: false);
-    final crc = Crc32();
-    await for (final chunk in _readArtifactCandidates(
-      candidates,
-      start: 0,
-      endExclusive: length,
-    )) {
-      builder.add(chunk);
-      crc.add(chunk);
+  Future<Uint8List> _readArtifactAllVerifiedForArtifact({
+    required String artifactId,
+    required List<_ArtifactAccessCandidate> preferredCandidates,
+    required int length,
+    required String expectedChecksum,
+    required String checksumAlgorithm,
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final replicas = await _index.listArtifactReplicas(artifactId);
+    final currentReplicaIds = <String>{
+      for (final replica in replicas) replica.replicaId,
+    };
+    final candidates = <_ArtifactAccessCandidate>[];
+    final seen = <String>{};
+
+    void addCandidate(_ArtifactAccessCandidate candidate) {
+      if (!currentReplicaIds.contains(candidate.access.replicaId)) return;
+      final key =
+          '${candidate.access.replicaId}\u0000${candidate.access.accessLocator}';
+      if (seen.add(key)) candidates.add(candidate);
     }
-    final bytes = builder.takeBytes();
-    if (bytes.lengthInBytes != length || crc.hex != expectedChecksum) {
-      throw Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'artifact cache body failed full verification',
+
+    for (final candidate in preferredCandidates) {
+      addCandidate(candidate);
+    }
+    for (final replica in replicas) {
+      control?.throwIfCancelled();
+      if (replica.accessLocator.isEmpty) continue;
+      final access = _ArtifactAccessRecord(
+        artifactId: artifactId,
+        replicaId: replica.replicaId,
+        accessLocator: replica.accessLocator,
+        bytes: length,
+        checksum: expectedChecksum,
+        checksumAlgorithm: checksumAlgorithm,
+        storageRootId: replica.storageRootId,
       );
+      if (!await _artifactReplicaIsAccessible(access)) continue;
+      for (final candidate in await _artifactAccessCandidates(access)) {
+        addCandidate(candidate);
+      }
     }
-    return bytes;
+    return _readArtifactAllVerified(
+      candidates,
+      length,
+      expectedChecksum,
+      control: control,
+    );
   }
 
-  Future<Uint8List> _readArtifactAllControlledCandidates(
+  Future<Uint8List> _readArtifactAllVerified(
     List<_ArtifactAccessCandidate> candidates,
     int length,
-    String expectedChecksum,
-    TaskControl control,
-  ) async {
-    control.throwIfCancelled();
+    String expectedChecksum, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final byReplica = <String, List<_ArtifactAccessCandidate>>{};
+    for (final candidate in candidates) {
+      byReplica
+          .putIfAbsent(
+            candidate.access.replicaId,
+            () => <_ArtifactAccessCandidate>[],
+          )
+          .add(candidate);
+    }
+    ArtifactReadFailure? accessFailure;
+    ArtifactReadFailure? structuralFailure;
+    for (final replicaCandidates in byReplica.values) {
+      ArtifactReadFailure? replicaStructuralFailure;
+      var replicaHasRecoverableFailure = false;
+      for (final candidate in replicaCandidates) {
+        try {
+          return await _readArtifactCandidateFullyVerified(
+            candidate,
+            length,
+            expectedChecksum,
+            control: control,
+          );
+        } on ArtifactReadFailure catch (error) {
+          if (error.kind == ArtifactReadFailureKind.accessDenied) {
+            await _recordStorageAccessHealth(
+              candidate,
+              StorageAccessHealth.accessDenied,
+            );
+          }
+          if (_isStructuralReplicaFailure(error.kind)) {
+            replicaStructuralFailure = error;
+            structuralFailure ??= error;
+          } else {
+            replicaHasRecoverableFailure = true;
+            accessFailure ??= error;
+          }
+        } on Object catch (error) {
+          control?.throwIfCancelled();
+          replicaHasRecoverableFailure = true;
+          accessFailure ??= ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.ioFailure,
+            accessLocator: candidate.access.accessLocator,
+            replicaId: candidate.access.replicaId,
+            failedOffset: 0,
+            bytesEmitted: 0,
+            cause: error,
+          );
+        }
+      }
+      if (!replicaHasRecoverableFailure &&
+          replicaStructuralFailure != null &&
+          replicaCandidates.isNotEmpty) {
+        final failed = replicaCandidates.first.access;
+        await _retireArtifactReplica(
+          failed.artifactId,
+          failed.replicaId,
+          failed.accessLocator,
+        );
+      }
+    }
+    throw accessFailure ??
+        structuralFailure ??
+        const ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.missing,
+          accessLocator: '',
+          failedOffset: 0,
+          bytesEmitted: 0,
+        );
+  }
+
+  Future<Uint8List> _readArtifactCandidateFullyVerified(
+    _ArtifactAccessCandidate candidate,
+    int length,
+    String expectedChecksum, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final access = candidate.access;
+    final observedLength = await _artifactPreflightLength(
+      access,
+      expectedLength: length,
+    );
+    if (observedLength != length) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.lengthChanged,
+        accessLocator: access.accessLocator,
+        replicaId: access.replicaId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: length,
+        observedLength: observedLength,
+      );
+    }
     final iterator = StreamIterator<List<int>>(
-      _readArtifactCandidates(candidates, start: 0, endExclusive: length),
+      _bytes.readChunks(
+        access.accessLocator,
+        start: 0,
+        endExclusive: length,
+      ),
     );
     final builder = BytesBuilder(copy: false);
     final crc = Crc32();
+    var consumed = 0;
     Object? primaryError;
     StackTrace? primaryStack;
     try {
-      while (await _moveNextArtifactChunk(iterator, control)) {
-        control.throwIfCancelled();
-        builder.add(iterator.current);
-        crc.add(iterator.current);
+      while (control == null
+          ? await iterator.moveNext()
+          : await _moveNextArtifactChunk(iterator, control)) {
+        control?.throwIfCancelled();
+        final chunk = iterator.current;
+        builder.add(chunk);
+        crc.add(chunk);
+        consumed += chunk.length;
       }
     } catch (error, stackTrace) {
       primaryError = error;
@@ -4848,15 +4993,35 @@ final class PersistentDownloadArtifactStore
       }
     }
     if (primaryError != null) {
+      if (primaryError is ArtifactReadFailure) {
+        throw _enrichArtifactReadFailure(access, primaryError);
+      }
       Error.throwWithStackTrace(primaryError, primaryStack!);
     }
     final bytes = builder.takeBytes();
-    if (bytes.lengthInBytes != length || crc.hex != expectedChecksum) {
-      throw Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'artifact cache body failed full verification',
+    if (consumed != length || bytes.lengthInBytes != length) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.shortRead,
+        accessLocator: access.accessLocator,
+        replicaId: access.replicaId,
+        failedOffset: consumed,
+        bytesEmitted: consumed,
+        expectedLength: length,
+        observedLength: consumed,
       );
     }
+    if (crc.hex != expectedChecksum) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.checksumMismatch,
+        accessLocator: access.accessLocator,
+        replicaId: access.replicaId,
+        failedOffset: length,
+        bytesEmitted: length,
+        expectedLength: length,
+        observedLength: length,
+      );
+    }
+    await _recordStorageAccessHealth(candidate, StorageAccessHealth.healthy);
     return bytes;
   }
 
