@@ -1999,7 +1999,7 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 只有用户启用 per-comic 设置后的 `invertPageOrder` 是 presentation override。
 物理页序改变不是 Reader 行为，现阶段也不存在普通 `flipComicPageOrder` fast path；
 未来如需要只能作为显式 Export Relayout migration，在 SQLite generation 与物理 rename/move/materialize 一致提交。
-普通下载/重试不枚举目录或收编未索引文件，只消费下载过程中逐页持久化的非空 CRC32 校验记录；未索引文件在目标提交时形成显式冲突，独立 repair/audit 才可扫描。
+普通下载/重试不枚举目录或收编未索引文件，只消费下载过程中逐页持久化的非空 CRC32 校验记录；`scanExistingPages()` 的唯一生产调用者是显式 `auditChapterFiles()`。该 audit 由当前 `ChapterDownloadService` generation 持有取消 token：先 full-verify 已索引 READY，再扫描结构化目录；未索引图片只有 source-declared CRC32 与本地独立 CRC32（及可用 byteLength）一致时才可走既有 artifact adoption，缺少可比 source proof 时只记为 unproven 而不绑定。Download Manager 只发送 audit/cancel command，Home command owner 保留启动时的 service generation，不把 TaskControl 下放给 Widget。最后一个结构性坏 replica 退出时，SQLite owner 以 zero-replica 条件事务同时撤销 exact READY/physical-media bindings，避免等待下一次 open 才收敛。
 最终目标路径提交由唯一 `PersistentDownloadArtifactStore` 串行化：经用户授权的 overwrite 模式允许覆盖更新 `.zic.json`；
 同进程已有旧 owner 认领时也必须由 `observedOwnerKey` 精确匹配该 owner 才可替换，未授权冲突抛出显式 `ErrorCode.policy` 错误。
 跨版本 createNew 复用必须物化到本版本的 1-based 目标页路径，并在复制前后验证 bytes+CRC32。

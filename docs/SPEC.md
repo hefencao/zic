@@ -1890,7 +1890,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   需要改变已经可见的物理编号时 MUST 走独立显式 Export Relayout migration，并以 generation-safe 的 SQLite/物理 rename-or-materialize 提交。
   显式 overwrite 只有在 `observedOwnerKey` 精确匹配当前 owner 时 MAY 替换既有认领，模式本身不得构成宽泛覆盖许可。
   普通下载和重试 MUST NOT 枚举整个目录或收编未索引文件；每页完成时 MUST 将实际 bytes 与非空 CRC32 随 exact `CacheRec` 原子更新，重试只能消费该增量校验记录。
-  未入库文件只能在显式、可取消的 repair/audit 中扫描，或在目标提交时形成用户可处理的冲突。最终目标路径写入 MUST 由唯一 artifact store 串行化；
+  未入库文件只能在显式、可取消的 chapter-file repair/audit 中扫描，或在目标提交时形成用户可处理的冲突；普通 download/retry/Reader MUST NOT 枚举目录。repair/audit MUST 由当前 download-service generation 持有取消权，并先 full-verify indexed READY；unindexed 图片只有 source-declared CRC32 与本地独立 CRC32（以及存在时的 byteLength）一致才 MAY 进入既有 artifact adoption。图片魔数、路径/page number、用户点击 repair 或本地自算 checksum 均不足以证明 exact source identity；缺少可比 source proof MUST 保持 unbound。最后一个 structural replica 被退休时，metadata owner MUST 以 zero-replica 条件事务同步撤销该 artifact 的 exact READY/physical bindings。最终目标路径写入 MUST 由唯一 artifact store 串行化；
   同一目标path的logical sibling冲突检查 MUST使用按`cache_entry.path`靶向的持久查询/索引，不得在每个page materialization内全量枚举cache bindings；
   只有现有文件与待提交内容 bytes、非空 checksum 均一致时 MAY 共享，不同内容 MUST 拒绝。
   download-cache schema 12 MUST提供该path索引，11→12升级 MUST只创建索引并推进版本，不得重跑历史artifact/backfill/identity/retention迁移。

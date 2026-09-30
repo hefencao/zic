@@ -269,6 +269,8 @@ void main() {
         await durableDelegate.delete(entry);
         return durableDelegate.inspect(entry);
       },
+      auditChapterFiles: durableDelegate.auditChapterFiles,
+      cancelChapterFileAudit: durableDelegate.cancelChapterFileAudit,
       pauseWholeComicJob: (_) async {},
       resumeWholeComicJob: (_) async {},
       cancelWholeComicJob: (_) async {},
@@ -328,6 +330,111 @@ void main() {
     unawaited(durableQueue.close());
     unawaited(bootstrap.close());
     unawaited(durable.close());
+  });
+
+  testWidgets('download manager audit action is cancellable through command owner',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:audit-manager',
+        displayName: '待校验章节',
+        sourceId: 'audit-manager-source',
+        comicId: 'audit-manager-comic',
+        comicTitle: '待校验漫画',
+        chapterId: 'audit-manager-chapter',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://audit-manager/1',
+            pageId: 'audit-manager-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final delegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await delegate.download(entry);
+    final queue = WholeComicDownloadQueue(downloads: delegate);
+    await queue.ready;
+    final snapshot = await delegate.inspect(entry);
+    final auditStarted = Completer<void>();
+    final releaseAudit = Completer<void>();
+    var auditCalls = 0;
+    var cancelCalls = 0;
+    final actions = DownloadManagerCommandActions(
+      downloadChapter: (_) => throw StateError('not used'),
+      retryChapter: (_) => throw StateError('not used'),
+      stopChapter: (_) => throw StateError('not used'),
+      deleteChapterFiles: (_) => throw StateError('not used'),
+      auditChapterFiles: (_) async {
+        auditCalls++;
+        if (!auditStarted.isCompleted) auditStarted.complete();
+        await releaseAudit.future;
+        return const ChapterFileAuditReport(
+          manifestPages: 1,
+          indexedReadyPages: 1,
+          verifiedIndexedPages: 1,
+          invalidIndexedPages: 0,
+          scannedImagePages: 1,
+          scannedBytes: 4,
+          repairedPages: 0,
+          unprovenPages: 0,
+          sourceMismatchPages: 0,
+          extraPages: 0,
+        );
+      },
+      cancelChapterFileAudit: (_) async {
+        cancelCalls++;
+        if (!releaseAudit.isCompleted) releaseAudit.complete();
+      },
+      pauseWholeComicJob: (_) async {},
+      resumeWholeComicJob: (_) async {},
+      cancelWholeComicJob: (_) async {},
+      retryWholeComicJob: (_) async {},
+      removeWholeComicJob: (_) async {},
+      updateWholeComicPolicy: (_) async {},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[entry],
+          downloads: delegate,
+          wholeComicDownloads: queue,
+          initialSnapshots: <ChapterDownloadSnapshot>[snapshot],
+          initialWholeComicSnapshot: queue.snapshot,
+          commandActions: actions,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final auditButton = find.byKey(downloadManagerAuditKey(snapshot.identity));
+    expect(auditButton, findsOneWidget);
+    expect(find.byTooltip('校验/修复离线文件'), findsOneWidget);
+    await tester.tap(auditButton);
+    await tester.pump();
+    await auditStarted.future;
+    await tester.pump();
+
+    expect(auditCalls, 1);
+    expect(find.byTooltip('取消校验'), findsOneWidget);
+    await tester.tap(auditButton);
+    await tester.pump();
+    expect(cancelCalls, 1);
+
+    for (var frame = 0; frame < 20 && find.byTooltip('取消校验').evaluate().isNotEmpty; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.byTooltip('校验/修复离线文件'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(delegate.close());
   });
 
   testWidgets(
@@ -2401,10 +2508,14 @@ final class _BlockingInspectManyDownloadService
       _delegate.probeExistingDownloads(query);
 
   @override
-  Future<ChapterFileStateReport> inspectChapterFileState(
+  Future<ChapterFileAuditReport> auditChapterFiles(
     ImportedLibraryEntry entry,
   ) =>
-      _delegate.inspectChapterFileState(entry);
+      _delegate.auditChapterFiles(entry);
+
+  @override
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry) =>
+      _delegate.cancelChapterFileAudit(entry);
 
   @override
   Future<void> claimComicDirectory({

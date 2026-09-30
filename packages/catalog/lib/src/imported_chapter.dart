@@ -8,6 +8,8 @@ final class ImportedPageRecord {
     this.pageId,
     this.mediaFormat,
     this.byteLength,
+    this.checksum,
+    this.checksumAlgorithm,
     this.animatedHint = false,
   });
 
@@ -17,6 +19,11 @@ final class ImportedPageRecord {
   final String? pageId;
   final String? mediaFormat;
   final int? byteLength;
+
+  /// Optional source-declared content checksum. This remains source metadata
+  /// until a local artifact owner independently verifies the same algorithm.
+  final String? checksum;
+  final String? checksumAlgorithm;
   final bool animatedHint;
 
   String get stablePageId => pageId ?? 'page-${_stableHash(sourceId)}';
@@ -42,6 +49,8 @@ final class ImportedPageRecord {
         if (pageId != null) 'pageId': pageId,
         if (mediaFormat != null) 'mediaFormat': mediaFormat,
         if (byteLength != null) 'byteLength': byteLength,
+        if (checksum != null) 'checksum': checksum,
+        if (checksumAlgorithm != null) 'checksumAlgorithm': checksumAlgorithm,
         'animatedHint': animatedHint,
       };
 
@@ -67,6 +76,8 @@ final class ImportedPageRecord {
       pageId: rawPageId as String?,
       mediaFormat: json['mediaFormat'] as String?,
       byteLength: byteLength as int?,
+      checksum: json['checksum'] as String?,
+      checksumAlgorithm: json['checksumAlgorithm'] as String?,
       animatedHint: (json['animatedHint'] as bool?) ?? false,
     );
   }
@@ -191,6 +202,8 @@ final class ImportedChapterRecord {
               pageId: page.pageId,
               mediaFormat: page.contentKindHint.name,
               byteLength: page.byteLength,
+              checksum: page.checksum,
+              checksumAlgorithm: page.checksumAlgorithm,
               animatedHint: page.animatedHint,
             ),
           )
@@ -349,6 +362,8 @@ final class ImportedChapterRecord {
           index: index,
           uri: page.uri,
           byteLength: page.byteLength,
+          checksum: page.checksum,
+          checksumAlgorithm: page.checksumAlgorithm,
           contentKindHint: page.contentKindHint,
           animatedHint: page.animatedHint,
         ),

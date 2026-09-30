@@ -573,15 +573,24 @@ final class _RecordingDownloads
       );
 
   @override
-  Future<ChapterFileStateReport> inspectChapterFileState(
+  Future<ChapterFileAuditReport> auditChapterFiles(
     ImportedLibraryEntry entry,
   ) async =>
-      const ChapterFileStateReport(
+      const ChapterFileAuditReport(
         manifestPages: 1,
-        indexReadyPages: 0,
-        diskPages: 0,
-        diskBytes: 0,
+        indexedReadyPages: 0,
+        verifiedIndexedPages: 0,
+        invalidIndexedPages: 0,
+        scannedImagePages: 0,
+        scannedBytes: 0,
+        repairedPages: 0,
+        unprovenPages: 0,
+        sourceMismatchPages: 0,
+        extraPages: 0,
       );
+
+  @override
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry) async {}
 
   @override
   Future<void> claimComicDirectory({

@@ -157,7 +157,7 @@ App build：0.31.0+328
   queued cancellation可直接移除pending，动态numeric priority由同一control驱动class内排序，current/nonCurrent仍只表达execution class；role promotion先迁移DecodeLane rank再迁移同一request class。
   in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。focused DecodeSession/LiveCoordinator回归与native decode ownership guard已通过。
   最终Profile authoritative Home 1.245s；`zic-debug-trace-2026-09-29T02-34-05.jsonl`完成4次forward+4次reverse，含2次stable `previous` 起手，`taskFailed=0`、decode recovery=0、priority promotion 1次且为active迁移。
-  下载治理：ADR0342/0343已闭合SAF manifest/body事务；DL-DIR-007进一步分离source `PageAsset.checksum`与artifact CRC32。普通sealed stream仍只做length/access preflight；显式full-read可识别同长度`checksumMismatch`、只退休坏replica并回退健康副本。DL-DIR-019/017仍只剩真实provider kill/reopen设备证据。
+  下载治理：ADR0342/0343已闭合SAF事务；DL-DIR-007已闭合source checksum持久链、同长度损坏与显式audit/repair。普通路径不扫描目录；audit可取消，仅source CRC32独立匹配时收编unindexed图片，无proof保持unbound；最后replica失效由SQLite原子撤销binding。DL-DIR-007仅余IoTransport未知媒体治理；DL-DIR-019/017仅余真实provider kill/reopen证据。
   partial复用继续收口到physical authority：03-03-51 Trace中page79/exact `6d924728a464c2c6`已有7,708,375-byte canonical SAF partial，却因不可borrow而经DownloadSession writer从0本地重放并被投影成receiving；同identity当段无origin sourceRead。
   现在persistent store在per-physical serializer内先将SAF authority安全迁到App-private Direct transfer staging，再borrow给hot session，generic fallback不变（ADR0340）。
   current-source Profile `zic-debug-trace-2026-09-29T03-35-53.jsonl`直接命中同一7,708,375-byte SAF partial：`accessMode=saf/adoptable=true -> adopted-physical`，local hydration结束仍为idle且未发生本地`receiving from 0`；随后03-54-39同页直接`adopted-posix-spool`。

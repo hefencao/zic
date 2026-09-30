@@ -2389,7 +2389,11 @@ final class PersistentDownloadArtifactStore
         }
       });
 
-  Future<({int bytes, String checksum})> _artifactProof(String path) async {
+  Future<({int bytes, String checksum})> _artifactProof(
+    String path, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
     if (parseSafRecordPath(path) == null) {
       _rejectLocalPathLinks(path);
     }
@@ -2402,9 +2406,11 @@ final class PersistentDownloadArtifactStore
     final crc = Crc32();
     var bytes = 0;
     await for (final chunk in _bytes.readChunks(path, start: 0)) {
+      control?.throwIfCancelled();
       crc.add(chunk);
       bytes += chunk.lengthInBytes;
     }
+    control?.throwIfCancelled();
     return (bytes: bytes, checksum: crc.hex);
   }
 
@@ -4610,6 +4616,11 @@ final class PersistentDownloadArtifactStore
           ? null
           : await _registerMigrationTemporaryCleanupDebt(migration);
       await _index.removeArtifactReplica(replicaId);
+      final authorityRetired =
+          await _index.removeArtifactAuthorityIfNoReplicas(artifactId);
+      if (authorityRetired) {
+        _notifyManagementProjectionChanged();
+      }
       if (migrationTempDebt != null) {
         // The replica delete cascades the schema-9 migration row. Do not take
         // StorageWriteScheduler capacity from this structural read-failure

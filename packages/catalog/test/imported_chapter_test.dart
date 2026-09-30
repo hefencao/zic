@@ -198,6 +198,52 @@ void main() {
     expect(restored.coverAnimatedHint, isTrue);
   });
 
+  test('remote import preserves source checksum namespace through persistence', () {
+    const comic = Comic(
+      comicId: 'comic-1',
+      sourceId: 'fixture',
+      title: 'Fixture',
+      authors: <String>[],
+      readingDirection: ReadingDirection.ltr,
+    );
+    final manifest = ChapterManifest(
+      sourceId: 'fixture',
+      comicId: 'comic-1',
+      chapter: const Chapter(
+        chapterId: 'chapter-1',
+        comicId: 'comic-1',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 1,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'page-1',
+          chapterId: 'chapter-1',
+          index: 0,
+          uri: Uri.parse('https://example.test/page.webp'),
+          byteLength: 16,
+          checksum: 'A1B2C3D4',
+          checksumAlgorithm: 'CRC32',
+          contentKindHint: ContentKindHint.webp,
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+
+    final imported = ImportedChapterRecord.remote(
+      comic: comic,
+      manifest: manifest,
+    );
+    final restored = ImportedChapterRecord.fromJson(imported.toJson());
+    final page = restored.toManifest().pages.single;
+
+    expect(page.checksum, 'A1B2C3D4');
+    expect(page.checksumAlgorithm, 'CRC32');
+    expect(page.sourceChecksumForAlgorithm('crc32'), 'a1b2c3d4');
+  });
+
   test('record JSON round trip preserves import metadata', () {
     final record = ImportedChapterRecord.folder(
       directoryId: '/books/chapter',

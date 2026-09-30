@@ -169,10 +169,20 @@ abstract interface class ChapterDownloadService {
     DownloadExistenceQuery query,
   );
 
-  /// Unified actual-file-state lookup for one chapter (index + disk scan).
-  Future<ChapterFileStateReport> inspectChapterFileState(
+  /// Explicit storage audit/repair for one chapter. Normal download, retry
+  /// and Reader paths never call this operation or enumerate the directory.
+  ///
+  /// The operation may full-verify already indexed sealed artifacts and scan
+  /// unindexed structured files. An unindexed file may become durable authority
+  /// only when source-declared CRC32 proof matches an independently computed
+  /// local CRC32. Files without comparable source proof remain unbound.
+  Future<ChapterFileAuditReport> auditChapterFiles(
     ImportedLibraryEntry entry,
   );
+
+  /// Cancels an explicit file audit owned by this service generation.
+  /// Ordinary chapter-download cancellation remains a separate command.
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry);
 
   Future<bool> isDownloaded(ImportedLibraryEntry entry);
 
@@ -397,25 +407,37 @@ class DownloadExistenceReport {
   bool get liveRun => liveRunIdentities.isNotEmpty;
 }
 
-/// Actual on-disk / index file state for one chapter, combining the index
-/// projection with the chapter-folder scan. Feeds the conflict comparison
-/// and the existing-file reuse path.
-class ChapterFileStateReport {
-  const ChapterFileStateReport({
+/// Result of an explicit chapter-file storage audit.
+///
+/// This report deliberately distinguishes local file integrity from exact
+/// source identity. [unprovenPages] are valid local images with a freshly
+/// computed CRC32 but no comparable source CRC32, so they remain unbound.
+final class ChapterFileAuditReport {
+  const ChapterFileAuditReport({
     required this.manifestPages,
-    required this.indexReadyPages,
-    required this.diskPages,
-    required this.diskBytes,
+    required this.indexedReadyPages,
+    required this.verifiedIndexedPages,
+    required this.invalidIndexedPages,
+    required this.scannedImagePages,
+    required this.scannedBytes,
+    required this.repairedPages,
+    required this.unprovenPages,
+    required this.sourceMismatchPages,
+    required this.extraPages,
   });
 
   final int manifestPages;
+  final int indexedReadyPages;
+  final int verifiedIndexedPages;
+  final int invalidIndexedPages;
+  final int scannedImagePages;
+  final int scannedBytes;
+  final int repairedPages;
+  final int unprovenPages;
+  final int sourceMismatchPages;
+  final int extraPages;
 
-  /// Pages with a `ready` index record matching the current revision.
-  final int indexReadyPages;
-
-  /// Page files found in the chapter folder (independent of the index).
-  final int diskPages;
-  final int diskBytes;
+  bool get changed => repairedPages > 0 || invalidIndexedPages > 0;
 }
 
 abstract interface class ManagedChapterDownloadService
@@ -927,7 +949,7 @@ final class MemoryChapterDownloadService
   }
 
   @override
-  Future<ChapterFileStateReport> inspectChapterFileState(
+  Future<ChapterFileAuditReport> auditChapterFiles(
     ImportedLibraryEntry entry,
   ) async {
     _requireOpen();
@@ -939,12 +961,23 @@ final class MemoryChapterDownloadService
           (sum, page) => sum + page.lengthInBytes,
         ) ??
         0;
-    return ChapterFileStateReport(
+    return ChapterFileAuditReport(
       manifestPages: entry.chapter.pages.length,
-      indexReadyPages: readyPages,
-      diskPages: readyPages,
-      diskBytes: bytes,
+      indexedReadyPages: readyPages,
+      verifiedIndexedPages: readyPages,
+      invalidIndexedPages: 0,
+      scannedImagePages: readyPages,
+      scannedBytes: bytes,
+      repairedPages: 0,
+      unprovenPages: 0,
+      sourceMismatchPages: 0,
+      extraPages: 0,
     );
+  }
+
+  @override
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry) async {
+    _requireOpen();
   }
 
   @override

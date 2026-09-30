@@ -1377,9 +1377,10 @@ void main() {
       ),
     );
     expect(await store.artifactReplicasFor(id), isEmpty);
+    expect((await store.indexedRecords()).containsKey(id.key), isFalse,
+        reason: 'last-replica retirement must synchronously drop logical authority');
     expect(await store.openArtifactStream(id), isNull,
         reason: 'a checksum-failed sealed replica must not remain reusable');
-    expect((await store.indexedRecords()).containsKey(id.key), isFalse);
   });
 
   test('accessDenied preserves the replica binding for later permission recovery', () async {

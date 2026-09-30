@@ -45,6 +45,10 @@ final class HomeDownloadCommands {
   final HomeChapterRefresh refreshRemoteEntry;
   final HomeStaleChapterRefresh refreshStaleChapter;
 
+  final Map<String, ({ChapterDownloadService downloads, ImportedLibraryEntry entry})>
+      _activeFileAudits =
+      <String, ({ChapterDownloadService downloads, ImportedLibraryEntry entry})>{};
+
   Future<ChapterDownloadSnapshot> inspectChapter(
     ImportedLibraryEntry entry,
   ) async {
@@ -187,6 +191,50 @@ final class HomeDownloadCommands {
     await queue.ready;
     await mutation(queue);
     session.refreshWholeComicSnapshot();
+  }
+
+  Future<ChapterFileAuditReport> auditChapterFiles(
+    ImportedLibraryEntry entry,
+  ) async {
+    await ensureDurableServices();
+    final hydrated = await session.hydrateEntry(entry);
+    final downloads = session.chapterDownloads;
+    final identity = chapterDownloadIdentity(
+      hydrated.chapter.sourceId,
+      hydrated.chapter.comicId,
+      hydrated.chapter.chapterId,
+      hydrated.chapter.sourceRevision,
+    );
+    _activeFileAudits[identity] = (downloads: downloads, entry: hydrated);
+    try {
+      final report = await downloads.auditChapterFiles(hydrated);
+      final snapshot = await downloads.inspect(hydrated);
+      session.acceptDownloadSnapshot(snapshot);
+      return report;
+    } finally {
+      final current = _activeFileAudits[identity];
+      if (current != null && identical(current.downloads, downloads)) {
+        _activeFileAudits.remove(identity);
+      }
+    }
+  }
+
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry) async {
+    final prefix =
+        '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000'
+        '${entry.chapter.chapterId}\u0000';
+    final active = _activeFileAudits.entries
+        .where((candidate) => candidate.key.startsWith(prefix))
+        .map((candidate) => candidate.value)
+        .toList(growable: false);
+    if (active.isNotEmpty) {
+      for (final owner in active) {
+        await owner.downloads.cancelChapterFileAudit(owner.entry);
+      }
+      return;
+    }
+    await ensureDurableServices();
+    await session.chapterDownloads.cancelChapterFileAudit(entry);
   }
 
   Future<ChapterDownloadSnapshot> stopChapter(

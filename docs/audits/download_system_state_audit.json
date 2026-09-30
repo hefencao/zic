@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.28.0",
-  "last_updated": "2026-09-30T08:13:03+08:00",
+  "audit_version": "1.29.0",
+  "last_updated": "2026-09-30T08:58:30+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -20,26 +20,28 @@
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T08:13:03+08:00",
-    "review_basis": "按 main@dee35c1e 后的 DL-DIR-007 checksum/physical-integrity 边界继续治理。PageAsset checksum 现明确为 source-declared algorithm namespace；只有声明为合法 CRC32 时才可约束 transport completion，且不直接成为 durable artifact proof。sealed artifact 普通 stream 仍只做 locator/existence/exact-length preflight；显式 full-read 才逐 physical replica 重算 artifact CRC32，同长度 mismatch 以结构性 checksumMismatch 退休坏 replica，并在存在其他 sealed copy 时继续验证。没有新增 cache/network/download authority，也没有把 whole-file hash 放进 Reader hot path。focused domain/persistent/cache/transport 回归已通过，downloads 全包与最终 required-toolchain gate 待本树验证。",
+    "reviewed_at": "2026-09-30T08:58:30+08:00",
+    "review_basis": "继续治理 DL-DIR-007 的显式 repair/audit 边界。发现 PageAsset checksum 在 ImportedPageRecord 持久链中被丢弃，现已补齐 remote import -> JSON/SQLite -> toManifest 的 source checksum namespace；普通 download/retry/Reader 仍无目录扫描。auditChapterFiles 成为 scanExistingPages 唯一生产调用者，由 ChapterDownloadService generation 持有 CancelToken，并通过 Download Manager/Home command boundary 显式触发/取消。audit 对 indexed READY 做 whole-file verification；unindexed 图片仅在 source-declared CRC32 与本地独立 CRC32（及可用 byteLength）匹配时复用既有 adoption authority，无 source proof 只报告 unproven。结构性失败退休最后 replica 时，SQLite zero-replica 条件事务同步移除 exact READY/physical bindings，不再依赖下一次 open 收敛。未新增 scheduler/cache/network authority；DL-DIR-007 仅余普通 IoTransport 未知媒体内容治理。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理",
-      "DL-DIR-007：source checksum/artifact CRC32 语义与同长度 sealed corruption 的显式 full-read 发现已闭合；仍需库外/旧版本无 checksum 文件的独立可取消 repair/audit，以及普通 IoTransport 未知媒体内容治理",
+      "DL-DIR-007：source checksum/artifact CRC32、同长度 sealed corruption、显式可取消 repair/audit 均已闭合；仅余普通 IoTransport 对未知媒体内容的统一拒绝/分类边界",
       "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
     ]
   },
   "validation": {
     "passed": [
-      "packages/domain exact full gate: 14/14 passed, including source checksum algorithm namespace regression",
-      "packages/downloads persistent_artifact_failure_test: same-length single-replica retirement and multi-replica CRC fallback regressions passed (34/34)",
-      "packages/downloads artifact_cache_manager + artifact_cache_transport + persistent_artifact_failure focused set: 115/115 passed; ordinary streamed reads remain separate from explicit whole-file verification",
-      "packages/downloads: 489/489 passed on the exact final tree",
-      "bash ./tool/check.sh --require-toolchains: exit 0 in 184.470s on the exact final 489/489 tree; repository/documentation/ownership guards, Dart/Flutter suites, Android debug build gates and Rust media_core completed successfully",
-      "Android exact-final outputs: armeabi-v7a 98207804 bytes, arm64-v8a 122326166 bytes, x86_64 109893373 bytes",
-      "cargo test -p media_core --quiet after exact final gate: 22/22 passed; existing unused/dead-code warnings only"
+      "packages/catalog affected/full validation: 97/97 passed; source checksum namespace survives ImportedPageRecord JSON/SQLite/manifest reconstruction",
+      "packages/storage affected full suite: exit 0; SQLite zero-replica conditional artifact-authority transaction regression passed",
+      "packages/downloads exact final tree: 492/492 passed, including explicit source-proof repair, proofless-unbound audit, service-owned SAF cancellation, same-length corruption retirement and healthy-replica fallback",
+      "apps/app chapter_downloads_test: 30/30 passed; Download Manager audit command changes to cancellation while Home command owner retains the starting service generation",
+      "python3 tool/test_download_repair_audit_ownership.py: pass and included in the repository full gate; production scanExistingPages is restricted to explicit audit and UI/composition cannot enumerate download directories",
+      "bash ./tool/check.sh --require-toolchains: exit 0 in 168.385s on the exact final tree; repository/documentation/ownership guards, Dart/Flutter analyses and suites, apps/app suite, Android split debug build and Rust media_core all completed successfully",
+      "apps/app full Flutter test in required-toolchain gate: 382 passed with 3 existing skips",
+      "Android exact-final outputs: armeabi-v7a 98213163 bytes, arm64-v8a 122331525 bytes, x86_64 109898732 bytes",
+      "Rust media_core in required-toolchain gate: 22/22 passed; existing unused/dead-code warnings only"
     ],
     "failed_or_unverified": [
-      "DL-DIR-007 remains in_progress for a standalone explicit cancellable repair/audit of legacy or external files without checksum proof and for ordinary IoTransport unknown-media governance",
+      "DL-DIR-007 ordinary IoTransport unknown-media classification/rejection governance remains open",
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
     ],
     "code_changes_in_this_audit": true
@@ -108,14 +110,17 @@
       "severity": "P1",
       "title": "已有部分文件场景下的增量下载与文件复用治理",
       "locations": [
+        "packages/catalog/lib/src/imported_chapter.dart",
         "packages/downloads/lib/src/chapter_downloads.dart",
-        "packages/downloads/lib/src/artifact_cache_manager.dart",
-        "packages/storage/lib/src/cache_index.dart",
-        "packages/sessions/lib/src/download_job.dart"
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart",
+        "packages/downloads/lib/src/persistent_download_artifact_store.dart",
+        "packages/storage/lib/src/sqlite_index.dart",
+        "apps/app/lib/download_manager.dart",
+        "apps/app/lib/home_download_commands.dart"
       ],
       "status": "in_progress",
-      "remediation_applied": "普通下载与重试不再扫描目录或收编未索引文件，只消费 SQLite 中逐页持久化的 ready+非空 CRC32 记录；显式 scanExistingPages 继续以图片魔数拒绝伪图片。PageAsset checksum 现保持 source-declared algorithm namespace，只有声明为格式合法 CRC32 时才可形成 transport completion constraint，且来源 CRC32 不等于 durable artifact seal proof。sealed persistent hot stream 仍只做 locator/existence/exact-length preflight；显式 full-read 按 physical replica 独立重算 artifact CRC32，同长度 mismatch 产生结构性 checksumMismatch，仅退休坏 replica，并在存在其他 sealed copy 时继续验证。",
-      "remaining_work": "为库外或旧版本无 checksum 文件提供独立、显式、可取消的 repair/audit 操作；普通 IoTransport 尚未统一拒绝未知媒体内容。"
+      "remediation_applied": "普通下载、重试与 Reader 不扫描目录或收编未索引文件；scanExistingPages 仅由显式 auditChapterFiles 调用并继续以图片魔数拒绝伪图片。PageAsset source checksum 现经 ImportedPageRecord JSON/SQLite 持久化并由 toManifest 原样恢复算法命名空间。audit 由当前 ChapterDownloadService generation 持有 CancelToken，先 whole-file 验证 indexed READY；未索引图片只有 source-declared CRC32 与本地独立 CRC32（及可用 byteLength）一致才调用既有 adoptExistingPageRecord，缺少可比 source proof 时仅计为 unproven 且保持 unbound。Download Manager 通过 Home command owner 显式启动/取消，不持有 TaskControl。sealed hot stream 仍不重算 whole-file CRC；结构性校验退休最后 replica 时，SQLite 以 zero-replica 条件事务同步移除 exact READY/physical-media binding，存在健康 replica 时保持 logical authority。",
+      "remaining_work": "普通 IoTransport 尚未统一拒绝/分类未知媒体内容；repair/audit 子项已闭合。"
     },
     {
       "id": "DL-DIR-009",

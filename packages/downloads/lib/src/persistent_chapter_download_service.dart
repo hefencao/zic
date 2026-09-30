@@ -159,6 +159,9 @@ final class PersistentChapterDownloadService
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
   final Map<String, Future<void>> _runs = <String, Future<void>>{};
+  final Map<String, CancelToken> _auditTokens = <String, CancelToken>{};
+  final Map<String, Future<ChapterFileAuditReport>> _auditRuns =
+      <String, Future<ChapterFileAuditReport>>{};
   final Map<String, DownloadTransferConsumer> _commandConsumers =
       <String, DownloadTransferConsumer>{};
   final Set<String> _cancelled = <String>{};
@@ -1375,41 +1378,191 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<ChapterFileStateReport> inspectChapterFileState(
+  Future<ChapterFileAuditReport> auditChapterFiles(
     ImportedLibraryEntry entry,
-  ) async {
+  ) {
     _requireOpen();
+    final identity = _identity(entry);
+    final active = _auditRuns[identity];
+    if (active != null) return active;
+    final token = CancelToken();
+    _auditTokens[identity] = token;
+    late final Future<ChapterFileAuditReport> run;
+    run = _runChapterFileAudit(entry, control: token).whenComplete(() {
+      if (identical(_auditRuns[identity], run)) {
+        _auditRuns.remove(identity);
+        _auditTokens.remove(identity);
+      }
+    });
+    _auditRuns[identity] = run;
+    return run;
+  }
+
+  Future<ChapterFileAuditReport> _runChapterFileAudit(
+    ImportedLibraryEntry entry, {
+    required TaskControl control,
+  }) async {
+    _requireOpen();
+    control.throwIfCancelled();
     final manifest = entry.chapter.toManifest();
-    final records = await artifactStore.indexedRecords();
-    var indexReadyPages = 0;
-    for (final page in manifest.pages) {
-      final record = records[_downloadId(manifest, page).key];
-      if (record != null && artifactStore._isVerifiedReadyRecord(record)) {
-        indexReadyPages++;
+    var records = await artifactStore.indexedRecords();
+    var indexedReadyPages = 0;
+    var verifiedIndexedPages = 0;
+    var invalidIndexedPages = 0;
+
+    var repairedAuthority = false;
+    try {
+      for (final page in manifest.pages) {
+        control.throwIfCancelled();
+        final id = _downloadId(manifest, page);
+        final record = records[id.key];
+        if (record == null || !artifactStore._isVerifiedReadyRecord(record)) {
+          continue;
+        }
+        indexedReadyPages++;
+        final stream = await artifactStore.openArtifactStream(id);
+        if (stream == null) {
+          invalidIndexedPages++;
+          continue;
+        }
+        try {
+          final controlled = stream.readAllControlled;
+          if (controlled != null) {
+            await controlled(control: control);
+          } else if (stream.readAll case final readAll?) {
+            await readAll();
+            control.throwIfCancelled();
+          } else {
+            await for (final _ in stream.open(start: 0)) {
+              control.throwIfCancelled();
+            }
+          }
+          verifiedIndexedPages++;
+        } on Failure catch (error) {
+          if (error.code == ErrorCode.cancelled) rethrow;
+          if (error.code != ErrorCode.artifactCorruption) rethrow;
+          invalidIndexedPages++;
+        } on ArtifactReadFailure catch (error) {
+          control.throwIfCancelled();
+          if (!artifactStore._isStructuralReplicaFailure(error.kind)) rethrow;
+          invalidIndexedPages++;
+        }
+      }
+
+      control.throwIfCancelled();
+      records = await artifactStore.indexedRecords();
+      final comicDirectoryName = await artifactStore
+          .resolveStructuredComicDirectory(entry, knownRecords: records.values);
+      final disk = await artifactStore.scanExistingPages(
+        comicTitle: entry.chapter.comicTitle,
+        chapterTitle: entry.chapter.displayName,
+        sequence: entry.chapter.sequence,
+        isSingleChapter: await _isSingleChapterFor(entry),
+        comicDirectoryName: comicDirectoryName,
+        control: control,
+        layoutId: manifest.pages.isEmpty
+            ? null
+            : _downloadId(manifest, manifest.pages.first),
+      );
+      var scannedBytes = 0;
+      var repairedPages = 0;
+      var unprovenPages = 0;
+      var sourceMismatchPages = 0;
+      var extraPages = 0;
+
+      for (final candidate in disk.entries) {
+        control.throwIfCancelled();
+        scannedBytes += candidate.value.bytes;
+        final pageIndex = candidate.key - 1;
+        if (pageIndex < 0 || pageIndex >= manifest.pages.length) {
+          extraPages++;
+          continue;
+        }
+        final page = manifest.pages[pageIndex];
+        final id = _downloadId(manifest, page);
+        final current = records[id.key];
+        if (current != null && artifactStore._isVerifiedReadyRecord(current)) {
+          continue;
+        }
+        final expectedChecksum = _sourceCrc32Constraint(page);
+        if (expectedChecksum == null) {
+          final proof = await artifactStore._artifactProof(
+            candidate.value.path,
+            control: control,
+          );
+          if (proof.bytes == candidate.value.bytes) {
+            unprovenPages++;
+          } else {
+            sourceMismatchPages++;
+          }
+          continue;
+        }
+        final expectedLength = page.byteLength;
+        if (expectedLength != null && expectedLength != candidate.value.bytes) {
+          sourceMismatchPages++;
+          continue;
+        }
+        try {
+          final adopted = await artifactStore.adoptExistingPageRecord(
+            id: id,
+            path: candidate.value.path,
+            bytes: candidate.value.bytes,
+            checksum: expectedChecksum,
+            storageRootId: artifactStore.storageRootIdFor(entry),
+            control: control,
+          );
+          records[id.key] = adopted;
+          repairedPages++;
+          repairedAuthority = true;
+        } on Failure catch (error) {
+          if (error.code == ErrorCode.cancelled) rethrow;
+          if (error.code == ErrorCode.artifactCorruption) {
+            sourceMismatchPages++;
+            continue;
+          }
+          rethrow;
+        }
+      }
+
+      return ChapterFileAuditReport(
+        manifestPages: manifest.pages.length,
+        indexedReadyPages: indexedReadyPages,
+        verifiedIndexedPages: verifiedIndexedPages,
+        invalidIndexedPages: invalidIndexedPages,
+        scannedImagePages: disk.length,
+        scannedBytes: scannedBytes,
+        repairedPages: repairedPages,
+        unprovenPages: unprovenPages,
+        sourceMismatchPages: sourceMismatchPages,
+        extraPages: extraPages,
+      );
+
+    } finally {
+      if (repairedAuthority) {
+        _handleArtifactManagementProjectionChanged();
       }
     }
-    final comicDirectoryName = await artifactStore
-        .resolveStructuredComicDirectory(entry);
-    final disk = await artifactStore.scanExistingPages(
-      comicTitle: entry.chapter.comicTitle,
-      chapterTitle: entry.chapter.displayName,
-      sequence: entry.chapter.sequence,
-      isSingleChapter: await _isSingleChapterFor(entry),
-      comicDirectoryName: comicDirectoryName,
-      layoutId: manifest.pages.isEmpty
-          ? null
-          : _downloadId(manifest, manifest.pages.first),
-    );
-    var diskBytes = 0;
-    for (final page in disk.values) {
-      diskBytes += page.bytes;
+  }
+
+  @override
+  Future<void> cancelChapterFileAudit(ImportedLibraryEntry entry) async {
+    _requireOpen();
+    final chapterPrefix = _chapterDownloadPrefix(entry);
+    final active = <Future<ChapterFileAuditReport>>[];
+    for (final identity in List<String>.of(_auditTokens.keys)) {
+      if (!identity.startsWith(chapterPrefix)) continue;
+      _auditTokens[identity]?.cancel();
+      final run = _auditRuns[identity];
+      if (run != null) active.add(run);
     }
-    return ChapterFileStateReport(
-      manifestPages: manifest.pages.length,
-      indexReadyPages: indexReadyPages,
-      diskPages: disk.length,
-      diskBytes: diskBytes,
-    );
+    for (final run in active) {
+      try {
+        await run.timeout(const Duration(seconds: 10));
+      } on Object {
+        // Cancellation remains authoritative even if provider I/O is still
+        // unwinding; the run observes its token at the next bounded checkpoint.
+      }
+    }
   }
 
   Future<bool> _isSingleChapterFor(ImportedLibraryEntry entry) async {
@@ -2259,11 +2412,21 @@ final class PersistentChapterDownloadService
       for (final token in _tokens.values) {
         token.cancel();
       }
+      for (final token in _auditTokens.values) {
+        token.cancel();
+      }
       for (final run in _runs.values.toList(growable: false)) {
         try {
           await run;
         } on Object {
           // Closing discards task failures after cancellation.
+        }
+      }
+      for (final run in _auditRuns.values.toList(growable: false)) {
+        try {
+          await run;
+        } on Object {
+          // Closing discards audit failures after cancellation.
         }
       }
       for (final consumer in _commandConsumers.values.toList(growable: false)) {

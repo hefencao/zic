@@ -285,6 +285,7 @@ python3 "$ROOT/tool/test_dev338_download_manager_durable_cache_inventory_boundar
 python3 "$ROOT/tool/test_download_root_migration_ownership.py"
 python3 "$ROOT/tool/test_saf_manifest_transaction_ownership.py"
 python3 "$ROOT/tool/test_saf_body_transaction_ownership.py"
+python3 "$ROOT/tool/test_download_repair_audit_ownership.py"
 python3 "$ROOT/tool/test_dev339_vertical_drag_resampling_boundary.py"
 python3 "$ROOT/tool/test_debug_trace_filter.py"
 python3 "$ROOT/tool/test_venera_network_cache_contract.py"

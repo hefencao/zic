@@ -1735,6 +1735,57 @@ final class SqliteIndex
     );
   }
 
+  /// Atomically drops all readable bindings for an immutable artifact after
+  /// its final physical replica has been structurally retired.
+  ///
+  /// The zero-replica predicate and binding deletes share one IMMEDIATE
+  /// transaction so a compatibility path or stale projection cannot outlive
+  /// the physical authority that proved the bytes.
+  Future<bool> removeArtifactAuthorityIfNoReplicas(String artifactId) async {
+    final normalized = artifactId.trim();
+    if (normalized.isEmpty) return false;
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final replicas = db.select(
+        'SELECT 1 FROM artifact_replica WHERE artifact_id = ? LIMIT 1',
+        <Object?>[normalized],
+      );
+      if (replicas.isNotEmpty) {
+        db.execute('COMMIT');
+        return false;
+      }
+      final exact = db.select(
+        "SELECT 1 FROM cache_entry WHERE artifact_id = ? AND state = 'ready' LIMIT 1",
+        <Object?>[normalized],
+      );
+      final physical = db.select(
+        'SELECT 1 FROM physical_media_artifact WHERE artifact_id = ? LIMIT 1',
+        <Object?>[normalized],
+      );
+      db.execute(
+        "DELETE FROM cache_entry WHERE artifact_id = ? AND state = 'ready'",
+        <Object?>[normalized],
+      );
+      db.execute(
+        'DELETE FROM physical_media_artifact WHERE artifact_id = ?',
+        <Object?>[normalized],
+      );
+      db.execute(
+        'DELETE FROM artifact_object WHERE artifact_id = ? '
+        'AND NOT EXISTS (SELECT 1 FROM cache_entry WHERE artifact_id = ?) '
+        'AND NOT EXISTS (SELECT 1 FROM physical_media_artifact WHERE artifact_id = ?)',
+        <Object?>[normalized, normalized, normalized],
+      );
+      db.execute('COMMIT');
+      _invalidateCache();
+      return exact.isNotEmpty || physical.isNotEmpty;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// Atomically retires one canonical physical binding only when the exact
   /// physical generation is unchanged and no exact READY binding still owns
   /// the same immutable artifact. Maintenance uses this to close the window

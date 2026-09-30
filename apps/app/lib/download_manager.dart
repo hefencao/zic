@@ -35,6 +35,8 @@ Key downloadManagerClearCacheKey(String identity) =>
     ValueKey<String>('download-clear-cache:$identity');
 Key downloadManagerDeleteKey(String identity) =>
     ValueKey<String>('download-delete:$identity');
+Key downloadManagerAuditKey(String identity) =>
+    ValueKey<String>('download-audit:$identity');
 Key downloadManagerCopyErrorKey(String identity) =>
     ValueKey<String>('download-copy-error:$identity');
 Key wholeComicQueueJobKey(String jobId) =>
@@ -74,6 +76,8 @@ final class DownloadManagerCommandActions {
     required this.retryChapter,
     required this.stopChapter,
     required this.deleteChapterFiles,
+    required this.auditChapterFiles,
+    required this.cancelChapterFileAudit,
     required this.pauseWholeComicJob,
     required this.resumeWholeComicJob,
     required this.cancelWholeComicJob,
@@ -90,6 +94,10 @@ final class DownloadManagerCommandActions {
       stopChapter;
   final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
       deleteChapterFiles;
+  final Future<ChapterFileAuditReport> Function(ImportedLibraryEntry entry)
+      auditChapterFiles;
+  final Future<void> Function(ImportedLibraryEntry entry)
+      cancelChapterFileAudit;
   final Future<void> Function(String jobId) pauseWholeComicJob;
   final Future<void> Function(String jobId) resumeWholeComicJob;
   final Future<void> Function(String jobId) cancelWholeComicJob;
@@ -1219,6 +1227,74 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
+  Future<void> _auditChapterFiles(ChapterDownloadSnapshot snapshot) async {
+    final lockKey = '${snapshot.identity}:audit';
+    if (_busyActionKeys.contains(lockKey)) return;
+    final entry = _entryFor(snapshot);
+    if (entry == null) {
+      _showError(StateError('下载任务对应的章节记录已不存在'));
+      return;
+    }
+    setState(() => _busyActionKeys.add(lockKey));
+    try {
+      await _resolveServices();
+      if (!mounted) return;
+      final actions = widget.commandActions;
+      final report = actions == null
+          ? await _downloads.auditChapterFiles(entry)
+          : await actions.auditChapterFiles(entry);
+      if (!mounted) return;
+      await _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '校验完成：已验证 ${report.verifiedIndexedPages} 页，'
+            '修复 ${report.repairedPages} 页，'
+            '无来源证明 ${report.unprovenPages} 页，'
+            '不匹配 ${report.sourceMismatchPages} 页',
+          ),
+        ),
+      );
+    } on Failure catch (error) {
+      if (error.code != ErrorCode.cancelled && mounted) {
+        _showError(error);
+      }
+    } on Object catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() => _busyActionKeys.remove(lockKey));
+      } else {
+        _busyActionKeys.remove(lockKey);
+      }
+    }
+  }
+
+  Future<void> _cancelChapterFileAudit(
+    ChapterDownloadSnapshot snapshot,
+  ) async {
+    final cancelKey = '${snapshot.identity}:audit-cancel';
+    if (_busyActionKeys.contains(cancelKey)) return;
+    final entry = _entryFor(snapshot);
+    if (entry == null) return;
+    setState(() => _busyActionKeys.add(cancelKey));
+    try {
+      final actions = widget.commandActions;
+      if (actions == null) {
+        await _downloads.cancelChapterFileAudit(entry);
+      } else {
+        await actions.cancelChapterFileAudit(entry);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busyActionKeys.remove(cancelKey));
+      } else {
+        _busyActionKeys.remove(cancelKey);
+      }
+    }
+  }
+
   Future<void> _delete(ChapterDownloadSnapshot snapshot) async {
     final lockKey = '${snapshot.identity}:delete';
     if (_busyActionKeys.contains(lockKey)) {
@@ -1667,6 +1743,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           isCancellingOrRetrying: _isActionBusy(snapshot.identity, 'stop') ||
               _isActionBusy(snapshot.identity, 'retry'),
           isDeleting: _isActionBusy(snapshot.identity, 'delete'),
+          isAuditing: _isActionBusy(snapshot.identity, 'audit'),
+          onAudit: () => _auditChapterFiles(snapshot),
+          onCancelAudit: () => _cancelChapterFileAudit(snapshot),
           onCancel: () => _act(
             snapshot,
             _DownloadManagerChapterCommand.stop,
@@ -2097,6 +2176,9 @@ final class _DownloadTaskTile extends StatelessWidget {
     required this.snapshot,
     this.isCancellingOrRetrying = false,
     this.isDeleting = false,
+    this.isAuditing = false,
+    required this.onAudit,
+    required this.onCancelAudit,
     required this.onCancel,
     required this.onRetry,
     required this.onDelete,
@@ -2106,6 +2188,9 @@ final class _DownloadTaskTile extends StatelessWidget {
   final ChapterDownloadSnapshot snapshot;
   final bool isCancellingOrRetrying;
   final bool isDeleting;
+  final bool isAuditing;
+  final VoidCallback onAudit;
+  final VoidCallback onCancelAudit;
   final VoidCallback onCancel;
   final VoidCallback onRetry;
   final VoidCallback onDelete;
@@ -2191,7 +2276,34 @@ final class _DownloadTaskTile extends StatelessWidget {
                   onPressed: onRetry,
                   icon: const Icon(Icons.refresh),
                 ),
-              const SizedBox(width: 12),
+              if (isAuditing)
+                IconButton(
+                  key: downloadManagerAuditKey(snapshot.identity),
+                  tooltip: '取消校验',
+                  onPressed: onCancelAudit,
+                  icon: Stack(
+                    alignment: Alignment.center,
+                    children: <Widget>[
+                      const SizedBox.square(
+                        dimension: 30,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                      const Icon(Icons.stop, size: 14),
+                    ],
+                  ),
+                )
+              else
+                IconButton(
+                  key: downloadManagerAuditKey(snapshot.identity),
+                  tooltip: '校验/修复离线文件',
+                  onPressed: snapshot.phase == ChapterDownloadPhase.downloading ||
+                          isCancellingOrRetrying ||
+                          isDeleting
+                      ? null
+                      : onAudit,
+                  icon: const Icon(Icons.fact_check_outlined),
+                ),
+              const SizedBox(width: 4),
               if (isDeleting)
                 const Padding(
                   padding: EdgeInsets.all(12),

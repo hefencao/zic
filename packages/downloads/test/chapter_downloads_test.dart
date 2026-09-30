@@ -3278,6 +3278,206 @@ void main() {
     expect(pages.keys, isNot(contains(1)));
   });
 
+  test('explicit file audit adopts only source-proven unindexed pages', () async {
+    final root = await Directory.systemTemp.createTemp('zic-audit-adopt-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final provenBytes = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4,
+    ]);
+    final unprovenBytes = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0, 9, 10, 11, 12,
+    ]);
+    final mismatchBytes = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0, 20, 21, 22, 23,
+    ]);
+    final provenCrc = Crc32()..add(provenBytes);
+    final expectedMismatch = Crc32()
+      ..add(Uint8List.fromList(<int>[
+        0xff, 0xd8, 0xff, 0xe0, 30, 31, 32, 33,
+      ]));
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:audit',
+        displayName: 'Single',
+        sourceId: 'fixture',
+        comicId: 'audit-comic',
+        comicTitle: 'Audit Comic',
+        chapterId: 'audit-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.jpg',
+            sourceId: 'https://example.test/1.jpg',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.jpeg,
+            byteLength: provenBytes.lengthInBytes,
+            checksum: provenCrc.hex,
+            checksumAlgorithm: 'crc32',
+          ),
+          ImportedPageRecord(
+            displayName: '002.jpg',
+            sourceId: 'https://example.test/2.jpg',
+            pageId: 'p2',
+            contentKindHint: ContentKindHint.jpeg,
+            byteLength: unprovenBytes.lengthInBytes,
+          ),
+          ImportedPageRecord(
+            displayName: '003.jpg',
+            sourceId: 'https://example.test/3.jpg',
+            pageId: 'p3',
+            contentKindHint: ContentKindHint.jpeg,
+            byteLength: mismatchBytes.lengthInBytes,
+            checksum: expectedMismatch.hex,
+            checksumAlgorithm: 'crc32',
+          ),
+        ],
+      ),
+    );
+    final comicDir = Directory(
+      '${service.artifactStore.layout.root}/${buildComicDirectoryName(comicTitle: entry.chapter.comicTitle)}',
+    );
+    await comicDir.create(recursive: true);
+    await File('${comicDir.path}/001.jpg').writeAsBytes(provenBytes);
+    await File('${comicDir.path}/002.jpg').writeAsBytes(unprovenBytes);
+    await File('${comicDir.path}/003.jpg').writeAsBytes(mismatchBytes);
+
+    final report = await service.auditChapterFiles(entry);
+
+    expect(report.manifestPages, 3);
+    expect(report.scannedImagePages, 3);
+    expect(report.repairedPages, 1);
+    expect(report.unprovenPages, 1);
+    expect(report.sourceMismatchPages, 1);
+    expect(await service.readyPageIndices(entry), <int>{0});
+    expect(await service.isDownloaded(entry), isFalse);
+  });
+
+  test('explicit file audit cancellation leaves unindexed bytes unbound', () async {
+    final root = await Directory.systemTemp.createTemp('zic-audit-cancel-');
+    addTearDown(() => root.delete(recursive: true));
+    final bytes = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0,
+      ...List<int>.filled(1024 * 1024, 7),
+    ]);
+    final crc = Crc32()..add(bytes);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:audit-cancel',
+        displayName: 'Single',
+        sourceId: 'fixture',
+        comicId: 'audit-cancel-comic',
+        comicTitle: 'Audit Cancel Comic',
+        chapterId: 'audit-cancel-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.jpg',
+            sourceId: 'https://example.test/cancel.jpg',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.jpeg,
+            byteLength: bytes.lengthInBytes,
+            checksum: crc.hex,
+            checksumAlgorithm: 'crc32',
+          ),
+        ],
+      ),
+    );
+    final readStarted = Completer<void>();
+    final releaseRead = Completer<void>();
+    final comicDirectory = buildComicDirectoryName(
+      comicTitle: entry.chapter.comicTitle,
+    );
+    final io = _MemorySafIo(
+      <String, Uint8List>{'$comicDirectory/001.jpg': bytes},
+      readStarted: readStarted,
+      readGate: releaseRead.future,
+    );
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: io,
+      safTreeUri: 'content://fixture/audit-cancel',
+    );
+    addTearDown(service.close);
+
+    final audit = service.auditChapterFiles(entry);
+    await readStarted.future;
+    final cancel = service.cancelChapterFileAudit(entry);
+    releaseRead.complete();
+    await cancel;
+
+    await expectLater(
+      audit,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(await service.readyPageIndices(entry), isEmpty);
+  });
+
+  test('explicit file audit retires a same-length corrupt indexed page', () async {
+    final root = await Directory.systemTemp.createTemp('zic-audit-corrupt-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4,
+    ]);
+    final corrupt = Uint8List.fromList(<int>[
+      0xff, 0xd8, 0xff, 0xe0, 9, 8, 7, 6,
+    ]);
+    final crc = Crc32()..add(bytes);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:audit-corrupt',
+        displayName: 'Single',
+        sourceId: 'fixture',
+        comicId: 'audit-corrupt-comic',
+        comicTitle: 'Audit Corrupt Comic',
+        chapterId: 'audit-corrupt-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.jpg',
+            sourceId: 'https://example.test/corrupt.jpg',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.jpeg,
+            byteLength: bytes.lengthInBytes,
+            checksum: crc.hex,
+            checksumAlgorithm: 'crc32',
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final id = DownloadId(
+      content: ContentId(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageId: manifest.pages.single.pageId,
+      ),
+      sourceRevision: manifest.chapter.sourceRevision,
+      canonicalUri: manifest.pages.single.uri,
+    );
+    await service.artifactStore.storePromotedArtifact(id: id, bytes: bytes);
+    final record = (await service.artifactStore.indexedRecords())[id.key]!;
+    await File(record.path).writeAsBytes(corrupt, flush: true);
+
+    final report = await service.auditChapterFiles(entry);
+
+    expect(report.indexedReadyPages, 1);
+    expect(report.verifiedIndexedPages, 0);
+    expect(report.invalidIndexedPages, 1);
+    expect(await service.readyPageIndices(entry), isEmpty);
+  });
+
   test('PersistentChapterDownloadService discovers orphaned entries not in known set', () async {
     final temp = await Directory.systemTemp.createTemp('orphaned-test');
     addTearDown(() => temp.delete(recursive: true));
@@ -7821,9 +8021,15 @@ final class _FailDeleteOnceArtifactBytes implements ArtifactBytes {
 }
 
 final class _MemorySafIo implements SafTreeIo {
-  _MemorySafIo(this.storage);
+  _MemorySafIo(
+    this.storage, {
+    this.readStarted,
+    this.readGate,
+  });
 
   final Map<String, Uint8List> storage;
+  final Completer<void>? readStarted;
+  final Future<void>? readGate;
   final Map<int, ({String path, int pos})> _handles =
       <int, ({String path, int pos})>{};
   int _nextHandle = 1;
@@ -7853,6 +8059,10 @@ final class _MemorySafIo implements SafTreeIo {
 
   @override
   Future<Uint8List> read(int handle, int length) async {
+    final started = readStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    final gate = readGate;
+    if (gate != null) await gate;
     final state = _handles[handle];
     if (state == null) throw StateError('invalid handle');
     readPaths.add(state.path);

@@ -161,7 +161,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   ArtifactBytes get _bytes;
   bool _isVerifiedReadyRecord(CacheRec record);
   String _storageRootIdForPath(String path, {DownloadId? id});
-  Future<({int bytes, String checksum})> _artifactProof(String path);
+  Future<({int bytes, String checksum})> _artifactProof(
+    String path, {
+    TaskControl? control,
+  });
   bool _proofMatchesRecord(
     ({int bytes, String checksum}) proof,
     CacheRec record,
@@ -3354,7 +3357,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     bool isSingleChapter = false,
     String? comicDirectoryName,
     String? chapterDirectoryName,
-    CancelToken? cancelToken,
+    TaskControl? control,
     DownloadId? layoutId,
   }) async {
     _requireOpen();
@@ -3375,7 +3378,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           : '$comicDir/$chapterDir';
       final entries = await safIo.list(targetRelPath);
       for (final entry in entries) {
-        cancelToken?.throwIfCancelled();
+        control?.throwIfCancelled();
         if (entry.isDirectory) continue;
         final pageNum = parsePageIndexFromFileName(entry.name);
         if (pageNum != null && entry.length > 0) {
@@ -3416,7 +3419,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
 
     try {
       await for (final entity in targetDir.list(followLinks: false)) {
-        cancelToken?.throwIfCancelled();
+        control?.throwIfCancelled();
         if (entity is File) {
           final fileName = entity.uri.pathSegments.isNotEmpty
               ? entity.uri.pathSegments.last
@@ -3450,6 +3453,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     required String checksum,
     String? artifactId,
     String? storageRootId,
+    TaskControl? control,
   }) => _serializeArtifactMutation(
         id,
         () => _serializeStructuredWrite(
@@ -3461,6 +3465,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
             checksum: checksum,
             artifactId: artifactId,
             storageRootId: storageRootId,
+            control: control,
           ),
         ),
       );
@@ -3472,8 +3477,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     required String checksum,
     String? artifactId,
     String? storageRootId,
+    TaskControl? control,
   }) async {
     _requireOpen();
+    control?.throwIfCancelled();
     final normalizedChecksum = checksum.trim().toLowerCase();
     if (bytes <= 0 || !RegExp(r'^[0-9a-f]{8}$').hasMatch(normalizedChecksum)) {
       throw const Failure(
@@ -3481,7 +3488,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         message: 'cannot adopt an artifact without content proof',
       );
     }
-    final proof = await _artifactProof(path);
+    final proof = await _artifactProof(path, control: control);
     if (proof.bytes != bytes || proof.checksum != normalizedChecksum) {
       throw Failure(
         code: ErrorCode.artifactCorruption,

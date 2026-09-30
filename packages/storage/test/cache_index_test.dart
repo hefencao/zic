@@ -134,6 +134,51 @@ void main() {
     expect(await index.getArtifactObject(ready.artifactId), isNull);
   });
 
+  test('sqlite retires replica-less artifact authority atomically', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final physicalId = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000replica-less\u00001',
+    );
+    final ready = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/replica-less-ready.bin',
+      bytes: 11,
+      checksum: 'abcdef12',
+      createdUs: 1,
+      touchedUs: 2,
+      artifactId: 'replica-less-object',
+    );
+    await index.put(ready);
+    await index.putPhysicalMediaArtifactBinding(
+      id: physicalId,
+      artifactId: ready.artifactId,
+      createdUs: 3,
+      touchedUs: 4,
+    );
+
+    expect(
+      await index.removeArtifactAuthorityIfNoReplicas(ready.artifactId),
+      isFalse,
+      reason: 'a surviving replica remains immutable byte authority',
+    );
+    expect(await index.get(id.key), isNotNull);
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNotNull);
+
+    for (final replica in await index.listArtifactReplicas(ready.artifactId)) {
+      await index.removeArtifactReplica(replica.replicaId);
+    }
+    expect(
+      await index.removeArtifactAuthorityIfNoReplicas(ready.artifactId),
+      isTrue,
+    );
+    expect(await index.get(id.key), isNull);
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNull);
+    expect(await index.getArtifactObject(ready.artifactId), isNull);
+  });
+
   test('sqlite exact recency touch is guarded by artifact generation', () async {
     final index = SqliteIndex.memory();
     await index.open();

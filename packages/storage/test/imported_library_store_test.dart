@@ -349,6 +349,8 @@ void main() {
           contentKindHint: ContentKindHint.webp,
           mediaFormat: 'webp',
           byteLength: 140,
+          checksum: 'a1b2c3d4',
+          checksumAlgorithm: 'crc32',
           animatedHint: true,
         ),
         ImportedPageRecord(
@@ -374,6 +376,8 @@ void main() {
 
     final entry = await store.get(chapter.sourceId, chapter.chapterId);
     expect(entry?.chapter.toJson(), chapter.toJson());
+    expect(entry?.chapter.toManifest().pages.first.checksum, 'a1b2c3d4');
+    expect(entry?.chapter.toManifest().pages.first.checksumAlgorithm, 'crc32');
     expect(entry?.progress?.toJson(), progress.toJson());
     expect((await store.list()).single.chapter.chapterId, chapter.chapterId);
 
