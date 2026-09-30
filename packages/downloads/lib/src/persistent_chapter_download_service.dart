@@ -16,6 +16,7 @@ final class PersistentChapterDownloadService
         ManagedChapterDownloadService,
         ChapterDownloadManagementProjectionReader,
         ChapterCacheManagementProjectionReader,
+        ChapterDeleteImpactProjectionReader,
         ChapterDownloadManagementChangeSource,
         ArtifactCacheMaintenance,
         ArtifactCacheBackend,
@@ -1204,6 +1205,20 @@ final class PersistentChapterDownloadService
         // The authoritative state is emitted by the task itself.
       }
     }
+  }
+
+  @override
+  Future<ChapterDeleteImpactProjection> inspectDeleteImpact(
+    ImportedLibraryEntry entry,
+  ) async {
+    _requireOpen();
+    final manifest = entry.chapter.toManifest();
+    return artifactStore.inspectChapterDeleteImpact(
+      entry,
+      targetIds: <DownloadId>[
+        for (final page in manifest.pages) _downloadId(manifest, page),
+      ],
+    );
   }
 
   @override

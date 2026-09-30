@@ -1910,6 +1910,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   cache/artifact owner MUST独立消费完整 source-verified relation/page-equivalence 证据，
   未显式下载的版本仍可复用既有缓存而不得仅因 head 不同重复落盘。
   下载管理手动任务 MUST 先按 `isManualDownload` 准入，再按 direct download-head mapping 归并；
+  version/revision 离线删除确认 MUST 通过只读 delete-impact capability 读取当前 durable artifact/reference authority，MUST NOT 由 Widget 枚举文件、复制 `CacheRec`/artifact 引用计数或建立第二删除计划。projection 的 target MUST 与真正 `ChapterDownloadService.delete` 对该 hydrated entry 生成的 exact `DownloadId` 集合一致；同 revision 但不同 provider URI 的 historical exact carrier若不在该 entry target 中 MUST 被视为外部引用。共享判定 MUST 至少包含 target 外 exact binding 与 canonical `physical_media_artifact` binding，并按 indexed physical body/object 去重统计 bytes。projection 只用于说明预计解除的 exact bindings、受影响页、独有可回收对象与仍共享保留对象；它 MUST NOT 授权 mutation。确认后实际删除 MUST 继续经过既有 chapter command/artifact owner，并按执行时最新引用重新判定，故真实回收 MAY 少于确认快照、MUST NOT 多删快照之外仍有引用的物理对象。
   未发起的 library/Reader-cache 后继版本不得参与手动主实体选举。logical chapter 对应 MUST 使用折叠后的 `ComicVersionPageMapping`；
   有 explicit mapping 时未映射同 raw chapterId 不得猜测，只有 direct legacy baseline relation 完全缺 mapping 时 MAY兼容 same raw chapterId。
   分叉/多路径无法唯一折叠时 MUST 保持 exact version 并跳过自动复用。自动缓存 Tab MUST 以 durable physical authority 为准：

@@ -4658,6 +4658,133 @@ void main() {
     expect(await service.artifactStore.index.get(second.key), isNull);
   });
 
+  test('delete impact matches exact entry bindings and preserves historical carrier', () async {
+    final root = await Directory.systemTemp.createTemp('zic-delete-impact-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final uniqueUri = Uri.parse('https://example.test/impact/unique.webp');
+    final sharedUri = Uri.parse('https://example.test/impact/shared.webp');
+    final historicalUri =
+        Uri.parse('https://example.test/impact/shared-old-provider.webp');
+    final canonicalUri =
+        Uri.parse('https://example.test/impact/canonical.webp');
+    final uniqueBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 1, 1, 1,
+    ]);
+    final sharedBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x1c, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 2, 2, 2, 2, 2, 2, 2, 2,
+    ]);
+    final canonicalBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x20, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:delete-impact',
+        displayName: '删除影响章节',
+        sourceId: 'impact-source',
+        comicId: 'impact-comic',
+        comicTitle: '删除影响漫画',
+        chapterId: 'impact-chapter',
+        sourceRevision: 'impact-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'unique.webp',
+            sourceId: uniqueUri.toString(),
+            pageId: 'unique',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: uniqueBytes.length,
+          ),
+          ImportedPageRecord(
+            displayName: 'shared.webp',
+            sourceId: sharedUri.toString(),
+            pageId: 'shared',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: sharedBytes.length,
+          ),
+          ImportedPageRecord(
+            displayName: 'canonical.webp',
+            sourceId: canonicalUri.toString(),
+            pageId: 'canonical',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: canonicalBytes.length,
+          ),
+        ],
+      ),
+    );
+    DownloadId exactId(String pageId, Uri uri) => DownloadId(
+          content: ContentId(
+            sourceId: entry.chapter.sourceId,
+            comicId: entry.chapter.comicId,
+            chapterId: entry.chapter.chapterId,
+            pageId: pageId,
+          ),
+          sourceRevision: entry.chapter.sourceRevision,
+          canonicalUri: uri,
+        );
+    final uniqueId = exactId('unique', uniqueUri);
+    final sharedId = exactId('shared', sharedUri);
+    final historicalId = exactId('shared', historicalUri);
+    final canonicalId = exactId('canonical', canonicalUri);
+    final canonicalPhysicalId =
+        PhysicalMediaId.canonical('delete-impact-canonical');
+    await service.storePromotedArtifact(id: uniqueId, bytes: uniqueBytes);
+    await service.storePromotedArtifact(id: sharedId, bytes: sharedBytes);
+    await service.storePromotedArtifact(id: canonicalId, bytes: canonicalBytes);
+    expect(
+      await service.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: canonicalPhysicalId,
+        sourceId: canonicalId,
+      ),
+      isTrue,
+    );
+    final sharedRecord = await service.artifactStore.index.get(sharedId.key);
+    expect(sharedRecord, isNotNull);
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: historicalId,
+        state: CacheState.ready,
+        path: sharedRecord!.path,
+        bytes: sharedRecord.bytes,
+        checksum: sharedRecord.checksum,
+        createdUs: sharedRecord.createdUs,
+        touchedUs: sharedRecord.touchedUs + 1,
+        pinned: false,
+        checksumAlgorithm: sharedRecord.checksumAlgorithm,
+        artifactId: sharedRecord.effectiveArtifactId,
+        storageRootId: sharedRecord.storageRootId,
+      ),
+    );
+    final uniqueRecord = await service.artifactStore.index.get(uniqueId.key);
+    expect(uniqueRecord, isNotNull);
+
+    final impact = await service.inspectDeleteImpact(entry);
+    expect(impact.sourceRevision, entry.chapter.sourceRevision);
+    expect(impact.exactBindings, 3,
+        reason: 'historical provider carrier is outside the delete target set');
+    expect(impact.affectedPages, 3);
+    expect(impact.reclaimablePhysicalObjects, 1);
+    expect(impact.sharedPhysicalObjects, 2);
+    expect(impact.reclaimableBytes, uniqueBytes.length);
+    expect(impact.sharedBytes, sharedBytes.length + canonicalBytes.length);
+
+    await service.delete(entry);
+
+    expect(await service.artifactStore.index.get(uniqueId.key), isNull);
+    expect(await service.artifactStore.index.get(sharedId.key), isNull);
+    expect(await service.artifactStore.index.get(canonicalId.key), isNull);
+    expect(await service.artifactStore.index.get(historicalId.key), isNotNull);
+    expect(await File(uniqueRecord!.path).exists(), isFalse);
+    expect(await service.artifactStore.openArtifactStream(historicalId), isNotNull);
+    expect(
+      await service.artifactStore.openPhysicalArtifact(canonicalPhysicalId),
+      isNotNull,
+    );
+  });
+
   test('cross-version shared physical file is preserved when one version is deleted', () async {
     final tempDir = await Directory.systemTemp.createTemp('zic_delete_safety_test_');
     addTearDown(() => tempDir.delete(recursive: true));

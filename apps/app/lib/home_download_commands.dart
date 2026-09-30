@@ -318,6 +318,21 @@ final class HomeDownloadCommands {
     );
   }
 
+  Future<ChapterDeleteImpactProjection> inspectDeleteImpact(
+    ImportedLibraryEntry entry,
+  ) async {
+    await ensureDurableServices();
+    final hydrated = await session.hydrateEntry(entry);
+    final downloads = session.chapterDownloads;
+    final reader = downloads is ChapterDeleteImpactProjectionReader
+        ? downloads as ChapterDeleteImpactProjectionReader
+        : null;
+    if (reader == null) {
+      throw StateError('download service does not expose delete impact');
+    }
+    return reader.inspectDeleteImpact(hydrated);
+  }
+
   Future<ChapterDownloadSnapshot> deleteChapterFiles(
     ImportedLibraryEntry entry,
   ) async {

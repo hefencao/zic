@@ -141,6 +141,47 @@ final class ChapterDownloadSnapshot {
   }
 }
 
+final class ChapterDeleteImpactProjection {
+  const ChapterDeleteImpactProjection({
+    required this.sourceId,
+    required this.comicId,
+    required this.chapterId,
+    required this.sourceRevision,
+    required this.exactBindings,
+    required this.affectedPages,
+    required this.reclaimablePhysicalObjects,
+    required this.sharedPhysicalObjects,
+    required this.reclaimableBytes,
+    required this.sharedBytes,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String chapterId;
+  final String sourceRevision;
+  final int exactBindings;
+  final int affectedPages;
+  final int reclaimablePhysicalObjects;
+  final int sharedPhysicalObjects;
+  final int reclaimableBytes;
+  final int sharedBytes;
+
+  int get physicalObjects =>
+      reclaimablePhysicalObjects + sharedPhysicalObjects;
+  bool get hasSharedPhysicalObjects => sharedPhysicalObjects > 0;
+}
+
+/// Optional read-only capability for delete confirmation surfaces.
+///
+/// The projection is advisory only. Actual deletion must still execute through
+/// [ChapterDownloadService.delete], whose artifact owner revalidates current
+/// references at mutation time.
+abstract interface class ChapterDeleteImpactProjectionReader {
+  Future<ChapterDeleteImpactProjection> inspectDeleteImpact(
+    ImportedLibraryEntry entry,
+  );
+}
+
 abstract interface class ChapterDownloadService {
   Stream<ChapterDownloadSnapshot> get changes;
 

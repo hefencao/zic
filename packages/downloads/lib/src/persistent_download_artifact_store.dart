@@ -6,6 +6,24 @@ part of 'chapter_downloads.dart';
 /// persistent SQLite/file representation used by [ArtifactCacheManager] and
 /// [PartialDownloadStore]. Explicit chapter commands and Reader consumers
 /// share a separate [CompositionDownloadTransferRuntime].
+final class _DeleteImpactPhysicalGroup {
+  final Set<String> artifactIds = <String>{};
+  final Set<String> paths = <String>{};
+  int bytes = 0;
+
+  void add(CacheRec record) {
+    artifactIds.add(record.effectiveArtifactId);
+    paths.add(record.path);
+    if (record.bytes > bytes) bytes = record.bytes;
+  }
+
+  void absorb(_DeleteImpactPhysicalGroup other) {
+    artifactIds.addAll(other.artifactIds);
+    paths.addAll(other.paths);
+    if (other.bytes > bytes) bytes = other.bytes;
+  }
+}
+
 final class _ArtifactAccessRecord {
   const _ArtifactAccessRecord({
     required this.artifactId,
@@ -2157,6 +2175,84 @@ final class PersistentDownloadArtifactStore
   Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
         for (final record in await _index.list()) record.key: record,
       };
+
+  Future<ChapterDeleteImpactProjection> inspectChapterDeleteImpact(
+    ImportedLibraryEntry entry, {
+    required Iterable<DownloadId> targetIds,
+  }) async {
+    _requireOpen();
+    final records = await _index.list();
+    final requestedKeys = <String>{for (final id in targetIds) id.key};
+    final target = records
+        .where(
+          (record) => requestedKeys.contains(record.key) && record.bytes > 0,
+        )
+        .toList(growable: false);
+    final targetKeys = <String>{for (final record in target) record.key};
+    final outside = records
+        .where((record) => !targetKeys.contains(record.key))
+        .toList(growable: false);
+    final canonical = await _index.listPhysicalMediaArtifacts();
+
+    final groups = <_DeleteImpactPhysicalGroup>[];
+    for (final record in target) {
+      final artifactId = record.effectiveArtifactId;
+      final matching = <_DeleteImpactPhysicalGroup>[
+        for (final group in groups)
+          if (group.artifactIds.contains(artifactId) ||
+              group.paths.contains(record.path))
+            group,
+      ];
+      final group = matching.isEmpty
+          ? _DeleteImpactPhysicalGroup()
+          : matching.first;
+      if (matching.isEmpty) groups.add(group);
+      for (final duplicate in matching.skip(1).toList(growable: false)) {
+        group.absorb(duplicate);
+        groups.remove(duplicate);
+      }
+      group.add(record);
+    }
+
+    var reclaimableObjects = 0;
+    var sharedObjects = 0;
+    var reclaimableBytes = 0;
+    var sharedBytes = 0;
+    for (final group in groups) {
+      final sharedByExactBinding = outside.any(
+        (record) =>
+            group.paths.contains(record.path) ||
+            group.artifactIds.contains(record.effectiveArtifactId),
+      );
+      final sharedByCanonicalBinding = canonical.any(
+        (record) =>
+            group.paths.contains(record.accessLocator) ||
+            group.artifactIds.contains(record.artifactId),
+      );
+      if (sharedByExactBinding || sharedByCanonicalBinding) {
+        sharedObjects++;
+        sharedBytes += group.bytes;
+      } else {
+        reclaimableObjects++;
+        reclaimableBytes += group.bytes;
+      }
+    }
+
+    return ChapterDeleteImpactProjection(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId,
+      sourceRevision: entry.chapter.sourceRevision,
+      exactBindings: target.length,
+      affectedPages: <String>{
+        for (final record in target) record.id.content.pageId,
+      }.length,
+      reclaimablePhysicalObjects: reclaimableObjects,
+      sharedPhysicalObjects: sharedObjects,
+      reclaimableBytes: reclaimableBytes,
+      sharedBytes: sharedBytes,
+    );
+  }
 
   Future<int> backfillCanonicalReadyArtifacts(
     Iterable<CanonicalMediaChapterAuthority> authorities,

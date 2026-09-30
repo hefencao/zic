@@ -76,6 +76,7 @@ final class DownloadManagerCommandActions {
     required this.retryChapter,
     required this.stopChapter,
     required this.deleteChapterFiles,
+    this.inspectDeleteImpact,
     required this.auditChapterFiles,
     required this.cancelChapterFileAudit,
     required this.pauseWholeComicJob,
@@ -94,6 +95,9 @@ final class DownloadManagerCommandActions {
       stopChapter;
   final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
       deleteChapterFiles;
+  final Future<ChapterDeleteImpactProjection> Function(
+    ImportedLibraryEntry entry,
+  )? inspectDeleteImpact;
   final Future<ChapterFileAuditReport> Function(ImportedLibraryEntry entry)
       auditChapterFiles;
   final Future<void> Function(ImportedLibraryEntry entry)
@@ -1295,12 +1299,67 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
+  Future<ChapterDeleteImpactProjection?> _deleteImpactFor(
+    ImportedLibraryEntry entry,
+  ) async {
+    final action = widget.commandActions?.inspectDeleteImpact;
+    if (action != null) {
+      return action(entry);
+    }
+    // Standalone screens may own the durable service directly. When a service
+    // handoff resolver exists but composition did not provide the read action,
+    // keep the legacy confirmation path rather than blocking on an unrelated
+    // bootstrap service generation.
+    if (widget.resolveServices != null) return null;
+    final downloads = _downloads;
+    final reader = downloads is ChapterDeleteImpactProjectionReader
+        ? downloads as ChapterDeleteImpactProjectionReader
+        : null;
+    if (reader != null) {
+      return reader.inspectDeleteImpact(entry);
+    }
+    return null;
+  }
+
+  String _deleteImpactMessage(
+    ChapterDownloadSnapshot snapshot,
+    ChapterDeleteImpactProjection? impact,
+  ) {
+    if (impact == null) {
+      return '将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。';
+    }
+    if (impact.exactBindings == 0) {
+      return '当前索引未发现“${snapshot.title}”此修订的持久离线绑定。'
+          '删除仍会清理该修订的下载任务状态；阅读记录不会被删除。';
+    }
+    final lines = <String>[
+      '将删除“${snapshot.title}”此修订的 ${impact.exactBindings} 个离线绑定'
+          '（涉及 ${impact.affectedPages} 页）。',
+    ];
+    if (impact.reclaimablePhysicalObjects > 0) {
+      lines.add(
+        '按当前引用关系，${impact.reclaimablePhysicalObjects} 个独有物理对象'
+        '（${_formatBytes(impact.reclaimableBytes)}）预计会被回收。',
+      );
+    }
+    if (impact.sharedPhysicalObjects > 0) {
+      lines.add(
+        '${impact.sharedPhysicalObjects} 个共享物理对象'
+        '（${_formatBytes(impact.sharedBytes)}）仍被其他版本或规范缓存引用，'
+        '只解除本修订绑定。',
+      );
+    }
+    lines.add('实际删除会再次按最新引用关系校验；阅读记录不会被删除。');
+    return lines.join('\n\n');
+  }
+
   Future<void> _delete(ChapterDownloadSnapshot snapshot) async {
     final lockKey = '${snapshot.identity}:delete';
     if (_busyActionKeys.contains(lockKey)) {
       return;
     }
-    if (_entryFor(snapshot) == null) {
+    final entry = _entryFor(snapshot);
+    if (entry == null) {
       _showError(StateError('下载任务对应的章节记录已不存在'));
       return;
     }
@@ -1308,11 +1367,19 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       _busyActionKeys.add(lockKey);
     });
     try {
+      ChapterDeleteImpactProjection? impact;
+      try {
+        impact = await _deleteImpactFor(entry);
+      } on Object catch (error) {
+        if (mounted) _showError(error);
+        return;
+      }
+      if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('删除离线章节？'),
-          content: Text('将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。'),
+          content: Text(_deleteImpactMessage(snapshot, impact)),
           actions: <Widget>[
             AppDialogActions(
               onClose: () => Navigator.pop(context, false),

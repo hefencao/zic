@@ -1694,6 +1694,7 @@ pause/cancel/close 对底层 cancel 与 active run 都采用 10 秒有界等待�
 删除最后一个同 comic 章节才释放 memory placement。
 生产显式下载在 probe/placement/mutation 前必须先完成 durable handoff，因此不建立 RAM manual task 向持久后端的第二套迁移协议。
 下载管理页对 chapter download、whole-comic queue 与 cache coordinator 保持非拥有关系，
+版本/revision 删除确认也只消费只读 `ChapterDeleteImpactProjection`：production command owner 先 hydrate exact entry，再由当前 durable `ChapterDownloadService` 按 `entry.toManifest()` 与同一 `_downloadId` 规则构造真实 mutation target；artifact store 在同一 durable index authority 下把目标 exact binding 按 artifact/path 去重，并把目标集合之外的 exact historical/provider binding 与 canonical `physical_media_artifact` binding 作为共享保留引用。Presentation 只显示 exact binding 数、受影响页、预计独有物理对象/bytes 与共享保留对象/bytes，不读取文件系统、不复制引用计数，也不获得删除权。该 projection 只是确认时快照；用户确认后仍调用原 `deleteChapterFiles`/`ChapterDownloadService.delete`，执行期由 artifact/replica owner 按最新引用关系再次判定，因此并发新增引用可让实际回收少于预览，但不能让 UI 按旧预览强删。该预览只描述 indexed physical body/object 的回收/保留，不宣称结构化目录项或 provider 副本数的精确删除量。
 `HomeLibrarySession` 是 download-management projection owner：
 Home 在首个可见 frame 后及 durable composition adoption 后后台生成包含 orphan entries 的投影；
 持久下载后端用一个 artifact-index snapshot 同时完成 orphan discovery 与 chapter snapshot inspection，

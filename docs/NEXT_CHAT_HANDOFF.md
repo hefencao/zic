@@ -51,7 +51,7 @@
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
   Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..023均已治理；022收口immutable grant/ack，023让mounted/detached共用唯一raster cache adapter。继续禁止删attempt stale-result guard、制造第二cache owner或把cache/retry/scheduler权威上移Reader。
-  Download治理：DL-DIR-007已闭合checksum、可取消audit/repair与image media admission。IoTransport继续byte-only；composition DownloadJob按真实图片签名拒绝HTML/JSON并清理坏generation，opaque URI/合法fallback继续可用。下一治理优先DL-MGR-005；DL-DIR-019/017只剩真实provider kill/reopen证据。
+  Download治理：DL-DIR-007已闭合；DL-MGR-005已用artifact-owner只读delete-impact投影闭合版本删除确认：exact target与真实delete一致，historical/canonical共享引用只保留，UI不数引用也不获删除权。剩余DL-DIR-019/017真实provider kill/reopen证据。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
   两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。

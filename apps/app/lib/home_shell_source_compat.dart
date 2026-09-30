@@ -881,6 +881,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
             retryChapter: _downloadCommands.retryChapter,
             stopChapter: _downloadCommands.stopChapter,
             deleteChapterFiles: _downloadCommands.deleteChapterFiles,
+            inspectDeleteImpact: _downloadCommands.inspectDeleteImpact,
             auditChapterFiles: _downloadCommands.auditChapterFiles,
             cancelChapterFileAudit: _downloadCommands.cancelChapterFileAudit,
             pauseWholeComicJob: _downloadCommands.pauseWholeComicJob,

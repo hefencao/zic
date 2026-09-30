@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.30.0",
-  "last_updated": "2026-09-30T09:54:41+08:00",
+  "audit_version": "1.31.0",
+  "last_updated": "2026-09-30T10:22:48+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -11,20 +11,19 @@
     "medium_p2": 2,
     "governance_status": "in_progress",
     "review_status": "reconciled_with_open_findings",
-    "resolved_count": 7,
+    "resolved_count": 8,
     "deferred_count": 1,
     "pending_count": 1,
-    "in_progress_count": 4
+    "in_progress_count": 3
   },
   "governance": {
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T09:54:41+08:00",
-    "review_basis": "继续关闭 DL-DIR-007 最后一个 ordinary transport 未知媒体缺口。根因不在 IoTransport：generic transport 正确只拥有 bytes；漏洞是 production composition 的 image DownloadJob 以前把最终非 WebP/GIF 且 >=12B 的任意正文都归为 ContentKind.fallback，因此 HTML/JSON 可 seal/promote 后才在 decoder/presentation 失败。现在 DownloadTransferOwner 在 local-prepare completion、NetLane 前 local completion 与新 source/network resident DownloadJob 路径都启用 requireEncodedImageBody；DownloadJob 只消费当前 DownloadSession generation-local bounded metadata prefix，并复用 supported encoded-image signature classifier。达到 sniff prefix 仍无签名或短 final body 结束仍无签名时复用既有 sourceMediaSemanticRejected；owner 先 reset 并删除该 generation partial/final authority，再发布 terminal source failure。已有 durable artifactCache resident generation 因 sessions 不持有 exact storageId+generation，继续交给既有 presentation generation-aware recovery，避免错误删除或旧 cache 永久回流。IoTransport 未增加 classifier/retry；opaque plugin URI 与 JPEG/PNG/AVIF/HEIF 等合法 fallback 只凭真实 bytes 准入。结合前一轮 source checksum/full-CRC/repair-audit，DL-DIR-007 已闭合。",
+    "reviewed_at": "2026-09-30T10:22:48+08:00",
+    "review_basis": "继续关闭 DL-MGR-005。物理删除安全此前已由 artifact/replica reference owner 闭合，剩余缺口是 Download Manager 在 revision 删除确认前无法解释本次 exact delete 会释放独有 bytes 还是只解除共享 binding。现新增只读 ChapterDeleteImpactProjection capability：PersistentChapterDownloadService 先对 hydrated entry 使用与真实 delete 完全相同的 toManifest()+_downloadId 生成 target exact IDs，再由 PersistentDownloadArtifactStore 基于同一 durable index snapshot 按 artifactId/path 对目标物理对象去重；target 外 exact historical/provider bindings 与 canonical physical_media_artifact bindings 均作为共享保留引用。UI 只展示 exact binding/受影响页/预计可回收与共享保留对象及 bytes，不读取文件系统、不复制引用计数、不获得 delete authority；确认后仍走原 deleteChapterFiles/ChapterDownloadService.delete，artifact owner 在 mutation 时按最新引用再次复核。回归覆盖独占 exact 真正回收、同 revision historical provider carrier 保留、canonical physical binding 保留，以及 UI preview-before-mutation。DL-MGR-005 因此从可解释性缺口收口为 resolved。",
     "closure_blockers": [
-      "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理",
-      "DL-MGR-005：版本/revision 删除的物理安全已由 artifact reference owner 保障，但管理页尚无显式版本级删除影响预览/计划语义"
+      "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理"
     ]
   },
   "validation": {
@@ -49,7 +48,13 @@
       "apps/app full Flutter suite in final gate: 382 passed with 3 existing skips",
       "Android final gate: split debug APKs built successfully for armeabi-v7a, arm64-v8a and x86_64",
       "Rust media_core final gate: 22/22 passed; existing unused/dead-code warnings only",
-      "pipeline_runtime slow self-bounded source-open regression: 1/1 passed after replacing the old arbitrary 3-byte fixture with the same-length JPEG signature; deadline behavior is unchanged"
+      "pipeline_runtime slow self-bounded source-open regression: 1/1 passed after replacing the old arbitrary 3-byte fixture with the same-length JPEG signature; deadline behavior is unchanged",
+      "packages/downloads DL-MGR-005 closure tree: 493/493 passed, including exact delete-impact vs real mutation, historical provider retention and canonical physical retention",
+      "apps/app chapter_downloads_test DL-MGR-005 UI/action coverage: 31/31 passed; delete confirmation reads impact before invoking the existing mutation command",
+      "python3 tool/test_download_delete_impact_ownership.py: pass; Download Manager cannot acquire filesystem/durable reference-count ownership and production composition wires the read-only capability",
+      "DL-MGR-005 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 168.587s on the final production/test/docs tree; all repository/documentation/ownership guards and analyzers passed",
+      "packages/downloads full suite in final gate: 493/493 passed",
+      "apps/app full Flutter suite in final gate: 383 passed with 3 existing skips"
     ],
     "failed_or_unverified": [
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
@@ -213,16 +218,20 @@
       "id": "DL-MGR-005",
       "domain": "download_management",
       "severity": "P1",
-      "title": "游离下载 revision 分组已收口但版本级删除计划未闭合",
+      "title": "游离下载 revision 分组与版本级删除影响预览已闭合",
       "locations": [
-        "packages/downloads/lib/src/chapter_downloads.dart:3363-3406",
-        "packages/catalog/lib/src/imported_chapter.dart"
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart",
+        "packages/downloads/lib/src/persistent_download_artifact_store.dart",
+        "apps/app/lib/download_manager.dart",
+        "apps/app/lib/home_download_commands.dart"
       ],
-      "root_cause": "orphan/revision identity 已精确到 sourceId+comicId+chapterId+sourceRevision，物理删除也已由 artifact/replica reference owner 保证共享 bytes 安全；剩余缺口已收窄为管理页没有在确认前显式展示该版本删除会仅解除共享 binding 还是同时回收独有物理页。",
-      "impact": "不会再因删除一个 revision 误删其它版本仍引用的物理页；当前不足主要是删除影响的可解释性/预览，而不是物理安全。",
-      "status": "in_progress",
-      "remediation_applied": "orphan discovery、known-entry 排除和 inspectMany 均按 sourceId+comicId+chapterId+sourceRevision 分组，synthetic entry 保留完整 revision identity。",
-      "remediation_plan": "如继续治理，基于现有 exact revision snapshot + artifact reference 查询生成只读 delete-impact projection；不得在 UI 复制物理引用计数或建立第二删除 authority。"
+      "root_cause": "orphan/revision identity 与物理删除安全已经精确，但管理页此前没有 artifact-owner 提供的只读 delete-impact projection；若由 UI 自行按页/路径推断，会把 historical provider binding 或 canonical physical binding 漏算，并形成第二引用计数/删除 authority。",
+      "impact": "删除确认现在可区分本次 exact target 中预计真正回收的独有 indexed physical object 与仍被 historical/canonical authority 引用、仅解除本 revision binding 的共享对象；实际 mutation 仍按最新引用 fail-safe 复核。",
+      "status": "resolved",
+      "remediation_applied": "新增可选 ChapterDeleteImpactProjectionReader。Persistent service 对 hydrated entry 以 toManifest()+_downloadId 生成与真实 delete 一致的 exact target；artifact store 从同一 durable index/physical-media authority 按 artifact/path 去重，target 外 exact historical/provider bindings 与 canonical physical bindings 均视为共享引用。Download Manager 仅消费 projection 显示 binding/page/object/bytes 影响，禁止 File/Directory/CacheRec/ref-count 逻辑；确认后继续调用既有 deleteChapterFiles，mutation 时由 artifact owner 重新检查引用。回归验证 1 个独占对象被真实删除、historical provider carrier 与 canonical physical object 均保留。",
+      "remediation_plan": "",
+      "remaining_work": ""
     },
     {
       "id": "DL-MGR-006",

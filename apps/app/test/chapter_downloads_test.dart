@@ -332,6 +332,106 @@ void main() {
     unawaited(durable.close());
   });
 
+  testWidgets('download manager shows exact revision delete impact before mutation',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:delete-impact-dialog',
+        displayName: '影响预览章节',
+        sourceId: 'delete-impact-source',
+        comicId: 'delete-impact-comic',
+        comicTitle: '影响预览漫画',
+        chapterId: 'delete-impact-chapter',
+        sourceRevision: 'delete-impact-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://delete-impact-1',
+            pageId: 'delete-impact-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await service.download(entry);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    final initial = await service.inspect(entry);
+    var impactReads = 0;
+    var deleteCalls = 0;
+    final actions = DownloadManagerCommandActions(
+      downloadChapter: (_) => throw StateError('not used'),
+      retryChapter: (_) => throw StateError('not used'),
+      stopChapter: (_) => throw StateError('not used'),
+      deleteChapterFiles: (value) async {
+        deleteCalls++;
+        await service.delete(value);
+        return service.inspect(value);
+      },
+      inspectDeleteImpact: (_) async {
+        impactReads++;
+        return const ChapterDeleteImpactProjection(
+          sourceId: 'delete-impact-source',
+          comicId: 'delete-impact-comic',
+          chapterId: 'delete-impact-chapter',
+          sourceRevision: 'delete-impact-r1',
+          exactBindings: 2,
+          affectedPages: 2,
+          reclaimablePhysicalObjects: 1,
+          sharedPhysicalObjects: 1,
+          reclaimableBytes: 1024,
+          sharedBytes: 2048,
+        );
+      },
+      auditChapterFiles: service.auditChapterFiles,
+      cancelChapterFileAudit: service.cancelChapterFileAudit,
+      pauseWholeComicJob: (_) async {},
+      resumeWholeComicJob: (_) async {},
+      cancelWholeComicJob: (_) async {},
+      retryWholeComicJob: (_) async {},
+      removeWholeComicJob: (_) async {},
+      updateWholeComicPolicy: (_) async {},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[entry],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: <ChapterDownloadSnapshot>[initial],
+          commandActions: actions,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+
+    await tester.tap(find.byKey(downloadManagerDeleteKey(initial.identity)));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(impactReads, 1);
+    expect(deleteCalls, 0);
+    expect(find.textContaining('2 个离线绑定'), findsOneWidget);
+    expect(find.textContaining('1 个独有物理对象'), findsOneWidget);
+    expect(find.textContaining('1 个共享物理对象'), findsOneWidget);
+    expect(find.textContaining('只解除本修订绑定'), findsOneWidget);
+    expect(find.textContaining('实际删除会再次按最新引用关系校验'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    for (var frame = 0; frame < 20 && deleteCalls == 0; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(deleteCalls, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
   testWidgets('download manager audit action is cancellable through command owner',
       (tester) async {
     final entry = ImportedLibraryEntry(
