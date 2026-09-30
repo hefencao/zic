@@ -1988,6 +1988,7 @@ final invalidation/structural retirement若要移除schema9 owner，必须先把
 人类可读的结构化导出目录以 exact `(sourceId, comicId)` 对应的持久化 `DownloadPlacement` 为权威。
 物理目录不存在（`!dirExists`）或无真实图片（`!hasRealImages`）且无活跃会话认领时，无条件判定为空闲并释放历史游标，优先分配纯标题目录；
 物理存在的非空目录冲突时弹出用户选择，严禁静默重命名或让历史 SQLite 幽灵记录阻断纯标题目录。
+冲突恢复/`forcePrompt` 不得只按当前漫画标题重新扫描候选：若当前 exact `(sourceId, comicId)` 已有 persisted `DownloadPlacement`，其 `relativeDirectory` 必须作为 required conflict target 交给同一 storage conflict inspector，即使目录名与标题完全无关、目录/manifest 尚未物化。inspector 可从 manifest 或 durable placement claim 投影 `observedOwnerKey`，UI 只消费该 owner 事实；真正 overwrite 仍由 placement owner 以相同 owner key 重新校验。Presentation 为避免展示 exact/self candidate 可以过滤候选，但必须保留完整 `occupiedDirectoryNames`，因此 `saveAsNew` 的唯一目录分配不能把被过滤掉的 exact occupied 推荐目录重新选中。整本队列/详情页任务查找继续以 `sourceId + comicId` 组合身份为准，相同 raw comicId 的不同来源必须保持独立 job。
 任务意图（`DownloadPlacementMode.incremental` / `overwrite` / `createNew`）与落盘目录及 `pageOrder`（`ComicPageOrder.auto/chronological/origin`）持久化于 SQLite `download_placement` 表中，
 单章和整本任务都重放同一 placement；仅对升级前缺少 placement 且全部已校验记录唯一指向同一目录的任务，允许从 `CacheRec.path` 一次性迁移。
 `pageOrder=auto` 只是一项未解析的导出布局意图：

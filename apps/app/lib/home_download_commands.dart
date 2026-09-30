@@ -81,6 +81,7 @@ final class HomeDownloadCommands {
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) async {
     final downloads = session.chapterDownloads;
     final probe = await downloads.probeExistingDownloads(
@@ -101,6 +102,7 @@ final class HomeDownloadCommands {
       comicTitle: comicTitle,
       knownPredecessorComicIds: knownPredecessorComicIds,
       knownSuccessorComicIds: knownSuccessorComicIds,
+      requiredDirectoryNames: requiredDirectoryNames,
     );
   }
 

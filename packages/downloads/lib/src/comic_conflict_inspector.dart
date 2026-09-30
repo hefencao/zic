@@ -27,6 +27,7 @@ final class ComicFolderCandidate {
     required this.folderName,
     this.manifest,
     this.hasManifestFile = false,
+    this.observedOwnerKey,
     required this.isExactMatch,
     required this.isTitleMatch,
     required this.chapterCount,
@@ -41,6 +42,18 @@ final class ComicFolderCandidate {
   /// Whether a `.zic.json` entry exists, including when its contents are
   /// malformed and therefore cannot be decoded as [manifest].
   final bool hasManifestFile;
+
+  /// Durable owner observed by the conflict authority, from either the
+  /// directory manifest or persisted DownloadPlacement. It is advisory until
+  /// overwrite is committed; storage revalidates the same owner key.
+  final String? observedOwnerKey;
+
+  String? get effectiveObservedOwnerKey {
+    final manifest = this.manifest;
+    if (observedOwnerKey != null) return observedOwnerKey;
+    if (manifest == null) return null;
+    return '${manifest.sourceId}\u0000${manifest.comicId}';
+  }
 
   /// Whether this folder belongs to the exact same (sourceId, comicId).
   final bool isExactMatch;
@@ -75,6 +88,7 @@ final class ComicFolderCandidate {
     if (versionRelation == ComicVersionRelationKind.existingIsNewer) {
       return '较新版本 (已存在)';
     }
+    if (!isTitleMatch && observedOwnerKey != null) return '已占用目录';
     if (manifest?.sourceDisplayName != null &&
         manifest!.sourceDisplayName!.isNotEmpty) {
       return '同名候选 (${manifest!.sourceDisplayName})';
@@ -87,7 +101,8 @@ final class ComicFolderCandidate {
       existingPageFilesCount > 0 ||
       chapterCount > 0 ||
       manifest != null ||
-      hasManifestFile;
+      hasManifestFile ||
+      observedOwnerKey != null;
 }
 
 /// Normalizes a comic title for flexible similarity comparison by removing
@@ -134,12 +149,20 @@ final class ComicConflictReport {
     required this.hasDirectExactMatch,
     required this.hasTitleConflicts,
     required this.recommendedDirectoryName,
+    this.additionalOccupiedDirectoryNames = const <String>{},
   });
 
   final List<ComicFolderCandidate> candidates;
   final bool hasDirectExactMatch;
   final bool hasTitleConflicts;
   final String recommendedDirectoryName;
+  final Set<String> additionalOccupiedDirectoryNames;
+
+  Set<String> get occupiedDirectoryNames => <String>{
+        ...additionalOccupiedDirectoryNames,
+        for (final candidate in candidates)
+          if (candidate.hasExistingContent) candidate.folderName,
+      };
 
   /// Returns true if there are existing files on disk in any matching candidate folder.
   bool get hasExistingFiles =>
@@ -161,6 +184,7 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
   Set<String>? knownPredecessorComicIds,
   Set<String>? knownSuccessorComicIds,
   Map<String, ({String sourceId, String comicId})>? knownDirectoryOwners,
+  Set<String>? requiredDirectoryNames,
 }) async {
   final root = Directory(rootDirectory);
   if (!await root.exists()) {
@@ -179,7 +203,11 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
   await for (final entity in root.list(followLinks: false)) {
     if (entity is! Directory) continue;
     final folderName = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
-    if (!isFolderCandidateForTitle(folderName: folderName, cleanTitle: cleanTitle)) {
+    final matchesTitle = isFolderCandidateForTitle(
+      folderName: folderName,
+      cleanTitle: cleanTitle,
+    );
+    if (!matchesTitle && requiredDirectoryNames?.contains(folderName) != true) {
       continue;
     }
 
@@ -203,6 +231,9 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
     final ownerComicId = manifest?.comicId ?? knownOwner?.comicId;
 
     final isExactMatch = ownerSourceId == sourceId && ownerComicId == comicId;
+    final observedOwnerKey = ownerSourceId == null || ownerComicId == null
+        ? null
+        : '$ownerSourceId\u0000$ownerComicId';
 
     ComicVersionRelationKind versionRelation;
     if (isExactMatch) {
@@ -250,13 +281,43 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
         folderName: folderName,
         manifest: manifest,
         hasManifestFile: hasManifestFile,
+        observedOwnerKey: observedOwnerKey,
         isExactMatch: isExactMatch,
-        isTitleMatch: !isExactMatch,
+        isTitleMatch: !isExactMatch && matchesTitle,
         chapterCount: chapterCount > 0
             ? chapterCount
             : (manifest?.chapters.length ?? 0),
         existingPageFilesCount: pageCount,
         versionRelation: versionRelation,
+      ),
+    );
+  }
+
+  for (final folderName in requiredDirectoryNames ?? const <String>{}) {
+    if (candidates.any((candidate) => candidate.folderName == folderName)) {
+      continue;
+    }
+    final knownOwner = knownDirectoryOwners?[folderName];
+    if (knownOwner == null) continue;
+    final isExactMatch =
+        knownOwner.sourceId == sourceId && knownOwner.comicId == comicId;
+    candidates.add(
+      ComicFolderCandidate(
+        directoryPath: '${root.path}${Platform.pathSeparator}$folderName',
+        folderName: folderName,
+        observedOwnerKey:
+            '${knownOwner.sourceId}\u0000${knownOwner.comicId}',
+        isExactMatch: isExactMatch,
+        isTitleMatch: !isExactMatch &&
+            isFolderCandidateForTitle(
+              folderName: folderName,
+              cleanTitle: cleanTitle,
+            ),
+        chapterCount: 0,
+        existingPageFilesCount: 0,
+        versionRelation: isExactMatch
+            ? ComicVersionRelationKind.sameVersion
+            : ComicVersionRelationKind.unknown,
       ),
     );
   }
@@ -309,6 +370,7 @@ Future<ComicConflictReport> inspectSafComicConflicts({
   Set<String>? knownPredecessorComicIds,
   Set<String>? knownSuccessorComicIds,
   Map<String, ({String sourceId, String comicId})>? knownDirectoryOwners,
+  Set<String>? requiredDirectoryNames,
 }) async {
   final cleanName = buildComicDirectoryName(comicTitle: comicTitle);
   final candidates = <ComicFolderCandidate>[];
@@ -319,10 +381,11 @@ Future<ComicConflictReport> inspectSafComicConflicts({
   if (rootEntries.isNotEmpty) {
     for (final entry in rootEntries) {
       if (entry.isDirectory &&
-          isFolderCandidateForTitle(
-            folderName: entry.name,
-            cleanTitle: cleanName,
-          )) {
+          (isFolderCandidateForTitle(
+                folderName: entry.name,
+                cleanTitle: cleanName,
+              ) ||
+              requiredDirectoryNames?.contains(entry.name) == true)) {
         folderNames.add(entry.name);
       }
     }
@@ -339,8 +402,10 @@ Future<ComicConflictReport> inspectSafComicConflicts({
           comicTitle: comicTitle,
           conflictSourceSuffix: sourceId,
         ),
+      ...?requiredDirectoryNames,
     });
   }
+  folderNames.addAll(requiredDirectoryNames ?? const <String>{});
 
   for (final folderName in folderNames) {
     final manifestPath = '$folderName/$comicManifestFileName';
@@ -387,12 +452,25 @@ Future<ComicConflictReport> inspectSafComicConflicts({
       exists = true;
     }
 
+    final knownOwner = knownDirectoryOwners?[folderName];
+    if (!exists &&
+        requiredDirectoryNames?.contains(folderName) == true &&
+        knownOwner != null) {
+      exists = true;
+    }
+
     if (exists) {
-      final knownOwner = knownDirectoryOwners?[folderName];
       final ownerSourceId = manifest?.sourceId ?? knownOwner?.sourceId;
       final ownerComicId = manifest?.comicId ?? knownOwner?.comicId;
 
       final isExactMatch = ownerSourceId == sourceId && ownerComicId == comicId;
+      final matchesTitle = isFolderCandidateForTitle(
+        folderName: folderName,
+        cleanTitle: cleanName,
+      );
+      final observedOwnerKey = ownerSourceId == null || ownerComicId == null
+          ? null
+          : '$ownerSourceId\u0000$ownerComicId';
       ComicVersionRelationKind versionRelation;
       if (isExactMatch) {
         versionRelation = ComicVersionRelationKind.sameVersion;
@@ -415,8 +493,9 @@ Future<ComicConflictReport> inspectSafComicConflicts({
           folderName: folderName,
           manifest: manifest,
           hasManifestFile: hasManifestFile,
+          observedOwnerKey: observedOwnerKey,
           isExactMatch: isExactMatch,
-          isTitleMatch: !isExactMatch,
+          isTitleMatch: !isExactMatch && matchesTitle,
           chapterCount: chapterCount > 0
               ? chapterCount
               : (manifest?.chapters.length ?? 0),

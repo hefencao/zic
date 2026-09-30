@@ -675,6 +675,7 @@ final class _RecordingDownloads
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) async =>
       ComicConflictReport(
         candidates: const <ComicFolderCandidate>[],

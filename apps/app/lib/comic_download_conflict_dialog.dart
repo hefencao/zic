@@ -118,16 +118,15 @@ Future<ComicConflictResolutionResult> promptComicConflictResolutionResult({
 }
 
 String _uniqueSaveAsNewDirectoryName(ComicConflictReport report) {
+  final occupied = report.occupiedDirectoryNames;
   var candidate = report.recommendedDirectoryName;
-  if (!report.candidates.any((item) => item.folderName == candidate)) {
-    return candidate;
-  }
+  if (!occupied.contains(candidate)) return candidate;
   final base = candidate;
   var sequence = 2;
   do {
     candidate = '$base (copy $sequence)';
     sequence++;
-  } while (report.candidates.any((item) => item.folderName == candidate));
+  } while (occupied.contains(candidate));
   return candidate;
 }
 
@@ -335,10 +334,13 @@ Future<ComicConflictDecision> showComicConflictCompareDialog({
         bannerBorderColor = colorScheme.outlineVariant.withValues(alpha: 0.5);
         statusIcon = Icons.folder_open_rounded;
         statusColor = colorScheme.secondary;
-        statusTitle = '检测到同名下载目录';
-        statusDesc =
-            '本地目录「${candidate.folderName}」中已有 ${candidate.existingPageFilesCount} 个文件。';
-        statusNote = '选择「新任务替换旧任务」将覆盖合并原目录；选择下方「新建任务」将独立保存。';
+        statusTitle = candidate.isTitleMatch
+            ? '检测到同名下载目录'
+            : '检测到已占用下载目录';
+        statusDesc = candidate.isTitleMatch
+            ? '本地目录「${candidate.folderName}」中已有 ${candidate.existingPageFilesCount} 个文件。'
+            : '目标目录「${candidate.folderName}」已有其他下载所有者，不能直接接管。';
+        statusNote = '选择「新任务替换旧任务」将按已确认所有者尝试替换；选择下方「新建任务」将独立保存。';
       }
 
       return AlertDialog(

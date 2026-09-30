@@ -1589,6 +1589,7 @@ void main() {
         required comicTitle,
         knownPredecessorComicIds,
         knownSuccessorComicIds,
+        requiredDirectoryNames,
       }) async {
         throw StateError('persisted placement should skip conflict inspection');
       },
@@ -1687,7 +1688,7 @@ void main() {
         message: 'download placement directory conflict',
         chapterId: 'governance-chapter',
         chapterTitle: '第 1 话',
-        directory: '治理漫画',
+        directory: '自定义下载槽',
         existingOwnerKey: 'old-source\u0000old-comic',
         requestOwnerKey: 'remote:governance\u0000governance-comic',
       ),
@@ -1698,29 +1699,44 @@ void main() {
       comicId: job.comicId,
       comicTitle: job.comicTitle,
       mode: DownloadPlacementMode.incremental,
-      relativeDirectory: '治理漫画',
+      relativeDirectory: '自定义下载槽',
       createdAt: now,
       updatedAt: now,
     );
     final candidate = ComicFolderCandidate(
-      directoryPath: '/downloads/治理漫画',
-      folderName: '治理漫画',
+      directoryPath: '/downloads/自定义下载槽',
+      folderName: '自定义下载槽',
       manifest: ComicFolderManifest(
         sourceId: 'old-source',
         comicId: 'old-comic',
-        comicTitle: '治理漫画',
+        comicTitle: '另一部漫画',
         updatedAt: now,
       ),
+      observedOwnerKey: 'old-source\u0000old-comic',
       isExactMatch: false,
       isTitleMatch: true,
       chapterCount: 1,
       existingPageFilesCount: 1,
     );
+    final exactCandidate = ComicFolderCandidate(
+      directoryPath: '/downloads/治理漫画',
+      folderName: '治理漫画',
+      manifest: ComicFolderManifest(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        comicTitle: chapter.comicTitle,
+        updatedAt: now,
+      ),
+      isExactMatch: true,
+      isTitleMatch: false,
+      chapterCount: 1,
+      existingPageFilesCount: 1,
+    );
     final report = ComicConflictReport(
-      candidates: <ComicFolderCandidate>[candidate],
-      hasDirectExactMatch: false,
+      candidates: <ComicFolderCandidate>[exactCandidate, candidate],
+      hasDirectExactMatch: true,
       hasTitleConflicts: true,
-      recommendedDirectoryName: '治理漫画 (remote_governance)',
+      recommendedDirectoryName: '治理漫画',
     );
     var queued = false;
     String? claimedDirectory;
@@ -1733,8 +1749,11 @@ void main() {
       required String comicTitle,
       Set<String>? knownPredecessorComicIds,
       Set<String>? knownSuccessorComicIds,
-    }) async =>
-        report;
+      Set<String>? requiredDirectoryNames,
+    }) async {
+      expect(requiredDirectoryNames, <String>{'自定义下载槽'});
+      return report;
+    }
     final actions = details.ComicDetailsDownloadActions(
       downloadChapter: (_) async {},
       stopChapter: (_) async {},
@@ -1798,7 +1817,7 @@ void main() {
     await _tapVisible(tester, saveBtn);
     await tester.pumpAndSettle();
     expect(queued, isTrue);
-    expect(claimedDirectory, '治理漫画 (remote_governance)');
+    expect(claimedDirectory, '治理漫画 (copy 2)');
     expect(claimedMode, DownloadPlacementMode.createNew);
     expect(claimedObservedOwner, isNull);
   });

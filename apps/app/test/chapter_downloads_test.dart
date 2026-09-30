@@ -2705,6 +2705,7 @@ final class _BlockingInspectManyDownloadService
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) =>
       _delegate.inspectComicConflicts(
         sourceId: sourceId,
@@ -2713,6 +2714,7 @@ final class _BlockingInspectManyDownloadService
         comicTitle: comicTitle,
         knownPredecessorComicIds: knownPredecessorComicIds,
         knownSuccessorComicIds: knownSuccessorComicIds,
+        requiredDirectoryNames: requiredDirectoryNames,
       );
 
   @override

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.31.0",
-  "last_updated": "2026-09-30T10:22:48+08:00",
+  "audit_version": "1.32.0",
+  "last_updated": "2026-09-30T12:25:14+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
@@ -11,17 +11,17 @@
     "medium_p2": 2,
     "governance_status": "in_progress",
     "review_status": "reconciled_with_open_findings",
-    "resolved_count": 8,
+    "resolved_count": 9,
     "deferred_count": 1,
     "pending_count": 1,
-    "in_progress_count": 3
+    "in_progress_count": 2
   },
   "governance": {
     "active_only": true,
     "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
     "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
-    "reviewed_at": "2026-09-30T10:22:48+08:00",
-    "review_basis": "继续关闭 DL-MGR-005。物理删除安全此前已由 artifact/replica reference owner 闭合，剩余缺口是 Download Manager 在 revision 删除确认前无法解释本次 exact delete 会释放独有 bytes 还是只解除共享 binding。现新增只读 ChapterDeleteImpactProjection capability：PersistentChapterDownloadService 先对 hydrated entry 使用与真实 delete 完全相同的 toManifest()+_downloadId 生成 target exact IDs，再由 PersistentDownloadArtifactStore 基于同一 durable index snapshot 按 artifactId/path 对目标物理对象去重；target 外 exact historical/provider bindings 与 canonical physical_media_artifact bindings 均作为共享保留引用。UI 只展示 exact binding/受影响页/预计可回收与共享保留对象及 bytes，不读取文件系统、不复制引用计数、不获得 delete authority；确认后仍走原 deleteChapterFiles/ChapterDownloadService.delete，artifact owner 在 mutation 时按最新引用再次复核。回归覆盖独占 exact 真正回收、同 revision historical provider carrier 保留、canonical physical binding 保留，以及 UI preview-before-mutation。DL-MGR-005 因此从可解释性缺口收口为 resolved。",
+    "reviewed_at": "2026-09-30T12:25:14+08:00",
+    "review_basis": "继续关闭 DL-DIR-006 的三个 remaining_work。重新审计确认 whole-comic identity 风险已是历史状态：WholeComicQueueSnapshot.jobFor 使用 comicLibraryIdentity(sourceId, comicId)，HomeDownloadCommands.cachedWholeComicJob 也同时比较 sourceId+comicId，本轮只补同 raw comicId/不同 source 的双 job 回归。另两项真实缺口已修复：forcePrompt 过去只按 title 重新探查，custom persisted placement 目录名不相似时会消失；现在当前 DownloadPlacement.relativeDirectory 作为 requiredDirectoryNames 贯穿 Home command -> ChapterDownloadService -> persistent placement owner -> POSIX/SAF inspector，durable placement claim 即使无物理目录/manifest 也可投影 observedOwnerKey，UI 不再从异常字符串或路径猜 owner。另一个缺口是 details 为隐藏 exact/self candidate 构造 filtered report 后丢掉 exact occupied recommended directory，saveAsNew 可能返回原目录；现在 ComicConflictReport 保留完整 occupiedDirectoryNames，filtered report 继承该集合，unique naming 必须避开所有占用名。overwrite 最终仍由 storage owner 对 observedOwnerKey 精确复核，没有新增第二 placement authority。",
     "closure_blockers": [
       "DL-DIR-019 / DL-DIR-017：代码级 generic SAF body replace crash protocol 已按 ADR0343 闭合；仍需真实 DocumentsProvider grant 下的 kill/reopen 验证，并观察旧版本随机 .zic-old-* 遗留是否需要一次性清理"
     ]
@@ -54,7 +54,13 @@
       "python3 tool/test_download_delete_impact_ownership.py: pass; Download Manager cannot acquire filesystem/durable reference-count ownership and production composition wires the read-only capability",
       "DL-MGR-005 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 168.587s on the final production/test/docs tree; all repository/documentation/ownership guards and analyzers passed",
       "packages/downloads full suite in final gate: 493/493 passed",
-      "apps/app full Flutter suite in final gate: 383 passed with 3 existing skips"
+      "apps/app full Flutter suite in final gate: 383 passed with 3 existing skips",
+      "DL-DIR-006 focused downloads validation: comic_conflict_inspector 9/9, whole_comic_downloads 16/16 and chapter_downloads 116/116 passed",
+      "DL-DIR-006 focused app validation: comic_download_conflict_dialog 5/5, library_ui 26/26, chapter_downloads 31/31 and source_resource_gateway 16/16 passed",
+      "python3 tool/test_download_conflict_resolution_ownership.py and dev.330 HomeShell download command boundary: pass; forcePrompt required target, observed owner, occupied-name and source-scoped whole-job contracts are guarded",
+      "tool/analyze.sh on DL-DIR-006 closure tree: exit 0 with no error/warning",
+      "DL-DIR-006 final required-toolchain gate: ./tool/check.sh --require-toolchains exit 0 in 161.688s on the final production/test/docs tree; all repository/documentation/ownership guards and analyzers passed",
+      "packages/downloads full suite in final gate: 495/495 passed"
     ],
     "failed_or_unverified": [
       "Fresh Android DocumentsProvider crash/kill/reopen remains unverified from ADR0343 because the app has no reusable persisted SAF tree URI permission"
@@ -106,7 +112,7 @@
       "id": "DL-DIR-006",
       "domain": "download_directory_and_settings",
       "severity": "P1",
-      "title": "同名/多版本漫画下载冲突探测与下载任务处理交互治理",
+      "title": "同名/多版本下载冲突探测、任务处理与自定义 placement 重入已闭合",
       "locations": [
         "packages/downloads/lib/src/comic_conflict_inspector.dart",
         "packages/downloads/lib/src/chapter_downloads.dart",
@@ -115,9 +121,12 @@
         "apps/app/lib/demo_home_source_compat.dart",
         "apps/app/lib/comic_download_conflict_dialog.dart"
       ],
-      "status": "in_progress",
-      "remediation_applied": "已打通 ComicVersionRelationKind（incomingIsNewer / existingIsNewer / sameVersion / unknown）与 knownPredecessorComicIds / knownSuccessorComicIds；探查时匹配已下载目录 manifest.comicId 与版本前驱/后继关系。弹窗重构为「下载任务处理」：新版发起下载时默认 FilledButton 为「新任务替换旧任务」，取消为副操作；本地已有新版时默认 FilledButton 为「保持现有版本（什么都不做）」，「仍要替换为旧版本」为副操作；底部收纳为「新建任务（可展开对比）」ExpansionTile，展开后展示对比卡片及「另存为新目录并新建任务」按钮。overwrite/saveAsNew 贯穿单章与整本执行，并在 WholeComicDownloadQueue 中实现新任务入队时自动取消并置换旧版本整本任务，PersistentChapterDownloadService 同步取消旧版本在途令牌，writeComicFolderManifest 隔离异版元数据继承；已在 apps/app 及 downloads 包补齐 widget 与单元测试回归。",
-      "remaining_work": "manifest/placement 的 SAF 跨进程提交已由 ADR0342 闭合；仍需处理 exact match saveAsNew 可能沿用原推荐目录、自定义冲突目录无 title candidate 时 forcePrompt 缺口，以及详情页整本任务回调仅按 comicId 而非 sourceId+comicId 识别的风险。generic SAF body replace 代码协议已由 ADR0343 闭合；真实 provider kill/reopen 证据继续归 DL-DIR-019。"
+      "status": "resolved",
+      "remediation_applied": "forcePrompt 读取当前 DownloadPlacement.relativeDirectory 并作为 requiredDirectoryNames 贯穿现有 inspector；persistent placement owner 从 durable placements/records 投影目录 owner，ComicFolderCandidate 只读携带 observedOwnerKey 与真实 title-match 事实，overwrite 仍由 claimStructuredComicDirectory 精确复核 owner。ComicConflictReport 新增完整 occupiedDirectoryNames 投影，details 的 filtered report 继承后再交给 saveAsNew 唯一命名。补充 placement-only custom conflict、exact occupied + saveAsNew、同 comicId/不同 source 双整本 job 回归，并加入 download conflict ownership guard。",
+      "remaining_work": "",
+      "root_cause": "剩余缺口来自冲突事实投影而非 placement 安全本身：forcePrompt 只按标题筛目录会漏掉自定义 persisted placement target；Presentation 过滤 exact/self candidate 后又把其目录名从 saveAsNew 唯一命名依据中丢失。整本任务 comicId-only 风险经现状审计确认已不存在。",
+      "impact": "自定义冲突目录现在即使不匹配漫画标题、甚至尚无物理目录/manifest，也会由 durable placement owner 投影为可处理候选；saveAsNew 不会撞回被过滤的 exact occupied 目录；相同 comicId 的不同 source 继续保持独立 whole-comic job。",
+      "remediation_plan": ""
     },
     {
       "id": "DL-DIR-007",

@@ -10,15 +10,16 @@ import 'package:test/test.dart';
 ImportedLibraryEntry _entry(
   int chapter, {
   int pageCount = 1,
+  String sourceId = 'queue-source',
   String comicId = 'queue-comic',
   String comicTitle = '队列漫画',
   String? sourceRevision,
 }) =>
     ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
-        directoryId: 'fixture:$comicId',
+        directoryId: 'fixture:$sourceId:$comicId',
         displayName: '第 $chapter 话',
-        sourceId: 'queue-source',
+        sourceId: sourceId,
         comicId: comicId,
         comicTitle: comicTitle,
         chapterId: comicId == 'queue-comic'
@@ -610,6 +611,46 @@ void main() {
     final restored = reopened.snapshot.jobFor('queue-source', 'queue-comic');
     expect(restored, isNotNull);
     expect(restored!.phase, WholeComicQueuePhase.complete);
+  });
+
+  test('same comicId from different sources keeps independent whole-comic jobs',
+      () async {
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    addTearDown(downloads.close);
+    final queue = WholeComicDownloadQueue(
+      downloads: downloads,
+      store: MemoryWholeComicQueueStore(),
+    );
+    addTearDown(queue.close);
+    await queue.ready;
+
+    await queue.enqueue(
+      sourceId: 'source-a',
+      comicId: 'shared-comic-id',
+      comicTitle: '来源 A',
+      chapters: <ImportedLibraryEntry>[
+        _entry(1, sourceId: 'source-a', comicId: 'shared-comic-id'),
+      ],
+    );
+    await queue.enqueue(
+      sourceId: 'source-b',
+      comicId: 'shared-comic-id',
+      comicTitle: '来源 B',
+      chapters: <ImportedLibraryEntry>[
+        _entry(1, sourceId: 'source-b', comicId: 'shared-comic-id'),
+      ],
+    );
+
+    expect(queue.snapshot.jobFor('source-a', 'shared-comic-id'), isNotNull);
+    expect(queue.snapshot.jobFor('source-b', 'shared-comic-id'), isNotNull);
+    expect(
+      queue.snapshot.jobs
+          .where((job) => job.comicId == 'shared-comic-id')
+          .length,
+      2,
+    );
   });
 
   test('enqueue with overwrite and observedOwnerKey displaces prior version comic job', () async {

@@ -239,6 +239,7 @@ class ComicDetailsDownloadActions {
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) async =>
       const ComicConflictReport(
         candidates: <ComicFolderCandidate>[],
@@ -433,6 +434,7 @@ typedef ComicDetailsConflictInspector = Future<ComicConflictReport> Function({
   String? sourceDisplayName,
   Set<String>? knownPredecessorComicIds,
   Set<String>? knownSuccessorComicIds,
+  Set<String>? requiredDirectoryNames,
 });
 
 typedef ComicDetailsComicPersister = Future<void> Function(
@@ -794,15 +796,13 @@ Future<bool> _confirmComicDownloadConflict({
   required int Function() traceMonotonicMicros,
 }) async {
   if (!forcePrompt && conflictConfirmed) return true;
-  if (!forcePrompt) {
-    final existingPlacement = await downloadActions.getDownloadPlacement(
-      sourceId: sourceId,
-      comicId: comicId,
-    );
-    if (existingPlacement != null) {
-      markConflictConfirmed();
-      return true;
-    }
+  final existingPlacement = await downloadActions.getDownloadPlacement(
+    sourceId: sourceId,
+    comicId: comicId,
+  );
+  if (!forcePrompt && existingPlacement != null) {
+    markConflictConfirmed();
+    return true;
   }
   if (inspector == null) return true;
   final report = await inspector(
@@ -810,6 +810,10 @@ Future<bool> _confirmComicDownloadConflict({
     comicId: comicId,
     comicTitle: comicTitle,
     sourceDisplayName: sourceDisplayName,
+    requiredDirectoryNames: forcePrompt &&
+            existingPlacement?.relativeDirectory.isNotEmpty == true
+        ? <String>{existingPlacement!.relativeDirectory}
+        : null,
   );
   if (!context.mounted) return false;
   final conflictingCandidates = report.candidates
@@ -853,6 +857,7 @@ Future<bool> _confirmComicDownloadConflict({
     hasDirectExactMatch: report.hasDirectExactMatch,
     hasTitleConflicts: conflictingCandidates.isNotEmpty,
     recommendedDirectoryName: report.recommendedDirectoryName,
+    additionalOccupiedDirectoryNames: report.occupiedDirectoryNames,
   );
   final result = await promptComicConflictResolutionResult(
     context: context,
@@ -888,10 +893,7 @@ Future<bool> _confirmComicDownloadConflict({
                   .firstOrNull ??
               report.matchingCandidate
           : null;
-      final manifest = chosenCandidate?.manifest;
-      final observedOwner = manifest == null
-          ? null
-          : '${manifest.sourceId}\u0000${manifest.comicId}';
+      final observedOwner = chosenCandidate?.effectiveObservedOwnerKey;
       await downloadActions.claimComicDirectory(
         sourceId: sourceId,
         comicId: comicId,

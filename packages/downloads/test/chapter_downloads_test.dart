@@ -5382,6 +5382,37 @@ void main() {
     expect(placement?.storageRootId, sourceRoot);
   });
 
+  test('required custom conflict projects persisted owner without a folder',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-required-conflict-');
+    addTearDown(() => root.delete(recursive: true));
+    var service = await PersistentChapterDownloadService.open(root.path);
+    await service.claimComicDirectory(
+      sourceId: 'mihon:old-source',
+      comicId: 'old-comic',
+      directoryName: '完全自定义下载槽',
+    );
+    await service.close();
+
+    service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final report = await service.inspectComicConflicts(
+      sourceId: 'mihon:new-source',
+      comicId: 'new-comic',
+      comicTitle: '与目录名完全无关的标题',
+      requiredDirectoryNames: const <String>{'完全自定义下载槽'},
+    );
+
+    expect(report.candidates, hasLength(1));
+    final candidate = report.candidates.single;
+    expect(candidate.folderName, '完全自定义下载槽');
+    expect(candidate.observedOwnerKey, 'mihon:old-source\u0000old-comic');
+    expect(candidate.hasExistingContent, isTrue);
+    expect(candidate.isExactMatch, isFalse);
+    expect(candidate.isTitleMatch, isFalse);
+    expect(candidate.confidenceLabel, '已占用目录');
+  });
+
   test('persisted placement reserves an empty directory after restart', () async {
     final root = await Directory.systemTemp.createTemp('zic-placement-reservation-');
     addTearDown(() => root.delete(recursive: true));

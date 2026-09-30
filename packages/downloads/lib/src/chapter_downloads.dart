@@ -262,6 +262,7 @@ abstract interface class ChapterDownloadService {
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   });
 
   Future<Set<int>> readyPageIndices(ImportedLibraryEntry entry);
@@ -895,6 +896,7 @@ final class MemoryChapterDownloadService
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) async => ComicConflictReport(
         candidates: const <ComicFolderCandidate>[],
         hasDirectExactMatch: false,

@@ -2244,6 +2244,7 @@ final class PersistentChapterDownloadService
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) => artifactStore.inspectComicConflicts(
         sourceId: sourceId,
         sourceDisplayName: sourceDisplayName,
@@ -2251,6 +2252,7 @@ final class PersistentChapterDownloadService
         comicTitle: comicTitle,
         knownPredecessorComicIds: knownPredecessorComicIds,
         knownSuccessorComicIds: knownSuccessorComicIds,
+        requiredDirectoryNames: requiredDirectoryNames,
       );
 
   @override

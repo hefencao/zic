@@ -3279,6 +3279,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
+    Set<String>? requiredDirectoryNames,
   }) async {
     _requireOpen();
     final preds = <String>{
@@ -3294,6 +3295,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           rel.successorComicId,
     };
     final knownOwners = <String, ({String sourceId, String comicId})>{};
+    final requiredDirectories = <String>{
+      for (final directory in requiredDirectoryNames ?? const <String>{})
+        if (directory.trim().isNotEmpty) directory.trim(),
+    };
     final relatedComicIds = <String>{comicId, ...preds, ...succs};
     for (final relComicId in relatedComicIds) {
       final p = await _index.getPlacement(
@@ -3305,6 +3310,22 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           sourceId: sourceId,
           comicId: relComicId,
         );
+      }
+    }
+    if (requiredDirectories.isNotEmpty) {
+      final currentOwner = '$sourceId\u0000$comicId';
+      for (final placement in await _index.listPlacements()) {
+        final directory = placement.relativeDirectory.trim();
+        if (!requiredDirectories.contains(directory)) continue;
+        final known = knownOwners[directory];
+        if (known == null ||
+            ('${known.sourceId}\u0000${known.comicId}' == currentOwner &&
+                placement.ownerKey != currentOwner)) {
+          knownOwners[directory] = (
+            sourceId: placement.sourceId,
+            comicId: placement.comicId,
+          );
+        }
       }
     }
     final records = await _index.list();
@@ -3333,6 +3354,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         knownPredecessorComicIds: preds.isNotEmpty ? preds : null,
         knownSuccessorComicIds: succs.isNotEmpty ? succs : null,
         knownDirectoryOwners: knownOwners,
+        requiredDirectoryNames:
+            requiredDirectories.isEmpty ? null : requiredDirectories,
       );
     }
     final rootDir = _registry.layoutForSource(sourceId).root;
@@ -3345,6 +3368,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       knownPredecessorComicIds: preds.isNotEmpty ? preds : null,
       knownSuccessorComicIds: succs.isNotEmpty ? succs : null,
       knownDirectoryOwners: knownOwners,
+      requiredDirectoryNames:
+          requiredDirectories.isEmpty ? null : requiredDirectories,
     );
   }
 
