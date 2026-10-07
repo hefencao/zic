@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device32/toolchain6/superseded2/partial34/pending38。051真实JM同key晋升/历史warm及cold hit已验，详情自身origin仍待验；061与110–112已验分量保持。普通Releasefbca6e0b/PID19804已恢复实际Home，forward空；物理触摸/性能开放，缺失证据不授权重改。
+- 当前112项：device33/toolchain6/superseded2/partial34/pending37。051真实JM详情自身origin关闭；062 Mihon普通往返/简介补全/三处同字节已验，实际mutable alias仍开放。061与110–112保持。Releasefbca6e0b/PID10206已恢复Home、forward空；物理输入/性能开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home58/source-card23保持，031/083/108关闭。legacy runner补已有base JAR后执行，ACTION_CLICK真实来源/详情/Reader/历史路由通过，物理输入仍未验。VM canonical样本为背后Home，非raw详情origin；051 partial保护已验分量。临时目录/设备导出已清；.log留5个必要原件，私有缓存165文件，已完成050/061/084及撤回方案结论保持。
+- Home58/source-card23及031/083/108保持。legacy runner/ACTION_CLICK普通路由已验；051详情Future/provider与canonical缓存同字节，062实际Mihon历史首帧通过。临时目录/设备导出已删；.log留5个必要原件，不搬迁。原19/20加载、真实alias/迁移及最终显示开放。
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。

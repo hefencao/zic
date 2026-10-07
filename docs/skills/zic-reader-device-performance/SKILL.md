@@ -2,7 +2,7 @@
 name: zic-reader-device-performance
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 metadata:
-  version: "1.2.4"
+  version: "1.2.5"
 ---
 
 # ZIC Reader device performance
@@ -43,6 +43,8 @@ ADB input must also target the real app display explicitly. scrcpy or other tool
 Before the first destructive or Reader-targeted input in a new device session, prove injection with a harmless Home navigation round-trip: resolve the current Home/Bookshelf tab bounds, tap Bookshelf with the source-first command and require `selected=true`, then tap Home and require `selected=true`. A zero exit code does not prove delivery. If the control state does not change, stop the performance run and mark input unverified; confirm the actual page, awake/focus state and fresh target before attributing a product defect. A harmless system-menu navigation can compare input methods. A different result from a same-point short press is an input-method observation, not authorization to tune Reader behavior.
 
 For read-only VM input diagnosis, require `getVM.pid` to match the current app PID. Read actual collection contents: a `ListQueue` uses head/tail/table, while a map exposes its length/associations. The number of object fields is not a queued-event count. Old ANR/WaitQueue flags cannot describe a new input stream; a missing DOWN must remain missing evidence.
+
+For artwork cache checks, follow the selected detail/list/history owner's actual Future and provider; a matching Home image retained behind details does not prove the details origin. VM object IDs from `AlwaysAllocate` are not identity comparisons. Compare encoded byte objects within one bounded `Ring`/`ReuseExisting` ID zone, then delete the zone and close the connection in `finally`.
 
 An exact accessibility `ACTION_CLICK` may independently verify ordinary product routes when injected touch remains unverified; require the actual destination state and keep physical gestures, input latency and performance acceptance open. Match duplicate labels with their current bounds and reject ambiguity. For a temporary legacy UiAutomator test, inspect the device launcher: a missing `android.test.RepetitiveTest` can mean its classpath omits an existing `android.test.base.jar`. The shell script consumes JAR paths before calling Java; direct `Launcher runtest` accepts `-c` and `-e jars`, not a standalone JAR argument. A runner abort with no test output is unexecuted, regardless of shell exit code. Remove the remote JAR and host temporary directory in `finally` after the bounded check.
 

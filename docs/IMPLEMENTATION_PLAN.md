@@ -56,7 +56,6 @@
 
 ## P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
-- 仅补普通外部漫画详情封面自身 Future/provider 的 cache origin：关联raw详情身份与canonical key，不能用背后保留的Home image代验。051真实JM已验browse/details同key/hash晋升、Reader往返和history warm/cold hit；保持这些分量，不重改namespace。Mihon mutable SManga仍由062独立验收。
 - 冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。
 - 继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。
 
@@ -74,7 +73,7 @@
 
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
-- 用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。
+- 在同一 Mihon漫画真实raw alias或标题/简介/thumbnail/memo变化后，补browse/details/history canonical namespace稳定性；062已验普通JM往返、简介补全及三处同字节命中，保持这些分量。
 - 在source暂不可用时补真机`mihon:resource:` durable封面命中和durable miss等待来源，不能回退local file loader。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
