@@ -29,13 +29,21 @@ if [[ ! "$DURATION_MS" =~ ^[0-9]+$ ]] || (( DURATION_MS < 5000 )); then
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
-TMP_CONFIG="$(mktemp)"
-trap 'rm -f "$TMP_CONFIG"' EXIT
-sed "s/^duration_ms: .*/duration_ms: $DURATION_MS/" "$CONFIG" > "$TMP_CONFIG"
+TMP_OUTPUT=""
+cleanup() {
+  if [[ -n "$TMP_OUTPUT" ]]; then
+    rm -f "$TMP_OUTPUT"
+  fi
+  adb shell rm -f "$REMOTE" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 adb shell rm -f "$REMOTE" >/dev/null 2>&1 || true
 printf 'Capturing %sms on Android API %s. Reproduce the fixed-position Reader hitch now.\n' "$DURATION_MS" "$SDK"
-adb shell perfetto --txt -c - -o "$REMOTE" < "$TMP_CONFIG"
-adb pull "$REMOTE" "$OUTPUT" >/dev/null
-adb shell rm -f "$REMOTE" >/dev/null 2>&1 || true
+sed "s/^duration_ms: .*/duration_ms: $DURATION_MS/" "$CONFIG" |
+  adb shell perfetto --txt -c - -o "$REMOTE"
+TMP_OUTPUT="$(mktemp "${OUTPUT}.XXXXXX")"
+adb pull "$REMOTE" "$TMP_OUTPUT" >/dev/null
+mv -f "$TMP_OUTPUT" "$OUTPUT"
+TMP_OUTPUT=""
 printf 'Wrote %s\n' "$OUTPUT"

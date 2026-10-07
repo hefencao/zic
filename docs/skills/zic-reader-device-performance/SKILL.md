@@ -2,7 +2,7 @@
 name: zic-reader-device-performance
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 # ZIC Reader device performance
@@ -57,7 +57,9 @@ Do not write temporary screenshots or UI XML into `/sdcard` root. If accessibili
 adb exec-out uiautomator dump /dev/tty
 ```
 
-Trace exports belong in the configured `Download/Debug` directory. Verify that the action created a new export before pulling it. Keep original user-reported traces and the minimum before/after inputs for an open issue; overwrite current working traces for repeated checks. After verification, delete redundant traces, stale screenshots/XML/APKs, completed backup copies and temporary worktrees. A completed check needs a short result in the existing status, not another permanent evidence directory or manifest. Temporary probes must clean their work directory on exit; moving a whole batch to private cache is not cleanup.
+Trace exports belong in the configured `Download/Debug` directory. Verify that the action created a new export before pulling it. Keep original user-reported traces and the minimum before/after inputs for an open issue; overwrite current working traces for repeated checks. After verification, delete redundant traces, stale screenshots/XML/APKs, completed backup copies and temporary worktrees, including those in private cache. A completed check needs a short result in the existing status, not another permanent evidence directory or manifest. Temporary probes must clean their work directory on success or failure; moving a whole batch to private cache is not cleanup.
+
+For VM profiling, collect allocation traces only when the selected allocation tracing is enabled. Before saving CPU/allocation samples, retain referenced function/code descriptions and remap stack indices, preserving all sample events, timestamps and class counts. An unreferenced full VM symbol table is not a necessary reproduction input.
 
 ## Reader state: never infer it from Home semantics alone
 

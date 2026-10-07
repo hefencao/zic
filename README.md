@@ -129,4 +129,4 @@ Debug Trace 是诊断证据，不是产品状态数据库。分析逐帧 Pipelin
 python3 tool/analyze_frame_pipeline_trace.py zic-debug-trace-*.jsonl
 ```
 
-Trace 的简短结论覆盖更新到现有状态；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。`.log/` 只保留原始报障输入、开放问题的必要复现文件及当前复验结果；重复与过期产物及时删除，临时目录用完清理。
+Trace 的简短结论覆盖更新到现有状态；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。`.log/` 只保留原始报障输入、开放问题的必要复现文件及当前复验结果；私有缓存执行同一规则。重复与过期产物及时删除，临时目录在成功或失败退出时清理。

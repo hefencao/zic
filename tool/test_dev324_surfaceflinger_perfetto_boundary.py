@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import os
 import runpy
 import sqlite3
+import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,6 +39,54 @@ for token in (
     'Reproduce the fixed-position Reader hitch now',
 ):
     require(capture, token, 'bounded device capture contract')
+
+# Device commands are replaced with a local executable. Capture and pull failures
+# must clean partial artifacts without replacing a previous valid output.
+with tempfile.TemporaryDirectory(prefix='zic-perfetto-cleanup-') as directory:
+    work = Path(directory)
+    mock = work / 'adb'
+    mock.write_text('''#!/usr/bin/env python3
+import os
+from pathlib import Path
+import sys
+
+work = Path(os.environ['ZIC_MOCK_WORK'])
+case = os.environ['ZIC_MOCK_CASE']
+args = sys.argv[1:]
+if args == ['shell', 'getprop', 'ro.build.version.sdk']:
+    print('36')
+elif args[:3] == ['shell', 'rm', '-f']:
+    (work / 'remote').unlink(missing_ok=True)
+elif args[:2] == ['shell', 'perfetto']:
+    config = sys.stdin.read()
+    assert 'duration_ms: 5000' in config
+    (work / 'remote').write_bytes(b'captured-trace')
+    if case == 'capture-failure':
+        sys.exit(7)
+elif args[:1] == ['pull']:
+    output = Path(args[-1])
+    if case == 'pull-failure':
+        output.write_bytes(b'incomplete')
+        sys.exit(8)
+    output.write_bytes((work / 'remote').read_bytes())
+else:
+    raise AssertionError(args)
+''')
+    mock.chmod(0o755)
+    output = work / 'current.perfetto-trace'
+    for case in ('capture-failure', 'pull-failure', 'success'):
+        output.write_bytes(b'previous-valid-trace')
+        environment = dict(os.environ, ZIC_MOCK_WORK=str(work),
+                           ZIC_MOCK_CASE=case, ZIC_PERFETTO_DURATION_MS='5000',
+                           PATH=str(work) + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(ROOT / capture), str(output)],
+                                env=environment, capture_output=True, text=True)
+        assert result.returncode == {'capture-failure': 7,
+                                     'pull-failure': 8, 'success': 0}[case], result
+        expected = b'captured-trace' if case == 'success' else b'previous-valid-trace'
+        assert output.read_bytes() == expected, case
+        assert not (work / 'remote').exists(), case
+        assert set(work.iterdir()) == {mock, output}, (case, list(work.iterdir()))
 
 for token in (
     'actual_frame_timeline_slice',

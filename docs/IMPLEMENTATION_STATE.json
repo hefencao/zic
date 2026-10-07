@@ -150,7 +150,7 @@
     "app_pid": 23446,
     "ordinary_release": true,
     "normal_minified_release": true,
-    "app_foreground": "home"
+    "app_foreground": "unverified_after_input"
   },
   "validation": {
     "command": "bash tool/check.sh --require-toolchains",
@@ -161,9 +161,10 @@
     "Android_native_tests": 110,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Reuse all3 ordinary Profile and minified Release packages for unchanged production inputs. Fresh full required gate includes three-ABI Debug; the existing Home entrypoint has a fresh analyzer/native-release Profile build. Fresh all3 release-native packaging/symbol/build-id checks pass.",
-    "Android_native_tests_scope": "Reuse prior110 native tests only for unchanged Kotlin/native inputs. This change extends an existing device acceptance entrypoint and current state; production code is unchanged. All3 release-native libraries are rebuilt and packaging/symbol/build-id checks pass.",
-    "scope": "Fresh full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2332 Dart-Flutter tests/Rust22/three-ABI Debug. Fresh native-release Profile Home58/58 passes, including7 real persistent-download completion badge checks; prior source-card23 remains accepted for unchanged production inputs. Ordinary Release restored to Home. One injected Back displays the production root Snackbar; touchscreen taps and Reader slider smoke remain unverified. Device is awake/ON, focused/unobscured, input channel normal; these observations do not attribute a product defect. Original19/20, live-origin and final-display/performance remain open.",
+    "ordinary_package_acceptance": "Reuse all3 ordinary Profile/minified Release packages and the latest Home fixture Profile for unchanged app inputs. Fresh full required gate includes three-ABI Debug; fresh all3 native packaging/symbol/build-id checks pass. No device installation or new physical-device acceptance in this tooling cleanup.",
+    "Android_native_tests_scope": "Reuse prior110 native tests for unchanged Kotlin/native inputs. This change only updates diagnostic capture tooling, its existing regression and current file-retention policies/state. Fresh all3 release-native packaging/symbol/build-id checks pass; native code and inputs are unchanged.",
+    "scope": "Fresh full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2332 Dart-Flutter tests/Rust22/three-ABI Debug. Fresh all3 native packaging/symbol/build-id and three local mocked-command capture cleanup cases pass. Reuse latest Home58/58 and source-card23/23 for unchanged app inputs; no new device action or performance claim. Ordinary Release remains installed; after injected input the current rendered route is unconfirmed, so stale Home accessibility alone cannot establish entry failure. Original19/20, live-origin and final-display/performance remain open.",
+    "artifact_retention": "Directly delete3,547 obsolete temporary/private artifacts and reclaim about12.7GB; no relocation or new audit/manifest. .log retains5 original fault inputs (11,137,690 bytes); private cache retains216 files (262375002 bytes), including17 current working files,6 original source APKs and minimum open-issue samples/fixtures. Compact16 VM profiles with resolved sample events/timestamps/class counts unchanged. Three local mocked-command Perfetto cases verify success, capture failure and partial pull failure: temporary remote/local files are removed and failed attempts preserve the previous output. All task scratch directories are removed. No product acceptance is added.",
     "device_fixture": "Fresh existing Home default58/58 (PID16866): real persistent chapter close/reopen cache, chapter and whole-comic commands, active-vs-complete icons/colors and details-entry clearing pass7 checks; existing51 Home/details/Reader slider/progress/history/retention/explicit-invalidation checks also pass. userStoresOpened=false and temporaryRootRemoved=true. Latest result overwrites current-device-result.json; device exports, scratch and both fixture APK copies/metadata are removed. Ordinary Release fbca6e0b/PID23446/Home restored, ADB forwards empty. Retain prior artwork23 and process-cold acceptance for unchanged inputs. No live-origin, physical-touch or final-display claim; no per-round result copies."
   },
   "new_user_task_acceptance": {
