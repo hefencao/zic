@@ -2,7 +2,7 @@
 name: zic-reader-device-performance
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 metadata:
-  version: "1.2.3"
+  version: "1.2.4"
 ---
 
 # ZIC Reader device performance
@@ -38,11 +38,13 @@ The helper also validates that the Home accessibility tree contains the reading-
 
 Cold-handoff correctness is a distinct regression scenario, not an invalid user action: real users MAY tap a bootstrap history card before these readiness events. App composition must paint the deferred route, await core-service readiness and Home adoption, then create Reader capabilities without capturing retired bootstrap owners. Test this deterministically with a blocked service-handoff future; any separately labeled early-entry device reproduction must prove the selected card/input and record whether the tap preceded core readiness. Do not use the performance helper's readiness wait as proof this race is fixed, and do not attribute its former `chapter download service is closed` failures to invalid user timing.
 
-ADB input must also target the real app display explicitly. scrcpy or other tooling may create a virtual display; an unqualified `adb shell input tap/swipe` can therefore inject into the wrong display while screenshots still show display 0. On the current MIUI device, the source-first form is the verified working syntax: use `adb shell input touchscreen -d 0 tap ...` / `swipe ...` for touch and `adb shell input keyboard -d 0 keyevent ...` for Back or other keys, unless `dumpsys activity` proves the ZIC task is on a different display. Do not use the superficially similar `adb shell input -d 0 tap ...` form as test evidence unless a harmless control round-trip has first proved that it is actually delivered on that device. Never use an unqualified tap/swipe in a Reader performance run.
+ADB input must also target the real app display explicitly. scrcpy or other tooling may create a virtual display; an unqualified `adb shell input tap/swipe` can therefore inject into the wrong display while screenshots still show display 0. Use the source-first form `adb shell input touchscreen -d 0 tap ...` / `swipe ...` for touch and `adb shell input keyboard -d 0 keyevent ...` for Back or other keys, unless `dumpsys activity` proves the ZIC task is on a different display. Correct command syntax does not prove event delivery. Do not use the superficially similar `adb shell input -d 0 tap ...` form as test evidence unless a harmless control round-trip has first proved that it is actually delivered on that device. Never use an unqualified tap/swipe in a Reader performance run.
 
 Before the first destructive or Reader-targeted input in a new device session, prove injection with a harmless Home navigation round-trip: resolve the current Home/Bookshelf tab bounds, tap Bookshelf with the source-first command and require `selected=true`, then tap Home and require `selected=true`. A zero exit code does not prove delivery. If the control state does not change, stop the performance run and mark input unverified; confirm the actual page, awake/focus state and fresh target before attributing a product defect. A harmless system-menu navigation can compare input methods. A different result from a same-point short press is an input-method observation, not authorization to tune Reader behavior.
 
 For read-only VM input diagnosis, require `getVM.pid` to match the current app PID. Read actual collection contents: a `ListQueue` uses head/tail/table, while a map exposes its length/associations. The number of object fields is not a queued-event count. Old ANR/WaitQueue flags cannot describe a new input stream; a missing DOWN must remain missing evidence.
+
+An exact accessibility `ACTION_CLICK` may independently verify ordinary product routes when injected touch remains unverified; require the actual destination state and keep physical gestures, input latency and performance acceptance open. Match duplicate labels with their current bounds and reject ambiguity. For a temporary legacy UiAutomator test, inspect the device launcher: a missing `android.test.RepetitiveTest` can mean its classpath omits an existing `android.test.base.jar`. The shell script consumes JAR paths before calling Java; direct `Launcher runtest` accepts `-c` and `-e jars`, not a standalone JAR argument. A runner abort with no test output is unexecuted, regardless of shell exit code. Remove the remote JAR and host temporary directory in `finally` after the bounded check.
 
 ## Device hygiene
 

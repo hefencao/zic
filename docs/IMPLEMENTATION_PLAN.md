@@ -1,4 +1,4 @@
-- P0：RMR-037继续输入交接/延迟、GC/入口CPU及最终显示验收；先以普通手动操作和当前原生接收对照定位Home输入，未证实命中前不做Reader性能结论。融合locator候选已撤回，不凭API推测收益或跳过兼容。原加载/固定顿挫、RMR-038与Plan039/040真实来源开放，保留NetLane、7/3和2/1。
+- P0：RMR-037继续物理输入/延迟、GC/入口CPU及最终显示验收。ACTION_CLICK普通路由已验，不能代替触摸/性能；用手动操作和当前原生接收对照定位输入。融合locator候选已撤回，不凭API推测收益或跳过兼容。原加载/固定顿挫、RMR-038与Plan039/040真实来源开放，保留NetLane、7/3和2/1。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282首次新OutputFrame的native呈现成本与快滑最终composition验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。首次frame独立测blit/schedule/frame timing，余下顿挫只按fresh证据定位首次visible/current frame与SurfaceProducer/compositor，不重改已验geometry/anchor或窗口。
@@ -56,7 +56,7 @@
 
 ## P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
-- 同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。
+- 仅补普通外部漫画详情封面自身 Future/provider 的 cache origin：关联raw详情身份与canonical key，不能用背后保留的Home image代验。051真实JM已验browse/details同key/hash晋升、Reader往返和history warm/cold hit；保持这些分量，不重改namespace。Mihon mutable SManga仍由062独立验收。
 - 冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。
 - 继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。
 
