@@ -619,6 +619,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - ReaderBinding MUST NOT rebuild upload page-index maps or re-run PlaybackGate for coverage-only motion when resolved ViewportState and Pipeline revision are unchanged.
   PipelineReaderSession MUST run page-stream/output/artifact/control synchronization only after a real plan revision or current/decode-target identity change.
   High-frequency readerObservation/pageTransition/layout diagnostics MUST be sampled at semantic edges/bounded heartbeat and MUST NOT become a per-frame control-plane owner.
+- 非file且无authority的opaque资源URI MUST NOT通过payload中的hash或路径片段推断standalone physical identity；已验证canonical projection的解析不受该形状过滤影响。
 - Source-confirmed version-family reuse MUST use a stable opaque `VersionFamilyId` and direct exact-page→canonical-physical projection.
   `DownloadId` MUST remain the exact provider/logical identity for URI/revision/validator/manual pin/export semantics;
   a verified cross-version page MAY resolve to `PhysicalMediaId.canonical`,
@@ -630,6 +631,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   and MUST preserve canonical physical metadata while any surviving exact READY binding still owns the same object.
   Global physical clear/trim MUST atomically revalidate the physical LRU generation and exact READY references before removing canonical routing;
   a stale maintenance snapshot MUST NOT win over a later exact bind/touch.
+  显式exact artifact失效MUST保留对新binding/body authority的保护，但MUST NOT因仅maintenance `touchedUs`变化而保留同一已指定失效的正文。trim、maintenance eviction及其它快照比较MUST继续保留recency保护。
   A persisted canonical coordinate alone MUST NOT reactivate revoked cross-version proof for a new exact claim.
   Automatic promotion MAY commit the exact durable object even when canonical binding conflicts with an incumbent physical owner,
   but that promoted epoch MUST then fail closed to exact routing,
@@ -1529,6 +1531,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   exact cache 的 durable identity MUST继续绑定原 source revision；但若同一 `(sourceId, comicId, chapterId)` 的当前 library chapter 已存在，
   projection MUST仅复用当前 chapter 的人类可读 comic/chapter metadata 作为 display alias，并标记旧 revision 为 historical。
   Presentation MUST NOT把 opaque plugin comic/chapter identity、raw source id、`Exact`/`Canonical` 内部术语显示成普通用户字段；
+  手动孤立下载、冷Home摘要与删除确认 MUST遵守同一显示合同：复用可证明的当前metadata，缺失时显示通用标题；MUST NOT解析plugin payload或改写exact identity、READY/pin及命令目标。
   historical exact cache MAY按其原 identity 清理，但 MUST NOT转为当前 revision 的手动下载任务。
   cache-management projection MUST仅消费 durable exact index 与 durable physical artifact/partial inventory；hot `DownloadSession`（包括 promoted source-resident local `file/content/asset` body）MUST NOT单独建立自动缓存行。Reader 对可重开本地来源的正常读取 MUST NOT为了 cache-management 可见性物化 app-owned duplicate body。
   Home 路径的 mutating chapter/whole-comic actions MUST 通过注入的 command capability 进入 `HomeDownloadCommands`，
@@ -1900,6 +1903,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   冲突恢复/`forcePrompt` MUST 将当前 persisted `DownloadPlacement.relativeDirectory` 作为 required conflict target 重新交给 storage conflict inspector，MUST NOT 因目录名不匹配 comic title 而忽略；即使目标目录尚未物化，只要 durable placement owner claim 存在，也 MUST 形成可解释的冲突候选并携带 storage-projected `observedOwnerKey`。UI MUST NOT 从路径、异常文本或标题推断 owner；overwrite 仍 MUST 由 storage owner 对该 observed owner 重新校验。若 Presentation 过滤 exact/self candidate，MUST 另行保留完整 occupied directory 集合用于 `saveAsNew` 唯一命名，禁止重新选择被过滤的 exact occupied 推荐目录。整本任务查找 MUST 使用 `(sourceId, comicId)` 组合身份；相同 comicId 的不同 sourceId MUST 保持不同 job。
   每本漫画根目录 MUST 写入 `.zic.json`，提交前 MUST 重新校验 owner，不同 comicId 不得 last-writer-wins；
   manifest MUST 保存单调 generation、内容 fingerprint、`pageOrder` 和稳定 chapter-id→directory 映射，损坏 fingerprint MUST 拒绝。SAF manifest replace/delete MUST 在任何 SAF mutation 前 flush App-private transaction intent，并保留 deterministic `.zic.json.zic-old` 直到 `DownloadPlacement` commit point；重启 MUST 以 intent + exact token 决定 rollback/forward。无 intent 的较新 target MUST NOT 仅因 generation 更高而推进 placement。generic SAF page/partial 不复用 manifest token，而按 ADR0343 在任何 target mutation 前 flush 独立 App-private body intent，保留 deterministic `target.zic-old`，并以现有 `CacheRec` / `PhysicalPartialRecord` 精确新记录作为唯一 commit point。低层 `commitSafTemporary` 只允许 rename 到空 target；生产路径禁止 `safReplace`、delete-then-rename 和随机隐藏 backup。
+  SAF body 的 stale/crash intent recovery MUST独立验证完整 length+CRC，partial 也 MUST NOT以 equal length 代替 staged content proof。相同 partial 重存可能在 mutation 前就匹配现有 index authority；target 缺失时，只有 backup 的完整 length+CRC 与该 authority 一致才 MAY恢复 backup。已存在但 CRC 不匹配的 target、缺失或不匹配的 backup MUST保留 intent/正文证据并 fail closed。正常 live staging/index commit 的清理 SHOULD复用该次 copy 已累计的 proof，MUST NOT因此给普通 checkpoint 增加整段正文扫描；MUST NOT新增 placement/generation 或第二 index authority。
   单章漫画 MAY 将页面直接放在漫画根目录且省略该章 directory mapping；
   首次进入多章布局时只有缺失 directory mapping 的既有章节 MAY 进入 flat→subdirectory 可重入迁移，
   现代 manifest 已有 mapping 的章节 MUST 视为已提交布局、后续新增章节不得再逐章全量扫描 cache index。

@@ -1088,6 +1088,38 @@ void main() {
     expect(await store.artifactReplicasFor(id), hasLength(1));
   });
 
+  for (final replaceGeneration in <bool>[false, true]) {
+    test('explicit invalidation distinguishes recency from replacement '
+        '(replace generation: $replaceGeneration)', () async {
+      final root = await Directory.systemTemp.createTemp('zic-invalidate-touch-');
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      final id = _id('invalidate-touch');
+      final bytes = Uint8List.fromList(<int>[9, 8, 7, 6, 5, 4, 3, 2]);
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      await store.storePromotedArtifact(id: id, bytes: bytes);
+      final index = store.index as SqliteIndex;
+      final before = (await index.get(id.key))!;
+
+      final invalidation = store.invalidateArtifact(id);
+      // Change SQLite metadata between the command's snapshot and its locked
+      // recheck. Recency is the same maintenance-only mutation as deferred
+      // foreground-read touch; a new binding generation remains protected.
+      await Future<void>.microtask(() async {
+        if (replaceGeneration) {
+          await index.put(before.copyWith(createdUs: before.createdUs + 1));
+        } else {
+          await index.touch(id.key, before.touchedUs + 1);
+        }
+      });
+      await invalidation;
+      expect(await index.get(id.key), replaceGeneration ? isNotNull : isNull);
+      expect(await File(before.path).exists(), replaceGeneration);
+    });
+  }
+
   test('remounted proven Direct alias serves and deletes a sealed replica',
       () async {
     final appRoot = await Directory.systemTemp.createTemp(

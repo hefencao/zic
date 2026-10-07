@@ -103,6 +103,108 @@ void main() {
     expect(await _intentFiles(fixture.indexPath), isEmpty);
   });
 
+  for (final physical in <bool>[false, true]) {
+    test('identical ${physical ? 'physical' : 'exact'} partial backup restores '
+        'body when authority already matched before replacement', () async {
+      final fixture = await _fixture('identical-$physical');
+      addTearDown(fixture.dispose);
+      final expected = fixture.oldRecord.copyWith(touchedUs: 30);
+      final physicalId = PhysicalMediaId.canonical('identical-$physical');
+      final index = SqliteIndex(fixture.indexPath);
+      await index.open();
+      try {
+        if (physical) {
+          await index.putPhysicalPartial(PhysicalPartialRecord(
+            id: physicalId,
+            path: fixture.oldRecord.path,
+            bytes: fixture.oldRecord.bytes,
+            checksum: fixture.oldRecord.checksum,
+            createdUs: fixture.oldRecord.createdUs,
+            touchedUs: fixture.oldRecord.touchedUs,
+            storageRootId: fixture.oldRecord.storageRootId,
+          ));
+        } else {
+          await index.put(fixture.oldRecord);
+        }
+      } finally {
+        await index.close();
+      }
+      await _writeIntent(
+        fixture.indexPath,
+        expected,
+        hadTarget: true,
+        physicalId: physical ? physicalId : null,
+      );
+      fixture.io.storage[backup] = fixture.oldBytes;
+      fixture.io.storage[temporary] = fixture.oldBytes;
+
+      final store = await fixture.open();
+      addTearDown(store.close);
+
+      expect(fixture.io.storage[target], orderedEquals(fixture.oldBytes));
+      expect(fixture.io.storage.containsKey(backup), isFalse);
+      expect(fixture.io.storage.containsKey(temporary), isFalse);
+      expect(await _intentFiles(fixture.indexPath), isEmpty);
+      if (physical) {
+        expect((await (store.index as PhysicalPartialIndex)
+            .getPhysicalPartial(physicalId))?.touchedUs, 20);
+      } else {
+        expect((await store.index.get(expected.key))?.touchedUs, 20);
+      }
+    });
+  }
+
+  test('missing committed target cannot restore same-length different backup',
+      () async {
+    final fixture = await _fixture('different-backup');
+    addTearDown(fixture.dispose);
+    await _putCache(fixture.indexPath, fixture.newRecord);
+    await _writeIntent(fixture.indexPath, fixture.newRecord, hadTarget: true);
+    fixture.io.storage[backup] = fixture.oldBytes;
+    fixture.io.storage[temporary] = fixture.newBytes;
+
+    await expectLater(
+      fixture.open(),
+      throwsA(isA<Failure>().having(
+        (value) => value.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(fixture.io.storage.containsKey(target), isFalse);
+    expect(fixture.io.storage[backup], orderedEquals(fixture.oldBytes));
+    expect(fixture.io.storage[temporary], orderedEquals(fixture.newBytes));
+    expect(await _intentFiles(fixture.indexPath), isNotEmpty);
+  });
+
+  test('refused current-backup restore preserves intent and releases owner',
+      () async {
+    final fixture = await _fixture('refused-backup-restore');
+    addTearDown(fixture.dispose);
+    await _putCache(fixture.indexPath, fixture.oldRecord);
+    await _writeIntent(fixture.indexPath, fixture.oldRecord, hadTarget: true);
+    fixture.io.storage[backup] = fixture.oldBytes;
+    fixture.io.refuseRename = true;
+
+    await expectLater(
+      fixture.open(),
+      throwsA(isA<Failure>().having(
+        (value) => value.code,
+        'code',
+        ErrorCode.policy,
+      )),
+    );
+    expect(fixture.io.storage.containsKey(target), isFalse);
+    expect(fixture.io.storage[backup], orderedEquals(fixture.oldBytes));
+    expect(await _intentFiles(fixture.indexPath), isNotEmpty);
+
+    fixture.io.refuseRename = false;
+    final store = await fixture.open();
+    addTearDown(store.close);
+    expect(fixture.io.storage[target], orderedEquals(fixture.oldBytes));
+    expect(await _intentFiles(fixture.indexPath), isEmpty);
+  });
+
   test('committed index with mismatched target fails store open closed',
       () async {
     final fixture = await _fixture('committed-mismatch');
@@ -125,6 +227,51 @@ void main() {
     expect(fixture.io.storage.containsKey(backup), isTrue,
         reason: 'ambiguous committed recovery must preserve rollback evidence');
     expect(await _intentFiles(fixture.indexPath), isNotEmpty);
+  });
+
+  for (final committed in <bool>[false, true]) {
+    test('recovered ${committed ? 'committed' : 'uncommitted'} partial rejects '
+        'same-length target that disagrees with staged CRC', () async {
+      final fixture = await _fixture('changed-target-$committed');
+      addTearDown(fixture.dispose);
+      await _putCache(fixture.indexPath,
+          committed ? fixture.newRecord : fixture.oldRecord);
+      await _writeIntent(fixture.indexPath, fixture.newRecord, hadTarget: true);
+      final changed = Uint8List.fromList(List<int>.filled(fixture.newBytes.length, 9));
+      fixture.io.storage[target] = changed;
+      fixture.io.storage[backup] = fixture.oldBytes;
+
+      await expectLater(
+        fixture.open(),
+        throwsA(isA<Failure>().having(
+          (value) => value.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        )),
+      );
+      expect(fixture.io.storage[target], orderedEquals(changed));
+      expect(fixture.io.storage[backup], orderedEquals(fixture.oldBytes));
+      expect(await _intentFiles(fixture.indexPath), isNotEmpty);
+    });
+  }
+
+  test('normal partial staging and commit do not rescan the body', () async {
+    final fixture = await _fixture('hot-staging-proof');
+    addTearDown(fixture.dispose);
+    final store = await fixture.open();
+    addTearDown(store.close);
+    final entry = PartialDownloadEntry(
+      length: fixture.oldBytes.length,
+      validators: const Validators(),
+      open: ({required int start}) =>
+          Stream<List<int>>.value(fixture.oldBytes.sublist(start)),
+    );
+
+    await store.storePartialDownload(id: fixture.oldRecord.id, entry: entry);
+    await store.storePartialDownload(id: fixture.oldRecord.id, entry: entry);
+
+    expect(fixture.io.bodyReadCalls, 0,
+        reason: 'the same live transaction already accumulated staging CRC');
   });
 
   test('committed body survives later touch before stale intent recovery',
@@ -325,6 +472,7 @@ Future<void> _writeIntent(
   String indexPath,
   CacheRec expected, {
   required bool hadTarget,
+  PhysicalMediaId? physicalId,
 }) async {
   final directory = Directory('$indexPath.saf-body-transactions');
   await directory.create(recursive: true);
@@ -336,8 +484,19 @@ Future<void> _writeIntent(
       'temporaryPath': 'partial/body.part.zic-tmp-crash',
       'backupPath': 'partial/body.part.zic-old',
       'hadTarget': hadTarget,
-      'authorityKind': 'cacheBinding',
-      'authority': expected.toJson(),
+      'authorityKind': physicalId == null ? 'cacheBinding' : 'physicalPartial',
+      'authority': physicalId == null
+          ? expected.toJson()
+          : <String, Object?>{
+              'physicalMedia': physicalId.toJson(),
+              'path': expected.path,
+              'bytes': expected.bytes,
+              'checksum': expected.checksum,
+              'createdUs': expected.createdUs,
+              'touchedUs': expected.touchedUs,
+              'checksumAlgorithm': expected.checksumAlgorithm,
+              'storageRootId': expected.storageRootId,
+            },
       'bodyBytes': expected.bytes,
       'bodyChecksum': expected.checksum,
       'verifyChecksum': false,
@@ -391,6 +550,8 @@ final class _MemorySafIo implements SafTreeIo {
   final Map<int, ({String path, int position})> _handles =
       <int, ({String path, int position})>{};
   int _nextHandle = 1;
+  int bodyReadCalls = 0;
+  bool refuseRename = false;
 
   @override
   Future<int?> open(String relativePath, {SafWriteMode mode = SafWriteMode.read}) async {
@@ -412,6 +573,7 @@ final class _MemorySafIo implements SafTreeIo {
   @override
   Future<Uint8List> read(int handle, int length) async {
     final state = _handles[handle]!;
+    if (state.path.endsWith('.part')) bodyReadCalls++;
     final bytes = storage[state.path]!;
     final end = (state.position + length).clamp(0, bytes.lengthInBytes);
     final result = Uint8List.fromList(bytes.sublist(state.position, end));
@@ -454,7 +616,8 @@ final class _MemorySafIo implements SafTreeIo {
 
   @override
   Future<bool> rename(String relativePath, String newRelativePath) async {
-    if (!storage.containsKey(relativePath) || storage.containsKey(newRelativePath)) {
+    if (refuseRename ||
+        !storage.containsKey(relativePath) || storage.containsKey(newRelativePath)) {
       return false;
     }
     storage[newRelativePath] = storage.remove(relativePath)!;

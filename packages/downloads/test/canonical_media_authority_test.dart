@@ -112,6 +112,30 @@ void main() {
     );
   });
 
+  test('opaque carrier text cannot prove a physical content identity', () {
+    for (final value in <String>[
+      'mihon:resource:0123456789abcdef0123456789abcdef',
+      'venera-resource:payload/s/incidental-image-key/1-1',
+    ]) {
+      final page = PageAsset(
+        pageId: 'page',
+        chapterId: 'chapter',
+        index: 0,
+        uri: Uri.parse(value),
+      );
+      expect(stablePhysicalPageIdentity(page), isNull);
+      expect(verifiedPhysicalMediaId(sourceId: 'source', page: page), isNull);
+    }
+    final file = PageAsset(
+      pageId: 'file',
+      chapterId: 'chapter',
+      index: 0,
+      uri: Uri.file('/pages/0123456789abcdef0123456789abcdef.jpg'),
+    );
+    expect(stablePhysicalPageIdentity(file),
+        'hash:0123456789abcdef0123456789abcdef');
+  });
+
   test('canonical projection batch rejects partial durable publication', () async {
     final root = await Directory.systemTemp.createTemp(
       'zic-canonical-projection-batch-',

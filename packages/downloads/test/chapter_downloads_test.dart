@@ -3735,6 +3735,8 @@ void main() {
     expect(orphaned.first.chapter.chapterId, entry.chapter.chapterId);
     expect(orphaned.first.chapter.comicId, entry.chapter.comicId);
     expect(orphaned.first.chapter.sourceId, entry.chapter.sourceId);
+    expect(orphaned.first.chapter.displayName, '未关联章节');
+    expect(orphaned.first.chapter.comicTitle, '未关联漫画');
 
     final management = await service.inspectDownloadManagement(
       const <ImportedLibraryEntry>[],
@@ -3742,6 +3744,38 @@ void main() {
     expect(management.orphanedEntries, hasLength(1));
     expect(management.snapshots, hasLength(1));
     expect(management.snapshots.single.isComplete, isTrue);
+    expect(management.snapshots.single.title, '未关联章节');
+    expect(management.snapshots.single.comicTitle, '未关联漫画');
+
+    final legacyOrphan = orphaned.single.copyWith(
+      chapter: orphaned.single.chapter.copyWith(
+        displayName: entry.chapter.chapterId,
+        comicTitle: entry.chapter.comicId,
+      ),
+    );
+    final legacyManagement = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[legacyOrphan],
+    );
+    expect(legacyManagement.snapshots.single.title, '未关联章节');
+    expect(legacyManagement.snapshots.single.comicTitle, '未关联漫画');
+    expect(legacyManagement.snapshots.single.identity,
+        management.snapshots.single.identity);
+
+    final currentRevision = entry.copyWith(
+      chapter: entry.chapter.copyWith(
+        sourceRevision: 'r2', comicTitle: '测试漫画',
+      ),
+    );
+    final historicalManagement = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[currentRevision, legacyOrphan],
+    );
+    final historical = historicalManagement.snapshots.singleWhere(
+      (snapshot) => snapshot.sourceRevision == entry.chapter.sourceRevision,
+    );
+    expect(historical.title, entry.chapter.displayName);
+    expect(historical.comicTitle, '测试漫画');
+    expect(historical.identity, management.snapshots.single.identity);
+    expect(historical.pinnedPages, management.snapshots.single.pinnedPages);
 
     final knownManagement = await service.inspectDownloadManagement(
       <ImportedLibraryEntry>[entry],

@@ -233,11 +233,14 @@ extension _PersistentSafBodyTransactionExtension
 
   Future<bool> _safBodyMatchesIntent(
     SafTreeIo io,
-    _SafBodyReplaceIntent intent,
-  ) async {
-    if (!await io.exists(intent.targetPath)) return false;
-    if (!intent.verifyChecksum) {
-      final handle = await io.open(intent.targetPath, mode: SafWriteMode.read);
+    _SafBodyReplaceIntent intent, {
+    String? relativePath,
+    bool requireChecksum = false,
+  }) async {
+    final path = relativePath ?? intent.targetPath;
+    if (!await io.exists(path)) return false;
+    if (!intent.verifyChecksum && !requireChecksum) {
+      final handle = await io.open(path, mode: SafWriteMode.read);
       if (handle == null) return false;
       try {
         return await io.length(handle) == intent.bodyBytes;
@@ -247,7 +250,7 @@ extension _PersistentSafBodyTransactionExtension
     }
     final recordPath = encodeSafRecordPath(
       treeUri: intent.treeUri,
-      relativePath: intent.targetPath,
+      relativePath: path,
     );
     final proof = await _artifactProof(recordPath);
     return proof.bytes == intent.bodyBytes &&
@@ -275,17 +278,40 @@ extension _PersistentSafBodyTransactionExtension
     File intentFile,
     _SafBodyReplaceIntent intent, {
     bool requireWritable = false,
+    bool useStagedProof = false,
   }) async {
     final io = safTreeIo;
     final treeUri = safTreeUri;
     if (io == null || treeUri == null || intent.treeUri != treeUri) return;
     final committed = await _safBodyAuthorityCommitted(intent);
     if (committed) {
-      if (!await _safBodyMatchesIntent(io, intent)) {
-        throw const Failure(
-          code: ErrorCode.artifactCorruption,
-          message: 'committed SAF body target disagrees with transaction',
-        );
+      if (!await _safBodyMatchesIntent(
+        io,
+        intent,
+        requireChecksum: !useStagedProof,
+      )) {
+        // Identical partial checkpoints already match the stable index before
+        // commit. A crash after backup rename can therefore leave that current
+        // authority in the backup; only its full content proof permits restore.
+        if (await io.exists(intent.targetPath) ||
+            !intent.hadTarget ||
+            !await _safBodyMatchesIntent(
+              io,
+              intent,
+              relativePath: intent.backupPath,
+              requireChecksum: true,
+            )) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'committed SAF body target disagrees with transaction',
+          );
+        }
+        if (!await io.rename(intent.backupPath, intent.targetPath)) {
+          throw const Failure(
+            code: ErrorCode.policy,
+            message: 'SAF current body backup could not be restored',
+          );
+        }
       }
       try {
         await _deleteSafPathExactly(
@@ -303,7 +329,7 @@ extension _PersistentSafBodyTransactionExtension
 
     if (intent.hadTarget && await io.exists(intent.backupPath)) {
       if (await io.exists(intent.targetPath)) {
-        if (!await _safBodyMatchesIntent(io, intent)) {
+        if (!await _safBodyMatchesIntent(io, intent, requireChecksum: true)) {
           throw const Failure(
             code: ErrorCode.artifactCorruption,
             message: 'uncommitted SAF body target changed externally',
@@ -322,7 +348,7 @@ extension _PersistentSafBodyTransactionExtension
         );
       }
     } else if (!intent.hadTarget && await io.exists(intent.targetPath)) {
-      if (!await _safBodyMatchesIntent(io, intent)) {
+      if (!await _safBodyMatchesIntent(io, intent, requireChecksum: true)) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'uncommitted first SAF body changed externally',
@@ -482,6 +508,9 @@ extension _PersistentSafBodyTransactionExtension
         intentFile,
         intent,
         requireWritable: true,
+        // Only this still-live, verified staging/commit owns the copy proof.
+        // Reopened intents and exception recovery must independently read CRC.
+        useStagedProof: true,
       );
     } on Object {
       // Index authority is already committed. The durable intent makes backup

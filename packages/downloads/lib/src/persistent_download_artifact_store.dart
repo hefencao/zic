@@ -7268,6 +7268,8 @@ final class PersistentDownloadArtifactStore
           final deletedPhysical = await _invalidateIndexedArtifact(
             id,
             record: record,
+            // A maintenance touch cannot rescue an explicitly invalidated body.
+            compareRecency: false,
           );
           if (deletedPhysical && _registry.find(id) != null) {
             await _registry.evict(id);
@@ -7309,6 +7311,7 @@ final class PersistentDownloadArtifactStore
     String? physicalPath,
     String? physicalArtifactId,
     String? physicalStorageRootId,
+    bool compareRecency = true,
   }) async {
     // The persistent registry deliberately does not retain a second mutable
     // DownloadSession while composition owns this durable spool. Centralize
@@ -7317,7 +7320,11 @@ final class PersistentDownloadArtifactStore
     if (_borrowedPartialIds.contains(id)) return false;
     final snapshot = await _index.get(id.key);
     if (snapshot == null) return false;
-    if (record != null && !_sameIndexedRecord(record, snapshot)) {
+    if (record != null && !_sameIndexedRecord(
+      record,
+      snapshot,
+      compareRecency: compareRecency,
+    )) {
       // Cache trim and invalidation callers may be acting on a snapshot. Never
       // remove a newer binding that reused the same logical key.
       return false;
@@ -7349,6 +7356,7 @@ final class PersistentDownloadArtifactStore
           id,
           record: snapshot,
           physicalAccess: physicalAccess,
+          compareRecency: compareRecency,
         ),
       ),
     );
@@ -7358,10 +7366,15 @@ final class PersistentDownloadArtifactStore
     DownloadId id, {
     required CacheRec record,
     required _ArtifactAccessRecord physicalAccess,
+    required bool compareRecency,
   }) async {
     final initial = await _index.get(id.key);
     if (initial == null) return false;
-    if (!_sameIndexedRecord(record, initial)) {
+    if (!_sameIndexedRecord(
+      record,
+      initial,
+      compareRecency: compareRecency,
+    )) {
       // Cache trim and invalidation callers may be acting on a snapshot. Never
       // remove a newer binding that reused the same logical key.
       return false;
@@ -7548,7 +7561,11 @@ final class PersistentDownloadArtifactStore
     return File('$path.meta').exists();
   }
 
-  bool _sameIndexedRecord(CacheRec first, CacheRec second) =>
+  bool _sameIndexedRecord(
+    CacheRec first,
+    CacheRec second, {
+    bool compareRecency = true,
+  }) =>
       first.id == second.id &&
       first.state == second.state &&
       first.path == second.path &&
@@ -7556,7 +7573,7 @@ final class PersistentDownloadArtifactStore
       first.checksum.trim().toLowerCase() ==
           second.checksum.trim().toLowerCase() &&
       first.createdUs == second.createdUs &&
-      first.touchedUs == second.touchedUs &&
+      (!compareRecency || first.touchedUs == second.touchedUs) &&
       first.pinned == second.pinned &&
       first.checksumAlgorithm.trim().toLowerCase() ==
           second.checksumAlgorithm.trim().toLowerCase() &&

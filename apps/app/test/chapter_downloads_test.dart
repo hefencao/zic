@@ -36,6 +36,64 @@ ImportedLibraryEntry _versionedDownloadEntry({
     );
 
 void main() {
+  testWidgets('manual cold orphan snapshot hides internal identities before refresh',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'orphaned:manual-comic:r1',
+        displayName: 'mihon:chapter:opaque-offline-chapter',
+        sourceId: 'mihon:123', comicId: 'mihon:manga:opaque-offline-comic',
+        comicTitle: 'mihon:manga:opaque-offline-comic',
+        chapterId: 'mihon:chapter:opaque-offline-chapter', sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(displayName: 'page', sourceId: 'memory:page',
+            pageId: 'page', contentKindHint: ContentKindHint.unknown),
+        ],
+      ),
+    );
+    final initial = ChapterDownloadSnapshot(
+      sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId, sourceRevision: 'r1',
+      comicTitle: entry.chapter.comicId, title: entry.chapter.chapterId,
+      completedPages: 1, totalPages: 1, receivedBytes: 4, pinnedPages: 1,
+      phase: ChapterDownloadPhase.complete,
+    );
+    final delegate = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    final releaseRefresh = Completer<void>();
+    final service = _BlockingInspectManyDownloadService(
+      delegate, releaseRefresh.future,
+    );
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    await tester.pumpWidget(MaterialApp(home: DownloadManagerScreen(
+      entries: <ImportedLibraryEntry>[entry], downloads: service,
+      wholeComicDownloads: queue,
+      initialSnapshots: <ChapterDownloadSnapshot>[initial],
+    )));
+    expect(releaseRefresh.isCompleted, isFalse);
+    expect(find.text('未关联章节'), findsOneWidget);
+    expect(find.textContaining('未关联漫画'), findsOneWidget);
+    expect(find.textContaining(entry.chapter.chapterId), findsNothing);
+    expect(find.textContaining(entry.chapter.comicId), findsNothing);
+    expect(find.textContaining(entry.chapter.sourceId), findsNothing);
+    expect(find.byKey(downloadManagerTaskKey(initial.identity)), findsOneWidget);
+    expect(find.byKey(downloadManagerDeleteKey(initial.identity)), findsOneWidget);
+    await tester.tap(find.byKey(downloadManagerDeleteKey(initial.identity)));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.textContaining('将删除“未关联章节”'), findsOneWidget);
+    expect(find.textContaining(entry.chapter.chapterId), findsNothing);
+    expect(find.textContaining(entry.chapter.comicId), findsNothing);
+    Navigator.of(tester.element(find.byType(AlertDialog))).pop(false);
+    await tester.pump(const Duration(milliseconds: 400));
+    releaseRefresh.complete();
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
   testWidgets('download manager paints before durable bulk refresh completes',
       (tester) async {
     final entry = ImportedLibraryEntry(

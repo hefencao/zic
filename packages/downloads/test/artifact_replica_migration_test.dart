@@ -363,11 +363,12 @@ void main() {
         destinationAccessLocator: destination,
         destinationStorageRootId: roots.destination.path,
       );
-      expect(retry.sourceCleanupComplete, isTrue);
       expect(retry.replica.accessLocator, destination);
-      expect(await File(sourcePath).exists(), isFalse);
       expect(await File(destination).readAsBytes(), bytes);
+      // Reopen also drains cleanup debt asynchronously. A competing deletion
+      // may make the immediate proof inconclusive; close joins the drainer.
       await reopened.close();
+      expect(await File(sourcePath).exists(), isFalse);
 
       final after = SqliteIndex(indexPath);
       await after.open();

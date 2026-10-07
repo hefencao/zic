@@ -877,19 +877,23 @@ String? verifiedPageIdentity(PageAsset page) =>
 /// enriched after a page first materializes. Letting such enrichment rename a
 /// physical owner would recreate the rebind problem canonical media removes.
 String? stablePhysicalPageIdentity(PageAsset page) {
+  final uri = page.uri;
+  // Opaque producer carriers have no public path/content identity. Their
+  // payload may contain incidental hashes or path markers; do not inspect it.
+  if (uri.hasScheme && !uri.hasAuthority && uri.scheme != 'file') return null;
   // Physical ownership deliberately ignores checksum metadata because that
   // metadata may be enriched after a page first materializes. Do not route
   // through [verifiedPageIdentities]: doing so normalizes an identity we must
   // discard and also evaluates the URI hash even after an E-Hentai locator is
   // already sufficient.
-  final segments = page.uri.pathSegments;
+  final segments = uri.pathSegments;
   final marker = segments.indexOf('s');
   if (marker >= 0 && marker + 1 < segments.length) {
     final imageKey = segments[marker + 1].trim().toLowerCase();
     if (imageKey.isNotEmpty) return 'eh:$imageKey';
   }
   final hash = _uriContentHashPattern
-      .firstMatch(page.uri.toString())
+      .firstMatch(uri.toString())
       ?.group(0)
       ?.toLowerCase();
   return hash == null ? null : 'hash:$hash';

@@ -398,6 +398,7 @@ Download Manager 首次打开 Canonical/自动缓存页若缺 physical cache pro
 cache identity 仍按 exact source/comic/chapter/revision 保留；若旧 source revision 与当前 library chapter 仅 generation 不同，
 downloads projection 只复用当前同逻辑章节的人类可读标题作为 presentation metadata，并显式标记 historical revision。
 Download Manager 不把 opaque plugin id、raw source id、Exact/Canonical 等存储术语直接当用户字段；historical exact cache 可清理，但不得被提升为当前手动下载目标。
+手动孤立下载与自动缓存共用downloads owner的单次metadata选择；无关联记录显示通用标题。冷Home摘要与删除确认只选安全标签，不改exact snapshot或命令目标，不解析plugin payload。
 cache-management 行只允许由 durable exact index 或 durable physical artifact/partial inventory 建立；transfer runtime 的 hot session 不属于该 projection。尤其 `file/content/asset` 的 source-resident promoted session 仍由原始可重开来源拥有正文，普通 Reader 重读不得因为 session 被 retention 保留而重新出现在自动缓存，也不得为此物化第二份正文。
 后续 durable management invalidation 仍使用完整 management projection 收敛 chapter lifecycle；
 完整 refresh 一旦开始会 fence 更早的 cache-only publication，不能把 cache-only fast path 扩成第二状态 owner。
@@ -687,6 +688,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   且 720×3572 RGBA PNG 解码后像素 SHA-256 也不同，因此不得从 logical page/revision 预先生成 canonical `PhysicalMediaId`，
   也不得因 URI churn 零网络别名到历史 READY。`DownloadId` 必须继续包含当前 hydrated manifest 的 exact URI；
   只有已有 version-family projection 或 strong locator/content proof 才能共享 physical owner。
+  无authority的非file opaque URI不参与路径/内容hash推断；producer payload中的偶然hash或`/s/`片段不构成physical proof。
   Home 的完整 source `upsertChapter()` 即使 revision/pageCount 未变也必须替换 hydrated authority 的 fresh provider locator，
   同时保留更新的 Reader progress；compact snapshot/progress projection 仍不得覆盖完整 manifest。
   Details composition 可以用同 source/comic 下按 chapterId 或唯一 sourceRevision 找到的历史完整 page list 作为页数 presentation candidate，
@@ -1398,6 +1400,7 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   exact/physical READY foreground open 的 LRU/recency `touch` 只属于 maintenance metadata，
   正文/descriptor authority 已成立后 MUST 立即返回给 presentation，
   recency 写入由既有 `StorageWriteScheduler` 合并异步提交，禁止让SQLite write pressure重新阻塞 `presentation-file-lease`；
+  public显式exact artifact失效以正文authority复核，不把maintenance touch当作新代际；其余record比较仍包含recency，trim/eviction/adoption及内部read快照保护保持原边界。
   只有明确full `readAll`验证路径才可声明本次`crc32Verified`。full-read按物理replica逐个重算artifact CRC32：同长度checksum不一致属于结构性`checksumMismatch`，只退休坏replica并继续尝试其他sealed copy；普通stream仍不增加whole-file hash。
   `PageAsset.checksum`始终是来源声明的算法命名空间事实，即便声明`crc32`也只有在artifact owner对sealed本地bytes独立计算一致CRC后才成为durable artifact proof。
   `ArtifactCacheStreamEntry`必须显式携带stream/full-read integrity basis，
@@ -2031,7 +2034,7 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 已进入结构化图片导出的正文若无任一支持签名 MUST 作为 `artifactCorruption` 拒绝，`ContentKindHint` 不得覆盖实际非图片 bytes。
 每个目录的 `.zic.json` 描述当前 owner、稳定章节目录映射、单调 generation 与内容 fingerprint，placement 镜像最近提交 token；
 POSIX 继续通过目录锁串行提交。SAF manifest 由 structured placement owner 在任何 SAF mutation 前先 flush App-private transaction intent，再以 deterministic `.zic.json.zic-old` + `DownloadPlacement` commit point 做 recoverable replace/delete；恢复只接受 intent 或 legacy backup 的 exact token 证据，禁止按“target generation 更高”猜测 forward。该协议位于唯一 metadata process owner 内并按 exact manifest path 串行，见 ADR 0342。
-page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。真实 DocumentsProvider kill/reopen 证据继续作为设备验证项。
+page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。重存相同 partial 时旧 index 已可匹配预期 authority，因此 target 缺失但 backup 的完整 length+CRC 匹配该 authority 时恢复 backup，不增加 commit token。stale/crash intent 恢复独立读取完整 CRC，未知 target 或不匹配 backup 保留证据并拒绝恢复；正常 live staging/index commit 的清理复用本次累计的 copy proof，不额外扫描 partial 正文。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。
 整本队列把执行期 `ErrorCode.policy` 提升为持久化 `requiresUserAction` 阶段，保存冲突目录、existing/request owner 和触发章节，停止后续调度；
 详情页再次发起整本下载时必须重新弹出冲突对比并以新 placement 重建任务，管理页不得把该阶段当普通失败直接重试。
 长期数据模型仍需进一步把物理 artifact、逻辑版本 binding 与 export binding 彻底解耦。

@@ -1012,6 +1012,23 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     return identity == null ? null : _entries[identity];
   }
 
+  ({String title, String comicTitle}) _rowDisplayMetadata(
+    ChapterDownloadSnapshot snapshot,
+  ) {
+    final chapter = _entryFor(snapshot)?.chapter;
+    if (chapter != null && !chapter.directoryId.startsWith('orphaned:')) {
+      return (title: chapter.displayName, comicTitle: chapter.comicTitle);
+    }
+    // A cold projection may still contain identity-as-title orphan summaries
+    // written by an older build. Labels do not change the command snapshot.
+    return (
+      title: snapshot.title == snapshot.chapterId
+          ? '未关联章节' : snapshot.title,
+      comicTitle: snapshot.comicTitle == snapshot.comicId
+          ? '未关联漫画' : snapshot.comicTitle,
+    );
+  }
+
   /// Row display when several revisions of one chapter coexist: library-bound
   /// entries win first over orphans, then entry-bound snapshot wins over stale,
   /// then manual download status, then activity/completion, then page count.
@@ -1325,15 +1342,16 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     ChapterDownloadSnapshot snapshot,
     ChapterDeleteImpactProjection? impact,
   ) {
+    final title = _rowDisplayMetadata(snapshot).title;
     if (impact == null) {
-      return '将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。';
+      return '将删除“$title”的离线页面，阅读记录不会被删除。';
     }
     if (impact.exactBindings == 0) {
-      return '当前索引未发现“${snapshot.title}”此修订的持久离线绑定。'
+      return '当前索引未发现“$title”此修订的持久离线绑定。'
           '删除仍会清理该修订的下载任务状态；阅读记录不会被删除。';
     }
     final lines = <String>[
-      '将删除“${snapshot.title}”此修订的 ${impact.exactBindings} 个离线绑定'
+      '将删除“$title”此修订的 ${impact.exactBindings} 个离线绑定'
           '（涉及 ${impact.affectedPages} 页）。',
     ];
     if (impact.reclaimablePhysicalObjects > 0) {
@@ -1804,9 +1822,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           return const Divider(height: 1);
         }
         final snapshot = manualSnapshots[snapshotIndex];
+        final metadata = _rowDisplayMetadata(snapshot);
         return _DownloadTaskTile(
           key: downloadManagerTaskKey(snapshot.identity),
           snapshot: snapshot,
+          title: metadata.title,
+          comicTitle: metadata.comicTitle,
           isCancellingOrRetrying: _isActionBusy(snapshot.identity, 'stop') ||
               _isActionBusy(snapshot.identity, 'retry'),
           isDeleting: _isActionBusy(snapshot.identity, 'delete'),
@@ -1900,9 +1921,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         final itemIndex = (contentIndex - 1) ~/ 2;
         if ((contentIndex - 1).isOdd) return const Divider(height: 1);
         final snapshot = autoCacheSnapshots[itemIndex];
+        final metadata = _rowDisplayMetadata(snapshot);
         return _AutoCacheTaskTile(
           key: downloadManagerAutoCacheTaskKey(snapshot.identity),
           snapshot: snapshot,
+          title: metadata.title,
+          comicTitle: metadata.comicTitle,
           isDeleting: _isActionBusy(snapshot.identity, 'delete'),
           isConverting: _isActionBusy(snapshot.identity, 'convert'),
           onDelete: () => _delete(snapshot),
@@ -2159,7 +2183,7 @@ final class _WholeComicQueueTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '${job.sourceId} · ${_wholeQueuePhaseLabel(job.phase)}'
+                      '${_wholeQueuePhaseLabel(job.phase)}'
                       ' · ${job.completedChapters}/${job.totalChapters} 章',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -2241,6 +2265,8 @@ final class _WholeComicQueueTile extends StatelessWidget {
 final class _DownloadTaskTile extends StatelessWidget {
   const _DownloadTaskTile({
     required this.snapshot,
+    required this.title,
+    required this.comicTitle,
     this.isCancellingOrRetrying = false,
     this.isDeleting = false,
     this.isAuditing = false,
@@ -2253,6 +2279,8 @@ final class _DownloadTaskTile extends StatelessWidget {
   });
 
   final ChapterDownloadSnapshot snapshot;
+  final String title;
+  final String comicTitle;
   final bool isCancellingOrRetrying;
   final bool isDeleting;
   final bool isAuditing;
@@ -2277,13 +2305,13 @@ final class _DownloadTaskTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      snapshot.title,
+                      title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '${snapshot.comicTitle} · ${snapshot.sourceId}'
+                      '$comicTitle'
                       ' · ${_phaseLabel(snapshot.phase)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -2607,6 +2635,8 @@ final class _ExactCacheTaskTile extends StatelessWidget {
 final class _AutoCacheTaskTile extends StatelessWidget {
   const _AutoCacheTaskTile({
     required this.snapshot,
+    required this.title,
+    required this.comicTitle,
     this.isDeleting = false,
     this.isConverting = false,
     required this.onDelete,
@@ -2615,6 +2645,8 @@ final class _AutoCacheTaskTile extends StatelessWidget {
   });
 
   final ChapterDownloadSnapshot snapshot;
+  final String title;
+  final String comicTitle;
   final bool isDeleting;
   final bool isConverting;
   final VoidCallback onDelete;
@@ -2634,13 +2666,13 @@ final class _AutoCacheTaskTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      snapshot.title,
+                      title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '${snapshot.comicTitle} · 页面自动缓存',
+                      '$comicTitle · 页面自动缓存',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],

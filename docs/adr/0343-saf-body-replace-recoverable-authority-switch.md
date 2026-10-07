@@ -19,6 +19,7 @@ This boundary is different from ADR 0342. Structured `.zic.json` commits against
 7. Local intent `.tmp` files are ignored by runtime intent readers. Only store-open recovery, while the metadata process owner is held and before business writers start, retires orphan `.tmp` journal staging files. This prevents one concurrent page transaction from deleting another transaction's intent while it is being flushed.
 8. Partial validator sidecars remain non-authoritative acceleration metadata. They may be replaced independently; losing a sidecar cannot change body/index authority.
 9. ADR 0342 remains the manifest/placement protocol. Body recovery MUST NOT use `DownloadPlacement` generation/fingerprint as a body commit token.
+10. Replacing an identical partial can match the expected stable index authority before the new commit. If its target is absent, recovery may restore the deterministic backup only after an independent full length+CRC proof matches that same current authority. A present unknown target is never overwritten by this path. Reopened/stale intents and exception recovery verify full CRC even for partials; only cleanup immediately following the same live staging and index commit may reuse its accumulated copy proof without another body scan.
 
 ## Recovery contract
 
@@ -29,7 +30,14 @@ This boundary is different from ADR 0342. Structured `.zic.json` commits against
 - a committed target that disagrees with the intent proof fails closed;
 - malformed body intent aborts open but releases metadata process ownership;
 - concurrent runtime intent readers never delete another live `.tmp` journal staging file.
+- identical exact/physical partial authority + backup only restores the verified current body without rotating index authority;
+- a same-length backup with different CRC cannot replace a missing committed target;
+- same-length target changes fail closed during both committed and uncommitted recovery, preserving target/backup/intent;
+- a refused current-backup rename preserves intent and releases process ownership for a later recovery attempt;
+- normal partial staging and successful commit do not rescan the body for cleanup.
 
 ## Validation status
 
-Deterministic crash/reopen regressions cover malformed-intent owner release, orphan local intent-temp cleanup, backup-only rollback, same-length rollback, committed-target mismatch fail-closed, committed recovery after a later touch, physical-partial stable commit evidence, committed forward cleanup and first-write rollback. The downloads suite is 487/487 with replica-migration resumable-temp and structured-page paths included. Fresh Android DocumentsProvider kill/reopen evidence remains tracked separately because the connected installation has no reusable persisted SAF tree grant.
+The focused body suite passes 16/16, including same-authority backup-only restore, same-length CRC mismatch fail-closed, refused-rename owner release and zero additional body scans for live partial commit. The downloads suite passes 504/504 with replica-migration resumable-temp and structured-page paths included. The repository required-toolchain gate passes, including all analyzers/ownership guards, Dart/Flutter suites, three-ABI Android builds and Rust media_core 22/22.
+
+[Device evidence](../audits/saf-body-kill-reopen-2026-09-30.json) covers API36 M2007J1SC's real ExternalStorage DocumentsProvider using an existing persisted grant and isolated fixture/private index: exact and growing physical partials pass backup/install/index-commit process-death recovery, identical exact partial passes backup-only recovery, and same-length target tampering fails closed before or after index commit. Nine kill/reopen cases and one physical equal-length no-op pass. The isolated fixture is removed and the original APK restored with matching SHA256. Current physical equal-length admission skips replacement; same-authority physical backup recovery remains a deterministic cold-intent contract. This evidence is scoped to the tested provider and process death, not sudden power loss or every provider.

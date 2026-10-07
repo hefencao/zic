@@ -1813,10 +1813,10 @@ final class PersistentChapterDownloadService
         ImportedLibraryEntry(
           chapter: ImportedChapterRecord(
             directoryId: 'orphaned:${content.comicId}:$revision',
-            displayName: content.chapterId,
+            displayName: '未关联章节',
             sourceId: content.sourceId,
             comicId: content.comicId,
-            comicTitle: content.comicId,
+            comicTitle: '未关联漫画',
             chapterId: content.chapterId,
             sourceRevision: revision,
             pages: <ImportedPageRecord>[
@@ -1843,16 +1843,13 @@ final class PersistentChapterDownloadService
   ) =>
       '$sourceId\u0000$comicId\u0000$chapterId';
 
-  ChapterCacheManagementProjection _buildCacheManagementProjection(
+  Map<String, ImportedChapterRecord> _managementDisplayMetadata(
     Iterable<ImportedLibraryEntry> entries,
-    Map<String, CacheRec> indexed,
-    _DownloadManagementPhysicalState physicalState,
   ) {
-    final visibleEntries = entries.toList(growable: false);
-    final displayMetadataByLogicalChapter = <String, ImportedChapterRecord>{};
-    for (final entry in visibleEntries) {
+    final metadata = <String, ImportedChapterRecord>{};
+    for (final entry in entries) {
       if (entry.chapter.directoryId.startsWith('orphaned:')) continue;
-      displayMetadataByLogicalChapter.putIfAbsent(
+      metadata.putIfAbsent(
         _logicalChapterManagementKey(
           entry.chapter.sourceId,
           entry.chapter.comicId,
@@ -1861,6 +1858,17 @@ final class PersistentChapterDownloadService
         () => entry.chapter,
       );
     }
+    return metadata;
+  }
+
+  ChapterCacheManagementProjection _buildCacheManagementProjection(
+    Iterable<ImportedLibraryEntry> entries,
+    Map<String, CacheRec> indexed,
+    _DownloadManagementPhysicalState physicalState,
+  ) {
+    final visibleEntries = entries.toList(growable: false);
+    final displayMetadataByLogicalChapter =
+        _managementDisplayMetadata(visibleEntries);
     final canonicalBuilders = physicalState.canonicalInventoryBuilders();
     final exactBuilders = <String, _ExactChapterCacheSnapshotBuilder>{};
     final exactRecordsByChapter = <String, List<CacheRec>>{};
@@ -2005,6 +2013,9 @@ final class PersistentChapterDownloadService
     Map<String, CacheRec> indexed, {
     _DownloadManagementPhysicalState? physicalState,
   }) async {
+    final visibleEntries = entries.toList(growable: false);
+    final displayMetadataByLogicalChapter =
+        _managementDisplayMetadata(visibleEntries);
     final recordsByChapter = <String, List<CacheRec>>{};
     final readyIndex = _DurableReadyRecordIndex(
       indexed.values,
@@ -2021,12 +2032,19 @@ final class PersistentChapterDownloadService
     }
     final snapshots = <ChapterDownloadSnapshot>[];
     final workBudget = _DownloadProjectionWorkBudget();
-    for (final entry in entries) {
+    for (final entry in visibleEntries) {
       final chapterKey =
           '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}\u0000${entry.chapter.sourceRevision}';
       snapshots.add(
         await _buildSnapshot(
           entry,
+          displayMetadata: displayMetadataByLogicalChapter[
+            _logicalChapterManagementKey(
+              entry.chapter.sourceId,
+              entry.chapter.comicId,
+              entry.chapter.chapterId,
+            )
+          ],
           indexedRecords: indexed,
           chapterRecords: recordsByChapter[chapterKey],
           workBudget: workBudget,
@@ -2040,6 +2058,7 @@ final class PersistentChapterDownloadService
 
   Future<ChapterDownloadSnapshot> _buildSnapshot(
     ImportedLibraryEntry entry, {
+    ImportedChapterRecord? displayMetadata,
     ChapterDownloadPhase? phase,
     String? failure,
     Map<String, CacheRec>? indexedRecords,
@@ -2205,13 +2224,15 @@ final class PersistentChapterDownloadService
                     : hasFailedSession
                         ? ChapterDownloadPhase.failed
                         : ChapterDownloadPhase.idle);
+    final displayChapter = displayMetadata ?? entry.chapter;
+    final orphanMetadata = displayChapter.directoryId.startsWith('orphaned:');
     return ChapterDownloadSnapshot(
       sourceId: entry.chapter.sourceId,
       comicId: entry.chapter.comicId,
-      comicTitle: entry.chapter.comicTitle,
+      comicTitle: orphanMetadata ? '未关联漫画' : displayChapter.comicTitle,
       chapterId: entry.chapter.chapterId,
       sourceRevision: entry.chapter.sourceRevision,
-      title: entry.chapter.displayName,
+      title: orphanMetadata ? '未关联章节' : displayChapter.displayName,
       completedPages: completedPages,
       totalPages: effectivePages.length,
       receivedBytes: receivedBytes,
