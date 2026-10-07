@@ -17,3 +17,10 @@
 - 只有具有基础性、重要性、隐蔽性或长期稳定契约的代码/功能才要求新增回归测试；普通 UI 文案、一次性布局和非稳定实现无需单独新增回归测试。已有测试仍不得因该规则删除或规避真实缺陷。
 - Delete code only after repository-wide production, test, export and documentation reference checks.
 - Run all available repository, documentation, ownership, platform and toolchain checks. Missing Flutter/Android/Rust tools must be reported as unverified, not silently treated as passed.
+
+## Device and visual subagent
+
+- 真机测试、设备截图/trace采集或视觉核验时，触发并复用一个固定的 `device_visual` 子代理，指定 `gpt-5.6-luna`、reasoning effort `high`；其他工作不因此委派。
+- 子代理只执行主代理给出的验收步骤并汇报观察结果；代码根因、修改边界、生产代码、状态 JSON 和提交由主代理负责。同一设备只允许一个执行者，避免并行 ADB 操作。
+- 返回简短的通过/失败/未验结论、复现步骤和必要截图或 trace 路径。优先更新已有文件，不新增逐轮审计、安装快照或哈希清单。
+- 若当前工具不支持指定型号或 effort，明确报告限制，由主代理继续已授权工作；不得静默替换型号，也不得把未运行的代理报告为已启用。
