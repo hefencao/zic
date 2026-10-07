@@ -44,7 +44,7 @@ for token in (
     'GestureBinding.instance.resamplingEnabled = restoreEnabled;',
 ):
     require(touch_adapter, token, 'ADR 0325 scoped touch resampling')
-adr0325 = read('docs/adr/0325-vertical-drag-displacement-resampling.md')
+adr0325 = read('docs/archive/adr/0325-vertical-drag-displacement-resampling.md')
 for token in ('20/22', 'ballistic', 'finger-down drag', '0/113', '0.0171%'):
     require(adr0325, token, 'dev.310 ballistic result preserved while drag boundary reopens')
 
@@ -135,9 +135,9 @@ all_docs = ''.join(read(path) for path in (
     'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/SPEC.md',
     'docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0288-vertical-reader-touch-resampling-boundary.md',
-    'docs/adr/0289-ballistic-platform-frame-cadence-boundary.md',
-    'docs/audits/dev310-ballistic-platform-frame-cadence-audit.md',
+    'docs/archive/adr/0288-vertical-reader-touch-resampling-boundary.md',
+    'docs/archive/adr/0289-ballistic-platform-frame-cadence-boundary.md',
+    'docs/archive/audits/dev310-ballistic-platform-frame-cadence-audit.md',
 ))
 for token in (
     '20/22', '28.2005ms', '42.888ms', 'ballistic',

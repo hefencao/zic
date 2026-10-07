@@ -9,8 +9,8 @@ ARTIFACT = (ROOT / 'packages/downloads/lib/src/artifact_cache_transport.dart').r
 ANALYZER = (ROOT / 'tool/analyze_frame_pipeline_trace.py').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
-ADR = ROOT / 'docs/adr/0175-rhttp-transfer-stage-observation.md'
-AUDIT = ROOT / 'docs/audits/dev192-rhttp-transfer-stage-root-cause-audit.md'
+ADR = ROOT / 'docs/archive/adr/0175-rhttp-transfer-stage-observation.md'
+AUDIT = ROOT / 'docs/archive/audits/dev192-rhttp-transfer-stage-root-cause-audit.md'
 
 for token in (
     'abstract interface class ByteResponseReadDiagnostics',

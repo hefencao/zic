@@ -69,9 +69,9 @@ for token in (
         raise SystemExit(f'dev.197 stable trace export boundary missing from spec: {token}')
 
 for path in (
-    ROOT / 'docs/adr/0178-semantic-debug-trace-export-compaction.md',
-    ROOT / 'docs/audits/dev197-trace-volume-root-cause-audit.md',
-    ROOT / 'docs/audits/dev197-validation-results.md',
+    ROOT / 'docs/archive/adr/0178-semantic-debug-trace-export-compaction.md',
+    ROOT / 'docs/archive/audits/dev197-trace-volume-root-cause-audit.md',
+    ROOT / 'docs/archive/audits/dev197-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.197 release document missing: {path.relative_to(ROOT)}')

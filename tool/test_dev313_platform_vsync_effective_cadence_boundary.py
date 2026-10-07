@@ -71,8 +71,8 @@ for forbidden in (
         raise SystemExit(f'dev.313 observation boundary leaked behavior: {forbidden}')
 
 for path in (
-    'docs/adr/0292-platform-vsync-effective-cadence-boundary.md',
-    'docs/audits/dev313-platform-vsync-effective-cadence-audit.md',
+    'docs/archive/adr/0292-platform-vsync-effective-cadence-boundary.md',
+    'docs/archive/audits/dev313-platform-vsync-effective-cadence-audit.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'dev.313 artifact missing: {path}')
@@ -81,9 +81,9 @@ docs = ''.join(read(path) for path in (
     'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/SPEC.md',
     'docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0291-vertical-reader-android-arr-boundary.md',
-    'docs/adr/0292-platform-vsync-effective-cadence-boundary.md',
-    'docs/audits/dev313-platform-vsync-effective-cadence-audit.md',
+    'docs/archive/adr/0291-vertical-reader-android-arr-boundary.md',
+    'docs/archive/adr/0292-platform-vsync-effective-cadence-boundary.md',
+    'docs/archive/audits/dev313-platform-vsync-effective-cadence-audit.md',
 ))
 for token in (
     'displayHasArrSupport=false', 'displayHasArrSupport=true',

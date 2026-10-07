@@ -80,5 +80,5 @@ assert "_classifyAnimated('decoded-animation')" in settings
 assert '_adaptiveClassifier.observeAnimated(asset)' in runtime
 assert 'runtimeAnimatedReaderProfile' not in settings
 
-assert (ROOT / 'docs/audits/dev79-stability-recovery-audit.md').exists()
+assert (ROOT / 'docs/archive/audits/dev79-stability-recovery-audit.md').exists()
 print('dev.79 stability recovery ownership: OK')

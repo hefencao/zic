@@ -97,9 +97,9 @@ if android is None or int(android.group(1)) < 196:
     raise SystemExit('dev.196-or-newer Android version missing')
 
 for path in (
-    ROOT / 'docs/adr/0177-validatorless-range-probe-duplicate-traffic.md',
-    ROOT / 'docs/audits/dev196-duplicate-traffic-root-cause-audit.md',
-    ROOT / 'docs/audits/dev196-validation-results.md',
+    ROOT / 'docs/archive/adr/0177-validatorless-range-probe-duplicate-traffic.md',
+    ROOT / 'docs/archive/audits/dev196-duplicate-traffic-root-cause-audit.md',
+    ROOT / 'docs/archive/audits/dev196-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.196 release document missing: {path.relative_to(ROOT)}')

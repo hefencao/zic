@@ -57,7 +57,7 @@ require(
     "__zicCancel",
 )
 require(
-    "docs/adr/0171-venera-dynamic-priority-observation.md",
+    "docs/archive/adr/0171-venera-dynamic-priority-observation.md",
     "PriorityObservableTaskControl",
     "onImageLoad",
     "最终图片HTTP",

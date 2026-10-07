@@ -1,0 +1,78 @@
+{
+  "date": "2026-10-03",
+  "status": "manual_orphan_display_verified_device_loading_investigation_active",
+  "user_report": [
+    "Opaque identifiers in Download Manager",
+    "Cached pages redownload or fail to present"
+  ],
+  "scope": "Latest user report takes precedence over unfinished Plan039/040 candidate; retain original112.",
+  "confirmed": [
+    {
+      "issue": "manual orphan display metadata",
+      "root_cause": "_discoverOrphanedEntriesFromRecords sets comicTitle/displayName to raw identities and _buildSnapshot forwards them. Prior safe-title correction covered only Exact cache row builder.",
+      "covered_paths": [
+        "manual durable orphan discovery/inspection",
+        "legacy orphan metadata",
+        "current logical display alias across revision",
+        "cold Home summary before refresh",
+        "manual delete confirmation",
+        "task subtitles without raw source id"
+      ]
+    }
+  ],
+  "parent_acceptance_complete": false,
+  "adr": "docs/archive/adr/0382-download-management-orphan-display-keeps-exact-identity.md",
+  "user_report_location": {
+    "comic": "要成為男子漢",
+    "chapters": [
+      "第19話",
+      "第20話"
+    ],
+    "currently_reproducible_by_user": false,
+    "question": "Did earlier changes invalidate cached identity/URI or bypass trust policy?",
+    "root_cause_proven": false
+  },
+  "manual_title_acceptance": {
+    "scope_acceptance_complete": true,
+    "device_verified": true,
+    "ordinary_release": true,
+    "manual_list_xml": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-manual-download-manager.xml",
+    "manual_list_image": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-manual-download-manager.png",
+    "delete_preview_xml": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-orphan-delete-dialog.xml",
+    "delete_preview_image": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-orphan-delete-dialog.png",
+    "delete_preview_exact_bindings": 5,
+    "manual_pinned_pages_before_after": 5,
+    "manual_bytes_before_after": "1.3MiB",
+    "delete_confirmed": false,
+    "automatic_cache_xml": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-auto-cache.xml",
+    "device_revalidation_pending": false
+  },
+  "loading_report_acceptance": {
+    "status": "not_reproduced_original_cause_unproven",
+    "original_report_acceptance_complete": false,
+    "production_loading_policy_changed": false,
+    "new_cache_or_uri_identity_change": false,
+    "currently_complete_durable_cache": {
+      "第19話": "第19話\n要成為男子漢 · 页面缓存\n176 页完整 · 11 MiB",
+      "第20話": "第20話\n要成為男子漢 · 页面缓存\n155 页完整 · 9.5 MiB"
+    },
+    "stationary_slider_samples": 11,
+    "slider_evidence": "/tmp/zic-user-repeat-regressions-2026-10-03-slider-evidence.json",
+    "first_second_actual_images_visually_checked": true,
+    "six_second_real_images_and_observed_page_xml_checked": true,
+    "same_exact_page99_return_confirmed": true,
+    "script_requested_page_numbers_are_estimates_actual_labels_authoritative": true,
+    "boundary_evidence": "/tmp/zic-user-repeat-regressions-2026-10-03-candidate-boundaries.json",
+    "boundary_samples": 4,
+    "boundary_first_second_actual_images_checked": true,
+    "network_trace_limitation": "Exports retain only last10000 events; first chapter20 slider samples require screenshot/XML evidence. No whole-run zero-origin claim.",
+    "remaining": "Need a fresh failing operation with a retained decision/candidate trail to establish why the originally expected cache was unavailable. Do not widen identity/equivalence/trust or change scheduling based only on this non-reproduction."
+  },
+  "current_reader_remaining_GC_attribution": {
+    "audit": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/reader-remaining-GC-attribution-2026-10-05",
+    "followup": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-locator-fused-decoding-2026-10-05",
+    "status": "attribution_completed_fused_candidate_rejected",
+    "next_action": "Attribute fresh remaining layout/semantics/GC/input/final-display failures before any production change; retain original compatibility checks."
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

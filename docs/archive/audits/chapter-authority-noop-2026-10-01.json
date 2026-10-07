@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-01",
+  "status": "verified_toolchain_and_device",
+  "root_cause": "Full chapter upserts mark identical hydrated payloads changed and rebuild all canonical/version authority; the same upsert refreshes the whole scope again after assimilation. Each cached chapter crossing incurs two UI-isolate rebuilds.",
+  "boundary": "Existing HomeLibrarySession only. Compare the full serialized chapter before refreshing, retain the new entry/latest progress, and remove only the duplicate post-assimilation refresh. Real same-revision provider changes still publish. Target persistence/final progress flush, proof revocation, source identity, windows and NetLane remain unchanged. No new cache/fingerprint/queue/owner.",
+  "adr": "docs/archive/adr/0357-unchanged-chapter-upsert-preserves-media-authority.md",
+  "failing_first": {
+    "file": "/tmp/zic-chapter-authority-noop-failing-first.log",
+    "sha256": "a27d7054aed82224fcb650f8f9b3fc31503cb3e93018a80369b6a94c763a7c23",
+    "exit_code": 1,
+    "expected_rebuilds": 0,
+    "actual_rebuilds": 2,
+    "scope": "Runtime performance contract failure. Missing fixture contentKindHint compilation error is excluded."
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

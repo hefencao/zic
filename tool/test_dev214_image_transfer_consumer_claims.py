@@ -80,8 +80,8 @@ for token in forbidden_global:
     forbid(pipe + session + registry + transfer_owner, token, 'second/premature transfer owner')
 
 for rel in (
-    'docs/adr/0195-image-transfer-consumer-claims-before-registry-lift.md',
-    'docs/audits/dev214-image-transfer-consumer-claim-root-cause-audit.md',
+    'docs/archive/adr/0195-image-transfer-consumer-claims-before-registry-lift.md',
+    'docs/archive/audits/dev214-image-transfer-consumer-claim-root-cause-audit.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.214 governance file missing: {rel}')

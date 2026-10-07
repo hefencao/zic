@@ -86,7 +86,7 @@ require(
     "elapsed>500",
 )
 require(
-    "docs/adr/0170-venera-request-scoped-cancel-unwind.md",
+    "docs/archive/adr/0170-venera-request-scoped-cancel-unwind.md",
     "InputStream",
     "Thread.sleep",
     "maxConcurrentInvocations=1",

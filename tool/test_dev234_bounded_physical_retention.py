@@ -116,9 +116,9 @@ for rel in (
             raise SystemExit(f'dev.234 retention budget leaked upward: {path.relative_to(ROOT)}')
 
 for rel in (
-    'docs/adr/0214-bounded-physical-transfer-retention.md',
-    'docs/audits/dev234-physical-retention-root-cause-audit.md',
-    'docs/audits/dev234-validation-results.md',
+    'docs/archive/adr/0214-bounded-physical-transfer-retention.md',
+    'docs/archive/audits/dev234-physical-retention-root-cause-audit.md',
+    'docs/archive/audits/dev234-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.234 governance file missing: {rel}')

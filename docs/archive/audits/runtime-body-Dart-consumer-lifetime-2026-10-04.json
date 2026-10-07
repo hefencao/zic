@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-04",
+  "status": "verified_device_Dart_channel_file_consumer_scope_parent_open",
+  "production_changed": false,
+  "fixture": "apps/app/test/device_acceptance/runtime_body_consumer.dart",
+  "boundary": [
+    "No artificial read Future delay, fake read data, FIFO, new production diagnostics or ownership hook.",
+    "A missed actual pending-read observation is a fixture timing miss, not a product defect.",
+    "Actual pending Dart File I/O Future proves the consumer admission/drain boundary, not a long blocked kernel read or final-display performance.",
+    "Synthetic transform input is complete by design; it does not prove real HTTP cancellation, host input allocation removal, canonical whole-byte removal, live pipe/stream, Cookie/POST or original19/20 loading root cause.",
+    "All original112 requirements, identities, statuses, sealed snapshot and current root objective remain unchanged; Plan049 current contract/evidence is reconciled separately.",
+    "Nine distinct channel/Binder/file-consumer cases passed in v4 and the same nine in a controlled v5 replay; this is not18 distinct cases or complete SourceResourceTransport/DownloadSession/Pipeline verification. Native11-case Binder evidence remains separately counted.",
+    "Adjacent v5 data is exact except export createdAt. The earlier longer baseline has one unattributed EH progress.updatedAt change before v4; it is retained rather than blanket-ignored or counted as whole-phase data equality."
+  ],
+  "parent_acceptance_complete": false,
+  "runner": "apps/app/test/device_acceptance/runtime_body_consumer.py",
+  "scoped_acceptance_complete": true,
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

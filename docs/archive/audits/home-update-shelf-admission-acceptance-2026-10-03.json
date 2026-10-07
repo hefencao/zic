@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-03",
+  "status": "ordinary_release_projection_and_controlled_lifecycle_verified_live_version_acceptance_pending",
+  "production_modified": true,
+  "root_cause_boundary": "The accepted candidate acknowledges only a known version notification in ComicPreference. This pass changes no production file; it verifies ordinary Home filtering/real metadata and Reader progress, plus controlled-source admission/later notification through production callbacks and SQLite on the device.",
+  "preserve": [
+    "HomeLibrarySession durable authority",
+    "canonical raw operation identity",
+    "existing version relation/history and shelf/download head ownership",
+    "Reader/NetLane/native worker/windows/budgets"
+  ],
+  "parent_acceptance_complete": false,
+  "root_cause": "The actual first-shelf preference callback clears SavedComic.sourceUpdateAt, but _projectedConfirmedSourceUpdateAt still publishes a pre-admission successor from independent versionBaselines shelf/latest heads. There is no persisted notification acknowledgement; preference.updatedAt also changes for unrelated user preference mutations, so it cannot serve as the update cutoff.",
+  "failing_first": {
+    "log": "/tmp/zic-home-update-admission-failing-first.log",
+    "exit_code": 1,
+    "failure": "Actual first shelf callback retains an old-comic Home update row for the already discovered known-successor; chapter signal is cleared and relation provenance survives."
+  },
+  "candidate_boundary": "Persist only the acknowledged version notification identity in the existing ComicPreference JSON. Do not alter relation history, family shelf/download heads, reuse mappings, raw operation identities, progress, source metadata revision, Reader or transport policy.",
+  "adr": "docs/archive/adr/0383-shelf-admission-acknowledges-known-version-notification.md",
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

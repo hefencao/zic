@@ -86,8 +86,8 @@ else:
             "Architecture must assign high-priority provider reclaim to NetLane classification")
 
 for path in (
-    "docs/adr/0220-current-high-priority-provider-reclaim.md",
-    "docs/audits/dev240-current-provider-reclaim-root-cause-audit.md",
+    "docs/archive/adr/0220-current-high-priority-provider-reclaim.md",
+    "docs/archive/audits/dev240-current-provider-reclaim-root-cause-audit.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 

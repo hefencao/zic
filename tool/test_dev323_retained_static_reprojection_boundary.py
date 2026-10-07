@@ -69,8 +69,8 @@ for token in (
     require(analyzer, token, 'resident-static analyzer')
 
 for rel in (
-    'docs/adr/0301-retained-static-reprojection-boundary.md',
-    'docs/audits/dev323-retained-static-reprojection-audit.md',
+    'docs/archive/adr/0301-retained-static-reprojection-boundary.md',
+    'docs/archive/audits/dev323-retained-static-reprojection-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.323 missing artifact: {rel}')

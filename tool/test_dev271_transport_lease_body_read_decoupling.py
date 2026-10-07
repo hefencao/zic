@@ -86,8 +86,8 @@ require(
     'lane.transportLeases, 0',
 )
 for path in (
-    'docs/adr/0249-transport-lease-body-read-permit-separation.md',
-    'docs/audits/dev271-transport-lease-source-open-latency-audit.md',
+    'docs/archive/adr/0249-transport-lease-body-read-permit-separation.md',
+    'docs/archive/audits/dev271-transport-lease-source-open-latency-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.271 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'transport/source `transportLeases`', 'inactive-transport-lease-reclaim')

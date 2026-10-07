@@ -6,7 +6,9 @@
 - `NetLane` is the only network scheduling authority. Do not add a holder-depth, playback-state or UI-owned network eligibility gate.
 - Scheduler cancellation/priority MUST remain observable through Reader page transport, source request-plan and runtime invocation boundaries; adapters must not replace it with an independent FIFO or release capacity before cancelled work actually exits.
 - Native encoded-byte ingress MUST NOT wait on a source lock held across frame decode/scale/composite work; keep source-lock critical sections limited to byte/demux preparation.
-- Stable documentation must describe current production code, not a superseded experiment. Historical attempts belong in `CHANGELOG.md`, ADRs and `docs/audits/`.
+- Stable documentation must describe current production code, not a superseded experiment. Historical attempts belong in `CHANGELOG.md`; existing ADRs and audits are archived under `docs/archive/` and read only when tracing a specific decision.
+- 当前有效状态只更新 `docs/IMPLEMENTATION_STATE.json`，覆盖结论、最新验证与剩余验收；暂不新增 ADR/audit 或逐轮证据文件，不累积历史子对象。
+- 编辑稳定文档前核对父标题、production owner 和同主题既有段落；按组件职责归类，不能只凭邻近关键词插入。
 - When ownership, lifecycle, default policy or public contracts change, update `docs/ARCHITECTURE.md`, `docs/SPEC.md`, `docs/IMPLEMENTATION_STATUS.md` and `docs/NEXT_CHAT_HANDOFF.md` in the same change.
 - ADR status must be exactly Proposed, Provisional, Accepted, Superseded or Rejected. Do not use ambiguous combined status text.
 
@@ -25,4 +27,5 @@
 - 设备代理执行前读取可用的 `android-ui-test` skill；缺失时按当前 UIAutomator XML 的精确标签/可点击节点定位，点击后确认实际结果，不沿用猜测坐标。误入相邻入口属于测试操作错误，不能据此修改产品。
 - 非动态页面 XML 可按页面覆盖缓存到已有私有测试目录；布局/版本、滚动、密度/方向、键盘或弹窗变化后必须刷新。动态列表与 Reader 不复用旧坐标；不新增逐轮 XML 或仓库审计文件。
 - 返回简短的通过/失败/未验结论、复现步骤和必要截图或 trace 路径。优先更新已有文件，不新增逐轮审计、安装快照或哈希清单。
+- 测试文件按必要性保留：原始报障输入和开放问题所需的最小复现文件可保留；重复 trace、过期截图/XML/APK、已完成备份及临时工作树及时删除。临时目录随任务结束清理，当前页面 XML/结果按用途覆盖；不得把整批文件搬到私有目录当作清理。
 - 若当前工具不支持指定型号或 effort，明确报告限制，由主代理继续已授权工作；不得静默替换型号，也不得把未运行的代理报告为已启用。

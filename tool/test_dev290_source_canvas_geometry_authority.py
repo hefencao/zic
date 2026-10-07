@@ -104,10 +104,10 @@ for marker in (
 ):
     req(marker in profile, f'frozen Reader window/concurrency changed: {marker}')
 
-req((ROOT / 'docs/adr/0269-source-canvas-page-geometry-authority.md').is_file(),
-    'missing dev.290 governance file: docs/adr/0269-source-canvas-page-geometry-authority.md')
+req((ROOT / 'docs/archive/adr/0269-source-canvas-page-geometry-authority.md').is_file(),
+    'missing dev.290 governance file: docs/archive/adr/0269-source-canvas-page-geometry-authority.md')
 require(
-    'docs/audits/dev290-source-canvas-geometry-audit.md',
+    'docs/archive/audits/dev290-source-canvas-geometry-audit.md',
     'dev.290',
     'Source-canvas',
     'pageDimensionsResolved',

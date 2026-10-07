@@ -9,8 +9,8 @@ _version_text = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
 _version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', _version_text, re.M)
 if _version_match is not None and int(_version_match.group(1)) >= 316:
     for _rel in (
-        'docs/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
-        'docs/audits/dev315-static-webp-encoded-presentation-audit.md',
+        'docs/archive/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
+        'docs/archive/audits/dev315-static-webp-encoded-presentation-audit.md',
     ):
         if not (ROOT / _rel).is_file(): raise SystemExit(f'missing historical dev.315 artifact: {_rel}')
     print('dev.315 static WebP encoded Flutter presentation boundary: FALSIFIED and rolled back')
@@ -98,8 +98,8 @@ for token in (
     require(test, token, 'policy regression')
 
 for rel in (
-    'docs/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
-    'docs/audits/dev315-static-webp-encoded-presentation-audit.md',
+    'docs/archive/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
+    'docs/archive/audits/dev315-static-webp-encoded-presentation-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.315 missing governance artifact: {rel}')
@@ -111,8 +111,8 @@ docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
-    'docs/audits/dev315-static-webp-encoded-presentation-audit.md',
+    'docs/archive/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
+    'docs/archive/audits/dev315-static-webp-encoded-presentation-audit.md',
 ))
 for token in (
     '173', '14/14', '16.588ms', 'surfaceReconfigureCount=1',

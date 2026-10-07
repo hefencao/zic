@@ -46,7 +46,7 @@ forbid(session, 'package:downloads/', 'sessions depending on durable cache imple
 req(test, 'resident-cache late Reader replays from external byte authority', 'resident artifact regression')
 req(test, 'expect(session.artifact.committedLength, 0);', 'no duplicate session artifact assertion')
 req(live, 'residentReplaySource: (physical, endExclusive) async', 'late coordinator resident replay regression')
-for rel in ('docs/adr/0202-resident-encoded-source-replay-authority.md','docs/audits/dev221-resident-replay-root-cause-audit.md','docs/audits/dev221-validation-results.md'):
+for rel in ('docs/archive/adr/0202-resident-encoded-source-replay-authority.md','docs/archive/audits/dev221-resident-replay-root-cause-audit.md','docs/archive/audits/dev221-validation-results.md'):
     if not (ROOT/rel).exists(): raise SystemExit(f'dev.221 missing governance: {rel}')
 props=read('apps/app/android/zic-version.properties')
 m=re.search(r'^version: 0\.31\.0\+(\d+)$',pub,re.M); a=re.search(r'^versionCode=(\d+)$',props,re.M)

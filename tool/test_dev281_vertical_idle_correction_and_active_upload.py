@@ -206,8 +206,8 @@ else:
     )
 
 for path in (
-    'docs/adr/0260-vertical-idle-layout-correction-and-active-texture-deferral.md',
-    'docs/audits/dev281-release-jitter-and-dart-compile-audit.md',
+    'docs/archive/adr/0260-vertical-idle-layout-correction-and-active-texture-deferral.md',
+    'docs/archive/audits/dev281-release-jitter-and-dart-compile-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.281 governance file: {path}')
 
@@ -251,7 +251,7 @@ if int(m.group(1)) >= 327:
     # visual/cadence criteria under the current selective-geometry contract.
     require('docs/IMPLEMENTATION_PLAN.md', 'dev.280', '真机视觉验收',
             '物理观察只用已布局geometry', 'ballistic')
-    require('docs/audits/dev281-release-jitter-and-dart-compile-audit.md',
+    require('docs/archive/audits/dev281-release-jitter-and-dart-compile-audit.md',
             '慢拖松手', '_ReaderVerticalScrollPhysics.adjustPositionForNewDimensions')
 else:
     require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')

@@ -109,18 +109,18 @@ require(
     'PageRole.previous => 780',
 )
 require(
-    'docs/adr/0167-receiving-state-detach-current-previous-handoff.md',
+    'docs/archive/adr/0167-receiving-state-detach-current-previous-handoff.md',
     '`activeRun`',
     'DownloadState.receiving',
     'previous priority继续为780',
 )
 require(
-    'docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md',
+    'docs/archive/audits/dev184-current-previous-receiving-state-root-cause-audit.md',
     '3.004',
     '至少有7组',
 )
 require(
-    'docs/audits/dev184-validation-results.md',
+    'docs/archive/audits/dev184-validation-results.md',
     'dev.157–dev.184',
     '没有 Flutter/Dart SDK',
 )

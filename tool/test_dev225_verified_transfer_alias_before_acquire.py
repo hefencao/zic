@@ -139,9 +139,9 @@ if build >= 233:
         require(test, token, 'multi-owner verified transfer reuse regression')
 
 for rel in (
-    'docs/adr/0205-verified-equivalent-transfer-alias-before-acquire.md',
-    'docs/audits/dev225-verified-transfer-alias-root-cause-audit.md',
-    'docs/audits/dev225-validation-results.md',
+    'docs/archive/adr/0205-verified-equivalent-transfer-alias-before-acquire.md',
+    'docs/archive/audits/dev225-verified-transfer-alias-root-cause-audit.md',
+    'docs/archive/audits/dev225-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.225 missing governance: {rel}')

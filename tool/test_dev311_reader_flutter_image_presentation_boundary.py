@@ -16,8 +16,8 @@ match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
 if match is None or int(match.group(1)) < 311:
     raise SystemExit('dev.311 history version missing/regressed')
 
-adr = read('docs/adr/0290-reader-flutter-image-presentation-boundary.md')
-audit = read('docs/audits/dev311-reader-flutter-image-presentation-audit.md')
+adr = read('docs/archive/adr/0290-reader-flutter-image-presentation-boundary.md')
+audit = read('docs/archive/audits/dev311-reader-flutter-image-presentation-audit.md')
 for token in (
     'Falsified by the 09:28 dev.311 device run',
     'renderer=flutterImage',

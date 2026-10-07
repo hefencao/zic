@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-05",
+  "status": "selected_SourceResourceTransport_transform_subset_Device_verified",
+  "production_changed": false,
+  "fixture": "apps/app/test/device_acceptance/source_body_transport.dart",
+  "runner": "apps/app/test/device_acceptance/source_body_transport.py",
+  "scope": "Production source adapter, SourceResourceTransport, rhttp raw input, actual separate Venera Service/Binder transform body, actual claimed Dart file and ByteResponse; original NetLane holds the work.",
+  "boundary": [
+    "Test HTTP server controls its actual socket output; no delayed production read Future, fake transport bytes or new production hook.",
+    "Nonempty synthetic Cookie/POST and source-UA precedence are observed at the actual loopback server; no real user Cookie/POST data or source roster is read.",
+    "The selected transform subset is not all SourceResourceTransport variants, full DownloadSession/Pipeline, real-origin/real-extension HTTP cancellation, body streaming/pipe or final display.",
+    "Earlier native11 and Dart9 cases remain independent evidence; do not combine them with these nine as one carrier scope.",
+    "Original112 identities, requirements, statuses and sealed snapshot remain unchanged."
+  ],
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "actual_device_result": "/tmp/zic-source-body-transport-device-run-v2/result.json",
+  "remaining_acceptance": [
+    "All remaining SourceResourceTransport variants, full DownloadSession/Pipeline persistence/cancellation and integrated runtime teardown.",
+    "Actual external origin and source-client HTTP cancellation, real source CookieJar/POST/interceptors; synthetic loopback request flags do not prove these.",
+    "Host transform complete-input and canonical internal whole-byte materialization; live stream/pipe/backpressure.",
+    "Original19/20 intermittent loading/cache failure cause, UI copy/allocation/GC/input latency and final physical display.",
+    "Original112 requirement identities, status counts and sealed snapshot are unchanged; this additional scope does not close the parent."
+  ],
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

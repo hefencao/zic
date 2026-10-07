@@ -60,8 +60,8 @@ for marker in (
     req(marker in tests, f'dev.276 runtime regression missing: {marker}')
 
 for path in (
-    'docs/adr/0254-venera-current-handoff-active-priority.md',
-    'docs/audits/dev276-venera-current-handoff-gate-audit.md',
+    'docs/archive/adr/0254-venera-current-handoff-active-priority.md',
+    'docs/archive/audits/dev276-venera-current-handoff-gate-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.276 governance file: {path}')
 

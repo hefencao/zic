@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-03",
+  "status": "scoped_physical_read_lifetime_verified_toolchain_and_ordinary_release",
+  "production_modified": true,
+  "scope": "Engine-readable encoded file descriptor lifetime during ordinary Release stationary slider acceptance. Preserve Reader navigation and existing single Pipeline/NetLane authorities.",
+  "root_cause": {
+    "proven": "Token cancellation removes a first-frame listener but does not cancel FileImage file/buffer/codec Future; caller finally/replacement/disposal released descriptor before the physical read exited. A same-generation cache consumer can join that still-pending completer.",
+    "device_path_attribution": "The ordinary trace does not record the failed descriptor/page identity. Do not claim an exact FD250 timing attribution; fresh device revalidation remains required."
+  },
+  "failing_first": {
+    "test": "packages/local_media_ui/test/external_static_prewarmer_test.dart",
+    "name": "cancelled file prewarm pins an in-flight decoder for its consumer",
+    "log": "/tmp/zic-file-lease-lifecycle-failing-first.log",
+    "exit_code": 1,
+    "failure": "Expected releases while reading0, actual1; a real backing file is deleted by premature release.",
+    "fixture": "IOOverrides only holds File.length; the real file and public Pipeline prewarm/cache consumer path are used. No production hooks.",
+    "fixed_log": "/tmp/zic-file-lease-lifecycle-fixed-focused.log",
+    "fixed_exit_code": 0
+  },
+  "parent_acceptance_complete": false,
+  "boundary": [
+    "Only physical lifetime of existing encoded file leases changes.",
+    "Existing generation-neutral file/memory cache key and viewport policy retained.",
+    "Pipeline raster owner, Reader navigation, NetLane, native ingress, workers, windows and budgets unchanged."
+  ],
+  "adr": "docs/archive/adr/0380-engine-file-lease-waits-for-physical-image-read.md",
+  "remaining": [
+    "Independent ordinary build/GC/input/final-display and all-source acceptance remain open."
+  ],
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

@@ -220,9 +220,9 @@ for token in (
     require(chapter_test, token, 'chapter/Reader shared-transfer behavior regression')
 
 for rel in (
-    'docs/adr/0204-composition-transfer-runtime-and-chapter-command-claims.md',
-    'docs/audits/dev223-chapter-transfer-claim-migration-root-cause-audit.md',
-    'docs/audits/dev223-validation-results.md',
+    'docs/archive/adr/0204-composition-transfer-runtime-and-chapter-command-claims.md',
+    'docs/archive/audits/dev223-chapter-transfer-claim-migration-root-cause-audit.md',
+    'docs/archive/audits/dev223-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.223 missing governance: {rel}')

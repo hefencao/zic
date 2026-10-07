@@ -84,9 +84,9 @@ require(partial, "'source': 'session-partial-handoff'", 'cold partial persistenc
 require(artifact, "'source': 'session-artifact-handoff'", 'immutable artifact persistence boundary')
 
 for rel in (
-    'docs/adr/0206-phase-e-late-takeover-contraction-and-alias-observability.md',
-    'docs/audits/dev226-phase-e-compensation-evidence-audit.md',
-    'docs/audits/dev226-validation-results.md',
+    'docs/archive/adr/0206-phase-e-late-takeover-contraction-and-alias-observability.md',
+    'docs/archive/audits/dev226-phase-e-compensation-evidence-audit.md',
+    'docs/archive/audits/dev226-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.226 missing governance: {rel}')

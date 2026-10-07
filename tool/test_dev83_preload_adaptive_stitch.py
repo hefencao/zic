@@ -228,8 +228,8 @@ def main() -> None:
             "dragUntilVisible",
         )
 
-    assert (ROOT / "docs/adr/0067-stable-preload-adaptive-profile-and-pixel-stitch.md").exists()
-    assert (ROOT / "docs/audits/dev83-preload-adaptive-stitch-audit.md").exists()
+    assert (ROOT / "docs/archive/adr/0067-stable-preload-adaptive-profile-and-pixel-stitch.md").exists()
+    assert (ROOT / "docs/archive/audits/dev83-preload-adaptive-stitch-audit.md").exists()
     print("dev.83 preload, adaptive and stitch ownership: OK")
 
 

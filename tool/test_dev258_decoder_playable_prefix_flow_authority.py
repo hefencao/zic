@@ -125,9 +125,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0237-decoder-playable-prefix-flow-authority.md',
-    'docs/audits/dev258-playable-prefix-flow-root-cause-audit.md',
-    'docs/audits/dev258-validation-results.md',
+    'docs/archive/adr/0237-decoder-playable-prefix-flow-authority.md',
+    'docs/archive/audits/dev258-playable-prefix-flow-root-cause-audit.md',
+    'docs/archive/audits/dev258-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.258 governance file: {path}')

@@ -63,9 +63,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0234-scheduler-cancellation-partial-lifecycle-separation.md',
-    'docs/audits/dev255-preemption-partial-failure-root-cause-audit.md',
-    'docs/audits/dev255-validation-results.md',
+    'docs/archive/adr/0234-scheduler-cancellation-partial-lifecycle-separation.md',
+    'docs/archive/audits/dev255-preemption-partial-failure-root-cause-audit.md',
+    'docs/archive/audits/dev255-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.255 governance file: {path}')

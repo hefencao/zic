@@ -123,9 +123,9 @@ reject(
     'resumePermit',
 )
 for path in (
-    'docs/adr/0231-resume-safe-flow-gating-and-sealed-ingress.md',
-    'docs/audits/dev252-flow-resume-source-root-cause-audit.md',
-    'docs/audits/dev252-validation-results.md',
+    'docs/archive/adr/0231-resume-safe-flow-gating-and-sealed-ingress.md',
+    'docs/archive/audits/dev252-flow-resume-source-root-cause-audit.md',
+    'docs/archive/audits/dev252-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.252 governance file: {path}')

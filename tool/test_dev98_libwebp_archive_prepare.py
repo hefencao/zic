@@ -118,9 +118,9 @@ with tempfile.TemporaryDirectory(prefix='zic-dev98-libwebp-') as directory:
         raise SystemExit('FAIL: modified source leaked the rejected function-anchor failure mode')
 
 required_docs = {
-    'docs/adr/0082-pinned-libwebp-archive-and-exact-patch.md': '0.31.0-dev.98',
-    'docs/audits/dev98-libwebp-source-patch-audit.md': '被否决方案清单',
-    'docs/audits/dev98-validation-results.md': 'libwebp incremental and loop fixtures: OK',
+    'docs/archive/adr/0082-pinned-libwebp-archive-and-exact-patch.md': '0.31.0-dev.98',
+    'docs/archive/audits/dev98-libwebp-source-patch-audit.md': '被否决方案清单',
+    'docs/archive/audits/dev98-validation-results.md': 'libwebp incremental and loop fixtures: OK',
 }
 for relative, token in required_docs.items():
     text = (ROOT / relative).read_text(encoding='utf-8')

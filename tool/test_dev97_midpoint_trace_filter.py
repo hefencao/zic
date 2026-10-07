@@ -136,10 +136,10 @@ require(
     'packages/telemetry/test/trace_test.dart',
     'trace bounds long local identities without losing stable correlation',
 )
-require('docs/adr/0081-midpoint-playback-handoff-and-diagnostic-trace.md', '0.31.0-dev.97')
-require('docs/audits/dev97-page-handoff-trace-audit.md', '被否决方案清单')
+require('docs/archive/adr/0081-midpoint-playback-handoff-and-diagnostic-trace.md', '0.31.0-dev.97')
+require('docs/archive/audits/dev97-page-handoff-trace-audit.md', '被否决方案清单')
 require(
-    'docs/audits/dev97-validation-results.md',
+    'docs/archive/audits/dev97-validation-results.md',
     '6486 条',
     '2387 个诊断桶',
     '4099 条高频样本',

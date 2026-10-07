@@ -72,8 +72,8 @@ for token in (
 
 for rel in (
     'tool/analyze_direction_flip_120hz_jank.py',
-    'docs/adr/0300-active-download-window-bridge-boundary.md',
-    'docs/audits/dev321-active-download-window-bridge-audit.md',
+    'docs/archive/adr/0300-active-download-window-bridge-boundary.md',
+    'docs/archive/audits/dev321-active-download-window-bridge-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.321 missing artifact: {rel}')

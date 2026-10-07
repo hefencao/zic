@@ -206,11 +206,11 @@ for path in ROOT.rglob('*'):
     if 'WebPSetWorkerInterface(' in text:
         raise SystemExit(f'FAIL: rejected native worker interface in {path}')
 require(
-    'docs/audits/dev96-local-webp-playback-audit.md',
+    'docs/archive/audits/dev96-local-webp-playback-audit.md',
     '## 问题清单',
     '## 所有权清单',
     '## 被否决方案清单',
 )
-require('docs/adr/0080-local-webp-resident-single-thread-playback.md', '0.31.0-dev.96')
+require('docs/archive/adr/0080-local-webp-resident-single-thread-playback.md', '0.31.0-dev.96')
 require('tool/check.sh', 'test_dev96_local_webp_playback.py')
 print('dev.96 resident single-thread local WebP playback ownership: OK')

@@ -37,7 +37,7 @@ elif build == 203:
     ):
         if marker not in block:
             raise SystemExit(f'dev.202 supersession rollback marker missing: {marker}')
-    if not (ROOT / 'docs/adr/0184-revert-headroom-retention-and-isolate-source-tail.md').exists():
+    if not (ROOT / 'docs/archive/adr/0184-revert-headroom-retention-and-isolate-source-tail.md').exists():
         raise SystemExit('dev.202 supersession ADR0184 missing')
 else:
     for marker in (
@@ -50,7 +50,7 @@ else:
     ):
         if marker not in block:
             raise SystemExit(f'dev.202 partial restoration marker missing: {marker}')
-    if not (ROOT / 'docs/adr/0185-partial-headroom-retention-restoration.md').exists():
+    if not (ROOT / 'docs/archive/adr/0185-partial-headroom-retention-restoration.md').exists():
         raise SystemExit('dev.202 partial restoration ADR0185 missing')
 for forbidden in (
     'sourceHostRemoteIpHash', 'sourceRhttp', 'duplicatePrefixBytes',
@@ -59,9 +59,9 @@ for forbidden in (
     if forbidden in block:
         raise SystemExit(f'dev.202 retention leaked non-cost input: {forbidden}')
 for rel in (
-    'docs/adr/0183-restart-cost-headroom-retention.md',
-    'docs/audits/dev202-restart-cost-headroom-root-cause-audit.md',
-    'docs/audits/dev202-validation-results.md',
+    'docs/archive/adr/0183-restart-cost-headroom-retention.md',
+    'docs/archive/audits/dev202-restart-cost-headroom-root-cause-audit.md',
+    'docs/archive/audits/dev202-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.202 document missing: {rel}')

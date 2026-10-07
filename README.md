@@ -15,8 +15,9 @@
 5. [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)：仍需执行的工作，不保存完成历史。
 6. [`docs/NEXT_CHAT_HANDOFF.md`](docs/NEXT_CHAT_HANDOFF.md)：下一轮唯一基线和继续入口。
 7. [`docs/DOCUMENTATION_POLICY.md`](docs/DOCUMENTATION_POLICY.md)：各文档职责和证据规则。
+8. [`docs/IMPLEMENTATION_STATE.json`](docs/IMPLEMENTATION_STATE.json)：唯一当前需求状态、有效验收及剩余工作。
 
-历史变更位于 [`CHANGELOG.md`](CHANGELOG.md)；技术决策位于 `docs/adr/`；单轮问题清单、Trace 分析和验证记录位于 `docs/audits/`。
+历史变更位于 [`CHANGELOG.md`](CHANGELOG.md)；既有技术决策与验证记录归档于 `docs/archive/adr/` 和 `docs/archive/audits/`，按需追溯并核对当前源码，暂不新增此类文件。
 
 ## 仓库结构
 
@@ -128,4 +129,4 @@ Debug Trace 是诊断证据，不是产品状态数据库。分析逐帧 Pipelin
 python3 tool/analyze_frame_pipeline_trace.py zic-debug-trace-*.jsonl
 ```
 
-Trace 结论应记录到 `docs/audits/`；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。
+Trace 的简短结论覆盖更新到现有状态；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。`.log/` 只保留原始报障输入、开放问题的必要复现文件及当前复验结果；重复与过期产物及时删除，临时目录用完清理。

@@ -66,10 +66,10 @@ require(
     "final prefix = await session.readSourcePrefix(96,",
     "residentReplayChunks: (endExclusive) async",
 )
-req((ROOT / "docs/adr/0270-physical-ingress-source-metadata-authority.md").is_file(),
-    "missing dev.291 governance file: docs/adr/0270-physical-ingress-source-metadata-authority.md")
+req((ROOT / "docs/archive/adr/0270-physical-ingress-source-metadata-authority.md").is_file(),
+    "missing dev.291 governance file: docs/archive/adr/0270-physical-ingress-source-metadata-authority.md")
 require(
-    "docs/audits/dev291-source-metadata-owner-and-scale-audit.md",
+    "docs/archive/audits/dev291-source-metadata-owner-and-scale-audit.md",
     "dev.291",
     "sourceCanvas",
     "layout",

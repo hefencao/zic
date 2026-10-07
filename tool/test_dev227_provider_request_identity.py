@@ -68,9 +68,9 @@ for token in (
     require(test, token, 'failed-partial provider identity behavior regression')
 
 for rel in (
-    'docs/adr/0207-provider-exact-request-identity-after-physical-alias.md',
-    'docs/audits/dev227-provider-request-identity-root-cause-audit.md',
-    'docs/audits/dev227-validation-results.md',
+    'docs/archive/adr/0207-provider-exact-request-identity-after-physical-alias.md',
+    'docs/archive/audits/dev227-provider-request-identity-root-cause-audit.md',
+    'docs/archive/audits/dev227-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.227 missing governance: {rel}')

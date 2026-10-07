@@ -106,9 +106,9 @@ reject(
 )
 
 for path in (
-    'docs/adr/0233-decode-ingress-epoch-and-bounded-flow-suspension.md',
-    'docs/audits/dev254-decode-epoch-and-flow-watermark-root-cause-audit.md',
-    'docs/audits/dev254-validation-results.md',
+    'docs/archive/adr/0233-decode-ingress-epoch-and-bounded-flow-suspension.md',
+    'docs/archive/audits/dev254-decode-epoch-and-flow-watermark-root-cause-audit.md',
+    'docs/archive/audits/dev254-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.254 governance file: {path}')

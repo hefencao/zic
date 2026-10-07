@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Archive existing ADR/audit files and retain their checks and references. Move effective acceptance to one bounded IMPLEMENTATION_STATE.json projection with all112 IDs and independent remaining criteria, preserving full historical records in the archive. Pause new ADR/audit files and require parent-heading/production-owner checks before editing stable docs; detail layout stays under details, and Home lifecycle/migration ownership wording is corrected. Prune obsolete log files and completed temporary review trees; retain original fault inputs and require prompt cleanup rather than moving accumulated output elsewhere.
+
 - Bound detail chapter layout to the outer viewport instead of a nested shrink-wrapped list. The 500-chapter regression fails on the old layout and preserves first/last opens and return progress after repair. On the same 144-chapter device catalog, exit build falls from80.291ms to19.314ms with CPU sampling and24.227ms without it; scrolling, sorting and page3 history pass. Required2322 Dart/Flutter tests,27 analyzers,Rust22 and three-ABI Debug/Profile/Release/native packaging pass. Close only061; checkpoint ownership, cache identities and original loading/display acceptance remain independent.
 
 - Close084 with actual ordinary Profile progress WAL transactions: idle8s and active30s batching, with13 real page changes and no per-page commits. Warm199 frames have max build4.015ms and no new download. Keep061 open for an unattributed61.999ms exit build; CPU capture ends before pop. Restore ordinary Release, refresh the existing Home XML cache and update only current state; production is unchanged.
@@ -188,7 +190,7 @@
 - Exclude overlapping same-manga Mihon catalog calls inside the runtime owner. Cancellation keeps active invocation lifetime until the Callable and uncancellable suspend continuation actually exit; other manga remain independent.
 - Reader retention now delegates detached media retirement to Coordinator's existing lane barrier. It no longer evicts a native cursor while an admitted decode is still returning; idle media still retires immediately and active media retires automatically at physical exit.
 - Add boundary reentry, legacy/fresh source order, sealed source identity and executable Kotlin catalog/cancellation regressions. Adjust two UI test fixtures for first-page boundary alignment and movement beyond real touch slop.
-- Verify four device chapter crossings and four slider releases without vertical input, then the final Profile's animated exit and same-session reentry after 2.269s with no retained decode/upload instances or failures. Final required-toolchain checks, three-ABI debug/Profile builds and Rust22/22 pass; close RMR-027..031. Evidence: `docs/audits/chapter-boundary-trace-regressions-2026-09-30.json`.
+- Verify four device chapter crossings and four slider releases without vertical input, then the final Profile's animated exit and same-session reentry after 2.269s with no retained decode/upload instances or failures. Final required-toolchain checks, three-ABI debug/Profile builds and Rust22/22 pass; close RMR-027..031. Evidence: `docs/archive/audits/chapter-boundary-trace-regressions-2026-09-30.json`.
 
 ## Unreleased — static first-frame progress after slider release
 

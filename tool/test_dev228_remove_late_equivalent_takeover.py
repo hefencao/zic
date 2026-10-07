@@ -62,9 +62,9 @@ if android is None or int(android.group(1)) < 228:
     raise SystemExit('dev.228 Android version mismatch')
 
 for rel in (
-    'docs/adr/0208-remove-late-equivalent-promotion-takeover.md',
-    'docs/audits/dev228-phase-e-late-takeover-removal-audit.md',
-    'docs/audits/dev228-validation-results.md',
+    'docs/archive/adr/0208-remove-late-equivalent-promotion-takeover.md',
+    'docs/archive/audits/dev228-phase-e-late-takeover-removal-audit.md',
+    'docs/archive/audits/dev228-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.228 missing governance: {rel}')

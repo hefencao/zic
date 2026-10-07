@@ -50,7 +50,7 @@ require(pipeline_test,
         'every reported vertical visible page changes foreground demand',
         'vertical visible foreground regression')
 require(
-    read('docs/adr/0329-reader-navigation-resource-window-ownership.md'),
+    read('docs/archive/adr/0329-reader-navigation-resource-window-ownership.md'),
     'vertical 中所有真实 `visibleCoverages.fraction > 0` 的非 current 页统一提升为 `PageRole.transition`',
     'ADR 0329 visible foreground ownership',
 )
@@ -68,8 +68,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0285-vertical-continuous-viewport-control-plane-separation.md',
-    'docs/audits/dev306-vertical-continuous-control-plane-hotpath-audit.md',
+    'docs/archive/adr/0285-vertical-continuous-viewport-control-plane-separation.md',
+    'docs/archive/audits/dev306-vertical-continuous-control-plane-hotpath-audit.md',
 ))
 for token in ('1,197', '132', 'control no-op', '250ms', '500ms'):
     require(all_docs, token, 'governed dev.306 evidence/boundary')

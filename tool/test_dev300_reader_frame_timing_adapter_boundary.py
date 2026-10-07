@@ -48,9 +48,9 @@ require('packages/reader_runtime/lib/src/reader_runtime_screen.dart',
 require('packages/reader_runtime/test/flutter_reader_frame_timing_source_test.dart',
         'ui.FramePhase.vsyncStart',
         'ReaderFrameTimingSample(')
-require('docs/adr/0279-reader-frame-timing-adapter-boundary.md',
+require('docs/archive/adr/0279-reader-frame-timing-adapter-boundary.md',
         'ReaderFrameTimingSource','reader_runtime','FramePhase')
-require('docs/audits/dev300-reader-frame-timing-boundary-audit.md',
+require('docs/archive/audits/dev300-reader-frame-timing-boundary-audit.md',
         'FramePhase.vsyncStart','ReaderRuntimeScreen')
 require('docs/SPEC.md','ReaderFrameTimingSample','ReaderView` MUST NOT直接解析engine timing API')
 print('dev.300 Reader FrameTiming adapter boundary: OK')

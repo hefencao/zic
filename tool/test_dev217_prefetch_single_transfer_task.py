@@ -48,9 +48,9 @@ require(spec, 'MUST只更新该task priority并保持task key稳定', 'stable ta
 require(architecture, 'policy revision只能原位迁移priority', 'stable task architecture')
 
 for rel in (
-    'docs/adr/0198-stable-physical-task-identity-across-demand-revisions.md',
-    'docs/audits/dev217-prefetch-scheduler-single-task-root-cause-audit.md',
-    'docs/audits/dev217-validation-results.md',
+    'docs/archive/adr/0198-stable-physical-task-identity-across-demand-revisions.md',
+    'docs/archive/audits/dev217-prefetch-scheduler-single-task-root-cause-audit.md',
+    'docs/archive/audits/dev217-validation-results.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.217 governance file missing: {rel}')

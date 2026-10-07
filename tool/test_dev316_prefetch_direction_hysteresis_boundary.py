@@ -26,9 +26,9 @@ for forbidden in ('encodedFlutterPresentation','_pipelineAuthoritativeStatic','s
     if forbidden in policy+player+session: raise SystemExit(f'dev.316+ retained falsified dev.315 behavior: {forbidden}')
 if 'runtimeLocalStaticPages.contains(entry.key)' not in policy:
     raise SystemExit('dev.316+ did not restore dev.313 local-static pre-presentation behavior')
-for rel in ('docs/adr/0293-fixed-position-hidden-static-upload-boundary.md','docs/adr/0294-static-webp-encoded-flutter-presentation-boundary.md','docs/adr/0295-prefetch-direction-hysteresis-boundary.md','docs/audits/dev316-prefetch-direction-jank-audit.md'):
+for rel in ('docs/archive/adr/0293-fixed-position-hidden-static-upload-boundary.md','docs/archive/adr/0294-static-webp-encoded-flutter-presentation-boundary.md','docs/archive/adr/0295-prefetch-direction-hysteresis-boundary.md','docs/archive/audits/dev316-prefetch-direction-jank-audit.md'):
     if not (ROOT/rel).is_file(): raise SystemExit(f'dev.316 missing governance artifact: {rel}')
-docs=''.join(read(p) for p in ('CHANGELOG.md','docs/IMPLEMENTATION_STATUS.md','docs/NEXT_CHAT_HANDOFF.md','docs/adr/0295-prefetch-direction-hysteresis-boundary.md','docs/audits/dev316-prefetch-direction-jank-audit.md'))
+docs=''.join(read(p) for p in ('CHANGELOG.md','docs/IMPLEMENTATION_STATUS.md','docs/NEXT_CHAT_HANDOFF.md','docs/archive/adr/0295-prefetch-direction-hysteresis-boundary.md','docs/archive/audits/dev316-prefetch-direction-jank-audit.md'))
 for token in ('378','7.425','1.289','14.617','1.637','FALSIFIED'):
     if token not in docs: raise SystemExit(f'dev.316 missing evidence: {token}')
 if code >= 317 and 'rolled back in dev.317' not in read('CHANGELOG.md'):

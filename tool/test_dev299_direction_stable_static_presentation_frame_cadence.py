@@ -51,9 +51,9 @@ require('packages/telemetry/lib/src/trace.dart','readerFrameTiming,')
 require('apps/app/lib/debug_trace.dart',
         'event.kind != TraceEventKind.readerFrameTiming',
         'self-sustaining and perturb the very cadence')
-require('docs/adr/0278-static-presentation-direction-stable-continuity.md',
+require('docs/archive/adr/0278-static-presentation-direction-stable-continuity.md',
         'current±2','不得为了UI连续性新增DecodeDemand','readerFrameTiming')
-require('docs/audits/dev299-direction-stable-static-presentation-frame-cadence-audit.md',
+require('docs/archive/audits/dev299-direction-stable-static-presentation-frame-cadence-audit.md',
         'page14','current变12','readDirection=-1','frameIntervalMicros')
 require('docs/SPEC.md','directional decode previous1/next2 policy仍是唯一decode work窗口','`current±2`','`readerFrameTiming`')
 forbid('packages/local_media_ui/lib/src/local_image_player.dart','PhysicalPixelAlignedPresentation(', 'roundingResidual <= 0.500001')

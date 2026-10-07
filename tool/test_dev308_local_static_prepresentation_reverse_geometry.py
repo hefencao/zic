@@ -131,8 +131,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0287-local-static-prepresentation-and-reverse-geometry-preparation.md',
-    'docs/audits/dev308-local-static-prepresentation-and-reverse-geometry-audit.md',
+    'docs/archive/adr/0287-local-static-prepresentation-and-reverse-geometry-preparation.md',
+    'docs/archive/audits/dev308-local-static-prepresentation-and-reverse-geometry-audit.md',
 ))
 for token in (
     '51ms', '52ms', '924.44', '1533.23', '1433.28',

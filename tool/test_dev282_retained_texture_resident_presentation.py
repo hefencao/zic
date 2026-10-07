@@ -87,8 +87,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0261-retained-android-texture-resident-presentation.md',
-    'docs/audits/dev282-retained-texture-presentation-audit.md',
+    'docs/archive/adr/0261-retained-android-texture-resident-presentation.md',
+    'docs/archive/audits/dev282-retained-texture-presentation-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.282 governance file: {path}')
 

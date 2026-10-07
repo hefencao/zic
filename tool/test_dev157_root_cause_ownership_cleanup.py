@@ -31,7 +31,7 @@ gateway = read('apps/app/lib/source_resource_gateway.dart')
 storage_bridge = read('packages/storage_bridge/lib/storage_bridge.dart')
 architecture = read('docs/ARCHITECTURE.md')
 spec = read('docs/SPEC.md')
-adr = read('docs/adr/0142-reader-checkpoint-mihon-catalog-artwork-presentation-ownership.md')
+adr = read('docs/archive/adr/0142-reader-checkpoint-mihon-catalog-artwork-presentation-ownership.md')
 check = read('tool/check.sh')
 
 # Reader hot path: enqueue only; durable batching belongs to storage isolate.
@@ -78,7 +78,7 @@ for token in (
 for stale in ('_saveReaderProgress', '_publishReaderProgressAfterRoute', '_latestReaderProgress'):
     forbid(home, stale, 'superseded global Reader projection')
 forbid(home, 'await library.saveProgress(progress)', 'Reader per-page durable barrier')
-require(read('docs/adr/0303-reader-progress-durable-exit-barrier.md'), 'Accepted', 'Reader exit durability ADR')
+require(read('docs/archive/adr/0303-reader-progress-durable-exit-barrier.md'), 'Accepted', 'Reader exit durability ADR')
 for token in (
     'void replaceProgress(ReadingProgress progress)',
     'Reader page callbacks never call this method',

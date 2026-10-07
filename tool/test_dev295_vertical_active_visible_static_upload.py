@@ -92,20 +92,20 @@ require(
     'backwardDecodePages: 1',
 )
 require(
-    'docs/adr/0274-vertical-active-visible-static-upload-boundary.md',
+    'docs/archive/adr/0274-vertical-active-visible-static-upload-boundary.md',
     'Superseded。',
     'ADR 0314',
     'hidden native/provisional texture',
 )
 require(
-    'docs/adr/0314-vertical-external-static-first-frame-staging.md',
+    'docs/archive/adr/0314-vertical-external-static-first-frame-staging.md',
     'Accepted。',
     'runtimeExternalStaticPages',
     '17/17 READY、0 BLACK',
     'localPresentationReady=false',
 )
 require(
-    'docs/adr/0323-vertical-active-deadline-static-prepresentation.md',
+    'docs/archive/adr/0323-vertical-active-deadline-static-prepresentation.md',
     'Accepted。',
     '`next`、`next2`、`previous`',
     '`far/near`',
@@ -113,7 +113,7 @@ require(
     'FrameBudgeter',
 )
 require(
-    'docs/audits/dev295-hidden-static-upload-jitter-audit.md',
+    'docs/archive/audits/dev295-hidden-static-upload-jitter-audit.md',
     '333条`pageLayoutSnapshot`',
     '24.416ms',
     '14.809ms',

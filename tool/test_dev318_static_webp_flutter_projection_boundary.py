@@ -111,8 +111,8 @@ for token in (
     forbid(product, token, 'unrelated experiment')
 
 for rel in (
-    'docs/adr/0297-static-webp-flutter-projection-composition-boundary.md',
-    'docs/audits/dev318-static-webp-composition-audit.md',
+    'docs/archive/adr/0297-static-webp-flutter-projection-composition-boundary.md',
+    'docs/archive/audits/dev318-static-webp-composition-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.318 missing governance artifact: {rel}')
@@ -122,8 +122,8 @@ docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0297-static-webp-flutter-projection-composition-boundary.md',
-    'docs/audits/dev318-static-webp-composition-audit.md',
+    'docs/archive/adr/0297-static-webp-flutter-projection-composition-boundary.md',
+    'docs/archive/audits/dev318-static-webp-composition-audit.md',
 ))
 for variants in (('4772', '4,772'), ('4761', '4,761')):
     if not any(token in docs for token in variants):

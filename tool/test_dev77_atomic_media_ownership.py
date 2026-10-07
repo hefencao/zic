@@ -108,8 +108,8 @@ for token in ('packages/pipeline_native',):
 for required in (
     'packages/pipeline_native/test/package_compile_test.dart',
     'packages/pipeline_runtime/test/media_runtime_ownership_test.dart',
-    'docs/adr/0061-atomic-pipeline-media-runtime.md',
-    'docs/audits/dev77-atomic-pipeline-media-runtime-audit.md',
+    'docs/archive/adr/0061-atomic-pipeline-media-runtime.md',
+    'docs/archive/audits/dev77-atomic-pipeline-media-runtime-audit.md',
 ):
     if not (ROOT / required).is_file():
         raise SystemExit(f'ERROR: dev.77 migration artifact is missing: {required}')

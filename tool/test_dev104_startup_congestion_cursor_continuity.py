@@ -56,7 +56,7 @@ require(
     "readSchedulerAcquires",
 )
 require(
-    "docs/audits/dev104-startup-congestion-cursor-continuity-audit.md",
+    "docs/archive/audits/dev104-startup-congestion-cursor-continuity-audit.md",
     "问题清单",
     "所有权清单",
     "被否决方案清单",

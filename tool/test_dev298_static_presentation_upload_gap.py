@@ -29,14 +29,14 @@ if dev == 298:
     require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
             'uploadIdentity == null ? _activeDecodeIdentity(id) : null')
 elif dev > 298:
-    require('docs/adr/0277-static-presentation-upload-demand-lifetime.md', 'UploadDemand membership只拥有presentation claim/retention identity')
+    require('docs/archive/adr/0277-static-presentation-upload-demand-lifetime.md', 'UploadDemand membership只拥有presentation claim/retention identity')
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
         'forwardEncodedPages: 7','backwardEncodedPages: 3','forwardDecodePages: 2','backwardDecodePages: 1')
 require('packages/local_media_ui/lib/src/local_image_player.dart', 'surface == null', '_loadingIndicator()', 'child: FittedBox(')
 forbid('packages/local_media_ui/lib/src/local_image_player.dart', 'PhysicalPixelAlignedPresentation(', 'physicalPixelSnapCorrection(', 'roundingResidual <= 0.500001')
 forbid('packages/pipeline_runtime/lib/src/pipeline_media_runtime.dart','PipelineExternalTextureSurface')
-require('docs/adr/0277-static-presentation-upload-demand-lifetime.md', 'UploadDemand membership只拥有presentation claim/retention identity', '既有decode', 'listener')
-require('docs/audits/dev298-static-presentation-demand-gap-audit.md', 'same-frame', 'surface=null', 'loadingIndicator', 'residentReuse=true')
+require('docs/archive/adr/0277-static-presentation-upload-demand-lifetime.md', 'UploadDemand membership只拥有presentation claim/retention identity', '既有decode', 'listener')
+require('docs/archive/audits/dev298-static-presentation-demand-gap-audit.md', 'same-frame', 'surface=null', 'loadingIndicator', 'residentReuse=true')
 require('docs/ARCHITECTURE.md','UploadDemand membership只拥有presentation claim/retention identity')
 require('docs/SPEC.md','UploadDemand membership MUST表示presentation claim/retention identity')
 print('dev.298 static presentation upload-demand gap: OK')

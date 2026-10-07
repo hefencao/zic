@@ -107,7 +107,7 @@ else:
         require(test, token, 'ADR 0325 touch-resampling regression')
     if 'samplingOffset' in adapter:
         raise SystemExit('ADR 0325 must not tune GestureBinding.samplingOffset')
-    adr = read('docs/adr/0288-vertical-reader-touch-resampling-boundary.md')
+    adr = read('docs/archive/adr/0288-vertical-reader-touch-resampling-boundary.md')
     require(adr, '## Status\n\nSuperseded', 'canonical ADR status')
     require(adr, 'ADR 0325', 'dev.309/310 scoped supersession')
     for token in ('20/22', '`dragDriven=false`', 'post-lift holes'):
@@ -120,8 +120,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0288-vertical-reader-touch-resampling-boundary.md',
-    'docs/audits/dev309-scroll-cadence-touch-resampling-audit.md',
+    'docs/archive/adr/0288-vertical-reader-touch-resampling-boundary.md',
+    'docs/archive/audits/dev309-scroll-cadence-touch-resampling-audit.md',
 ))
 for token in (
     '49', '31.775ms', '36.668ms', '75.923ms',

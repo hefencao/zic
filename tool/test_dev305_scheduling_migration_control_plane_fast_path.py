@@ -65,8 +65,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0284-scheduling-migration-control-plane-fast-path.md',
-    'docs/audits/dev305-vertical-jank-control-plane-migration-audit.md',
+    'docs/archive/adr/0284-scheduling-migration-control-plane-fast-path.md',
+    'docs/archive/audits/dev305-vertical-jank-control-plane-migration-audit.md',
 ))
 for token in ('8.387ms', 'scheduling-only', 'physical session', 'pipelineReconcileTiming'):
     require(all_docs, token, 'governed dev.305 evidence/boundary')

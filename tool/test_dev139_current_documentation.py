@@ -172,14 +172,14 @@ for token in (
 # Recent ADR status values are exact and the consolidation ADR is current.
 allowed = {"Proposed", "Provisional", "Accepted", "Superseded", "Rejected"}
 for number in range(113, 123):
-    matches = sorted((ROOT / "docs/adr").glob(f"{number:04d}-*.md"))
+    matches = sorted((ROOT / "docs/archive/adr").glob(f"{number:04d}-*.md"))
     if not matches:
         continue
     text = matches[0].read_text(encoding="utf-8")
     match = re.search(r"^\*\*状态：([^*]+)\*\*$", text, re.M)
     if match is None or match.group(1).strip() not in allowed:
         raise SystemExit(f"ADR {number:04d} has a non-canonical status")
-require(read("docs/adr/0122-current-reader-pipeline-authority-consolidation.md"),
+require(read("docs/archive/adr/0122-current-reader-pipeline-authority-consolidation.md"),
         "**状态：Accepted**", "ADR 0122")
 
 pubspec = read("apps/app/pubspec.yaml")
@@ -193,8 +193,17 @@ if f"dev.{build}" not in handoff:
     raise SystemExit("Handoff does not match App build")
 
 # Historical requirements must not become a repair backlog for retired owners.
-governance_path = "docs/audits/state-governance-closure-2026-10-01.json"
+governance_path = "docs/IMPLEMENTATION_STATE.json"
 governance = json.loads(read(governance_path))
+governance_source = read(governance_path)
+if len(governance_source.encode("utf-8")) > 96 * 1024 or len(governance_source.splitlines()) > 400:
+    raise SystemExit("current governance must remain a bounded current projection")
+if "supplemental_acceptance" in governance or "historical_requirement_summary" in governance:
+    raise SystemExit("historical governance objects belong only in the archive")
+archived_path = governance["historical_record"]
+if not archived_path.startswith("docs/archive/audits/"):
+    raise SystemExit("current governance must reference the archived history")
+archived_governance = json.loads(read(archived_path))
 requirements = governance["requirements"]
 if len(requirements) != 112 or len({row["id"] for row in requirements}) != 112:
     raise SystemExit("current governance must retain all 112 requirement IDs")
@@ -202,16 +211,25 @@ if any(not row.get("current_contract", "").strip() for row in requirements):
     raise SystemExit("every governance requirement needs an explicit current contract")
 if dict(Counter(row["status"] for row in requirements)) != governance["requirement_summary"]:
     raise SystemExit("current governance status counts are stale")
-if dict(Counter(row["historical_status"] for row in requirements)) != governance["historical_requirement_summary"]:
+historical_requirements = archived_governance["requirements"]
+if {row["id"] for row in requirements} != {row["id"] for row in historical_requirements}:
+    raise SystemExit("current governance lost archived requirement IDs")
+if dict(Counter(row["historical_status"] for row in historical_requirements)) != archived_governance["historical_requirement_summary"]:
     raise SystemExit("historical governance status counts are stale")
 for row in requirements:
-    if row["status"] in {"pending", "partial"} and not row.get("remaining_acceptance"):
+    if set(row) - {"id", "status", "current_contract", "remaining_acceptance", "evidence_reproducibility"}:
+        raise SystemExit(f"{row['id']} accumulates historical governance fields")
+    if row["status"] not in {"pending", "partial", "verified_device", "verified_toolchain", "superseded"}:
+        raise SystemExit(f"{row['id']} has an unknown acceptance status")
+    if row["status"] == "partial" and not row.get("remaining_acceptance"):
         raise SystemExit(f"{row['id']} hides remaining acceptance")
-rejected = governance["supplemental_acceptance"]["mihon-locator-fused-decoding-2026-10-05"]
+    if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
+        raise SystemExit(f"{row['id']} hides pending acceptance")
+rejected = archived_governance["supplemental_acceptance"]["mihon-locator-fused-decoding-2026-10-05"]
 for path in (
-    "docs/audits/reader_media_runtime_state_audit.json",
-    "docs/audits/download_system_state_audit.json",
-    "docs/audits/user-repeated-download-loading-regressions-2026-10-03.json",
+    "docs/archive/audits/reader_media_runtime_state_audit.json",
+    "docs/archive/audits/download_system_state_audit.json",
+    "docs/archive/audits/user-repeated-download-loading-regressions-2026-10-03.json",
 ):
     parent = json.loads(read(path))
     if parent["current_requirement_state"] != governance_path + "#requirements":

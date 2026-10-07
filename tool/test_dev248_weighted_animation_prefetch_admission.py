@@ -45,7 +45,7 @@ if build >= 249:
         'flowTargetFrames',
     )
     require(
-        'docs/adr/0228-animated-speculative-byte-weighted-admission.md',
+        'docs/archive/adr/0228-animated-speculative-byte-weighted-admission.md',
         'Superseded',
     )
 else:
@@ -107,9 +107,9 @@ else:
         'byte budget does not remove eligible 2/4 or waterline pages',
     )
 for path in (
-    'docs/adr/0228-animated-speculative-byte-weighted-admission.md',
-    'docs/audits/dev248-weighted-animation-prefetch-root-cause-audit.md',
-    'docs/audits/dev248-validation-results.md',
+    'docs/archive/adr/0228-animated-speculative-byte-weighted-admission.md',
+    'docs/archive/audits/dev248-weighted-animation-prefetch-root-cause-audit.md',
+    'docs/archive/audits/dev248-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.248 governance file: {path}')

@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-02",
+  "status": "scoped_canonical_subtree_contract_verified_toolchain_and_device_parent_scope_open",
+  "scope": "SWG-PLAN-032 canonical source-card presentation State through raw locator metadata refresh; no claim that this accounts for Reader GC/cadence or final display.",
+  "root_cause": "The Sliver _SourceComicCard Element has a stable canonical key, but its descendant InkWell uses sourceComicCardKey with mutable raw comicId. Changing the raw alias replaces the InkWell subtree and destroys _RemoteImage/Image State. The canonical _cardCoverFutures cache hides the remount from coverLoads-only assertions.",
+  "boundary": [
+    "Use the same source-owned canonical identity at the existing interaction widget key; latest raw comic locator remains in SourceComicSummary/onOpenComic/source requests.",
+    "Keep existing ordinary/aggregate Sliver owners, local URI/reloadToken changes, stable cover Future cache, failure terminality and explicit refresh. No GlobalKey registry, persistent state/cache, new owner, scheduler or transport change.",
+    "Update key helper documentation and the stale dev167 guard that explicitly required raw interaction key below the stable Sliver owner. Preserve all filter/artwork/gateway assertions.",
+    "Retain all ADR0376/current Release8050 evidence as before-fix scoped proof. Parent GC/unsampled return/final-display/all-source/original112 remain open."
+  ],
+  "failing_first": {
+    "command": "flutter test test/source_browser_test.dart --plain-name 'browse metadata refresh preserves canonical cover presentation owner' --reporter expanded",
+    "log": "/tmp/zic-plan032-state-valid-fixture.log",
+    "log_sha256": "afd8e97763f6f6b58abb861dd0b336f7b27bc2dbd405cb459873740de3c1a424",
+    "exit_code": 1,
+    "failed_assertion": "tester.state(image) must be same(originalImageState)",
+    "semantic_assertions_passed": [
+      "Both old and changed raw summaries resolved to the same canonical card owner.",
+      "coverLoads remained1 after metadata reload.",
+      "Sliver card Element stayed same(originalElement)."
+    ],
+    "observed": "Old Image State is defunct/not mounted; replacement State has the same cached ImageStream completer."
+  },
+  "adr": "docs/archive/adr/0377-source-card-canonical-identity-preserves-presentation-subtree.md",
+  "fixed_behavior": {
+    "canonical_interaction_key": true,
+    "latest_raw_locator_retained_in_click_command": true,
+    "same_sliver_element_and_image_state": true,
+    "canonical_future_cache_unchanged": true,
+    "persistent_or_GlobalKey_owner_added": false,
+    "reader_and_scheduler_unchanged": true
+  },
+  "remaining": [
+    "Latest ordinary retained chapter20 tail return21.299ms build and15.949ms reconcile have no matched CPU; previous chapter21-entry34.772ms/returns35.255+20.331ms/Profile GC stay open.",
+    "Final physical display/visual smoothness/input latency/all-source/original112 remain open; first device SurfaceFlinger evidence is invalid and second device is offline.",
+    "Same-page duplicate alias condition now verified under ADR0378; earlier device13 evidence remains unchanged."
+  ],
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

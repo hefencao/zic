@@ -54,9 +54,9 @@ require("expect(owner.activeProviderExactId(physical), exact);" in owner_test, "
 require("await session.append(" in progress_test and "1024 + 64 * 1024" in progress_test, "progress behavior test must prove future committed growth propagates after physical selection")
 
 for path in (
-    "docs/adr/0217-active-provider-lease-handoff.md",
-    "docs/audits/dev237-active-provider-lease-root-cause-audit.md",
-    "docs/audits/dev237-validation-results.md",
+    "docs/archive/adr/0217-active-provider-lease-handoff.md",
+    "docs/archive/audits/dev237-active-provider-lease-root-cause-audit.md",
+    "docs/archive/audits/dev237-validation-results.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 

@@ -10,7 +10,7 @@ JOB_TEST = (ROOT / 'packages/sessions/test/download_job_test.dart').read_text(en
 SESSION_TEST = (ROOT / 'packages/sessions/test/download_session_test.dart').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
-ADR = (ROOT / 'docs/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md').read_text(encoding='utf-8')
+ADR = (ROOT / 'docs/archive/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md').read_text(encoding='utf-8')
 
 for token in (
     "strategy: 'full-body-prefix-catchup'",
@@ -82,9 +82,9 @@ if android is None or int(android.group(1)) < 195:
     raise SystemExit('dev.195-or-newer Android version missing')
 
 for path in (
-    ROOT / 'docs/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md',
-    ROOT / 'docs/audits/dev195-dev192-restart-playable-partial-root-cause-audit.md',
-    ROOT / 'docs/audits/dev195-validation-results.md',
+    ROOT / 'docs/archive/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md',
+    ROOT / 'docs/archive/audits/dev195-dev192-restart-playable-partial-root-cause-audit.md',
+    ROOT / 'docs/archive/audits/dev195-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.195 release document missing: {path.relative_to(ROOT)}')

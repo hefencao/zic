@@ -125,8 +125,8 @@ require(
     'frameScheduler: const _TestFrameScheduler()',
 )
 for path in (
-    'docs/adr/0268-pipeline-frame-scheduler-and-projection-boundary.md',
-    'docs/audits/dev289-pipeline-flutter-binding-closure-audit.md',
+    'docs/archive/adr/0268-pipeline-frame-scheduler-and-projection-boundary.md',
+    'docs/archive/audits/dev289-pipeline-flutter-binding-closure-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.289 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'PipelineFrameScheduler', 'PipelineTransferProgressFeed')

@@ -50,9 +50,9 @@ require('apps/app/lib/debug_trace.dart',
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
         'forwardEncodedPages: 7', 'backwardEncodedPages: 3',
         'forwardDecodePages: 2', 'backwardDecodePages: 1')
-require('docs/adr/0281-atomic-lane-reconcile-transaction.md',
+require('docs/archive/adr/0281-atomic-lane-reconcile-transaction.md',
         'scheduling transaction','28/37','10.456ms','pipelineReconcileTiming')
-require('docs/audits/dev302-atomic-lane-reconcile-root-cause-audit.md',
+require('docs/archive/audits/dev302-atomic-lane-reconcile-root-cause-audit.md',
         '正确 revision 缺少 transaction boundary','11-download','UI isolate')
 require('docs/SPEC.md',
         '一个accepted `DemandPlan`的sessions reconcile MUST作为单一scheduler transaction',

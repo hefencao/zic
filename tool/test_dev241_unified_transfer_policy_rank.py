@@ -63,8 +63,8 @@ require("full-body catchup is one demand-rank versus cost-rank comparison" in ra
 require("policy rank" in architecture, "Architecture must describe unified policy rank ownership")
 require("policy rank" in spec, "SPEC must describe unified policy rank contract")
 for path in (
-    "docs/adr/0221-unified-transfer-policy-rank.md",
-    "docs/audits/dev241-policy-rank-consolidation-audit.md",
+    "docs/archive/adr/0221-unified-transfer-policy-rank.md",
+    "docs/archive/audits/dev241-policy-rank-consolidation-audit.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 require("test_dev241_unified_transfer_policy_rank.py" in check, "release gate wiring")

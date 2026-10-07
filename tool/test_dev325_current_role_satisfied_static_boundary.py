@@ -65,8 +65,8 @@ for token in (
     require(analyzer, token, 'current boundary analyzer')
 
 for rel in (
-    'docs/adr/0302-current-role-satisfied-static-scheduler-boundary.md',
-    'docs/audits/dev325-current-role-satisfied-static-scheduler-audit.md',
+    'docs/archive/adr/0302-current-role-satisfied-static-scheduler-boundary.md',
+    'docs/archive/audits/dev325-current-role-satisfied-static-scheduler-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.325 missing artifact: {rel}')

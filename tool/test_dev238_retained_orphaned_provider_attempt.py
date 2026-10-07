@@ -67,8 +67,8 @@ else:
     require("claim lifetime不得再冒充transport lifetime" in architecture, "Architecture must name the corrected ownership boundary")
 
 for path in (
-    "docs/adr/0218-retained-orphaned-provider-attempt.md",
-    "docs/audits/dev238-retained-provider-attempt-root-cause-audit.md",
+    "docs/archive/adr/0218-retained-orphaned-provider-attempt.md",
+    "docs/archive/audits/dev238-retained-provider-attempt-root-cause-audit.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 

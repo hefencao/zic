@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-05",
+  "status": "scoped_JM_Web_title_search_verified_toolchain_and_device",
+  "scope": "User-requested JM Venera comic Web link and independent title aggregate search grouped by source; before other governance.",
+  "pre_modification_root_cause": {
+    "JM_Web_link": "Venera source.url is the JS update URL. Activation exposes it as descriptor.website, and the browser adapter resolves raw1441640 against that CDN URL. This produces a missing venera-configs file. Canonical identity currently shares the resolver, so changing it globally would churn source aliases/cache identity.",
+    "title_search": "The details title is plain Text without a command. Existing metadata search exits details and routes to the selected source. Existing source-page aggregate results are flat and grouped by plugin selection; the requested additional title route must be independent and grouped per source."
+  },
+  "boundary": [
+    "Only JM browser link compatibility in plugin source adapter; canonical identity and sourceWebsite projection remain unchanged.",
+    "Independent details title callback plus dedicated per-source search route; tags retain current source metadata callback.",
+    "Use enabled/searchable adapters, original catalog/cache/runtime and shared artwork loader. No new transport, DNS, cache, scheduler, retry or Reader owner.",
+    "Per-source completion/errors render independently; no Future.wait barrier across sources; explicit retry only.",
+    "Keep original112 raw fields and all closed audits."
+  ],
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "failing_first": {
+    "command": [
+      "flutter",
+      "test",
+      "test/runtime_source_adapter_test.dart",
+      "--plain-name",
+      "Venera JM browser link never uses its update URL or changes identity"
+    ],
+    "log": "/home/unkloser/.cache/zic-device-evidence/details-web-title-search/web-link-failing-first.log",
+    "exit_code": 1,
+    "expected": "https://18comic.vip/album/1441640",
+    "actual": "https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/1441640"
+  },
+  "cold_start_roster_root_cause": "The new title route snapshots only active enabled sources. Home intentionally defers all-plugin activation until explicit source demand, so cold Home→Venera details→title never activated or observed the installed Mihon adapters. Warm prototype UI masked this omission.",
+  "remaining_outside_scope": [
+    "Original chapter19/20 intermittent loading or redownload cause.",
+    "Fixed-position stutter, overall allocation/GC, input latency and final display.",
+    "Real system-DNS physical wait cancellation and remaining live-origin/other-client acceptance.",
+    "Real predecessor/update notice inputs and ordinary confirmed migration acceptance."
+  ],
+  "final_validation": {
+    "path": "/home/unkloser/.cache/zic-device-evidence/details-web-title-search/final-validation.json"
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

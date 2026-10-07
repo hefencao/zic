@@ -48,7 +48,7 @@ require('packages/sessions/lib/src/coordinator.dart',
 require('packages/pipeline/test/vertical_visible_policy_test.dart',
         'every reported vertical visible page changes foreground demand',
         'expect(controller.revision, greaterThan(revision));')
-require('docs/adr/0329-reader-navigation-resource-window-ownership.md',
+require('docs/archive/adr/0329-reader-navigation-resource-window-ownership.md',
         'vertical 中所有真实 `visibleCoverages.fraction > 0` 的非 current 页统一提升为 `PageRole.transition`',
         'MUST NOT 单独缩小 download/decode/upload window')
 require('packages/pipeline/test/animated_prefetch_policy_test.dart',
@@ -70,9 +70,9 @@ require('packages/reader/lib/src/reader_view.dart',
 forbid('packages/reader/lib/src/reader_view.dart',
        "if (scrollPixels != null) 'scrollPixels': scrollPixels",
        "'viewportDimension': viewportDimension")
-require('docs/adr/0280-semantic-demand-revision-boundary.md',
+require('docs/archive/adr/0280-semantic-demand-revision-boundary.md',
         'expirationRevision','semantic diff','missed-vsync','rev46–49')
-require('docs/audits/dev301-semantic-demand-revision-root-cause-audit.md',
+require('docs/archive/audits/dev301-semantic-demand-revision-root-cause-audit.md',
         '52.6ms','4 decodeDemand + 2 uploadDemand','UI Dart isolate')
 require('docs/SPEC.md',
         '`expirationRevision` MUST只作为surviving demand的liveness metadata',

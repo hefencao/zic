@@ -128,9 +128,9 @@ for body, name in ((STATUS, 'status'), (HANDOFF, 'handoff'), (CHANGELOG, 'change
         raise SystemExit(f'dev.199 missing from {name}')
 
 for path in (
-    ROOT / 'docs/adr/0180-cost-aware-full-body-catchup-admission.md',
-    ROOT / 'docs/audits/dev199-full-body-catchup-root-cause-audit.md',
-    ROOT / 'docs/audits/dev199-validation-results.md',
+    ROOT / 'docs/archive/adr/0180-cost-aware-full-body-catchup-admission.md',
+    ROOT / 'docs/archive/audits/dev199-full-body-catchup-root-cause-audit.md',
+    ROOT / 'docs/archive/audits/dev199-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.199 release document missing: {path.relative_to(ROOT)}')

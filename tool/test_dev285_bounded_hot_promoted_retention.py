@@ -85,10 +85,10 @@ require(
     'maxIdlePromotedSessions: 0',
 )
 
-req((ROOT / 'docs/adr/0264-bounded-hot-promoted-physical-retention.md').is_file(),
-    'missing dev.285 governance file: docs/adr/0264-bounded-hot-promoted-physical-retention.md')
+req((ROOT / 'docs/archive/adr/0264-bounded-hot-promoted-physical-retention.md').is_file(),
+    'missing dev.285 governance file: docs/archive/adr/0264-bounded-hot-promoted-physical-retention.md')
 require(
-    'docs/audits/dev285-fixed-region-promoted-physical-retention-audit.md',
+    'docs/archive/audits/dev285-fixed-region-promoted-physical-retention-audit.md',
     'dev.285',
     'hot-promoted-retention-pressure',
 )

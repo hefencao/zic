@@ -98,8 +98,8 @@ for token in (
 
 for rel in (
     'tool/analyze_vertical_scene_motion_jank.py',
-    'docs/adr/0299-vertical-scene-motion-frame-boundary.md',
-    'docs/audits/dev320-vertical-scene-motion-frame-audit.md',
+    'docs/archive/adr/0299-vertical-scene-motion-frame-boundary.md',
+    'docs/archive/audits/dev320-vertical-scene-motion-frame-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.320 missing artifact: {rel}')
@@ -108,9 +108,9 @@ docs = ''.join(read(path) for path in (
     'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/SPEC.md',
     'docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0298-android-window-frame-metrics-boundary.md',
-    'docs/adr/0299-vertical-scene-motion-frame-boundary.md',
-    'docs/audits/dev320-vertical-scene-motion-frame-audit.md',
+    'docs/archive/adr/0298-android-window-frame-metrics-boundary.md',
+    'docs/archive/adr/0299-vertical-scene-motion-frame-boundary.md',
+    'docs/archive/audits/dev320-vertical-scene-motion-frame-audit.md',
 ))
 for token in (
     '2052', '1989', '8.419ms', 'FrameMetrics', '62',

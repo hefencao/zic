@@ -8,7 +8,7 @@ def req(c,m):
     if not c: raise SystemExit('FAIL: '+m)
 build=int(re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$',read('apps/app/pubspec.yaml'),re.M).group(1))
 req(build>=268,'dev.264 gate must run under dev.268+ supersession')
-adr=read('docs/adr/0242-nonrange-flow-retention-slot-fairness.md')
+adr=read('docs/archive/adr/0242-nonrange-flow-retention-slot-fairness.md')
 req('Status: Superseded' in adr,'ADR0242 must remain superseded')
 net=read('packages/sessions/lib/src/net_lane.dart')
 job=read('packages/sessions/lib/src/download_job.dart')

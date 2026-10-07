@@ -83,10 +83,10 @@ for body, name in ((ARCH,'architecture'), (SPEC,'spec'), (STATUS,'status'), (HAN
     if '2/3' not in body and '2/3 headroom' not in body:
         raise SystemExit(f'dev.204 partial retention semantics missing from {name}')
 for rel in (
-    'docs/adr/0185-partial-headroom-retention-restoration.md',
-    'docs/adr/0186-venera-resolver-http-connection-reuse.md',
-    'docs/audits/dev204-retention-and-venera-cold-plan-root-cause-audit.md',
-    'docs/audits/dev204-validation-results.md',
+    'docs/archive/adr/0185-partial-headroom-retention-restoration.md',
+    'docs/archive/adr/0186-venera-resolver-http-connection-reuse.md',
+    'docs/archive/audits/dev204-retention-and-venera-cold-plan-root-cause-audit.md',
+    'docs/archive/audits/dev204-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.204 document missing: {rel}')

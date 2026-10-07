@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-07",
+  "status": "cold_metadata_query_admission_verified_upstream_and_original_Reader_acceptance_open",
+  "objective": "Preserve metadata tag query delivery on the first source-page mount while keeping the existing single-source route.",
+  "root_cause_and_boundary": {
+    "confirmed": "initState ignored the already issued requestedQuery; only didUpdateWidget queryRevision changes consumed commands. Real cold Home tag navigation therefore opened the right route but sent empty-query Latest.",
+    "existing_test_limit": "The prior integrated title/result/nested-tag test first visited the source tab, so it correctly covered a warm source page. It never proved the first-mount command.",
+    "repair": "Seed only the original query and TextEditingController from trimmed requestedQuery before the same scheduled source load. Five added production lines, no new owner, command mirror, Future queue, retry or route.",
+    "unchanged": "Mounted queryRevision handling, ordinary empty-query browse, canonical/source identity, search-history/locking policy, pagination coordinates, cache/URI/revision/body authority, NetLane/window/runtime/presentation ownership.",
+    "limits": "Actual first query admission is proven; actual upstream response/results and current Venera JM API failure cause are separate. No Reader route is exercised and original19/20 loading/performance remains open."
+  },
+  "failing_first": {
+    "log": "/home/unkloser/.cache/zic-device-evidence/source-metadata-cold-query-2026-10-07/failing-first.log",
+    "sha256": "2a07cd44a50b4d12f5a8400ee4d2ed8d8986fed4968ae569dabdec9e0e63d995",
+    "expected": "route-tag / offset0",
+    "actual": "empty query / offset0"
+  },
+  "remaining": [
+    "Successful upstream search response and the independent current Venera JM connection error/API cause.",
+    "Real source-produced revision/carrier retirement, original19/20 intermittent loading, GC/input/fixed-position stutter/final display and remaining source/product acceptance."
+  ],
+  "final_validation": {
+    "path": "/home/unkloser/.cache/zic-device-evidence/source-metadata-cold-query-2026-10-07/final-validation.json"
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

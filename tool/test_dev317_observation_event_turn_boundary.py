@@ -31,9 +31,9 @@ for token in ('Only a second committed','_candidateCount >= 2'):
     require(predictor, token, 'dev.313 predictor rollback')
 for token in ('reversalDistancePages = 4','_candidateDistance += delta.abs()'):
     forbid(predictor, token, 'falsified dev.316 predictor')
-for rel in ('tool/analyze_frame_between_control_jank.py','docs/adr/0296-reader-observation-event-turn-boundary.md','docs/audits/dev317-observation-event-turn-jank-audit.md'):
+for rel in ('tool/analyze_frame_between_control_jank.py','docs/archive/adr/0296-reader-observation-event-turn-boundary.md','docs/archive/audits/dev317-observation-event-turn-jank-audit.md'):
     if not (ROOT/rel).is_file(): raise SystemExit(f'dev.317 missing artifact: {rel}')
-docs=''.join(read(p) for p in ('CHANGELOG.md','docs/IMPLEMENTATION_PLAN.md','docs/IMPLEMENTATION_STATUS.md','docs/NEXT_CHAT_HANDOFF.md','docs/adr/0296-reader-observation-event-turn-boundary.md','docs/audits/dev317-observation-event-turn-jank-audit.md'))
+docs=''.join(read(p) for p in ('CHANGELOG.md','docs/IMPLEMENTATION_PLAN.md','docs/IMPLEMENTATION_STATUS.md','docs/NEXT_CHAT_HANDOFF.md','docs/archive/adr/0296-reader-observation-event-turn-boundary.md','docs/archive/audits/dev317-observation-event-turn-jank-audit.md'))
 for token in ('66','55','build','raster','ordinary event','FALSIFIED'):
     require(docs, token, '14:39 evidence/governance')
 print('dev.317 Reader observation ordinary-event-turn boundary: OK')

@@ -118,6 +118,6 @@ for rejected in (
 ):
     assert rejected not in trace_screen
 
-assert (ROOT / 'docs/audits/dev80-streaming-raster-and-trace-export-audit.md').is_file()
-assert (ROOT / 'docs/adr/0064-unified-raster-and-platform-trace-export.md').is_file()
+assert (ROOT / 'docs/archive/audits/dev80-streaming-raster-and-trace-export-audit.md').is_file()
+assert (ROOT / 'docs/archive/adr/0064-unified-raster-and-platform-trace-export.md').is_file()
 print('dev.80 streaming, raster and trace export ownership: OK')

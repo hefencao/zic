@@ -69,8 +69,8 @@ for forbidden in ('_syncPipelinePageDimensions', '_pipeline.pageDimensions.value
 require('packages/pipeline_runtime/lib/src/asset_bundle_transport.dart',
         'factory AssetBundleTransport.root() => AssetBundleTransport(rootBundle);')
 for path in (
-    'docs/adr/0267-pipeline-dimension-projection-boundary.md',
-    'docs/audits/dev288-pipeline-dimension-projection-compile-audit.md',
+    'docs/archive/adr/0267-pipeline-dimension-projection-boundary.md',
+    'docs/archive/audits/dev288-pipeline-dimension-projection-compile-audit.md',
 ):
     req((ROOT/path).is_file(),f'missing dev.288 governance file: {path}')
 require('docs/ARCHITECTURE.md','PipelinePageDimensionsFeed','ValueNotifier','ValueListenable')

@@ -64,8 +64,8 @@ require('packages/sessions/test/download_transfer_owner_test.dart',
         'expect(openOrder.first, high.canonicalUri);')
 
 for path in (
-    'docs/adr/0252-local-prepare-network-priority-continuity.md',
-    'docs/audits/dev274-compile-and-local-admission-priority-audit.md',
+    'docs/archive/adr/0252-local-prepare-network-priority-continuity.md',
+    'docs/archive/audits/dev274-compile-and-local-admission-priority-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.274 governance file: {path}')
 require('docs/NEXT_CHAT_HANDOFF.md', 'post-local network-admission rank barrier', '0-byte victim 自动重排 local prepare')

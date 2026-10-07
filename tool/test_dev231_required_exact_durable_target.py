@@ -19,5 +19,5 @@ need(Path('packages/downloads/lib/src/composition_download_transfer_runtime.dart
 forbid(Path('packages/downloads/lib/src/composition_download_transfer_runtime.dart'),'physical transfer artifact is unavailable for exact materialization','old physical-durable copy bridge')
 need(Path('packages/downloads/test/chapter_downloads_test.dart'),'openArtifactStream(oldId), isNull','no physical anchor durable duplicate')
 need(Path('packages/downloads/test/chapter_downloads_test.dart'),"event.payload['action'] == 'stored-required-exact-alias'",'behavior trace assertion')
-need(Path('docs/adr/0211-required-exact-durable-target.md'),'状态：Accepted','ADR')
+need(Path('docs/archive/adr/0211-required-exact-durable-target.md'),'状态：Accepted','ADR')
 print('dev.231 required exact durable target: OK')

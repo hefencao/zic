@@ -1024,6 +1024,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   通用同源版本列表 MUST在打开的面板中消费已有来源刷新结果，失败保留已确认首显；关闭面板 MUST NOT取消owner已接纳工作。关系发现时间 MUST NOT冒充来源更新日期，未知来源日期 MUST省略；候选展示 MUST使用来源Web地址，回调 MUST保持精确版本对象。
 - 迁移比较 MUST 使用标题、作者、来源、章节及来源提供的普通Web地址帮助核对；没有Web地址时 MUST省略该行，MUST NOT展示或解析内部opaque identity。展示地址 MUST NOT改变plan、精确匹配、缓存identity或事务目标；用户仍 MUST明确核对目标漫画/来源及章节风险后才能确认。
 - 迁移 MUST 只复制整部漫画偏好、精确章节匹配得到的阅读位置/已读状态和有证据的 artifact复用关系。目标写入成功后，同源替换 MUST 清理旧版本的漫画/章节元数据；跨源迁移 MUST保留原来源。
+  确认后的事务与 durable recovery MUST 统一经 `HomeSourceMigrationTransaction` 调用 `HomeLibrarySession` 和既有 artifact owner；来源浏览/比较 UI 只适配选择与命令，不得另持迁移状态权威。
   章节比较的 `exact` confidence 指序号与归一化标题同时匹配，目标原生 `sourceId + comicId + chapterId` MUST在写入前独立校验；comparison confidence MUST NOT替换持久身份或充当media proof。sequence-only候选 MUST NOT复制进度、已读或artifact；目标已有阅读状态 MUST优先保留。
   来源专属 URL 和离线字节不得被当作可直接复制的元数据。持久化同源page mapping MUST保持compact affine offset + bounded anchor proof：
   `verifiedPredecessorPageIndexes`只记录最多首/中/末anchor的证明来源，不是逐页reuse白名单；

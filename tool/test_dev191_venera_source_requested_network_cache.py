@@ -7,8 +7,8 @@ VENERA = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pl
 CACHE = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraHttpCacheStore.kt').read_text(encoding='utf-8')
 HOST = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/NativeExternalPluginDriverHost.kt').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
-ADR = ROOT / 'docs/adr/0174-venera-source-requested-network-cache.md'
-AUDIT = ROOT / 'docs/audits/dev191-venera-network-cache-root-cause-audit.md'
+ADR = ROOT / 'docs/archive/adr/0174-venera-source-requested-network-cache.md'
+AUDIT = ROOT / 'docs/archive/audits/dev191-venera-network-cache-root-cause-audit.md'
 
 for token in (
     'private val networkCache: VeneraHttpCacheStore',

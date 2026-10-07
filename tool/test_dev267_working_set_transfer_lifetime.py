@@ -32,7 +32,7 @@ req('_candidateCount >= 2' in pred and '_history' not in pred and 'nowMicros' no
 owner_test=read('packages/sessions/test/download_transfer_owner_test.dart')
 req('working-set turn out and back reuses the same active physical task' in owner_test,'TransferOwner turn-out/back identity regression missing')
 req('encoded work mode changes preserve one logical claim and physical task' in owner_test,'TransferOwner demanded park/revive regression missing')
-for path in ('docs/adr/0245-working-set-physical-transfer-lifetime-separation.md','docs/audits/dev267-working-set-transfer-lifetime-root-cause-audit.md'):
+for path in ('docs/archive/adr/0245-working-set-physical-transfer-lifetime-separation.md','docs/archive/audits/dev267-working-set-transfer-lifetime-root-cause-audit.md'):
     req((ROOT/path).is_file(),f'missing governance file {path}')
 req('test_dev267_working_set_transfer_lifetime.py' in read('tool/check.sh'),'dev.267 gate not wired')
 print('PASS: dev.267 working-set/task separation preserved; response lifetime strengthened by dev.268 parking')

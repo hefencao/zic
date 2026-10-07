@@ -48,7 +48,7 @@ if int(m.group(1)) >= 271:
         'control.releaseResponseReadPermit();',
         'The StreamIterator stays alive and no body read is requested here.',
     )
-    require('docs/adr/0249-transport-lease-body-read-permit-separation.md', 'transport/source lease', 'body-read permit')
+    require('docs/archive/adr/0249-transport-lease-body-read-permit-separation.md', 'transport/source lease', 'body-read permit')
     print('PASS: dev.268 live-response parking preserved under dev.271 transport-lease ownership')
     raise SystemExit(0)
 
@@ -77,8 +77,8 @@ if int(m.group(1)) >= 269:
         'The StreamIterator stays alive and no body read is requested here.',
     )
     require('packages/sessions/test/download_job_test.dart', 'parked response frees NetLane read slot and later reuses same stream')
-    require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
-    require('docs/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
+    require('docs/archive/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
+    require('docs/archive/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
     print('PASS: dev.268 live-response parking preserved; dev.269 narrows retention eviction to inactive responses')
     raise SystemExit(0)
 
@@ -190,8 +190,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0246-live-response-parking-body-read-permit-separation.md',
-    'docs/audits/dev268-live-response-loss-root-cause-audit.md',
+    'docs/archive/adr/0246-live-response-parking-body-read-permit-separation.md',
+    'docs/archive/audits/dev268-live-response-loss-root-cause-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.268 governance file: {path}')
 require('CHANGELOG.md', '0.31.0-dev.268', 'live response', 'body-read permit')

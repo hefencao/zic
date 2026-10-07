@@ -54,6 +54,6 @@ assert 'before?.epoch != after.epoch' in coordinator
 assert 'before?.revision != after.revision' not in coordinator
 assert '319.99999999999994' not in geometry_test
 
-assert (ROOT / 'docs/adr/0066-frame-consumption-source-grid-composition-and-trace-aggregation.md').is_file()
-assert (ROOT / 'docs/audits/dev82-vertical-animation-trace-stability-audit.md').is_file()
+assert (ROOT / 'docs/archive/adr/0066-frame-consumption-source-grid-composition-and-trace-aggregation.md').is_file()
+assert (ROOT / 'docs/archive/audits/dev82-vertical-animation-trace-stability-audit.md').is_file()
 print('dev.82 animation geometry and trace stability: OK')

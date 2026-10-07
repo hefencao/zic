@@ -78,8 +78,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0259-scroll-stable-vertical-geometry-snapshot.md',
-    'docs/audits/dev280-vertical-scroll-geometry-jitter-audit.md',
+    'docs/archive/adr/0259-scroll-stable-vertical-geometry-snapshot.md',
+    'docs/archive/audits/dev280-vertical-scroll-geometry-jitter-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.280 governance file: {path}')
 

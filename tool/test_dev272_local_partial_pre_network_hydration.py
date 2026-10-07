@@ -91,8 +91,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0250-local-partial-hydration-before-network-admission.md',
-    'docs/audits/dev272-local-partial-hydration-admission-root-cause-audit.md',
+    'docs/archive/adr/0250-local-partial-hydration-before-network-admission.md',
+    'docs/archive/audits/dev272-local-partial-hydration-admission-root-cause-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.272 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'physical local prepare', '在任何NetLane task/transport lease/provider lookup之前启动')

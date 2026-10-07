@@ -77,9 +77,9 @@ require(nav_test, 'page scrub updates navigation live and ends with a planning r
 require(controls_test, 'Slider dragging is live Reader navigation', 'gesture live-navigation regression')
 
 for rel in (
-    'docs/adr/0203-live-reader-scrub-and-foreground-demand-boundary.md',
-    'docs/audits/dev222-live-scrub-root-cause-audit.md',
-    'docs/audits/dev222-validation-results.md',
+    'docs/archive/adr/0203-live-reader-scrub-and-foreground-demand-boundary.md',
+    'docs/archive/audits/dev222-live-scrub-root-cause-audit.md',
+    'docs/archive/audits/dev222-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.222 missing governance: {rel}')

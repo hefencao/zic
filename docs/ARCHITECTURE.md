@@ -187,7 +187,7 @@ reset 前启动的旧 handoff 不得解除；禁止从session final或sibling bi
 二者都不拥有资源 session、缓存或 native handle。页面错误 UI 可以报告 presentation failure 和发出显式“重试”命令，但恢复资格、
 cache invalidation、session reset 与 network re-admission 全部留在 Pipeline/composition owner。
 
-### Home 冷启动组合
+### Home 组合与生命周期
 - Reader native media/process prewarm 只能是 acceleration hint：
   可以在章节 materialization 同时启动，但章节准备/route readiness MUST NOT await prewarm；
   真实 decode worker/texture capability 在需要时自行 join/retry，并保留错误 authority。
@@ -496,8 +496,9 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 `ComicDetails` 只把详情展示、阅读进度和用户命令投影到 Flutter；详情 AppBar 不重复显示
 漫画标题，标题只在详情内容区出现。保存过阅读进度时，继续阅读命令直接调用既有
 `onOpenChapter` facade，按钮和阅读历史是两个独立的 UI 投影，并位于章节总数行上方；详情页不创建第二个阅读器或
-正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
-`_HomeShellSourceMigration` 组合 owner 完成。
+正文缓存。来源浏览、manifest/chapter 身份校验和 `ComicSourceMigrationPlan` 比较由
+`_HomeShellSourceMigration` UI part 组合；确认后的状态迁移、artifact 复用和 durable recovery 由
+`HomeSourceMigrationTransaction` 经 `HomeLibrarySession` 与既有 cache owner 完成。
 远程与本地详情共用同一章节 presentation：
 章节目录直接以 `SliverList` 接入外层 `CustomScrollView`，只构建可见及缓存范围的行，不嵌套全目录 shrink-wrap 视口。章节行沿用 source/chapter presentation identity 和既有交互回调；目录元数据、进度与下载 authority 仍由原 owner 提供。
 章节完成态优先由真实 `ReadingProgress` 与已知 pageCount 推导，到达最后一页或倒数第二页即视为已读并整体弱化，未完成进度保持正常亮度并显示“读到第 N 页”，进入章节本身不再写已读；

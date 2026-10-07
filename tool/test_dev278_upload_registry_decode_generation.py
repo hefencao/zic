@@ -54,8 +54,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0256-upload-registry-decode-generation-binding.md',
-    'docs/audits/dev278-reader-reentry-upload-generation-audit.md',
+    'docs/archive/adr/0256-upload-registry-decode-generation-binding.md',
+    'docs/archive/audits/dev278-reader-reentry-upload-generation-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.278 governance file: {path}')
 

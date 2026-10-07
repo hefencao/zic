@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-03",
+  "status": "scoped_query_contract_verified_device_parent_performance_open",
+  "production_modified": true,
+  "scope": "Reader route chapter metadata projection only; preserve current alias representative selection, logical order, actual boundary checks, head/tail entry, media/session/source identities and all lane/window/budget policies.",
+  "root_cause": "Each _readerChapterSequence call materializes/canonicalizes the whole Home library before selecting the current comic. Matched Reader frame samples show aggregateImportedLibrary/LibraryComic.fromEntries and canonical URI decoding under _readerAdjacentChapters. Other source comics are unnecessary inputs to this route metadata query.",
+  "limits": [
+    "CPU samples show this redundant query cost in specific instrumented frame intervals, not the cause of every GC or the ordinary26.743ms build.",
+    "Scavenge/CollectNewGeneration overlap is a unique interval union, never double-counted.",
+    "Entry22.123ms has no adjacency-query sample; independent entry/layout/main SQLite/backfill/NetLane and final-display costs remain open.",
+    "The proposed query must preserve fresh source canonical authority on each call without a persistent cache, new owner, worker or Reader state."
+  ],
+  "failing_first": {
+    "log": "/tmp/zic-reader-adjacent-query-failing-first.log",
+    "exit_code": 1,
+    "reason": "Original whole-library projection queried unrelated-source canonical authority."
+  },
+  "parent_acceptance_complete": false,
+  "adr": "docs/archive/adr/0381-reader-adjacent-query-projects-current-comic-family.md",
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

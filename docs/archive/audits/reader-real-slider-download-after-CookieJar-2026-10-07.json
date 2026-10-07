@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-07",
+  "status": "ordinary_current_slider_download_verified_device_original_loading_and_performance_open",
+  "scope": "Existing same comic chapter21 middle slider positions and revisit; actual network admission checked against exported trace, no explicit reload/cache invalidation.",
+  "root_cause_of_original_intermittent_loading": "unattributed",
+  "production_changes": [],
+  "source_or_cache_settings_changed": false,
+  "boundary": "Preserve all current Reader/Pipeline/NetLane/generation/URI/revision/trust and published title/tag/WebView behavior. No repair without fresh failed evidence.",
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "remaining": [
+    "Original intermittent19/20 stall/redownload was not reproduced; root cause remains unattributed.",
+    "First two lower-viewport neighbors need more than1s but fill by6s without input; no active visual/performance acceptance.",
+    "Three actual positions are74/115/71, not an exact same-page or absolute pixel-to-slider contract test.",
+    "GC/input/final display, real source generation, native CPU/GPU and full browser Cookie/Cloudflare remain open."
+  ],
+  "final_validation": {
+    "passed": true,
+    "checks_count": 73
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements",
+  "verification_summary": {
+    "chapter": "第21話",
+    "stationary_target_pages": [
+      74,
+      115,
+      71
+    ],
+    "downloads": 18,
+    "completed_origins": 18,
+    "sealed_artifacts": 18,
+    "task_failures": 0,
+    "page115_first_frame_after_release_micros": 882796,
+    "neighbor_completion": "Incomplete neighbors at1s fill by6s without extra input.",
+    "revisit_scope": "Third target revisits the first window; it is not the identical page.",
+    "original19_20_loading_reproduced": false
+  }
+}

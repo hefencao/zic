@@ -64,7 +64,7 @@ require(
     'backwardDecodePages: 1',
 )
 require(
-    'docs/adr/0273-vertical-jitter-actual-layout-observability.md',
+    'docs/archive/adr/0273-vertical-jitter-actual-layout-observability.md',
     '缩放/比例异常已经在前一轮修复后解决',
     'observation-only',
     'external Texture/SurfaceProducer compositor',

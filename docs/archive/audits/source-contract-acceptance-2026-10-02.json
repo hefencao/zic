@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-02",
+  "status": "component_verified_toolchain_device_scope_remaining",
+  "baseline_commit": "16a17020",
+  "scope": [
+    "Mihon real installed-source catalog/request/fresh/restart contract acceptance",
+    "Canonical default client host replay classification defect; no Reader/scheduler/worker policy changes"
+  ],
+  "root_cause": "Canonical default-client interceptor class names added to runtime ABI were absent from the host replay capability allowlist, forcing ordinary media through complete runtime body RPC. Unknown/source-owned capability classification remains conservative.",
+  "failing_first": {
+    "command": "python3 tool/test_mihon_network_helper_contract.py",
+    "log": "/tmp/zic-mihon-default-client-before.log",
+    "sha256": "0e9b95ec50dc75f1eb449552aacddaab179044e9be78ff9a7f3643b8005e0205",
+    "exit_code": 1,
+    "assertion": "canonical default Mihon client incorrectly forces complete runtime body RPC",
+    "source_loader_boundary": "Fixture source and custom interceptor are loaded by a separate child classloader; default host capability classes come from the parent."
+  },
+  "fixed_behavior": {
+    "command": "python3 tool/test_mihon_network_helper_contract.py",
+    "log": "/tmp/zic-mihon-default-client-after.log",
+    "sha256": "7e84dd1ecc53ef6f7defbe87bb76aa9df54796b957a3c39e2af211ffd56ba7cf",
+    "exit_code": 0,
+    "covered": [
+      "Three exact canonical default interceptors stream on host",
+      "Unknown interceptor remains runtime",
+      "Custom source-owned application and network interceptor remains runtime"
+    ]
+  },
+  "limits": [
+    "Historical exact Roumanwu 80-chapter source sample is not yet recovered; actual fresh sample has42 chapters. JVM80-object contract is distinct from that device sample.",
+    "Catalog adapter bypasses durable cache in this harness; actual upgrade/cache-revision invalidation is not yet verified.",
+    "Current real request samples use GET with no Cookie and no body; full source-produced GET/Referer/UA assertions do not establish nonempty Cookie/POST device coverage.",
+    "Real runtime replacement works; Cookie snapshot reset ordering is not yet measured on device.",
+    "Reader loading cadence/final display and the remaining original112 Plan requirements remain independent."
+  ],
+  "parent_acceptance_complete": false,
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

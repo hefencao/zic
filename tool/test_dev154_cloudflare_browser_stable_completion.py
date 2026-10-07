@@ -49,7 +49,7 @@ for token in (
 ):
     forbid(activity, token, 'single onPageFinished completion')
 
-adr = read('docs/adr/0139-cloudflare-browser-stable-completion.md')
+adr = read('docs/archive/adr/0139-cloudflare-browser-stable-completion.md')
 for token in (
     '**状态：Accepted**',
     '连续稳定',

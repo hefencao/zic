@@ -113,9 +113,9 @@ for path, token in (
     require(read(path), token, path)
 require(check, "test_dev112_ranked_download_adaptive_prefix.py", "repository check")
 for path in (
-    "docs/adr/0096-ranked-page-download-adaptive-webp-prefix.md",
-    "docs/audits/dev112-ranked-download-adaptive-prefix-audit.md",
-    "docs/audits/dev112-validation-results.md",
+    "docs/archive/adr/0096-ranked-page-download-adaptive-webp-prefix.md",
+    "docs/archive/audits/dev112-ranked-download-adaptive-prefix-audit.md",
+    "docs/archive/audits/dev112-validation-results.md",
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f"dev.112 evidence is missing: {path}")

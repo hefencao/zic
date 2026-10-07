@@ -77,9 +77,9 @@ for token in ('observation', 'late', 'projection', 'ReaderController'):
     require(architecture + spec, token, 'governed ownership boundary')
 
 for rel in (
-    'docs/adr/0200-reader-navigation-pipeline-observation-and-late-ingress-boundary.md',
-    'docs/audits/dev219-reader-pipeline-coupling-root-cause-audit.md',
-    'docs/audits/dev219-validation-results.md',
+    'docs/archive/adr/0200-reader-navigation-pipeline-observation-and-late-ingress-boundary.md',
+    'docs/archive/audits/dev219-reader-pipeline-coupling-root-cause-audit.md',
+    'docs/archive/audits/dev219-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.219 governance file missing: {rel}')

@@ -75,7 +75,7 @@ require(
     "__zicBridgeMetrics.has(requestId)",
 )
 require(
-    "docs/adr/0172-venera-current-only-dynamic-preemption-and-plan-stage-observation.md",
+    "docs/archive/adr/0172-venera-current-only-dynamic-preemption-and-plan-stage-observation.md",
     "current=1000",
     "780↔900",
     "sourcePlanGateWaitMicros",

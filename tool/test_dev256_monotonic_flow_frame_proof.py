@@ -80,9 +80,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0235-physical-frame-prefix-proof.md',
-    'docs/audits/dev256-flow-target-proof-root-cause-audit.md',
-    'docs/audits/dev256-validation-results.md',
+    'docs/archive/adr/0235-physical-frame-prefix-proof.md',
+    'docs/archive/audits/dev256-flow-target-proof-root-cause-audit.md',
+    'docs/archive/audits/dev256-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.256 governance file: {path}')

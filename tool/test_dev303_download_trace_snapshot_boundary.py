@@ -45,9 +45,9 @@ require('packages/sessions/lib/src/download_session.dart',
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
         'forwardEncodedPages: 7','backwardEncodedPages: 3',
         'forwardDecodePages: 2','backwardDecodePages: 1')
-require('docs/adr/0282-download-trace-snapshot-publication-boundary.md',
+require('docs/archive/adr/0282-download-trace-snapshot-publication-boundary.md',
         '状态：Accepted','10.213ms','_recordTrace()','0 个 snapshot','恰好 1 次')
-require('docs/audits/dev303-download-trace-snapshot-publication-root-cause-audit.md',
+require('docs/archive/audits/dev303-download-trace-snapshot-publication-root-cause-audit.md',
         '重复 `_pump()`','无条件 `_notifySnapshot()`','Listener 所有权审计','1/10/1')
 require('docs/ARCHITECTURE.md',
         'DownloadSession诊断Trace与DownloadSnapshot publication必须是两个独立ownership edge')

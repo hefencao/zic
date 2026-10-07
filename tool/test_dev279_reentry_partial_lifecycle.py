@@ -116,10 +116,10 @@ require(
 )
 
 for path in (
-    'docs/adr/0257-sealed-reader-encoded-generation-continuity.md',
-    'docs/adr/0258-app-lifecycle-durable-partial-checkpoint.md',
-    'docs/adr/0307-recoverable-transfer-staging-root-background.md',
-    'docs/audits/dev279-local-reentry-cold-partial-regression-audit.md',
+    'docs/archive/adr/0257-sealed-reader-encoded-generation-continuity.md',
+    'docs/archive/adr/0258-app-lifecycle-durable-partial-checkpoint.md',
+    'docs/archive/adr/0307-recoverable-transfer-staging-root-background.md',
+    'docs/archive/audits/dev279-local-reentry-cold-partial-regression-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.279 governance file: {path}')
 

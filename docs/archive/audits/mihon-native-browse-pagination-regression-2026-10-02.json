@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-02",
+  "baseline_commit": "16a17020",
+  "status": "verified_toolchain_and_scoped_ordinary_release_device",
+  "adr": "docs/archive/adr/0375-mihon-browse-preserves-native-pages-and-request-coordinates.md",
+  "root_cause": "UI advances by returned item count20 while Mihon runtime uses limit24 to map native pages then drops20 from repeated page1; take(limit) also discards native tails larger than24.",
+  "failing_first": {
+    "production_changed_before_original_test": false,
+    "kotlin": {
+      "log": "/tmp/zic-mihon-native-page-before.log",
+      "sha256": "3ba0f514b0a3459c31d273839c1ab0977df0679b2da2022616ea69506a763aef",
+      "exit_code": 1,
+      "behavior_failure": "native20 next coordinate is20 instead of24"
+    },
+    "ui": {
+      "log": "/tmp/zic-mihon-native-page-ui-before.log",
+      "sha256": "188e19cf527fe64ad7fa35e7b1aeef70e4d2260cb605d5e0fa2740a3785aa306",
+      "exit_code": 1,
+      "behavior_failure": "native second-page card20 unavailable"
+    },
+    "adapter": {
+      "log": "/tmp/zic-mihon-native-page-adapter-before.log",
+      "sha256": "edd5f9d389a5a5c14d0f4baffae3ba37b6b3030355f9d625dd8ccf381a7b1e18",
+      "exit_code": 1,
+      "failed": 2,
+      "behavior_failure": "nextOffset lost and invalid coordinates accepted"
+    },
+    "empty_more_pager": {
+      "log": "/tmp/zic-mihon-native-empty-page-before.log",
+      "sha256": "a5e59771c3562fa853050b32b004242900f141bea1bff824bef34fe721e127f2",
+      "exit_code": 1,
+      "scope": "Only empty-more pager production line reverted then restored in finally; test scrolls to lazy tail; pager absent before fix"
+    },
+    "production_driver_before_sha256": "e20b678ba210666d2b4f74a0c029ad03bd1db15ad6cc07d6fc2cee33a5b1f806"
+  },
+  "remaining": [
+    "35.255ms reused-chapter return build needs matched CPU/entry attribution; sampled after boundary completion, not a proved native-page regression",
+    "Independent input/final physical-display performance and all-source contracts remain open",
+    "Original112 requirements and prior resolved Reader/download/source components retained without scope reduction"
+  ],
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

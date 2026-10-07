@@ -24,7 +24,7 @@ ownership_test = read("packages/pipeline_runtime/test/media_runtime_ownership_te
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 delivery = read("docs/AI_ITERATION_PROMPT.md")
 check = read("tool/check.sh")
-adr = read("docs/adr/0108-startup-current-prefix-exact-output-prewarm.md")
+adr = read("docs/archive/adr/0108-startup-current-prefix-exact-output-prewarm.md")
 
 for token in (
     "final target = binding.pipeline.decodeTarget",

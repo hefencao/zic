@@ -92,8 +92,8 @@ require('test_dev244_transport_cursor_provider_stability.py' in check,
         'dev.244 gate must be wired into tool/check.sh')
 
 for path in (
-    'docs/adr/0224-admitted-provider-stability-and-transport-cursor.md',
-    'docs/audits/dev244-redundant-prefix-progress-root-cause-audit.md',
+    'docs/archive/adr/0224-admitted-provider-stability-and-transport-cursor.md',
+    'docs/archive/audits/dev244-redundant-prefix-progress-root-cause-audit.md',
 ):
     require((ROOT / path).is_file(), f'missing governance file: {path}')
 

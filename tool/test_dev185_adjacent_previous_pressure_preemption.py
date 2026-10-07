@@ -110,11 +110,11 @@ else:
         'detached pre-open run drops to rank zero and yields only to current',
     )
     require(
-        'docs/adr/0168-adjacent-previous-normal-pressure-preemption.md',
+        'docs/archive/adr/0168-adjacent-previous-normal-pressure-preemption.md',
         'Superseded by ADR 0225',
     )
     require(
-        'docs/adr/0225-borrow-first-current-and-demotion-rank-hysteresis.md',
+        'docs/archive/adr/0225-borrow-first-current-and-demotion-rank-hysteresis.md',
         'normal-pressure preemption',
         '200ms',
     )

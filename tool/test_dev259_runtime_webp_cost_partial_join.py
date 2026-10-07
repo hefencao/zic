@@ -135,9 +135,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0238-runtime-webp-cost-and-progressive-reader-partial-join.md',
-    'docs/audits/dev259-runtime-webp-cost-partial-join-root-cause-audit.md',
-    'docs/audits/dev259-validation-results.md',
+    'docs/archive/adr/0238-runtime-webp-cost-and-progressive-reader-partial-join.md',
+    'docs/archive/audits/dev259-runtime-webp-cost-partial-join-root-cause-audit.md',
+    'docs/archive/audits/dev259-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.259 governance file: {path}')

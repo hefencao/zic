@@ -1,6 +1,6 @@
 # Implementation Status
 源码版本：0.31.0-dev.328，App build：0.31.0+328
-本文件只描述当前源码快照和验证等级。历史见 CHANGELOG.md，单轮证据见 docs/audits/。
+本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
 
@@ -141,7 +141,7 @@
   真机验收中发现`prepare_reader_device_test.py`只是“安装现有APK+readiness preflight”，不会构建；因此前两份误装13:44旧Profile APK的样本作废。
   重新执行`./tool/build_android.sh profile`并安装后，11-57-54 Profile Trace中held target118先稳定为logical=118.5/velocity=0，约5.25s后仍为118.5/0；pointer-up后的idle仍为118.5/0，页码119→119不漂移。
   同一新Profile Trace的artifact-cache presentation-file-lease为26次/26个unique identity、重复读取0；同任务pre-fix 11-18-08为64次/37个unique、27次额外重复读取，重复identity累计readMicros约531.5ms。说明resident-raster mounted attach已切断“prepared后再重开encoded file”的重复路径。
-  Reader/media runtime持续反审计统一记录到`docs/audits/reader_media_runtime_state_audit.json`。在`27467b96`上重新核对后，新增RMR-011..017七项均由current source独立确认。
+  Reader/media 当前验收统一更新`docs/IMPLEMENTATION_STATE.json`，既有RMR记录已归档。RMR-011..017七项由production source独立确认的已验边界保持。
   presentation侧包括：same-generation first-frame仍按widget lifetime去重；managed raster decode error被同步eviction先撤下error/authority；requested→ready分步通知制造瞬时双false；widget级recovery gate会吞新grant；旧rendered error可污染新attempt。
   worker侧包括：每请求向长期exit Future挂continuation；dead worker退出后仍留在可调度集合。
   当前external presentation改为一次完整`requested/ready` state commit，并以不可变`_PresentationAttempt(loadEpoch, token, opaque identity, exact read authority)`统一first-frame/error/recovery/final publish。

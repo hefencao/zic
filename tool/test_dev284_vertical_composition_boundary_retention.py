@@ -24,15 +24,15 @@ pubspec = text('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 req(m is not None and int(m.group(1)) >= 284, 'dev.284 app version history missing')
 
-adr = text('docs/adr/0263-vertical-composition-boundary-retention.md')
+adr = text('docs/archive/adr/0263-vertical-composition-boundary-retention.md')
 req('状态：Superseded' in adr, 'dev.284 ADR must be superseded after negative device result')
 require(
-    'docs/adr/0263-vertical-composition-boundary-retention.md',
+    'docs/archive/adr/0263-vertical-composition-boundary-retention.md',
     'dev.285 / ADR 0264',
     'production 回滚',
 )
 require(
-    'docs/audits/dev284-vertical-composition-cache-boundary-audit.md',
+    'docs/archive/audits/dev284-vertical-composition-cache-boundary-audit.md',
     'page18',
     'sliver cache边界',
 )

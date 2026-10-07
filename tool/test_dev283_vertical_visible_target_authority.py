@@ -45,10 +45,10 @@ require(
     'observation.visibleCoverages.length == 1',
     'observation.targetCoverage == null',
 )
-req((ROOT / 'docs/adr/0262-vertical-visible-target-authority.md').is_file(),
-    'missing dev.283 governance file: docs/adr/0262-vertical-visible-target-authority.md')
+req((ROOT / 'docs/archive/adr/0262-vertical-visible-target-authority.md').is_file(),
+    'missing dev.283 governance file: docs/archive/adr/0262-vertical-visible-target-authority.md')
 require(
-    'docs/audits/dev283-vertical-target-directionality-audit.md',
+    'docs/archive/audits/dev283-vertical-target-directionality-audit.md',
     'visibleIndexes',
     'target=current+1',
 )

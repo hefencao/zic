@@ -57,8 +57,8 @@ else:
     require("sessions不得知道Venera/Mihon/source类型" in architecture, "Architecture must prohibit source-specific branching in sessions")
 
 for path in (
-    "docs/adr/0219-task-retained-loader-transport-lease.md",
-    "docs/audits/dev239-task-retained-transport-root-cause-audit.md",
+    "docs/archive/adr/0219-task-retained-loader-transport-lease.md",
+    "docs/archive/audits/dev239-task-retained-transport-root-cause-audit.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 

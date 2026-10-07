@@ -88,8 +88,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0283-diagnostic-trace-ui-isolate-hotpath.md',
-    'docs/audits/dev304-diagnostic-trace-hotpath-root-cause-audit.md',
+    'docs/archive/adr/0283-diagnostic-trace-ui-isolate-hotpath.md',
+    'docs/archive/audits/dev304-diagnostic-trace-hotpath-root-cause-audit.md',
 ))
 for token in ('O(1)', 'RegExp', 'hasListeners', 'MemoryTraceSink'):
     require(all_docs, token, 'governed diagnostic hot path')

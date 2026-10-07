@@ -89,8 +89,8 @@ else:
 require('active/admitted' in spec and 'rank 0' in spec,
         'SPEC must freeze logical-detach versus active-task rank ownership')
 for path in (
-    'docs/adr/0223-atomic-late-ingress-and-active-rank-zero-retention.md',
-    'docs/audits/dev243-streaming-cancel-rank-root-cause-audit.md',
+    'docs/archive/adr/0223-atomic-late-ingress-and-active-rank-zero-retention.md',
+    'docs/archive/audits/dev243-streaming-cancel-rank-root-cause-audit.md',
 ):
     require((ROOT / path).is_file(), f'missing governance file: {path}')
 require('test_dev243_streaming_replay_active_rank_retention.py' in check,

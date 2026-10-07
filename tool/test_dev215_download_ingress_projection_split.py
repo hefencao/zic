@@ -98,9 +98,9 @@ for token in ('GlobalDownloadRegistry', 'static final DownloadRegistry', 'Compos
 require(pipe, '_ingresses = DownloadIngressProjectionRegistry(', 'Reader-local ingress survives registry lift')
 
 for rel in (
-    'docs/adr/0196-reader-local-ingress-projection-before-transfer-registry-lift.md',
-    'docs/audits/dev215-download-ingress-projection-root-cause-audit.md',
-    'docs/audits/dev215-validation-results.md',
+    'docs/archive/adr/0196-reader-local-ingress-projection-before-transfer-registry-lift.md',
+    'docs/archive/audits/dev215-download-ingress-projection-root-cause-audit.md',
+    'docs/archive/audits/dev215-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.215 governance file missing: {rel}')

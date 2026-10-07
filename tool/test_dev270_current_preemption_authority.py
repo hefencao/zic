@@ -71,8 +71,8 @@ else:
         'inactive.retentionEvictionSnapshot?.reason',
     )
 for path in (
-    'docs/adr/0248-current-read-permit-preemption-retention-eviction-separation.md',
-    'docs/audits/dev270-current-preemption-authority-audit.md',
+    'docs/archive/adr/0248-current-read-permit-preemption-retention-eviction-separation.md',
+    'docs/archive/audits/dev270-current-preemption-authority-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.270 governance file: {path}')
 require('CHANGELOG.md', '0.31.0-dev.270', 'downloadEvicted', 'current body-read')

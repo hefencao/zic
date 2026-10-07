@@ -77,9 +77,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0232-logical-source-watch-physical-generation-binding.md',
-    'docs/audits/dev253-logical-source-watch-generation-root-cause-audit.md',
-    'docs/audits/dev253-validation-results.md',
+    'docs/archive/adr/0232-logical-source-watch-physical-generation-binding.md',
+    'docs/archive/audits/dev253-logical-source-watch-generation-root-cause-audit.md',
+    'docs/archive/audits/dev253-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.253 governance file: {path}')

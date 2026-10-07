@@ -84,8 +84,8 @@ assert 'pipelineTransferProgressFor(' in progress
 assert 'completed and failed artifacts never project transfer progress' in progress_test
 
 for path in (
-    'docs/adr/0068-mihon-runtime-transform-catalog-and-details-metadata.md',
-    'docs/audits/dev84-static-transform-mihon-details-audit.md',
+    'docs/archive/adr/0068-mihon-runtime-transform-catalog-and-details-metadata.md',
+    'docs/archive/audits/dev84-static-transform-mihon-details-audit.md',
 ):
     assert (ROOT / path).is_file(), path
 

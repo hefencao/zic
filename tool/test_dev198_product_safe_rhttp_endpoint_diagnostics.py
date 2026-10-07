@@ -70,9 +70,9 @@ for body, name in ((STATUS, 'status'), (HANDOFF, 'handoff'), (CHANGELOG, 'change
         raise SystemExit(f'dev.198 missing from {name}')
 
 for path in (
-    ROOT / 'docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md',
-    ROOT / 'docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md',
-    ROOT / 'docs/audits/dev198-validation-results.md',
+    ROOT / 'docs/archive/adr/0179-product-safe-rhttp-endpoint-diagnostics.md',
+    ROOT / 'docs/archive/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md',
+    ROOT / 'docs/archive/audits/dev198-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.198 release document missing: {path.relative_to(ROOT)}')

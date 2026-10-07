@@ -20,7 +20,7 @@ adapter = read('packages/reader_runtime/lib/src/flutter_reader_touch_resampling.
 test = read('packages/reader_runtime/test/flutter_reader_touch_resampling_test.dart')
 main = read('apps/app/lib/main.dart')
 profile = read('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart')
-adr = read('docs/adr/0325-vertical-drag-displacement-resampling.md')
+adr = read('docs/archive/adr/0325-vertical-drag-displacement-resampling.md')
 
 for token in ('GestureBinding', 'resamplingEnabled', 'samplingOffset'):
     forbid(reader, token, 'Reader framework-input ownership')

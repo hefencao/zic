@@ -51,7 +51,7 @@ Architecture 中的“当前实现事实”必须能由 production source、owne
 
 ### IMPLEMENTATION_PLAN
 
-只列未完成工作、优先级、进入条件和退出条件。完成项必须删除，并转入 CHANGELOG/audit。禁止保存逐版本“已实施计划”。
+只列未完成工作、优先级、进入条件和退出条件。完成项必须删除，简短结论进入 CHANGELOG 和当前状态。禁止保存逐版本“已实施计划”。
 
 ### IMPLEMENTATION_STATUS
 
@@ -75,11 +75,17 @@ Architecture 中的“当前实现事实”必须能由 production source、owne
 - 下一步命令；
 - 不可改变的稳定边界。
 
-Handoff 每轮覆盖更新，不累积历史。
+Handoff 每轮覆盖更新，不累积历史。当前有效状态只指向 `docs/IMPLEMENTATION_STATE.json`。
 
-### ADR
+### IMPLEMENTATION_STATE.json
 
-ADR 记录一个重要技术决策、背景、取舍和后果。状态行必须只使用下列一个值；部分取代关系写在正文，不得拼接进状态值：
+保留全部 requirement ID、当前合同、有效状态和独立剩余验收；部分验收必须明确 remaining_acceptance。pending 未单列 remaining_acceptance 时，整个 current_contract 仍待验。缺少历史原始文件不代表产品缺陷，不授权重改已验生产行为。
+
+最新验证和设备安装信息覆盖更新；原需求措辞、逐轮过程、重复子审计和原始文件清单留在归档，不复制到当前状态。该文件保持在 96 KiB / 400 行以内。
+
+### docs/archive/adr
+
+已归档 ADR 保存重要技术决策、背景、取舍和后果，暂不新增。它们是历史资料；只在追溯具体决定时读取，并核对当前源码和稳定文档。状态行必须只使用下列一个值；部分取代关系写在正文，不得拼接进状态值：
 
 - Proposed；
 - Provisional；
@@ -93,9 +99,9 @@ ADR 记录一个重要技术决策、背景、取舍和后果。状态行必须�
 
 保存版本历史和用户可见/工程变更，不承担架构说明。
 
-### docs/audits
+### docs/archive/audits
 
-保存：
+已归档记录保存历史：
 
 - 问题清单；
 - 所有权清单；
@@ -104,7 +110,7 @@ ADR 记录一个重要技术决策、背景、取舍和后果。状态行必须�
 - 单轮验证命令和结果；
 - 未验证项。
 
-未经验证的推断只能在 audit 中明确标注，不得直接升级为 Architecture 事实。
+暂不新增或持续扩写 audit；当前待验事项更新已有 Plan/状态，简短变更写入 CHANGELOG。未经验证的推断在当前状态中明确标注，不得直接升级为 Architecture 事实。
 
 ## 2. 证据等级
 
@@ -118,23 +124,28 @@ ADR 记录一个重要技术决策、背景、取舍和后果。状态行必须�
 
 ## 3. 更新规则
 
-每轮默认只更新：
+每轮按实际变更更新已有文件：
 
 - CHANGELOG；
 - IMPLEMENTATION_STATUS；
 - NEXT_CHAT_HANDOFF；
-- 本轮 audit。
+- IMPLEMENTATION_STATE.json；
+- 未完成事项变化时更新 IMPLEMENTATION_PLAN。
 
 发生稳定所有权、默认策略、生命周期、缓存边界或长期合同变化时，必须在同一轮更新 Architecture/Spec；发现它们已与 production source 不一致时也必须立即校正。README 通常不随版本更新。
+
+修改前先检查目标段落的父标题、production owner 和同主题现有段落，再按组件职责编辑；详情布局归详情章节，Home 组合与生命周期只描述 Home 的职责。不能凭邻近关键词选择插入位置。
 
 ## 4. 删除和迁移
 
 发现历史段落放错位置时：
 
 - 版本变更保留在 CHANGELOG；
-- 决策保留在 ADR；
-- 验证证据保留在 audit；
+- 既有决策与验证记录迁入 docs/archive，引用同步迁移；
+- 当前结论与剩余验收进入 IMPLEMENTATION_STATE.json；
 - 其余重复内容直接删除，不创建新的“大杂烩历史文档”。
+
+测试与 trace 文件按必要性保留：保留原始报障输入、开放问题所需的最小复现文件和当前复验结果；成功后清理重复 trace、过期截图/XML/APK、旧备份及临时工作树。优先复用现有构建产物，当前截图/XML/结果按用途覆盖。临时目录必须在任务结束时清理；搬到仓库外不等于清理，不新增逐轮清理清单。
 
 ## 5. 门禁
 
@@ -146,3 +157,5 @@ ADR 记录一个重要技术决策、背景、取舍和后果。状态行必须�
 - Plan 中的大量完成历史；
 - Status 中多个历史版本章节；
 - 缺失当前验证等级或文档职责说明。
+- 当前状态丢失 ID、隐藏剩余验收、计数失配或重新积累历史对象；
+- 详情布局误归 Home，以及恢复已退役的当前文档目录。

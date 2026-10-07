@@ -71,9 +71,9 @@ require(
     'static classification restores unlimited 3/7 flow',
 )
 for path in (
-    'docs/adr/0227-animated-webp-layered-prefetch-window.md',
-    'docs/audits/dev247-animated-prefetch-window-root-cause-audit.md',
-    'docs/audits/dev247-validation-results.md',
+    'docs/archive/adr/0227-animated-webp-layered-prefetch-window.md',
+    'docs/archive/audits/dev247-animated-prefetch-window-root-cause-audit.md',
+    'docs/archive/audits/dev247-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.247 governance file: {path}')

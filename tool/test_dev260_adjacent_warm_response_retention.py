@@ -38,8 +38,8 @@ if build >= 269:
     for path in ('packages/pipeline/lib/src/demand.dart', 'packages/sessions/lib/src/net_lane.dart', 'packages/sessions/lib/src/download_job.dart'):
         reject(path, 'retainFlowResponse', 'pseudo-retained', 'pseudo-suspended')
     require('packages/sessions/test/download_job_test.dart', 'consumer-paced flow parks and resumes the same response')
-    require('docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
-    require('docs/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
+    require('docs/archive/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
+    require('docs/archive/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
     require('packages/pipeline/lib/src/animated_prefetch_policy.dart', 'if (readDistance == 1) return 5;', 'if (readDistance == 2) return 3;', 'if (readDistance == -1) return 2;')
     require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
     print('PASS: dev.260 adjacent continuity preserved; dev.269 separates demanded parking from inactive retention')
@@ -50,8 +50,8 @@ if build >= 268:
     for path in ('packages/pipeline/lib/src/demand.dart', 'packages/sessions/lib/src/net_lane.dart', 'packages/sessions/lib/src/download_job.dart'):
         reject(path, 'retainFlowResponse', 'pseudo-retained', 'pseudo-suspended')
     require('packages/sessions/test/download_job_test.dart', 'consumer-paced flow parks and resumes the same response')
-    require('docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
-    require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
+    require('docs/archive/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
+    require('docs/archive/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
     require('packages/pipeline/lib/src/animated_prefetch_policy.dart', 'if (readDistance == 1) return 5;', 'if (readDistance == 2) return 3;', 'if (readDistance == -1) return 2;')
     require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
     print('PASS: dev.260 adjacent continuity preserved; retainFlowResponse superseded by dev.268 live response parking')
@@ -127,9 +127,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md',
-    'docs/audits/dev260-adjacent-response-retention-root-cause-audit.md',
-    'docs/audits/dev260-validation-results.md',
+    'docs/archive/adr/0239-adjacent-warm-response-bounded-flow-retention.md',
+    'docs/archive/audits/dev260-adjacent-response-retention-root-cause-audit.md',
+    'docs/archive/audits/dev260-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.260 governance file: {path}')

@@ -80,8 +80,8 @@ all_docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0286-reader-position-command-and-scroll-lifecycle-boundary.md',
-    'docs/audits/dev307-reader-current-boundary-build-jank-audit.md',
+    'docs/archive/adr/0286-reader-position-command-and-scroll-lifecycle-boundary.md',
+    'docs/archive/audits/dev307-reader-current-boundary-build-jank-audit.md',
 ))
 for token in ('13.8ms', '29.5ms', '32.2ms', 'scrollCadenceOutlier',
               'currentIndexListenable', 'current±7'):

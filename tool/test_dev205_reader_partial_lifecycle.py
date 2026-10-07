@@ -29,9 +29,9 @@ if current_version is not None and int(current_version.group(1)) >= 206:
     # recovery and cursor-reentry-before-stale-prefix-gate. Historical docs must
     # remain present, but current production is validated by the dev.206 gate.
     for rel in (
-        'docs/adr/0187-durable-reader-partial-handoff-and-cursor-reentry.md',
-        'docs/audits/dev205-reader-partial-lifecycle-root-cause-audit.md',
-        'docs/audits/dev205-validation-results.md',
+        'docs/archive/adr/0187-durable-reader-partial-handoff-and-cursor-reentry.md',
+        'docs/archive/audits/dev205-reader-partial-lifecycle-root-cause-audit.md',
+        'docs/archive/audits/dev205-validation-results.md',
     ):
         if not (ROOT / rel).exists():
             raise SystemExit(f'dev.205 historical document missing: {rel}')
@@ -103,9 +103,9 @@ for body, name in ((ARCH,'architecture'), (SPEC,'spec')):
         if marker not in body:
             raise SystemExit(f'dev.205 {marker} clarification missing from {name}')
 for rel in (
-    'docs/adr/0187-durable-reader-partial-handoff-and-cursor-reentry.md',
-    'docs/audits/dev205-reader-partial-lifecycle-root-cause-audit.md',
-    'docs/audits/dev205-validation-results.md',
+    'docs/archive/adr/0187-durable-reader-partial-handoff-and-cursor-reentry.md',
+    'docs/archive/audits/dev205-reader-partial-lifecycle-root-cause-audit.md',
+    'docs/archive/audits/dev205-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.205 document missing: {rel}')

@@ -112,14 +112,14 @@ for body, name in ((STATUS, 'status'), (CHANGELOG, 'changelog')):
         raise SystemExit(f'dev.200 missing from {name}')
 
 for path in (
-    ROOT / 'docs/adr/0181-deferred-catchup-memory-and-two-tier-cost.md',
-    ROOT / 'docs/audits/dev200-dev199-defer-lifetime-two-tier-cost-audit.md',
-    ROOT / 'docs/audits/dev200-validation-results.md',
+    ROOT / 'docs/archive/adr/0181-deferred-catchup-memory-and-two-tier-cost.md',
+    ROOT / 'docs/archive/audits/dev200-dev199-defer-lifetime-two-tier-cost-audit.md',
+    ROOT / 'docs/archive/audits/dev200-validation-results.md',
 ):
     if not path.exists():
         raise SystemExit(f'dev.200 release document missing: {path.relative_to(ROOT)}')
 
-adr180 = (ROOT / 'docs/adr/0180-cost-aware-full-body-catchup-admission.md').read_text(encoding='utf-8')
+adr180 = (ROOT / 'docs/archive/adr/0180-cost-aware-full-body-catchup-admission.md').read_text(encoding='utf-8')
 if 'Superseded by ADR 0181' not in adr180:
     raise SystemExit('ADR0180 supersession marker missing')
 

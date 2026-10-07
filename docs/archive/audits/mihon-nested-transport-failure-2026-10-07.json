@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-07",
+  "status": "nested_transport_classification_verified_real_generation_and_origin_search_open",
+  "objective": "Repair the actual Mihon nested transport failure classification without introducing another retry, cache, scheduler or Reader owner.",
+  "root_cause_and_boundary": {
+    "production_defect": "The catch classified error.rootCause(), losing concrete ConnectException when Android ErrnoException was the deepest non-IO cause. Dart received Failure(source); the same decision could incorrectly grant runtime-owned media source replay.",
+    "repair": "Classify the original exception chain. Concrete SocketException/UnknownHostException/ProtocolException/InterruptedIOException/EOFException/SSLException overrides deeper non-IO platform causes. Generic IO/HTTP keeps the deepest-cause policy; any UnknownServiceException stays non-network. Use an identity set while scanning.",
+    "negative_contract": "Canonical UncaughtExceptionInterceptor wraps source/parser errors in ordinary IOException; those wrappers must not become network errors. Cancellation and verification retain their prior precedence.",
+    "unchanged": "Retry budgets, operation/wire shape, NetLane normal5/current1, canonical1/isolated2, encoded7/3, decode2/1, source settings and payload/URI/revision/cache identities, original transport/lifetime/Reader ownership.",
+    "not_inferred": [
+      "This defect is not established as the cause of original19/20 intermittent loading.",
+      "Real source invocation failed before and after; no fresh manifest or source-generated revision/carrier was produced.",
+      "Before host resolved to127.0.0.1; after to199.59.148.96. The typed nested connection-refusal shape matches, not the address/network conditions. VPN is non-bypassable and its UID policy differs; ordinary/isolated network equivalence is unproved.",
+      "The private installed ordinary UI smoke is partial because Venera search is unavailable. Browser normal site and Mihon result/details/tag route are verified; original Venera search-result return is not newly verified."
+    ]
+  },
+  "failing_first": {
+    "log": "/home/unkloser/.cache/zic-device-evidence/reader-real-source-settings-retirement-2026-10-07/failing-first-network-contract.log",
+    "sha256": "ff8fdb084a7740a489d11bf360beaf90c3f089c14442853585d80b63d4019966",
+    "actual_nested_ConnectException_assertion_failed": true
+  },
+  "remaining": [
+    "Real source-produced revision/carrier transition and independent generation retirement.",
+    "Fresh Venera JM search currently shows a source connection error; its API cause and matched baseline comparison remain unverified. Existing0399 acceptance is preserved, not replaced by this partial smoke.",
+    "Original19/20 intermittent loading, GC/input/fixed-position stutter/final display and remaining source/product acceptance."
+  ],
+  "final_validation": {
+    "path": "/home/unkloser/.cache/zic-device-evidence/reader-real-source-settings-retirement-2026-10-07/final-validation.json"
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

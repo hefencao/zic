@@ -47,7 +47,7 @@ require(
     'backwardDecodePages: 1',
 )
 require(
-    'docs/adr/0272-vertical-media-aspect-independence.md',
+    'docs/archive/adr/0272-vertical-media-aspect-independence.md',
     'BoxFit.fill',
     'top-aligned `FittedBox(fitWidth)`',
     '不恢复 dev.286',

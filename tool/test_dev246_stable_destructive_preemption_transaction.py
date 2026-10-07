@@ -63,9 +63,9 @@ require(
     'only one destructive preemption may be in flight',
 )
 for path in (
-    'docs/adr/0226-stable-destructive-preemption-transaction.md',
-    'docs/audits/dev246-destructive-preemption-burst-root-cause-audit.md',
-    'docs/audits/dev246-validation-results.md',
+    'docs/archive/adr/0226-stable-destructive-preemption-transaction.md',
+    'docs/archive/audits/dev246-destructive-preemption-burst-root-cause-audit.md',
+    'docs/archive/audits/dev246-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.246 governance file: {path}')

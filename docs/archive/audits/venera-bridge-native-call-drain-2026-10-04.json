@@ -1,0 +1,15 @@
+{
+  "status": "toolchains_packaging_and_scoped_native_device_verified",
+  "scope": "Canonical bridge result/cancellation publication joins JS and admitted native work; Venera body/transform delivery remains open.",
+  "parent_acceptance_complete": false,
+  "failing_first": "/tmp/zic-venera-native-drain-failing-first.json",
+  "original19_20_root_cause_and_final_display_pending": true,
+  "date": "2026-10-04",
+  "root_cause": {
+    "prior_behavior": "Native bridge forwarded JavaScript finished and removed cancellation while async executor work could still own physical resolver IO.",
+    "proved_by": "Exact baseline finished method plus a blocked admitted native worker fails permit-retirement assertion.",
+    "boundary": "No change to source HTTP/cache/retry, NetLane, canonical1/isolated2, persistent identity, Reader or existing Mihon delivery.",
+    "prior_completed_surfaces_unchanged": true
+  },
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

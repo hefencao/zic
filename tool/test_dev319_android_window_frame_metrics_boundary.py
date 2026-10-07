@@ -84,8 +84,8 @@ for token in (
 
 for rel in (
     'tool/analyze_window_frame_pipeline_jank.py',
-    'docs/adr/0298-android-window-frame-metrics-boundary.md',
-    'docs/audits/dev319-android-window-frame-metrics-audit.md',
+    'docs/archive/adr/0298-android-window-frame-metrics-boundary.md',
+    'docs/archive/audits/dev319-android-window-frame-metrics-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.319 missing artifact: {rel}')
@@ -94,9 +94,9 @@ docs = ''.join(read(path) for path in (
     'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/SPEC.md',
     'docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0297-static-webp-flutter-projection-composition-boundary.md',
-    'docs/adr/0298-android-window-frame-metrics-boundary.md',
-    'docs/audits/dev319-android-window-frame-metrics-audit.md',
+    'docs/archive/adr/0297-static-webp-flutter-projection-composition-boundary.md',
+    'docs/archive/adr/0298-android-window-frame-metrics-boundary.md',
+    'docs/archive/audits/dev319-android-window-frame-metrics-audit.md',
 ))
 for variants in (('2096', '2,096'), ('1521', '1,521')):
     if not any(token in docs for token in variants):

@@ -67,9 +67,9 @@ require(
 )
 
 for path in (
-    'docs/adr/0236-local-completion-before-provider-admission.md',
-    'docs/audits/dev257-local-completion-provider-admission-root-cause-audit.md',
-    'docs/audits/dev257-validation-results.md',
+    'docs/archive/adr/0236-local-completion-before-provider-admission.md',
+    'docs/archive/audits/dev257-local-completion-provider-admission-root-cause-audit.md',
+    'docs/archive/audits/dev257-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.257 governance file: {path}')

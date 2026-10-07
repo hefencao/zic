@@ -132,9 +132,9 @@ require(
     'counts complete ANMF chunks across arbitrary fragment boundaries',
 )
 for path in (
-    'docs/adr/0229-animated-webp-frame-flow-backpressure.md',
-    'docs/audits/dev249-frame-flow-root-cause-audit.md',
-    'docs/audits/dev249-validation-results.md',
+    'docs/archive/adr/0229-animated-webp-frame-flow-backpressure.md',
+    'docs/archive/audits/dev249-frame-flow-root-cause-audit.md',
+    'docs/archive/audits/dev249-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.249 governance file: {path}')

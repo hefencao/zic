@@ -50,7 +50,7 @@ if int(m.group(1)) >= 271:
         "'globalTransportLeases': net.transportLeases",
         "'bucketTransportLeases': net.transportLeasesForBucket(bucket)",
     )
-    require('docs/adr/0249-transport-lease-body-read-permit-separation.md', 'inactive', 'artifact')
+    require('docs/archive/adr/0249-transport-lease-body-read-permit-separation.md', 'inactive', 'artifact')
     print('PASS: dev.269 demand/artifact decoupling preserved under dev.271 transport leases')
     raise SystemExit(0)
 require(
@@ -123,8 +123,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0247-demanded-parking-inactive-retention-separation.md',
-    'docs/audits/dev269-parking-retention-owner-decoupling-audit.md',
+    'docs/archive/adr/0247-demanded-parking-inactive-retention-separation.md',
+    'docs/archive/audits/dev269-parking-retention-owner-decoupling-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.269 governance file: {path}')
 require('CHANGELOG.md', '0.31.0-dev.269', 'inactive retention', 'artifact')

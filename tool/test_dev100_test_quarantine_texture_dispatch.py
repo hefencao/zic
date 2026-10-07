@@ -105,15 +105,15 @@ require("tool/check.sh", "check_test_quarantine.py")
 require("tool/check.sh", "test_dev100_test_quarantine_texture_dispatch.py")
 require("tool/check.sh", "test_texture_bridge_kotlin_compile.py")
 require(
-    "docs/adr/0084-test-quarantine-and-texture-schedule-reply.md",
+    "docs/archive/adr/0084-test-quarantine-and-texture-schedule-reply.md",
     "0.31.0-dev.100",
 )
 require(
-    "docs/audits/dev100-test-quarantine-playback-audit.md",
+    "docs/archive/audits/dev100-test-quarantine-playback-audit.md",
     "被否决方案清单",
 )
 require(
-    "docs/audits/dev100-validation-results.md",
+    "docs/archive/audits/dev100-validation-results.md",
     "0.31.0-dev.100",
 )
 require(

@@ -12,5 +12,5 @@ need(Path('packages/sessions/lib/src/decode_session.dart'),'identical(_boundSour
 need(Path('packages/sessions/lib/src/decode_session.dart'),'_boundSource = source;','source binding update')
 need(Path('packages/sessions/lib/src/decode_session.dart'),'_boundSource = null;','source binding release')
 need(Path('packages/sessions/test/decode_session_test.dart'),'rebinds when ingress replaces encoded source inside the same epoch','behavior regression')
-need(Path('docs/adr/0212-same-epoch-encoded-source-rebind.md'),'状态：Accepted','ADR')
+need(Path('docs/archive/adr/0212-same-epoch-encoded-source-rebind.md'),'状态：Accepted','ADR')
 print('dev.232 same-epoch source rebind: OK')

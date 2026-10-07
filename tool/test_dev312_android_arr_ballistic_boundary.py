@@ -115,8 +115,8 @@ if 'GestureBinding' in read('packages/reader/lib/src/reader_view.dart'):
 
 for path in (
     'packages/reader_runtime/test/flutter_reader_platform_frame_rate_policy_test.dart',
-    'docs/adr/0291-vertical-reader-android-arr-boundary.md',
-    'docs/audits/dev312-android-arr-ballistic-audit.md',
+    'docs/archive/adr/0291-vertical-reader-android-arr-boundary.md',
+    'docs/archive/audits/dev312-android-arr-ballistic-audit.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'dev.312 artifact missing: {path}')
@@ -125,8 +125,8 @@ docs = ''.join(read(path) for path in (
     'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/SPEC.md',
     'docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0291-vertical-reader-android-arr-boundary.md',
-    'docs/audits/dev312-android-arr-ballistic-audit.md',
+    'docs/archive/adr/0291-vertical-reader-android-arr-boundary.md',
+    'docs/archive/audits/dev312-android-arr-ballistic-audit.md',
 ))
 for token in (
     '57', '28.194ms', '70', 'FALSIFIED', 'android.view.Choreographer',

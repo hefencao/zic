@@ -50,9 +50,9 @@ else:
     require("expect(publisher.notifier.value.committedBytes, 1024);" in test, "test must prove inherited committed progress")
 
 for path in (
-    "docs/adr/0216-physical-partial-progress-projection.md",
-    "docs/audits/dev236-partial-progress-authority-root-cause-audit.md",
-    "docs/audits/dev236-validation-results.md",
+    "docs/archive/adr/0216-physical-partial-progress-projection.md",
+    "docs/archive/audits/dev236-partial-progress-authority-root-cause-audit.md",
+    "docs/archive/audits/dev236-validation-results.md",
 ):
     require((ROOT / path).is_file(), f"missing governance file: {path}")
 

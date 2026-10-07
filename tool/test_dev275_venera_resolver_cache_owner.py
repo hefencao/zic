@@ -92,8 +92,8 @@ req('prewarmChapter' not in driver and 'preResolveChapter' not in driver,
     'dev.275 must not add whole-chapter Venera request-plan prewarm')
 
 for path in (
-    'docs/adr/0253-venera-resolver-network-cache-owner.md',
-    'docs/audits/dev275-venera-resolver-cache-lifetime-audit.md',
+    'docs/archive/adr/0253-venera-resolver-network-cache-owner.md',
+    'docs/archive/audits/dev275-venera-resolver-cache-lifetime-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.275 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'Venera source-requested resolver cache', 'NativeExternalPluginDriverHost')

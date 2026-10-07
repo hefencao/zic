@@ -43,9 +43,9 @@ require(spec, 'staged refill policy 因 current bootstrap 暂时返回空决策 
 require(architecture, 'current-bootstrap 暂时门控邻页不得吞掉其 pending source wake', 'source revision architecture')
 
 for rel in (
-    'docs/adr/0199-pending-source-revision-and-reader-slider-request-projection.md',
-    'docs/audits/dev218-source-wake-slider-root-cause-audit.md',
-    'docs/audits/dev218-validation-results.md',
+    'docs/archive/adr/0199-pending-source-revision-and-reader-slider-request-projection.md',
+    'docs/archive/audits/dev218-source-wake-slider-root-cause-audit.md',
+    'docs/archive/audits/dev218-validation-results.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.218 governance file missing: {rel}')

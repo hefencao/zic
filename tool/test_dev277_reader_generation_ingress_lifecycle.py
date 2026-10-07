@@ -82,8 +82,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0255-reader-generation-ingress-and-uploader-retirement.md',
-    'docs/audits/dev277-reader-reentry-ingress-generation-audit.md',
+    'docs/archive/adr/0255-reader-generation-ingress-and-uploader-retirement.md',
+    'docs/archive/audits/dev277-reader-reentry-ingress-generation-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.277 governance file: {path}')
 

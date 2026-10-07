@@ -136,9 +136,9 @@ for token in ('GlobalDownloadRegistry', 'CompositionDownloadRegistry', 'static f
     forbid(pipe + owner, token, 'parallel ad-hoc physical registry')
 
 for rel in (
-    'docs/adr/0197-composition-physical-transfer-owner-for-exact-download-id.md',
-    'docs/audits/dev216-composition-transfer-owner-root-cause-audit.md',
-    'docs/audits/dev216-validation-results.md',
+    'docs/archive/adr/0197-composition-physical-transfer-owner-for-exact-download-id.md',
+    'docs/archive/audits/dev216-composition-transfer-owner-root-cause-audit.md',
+    'docs/archive/audits/dev216-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.216 governance file missing: {rel}')

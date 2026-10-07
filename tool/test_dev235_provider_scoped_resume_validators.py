@@ -118,9 +118,9 @@ require(partial_test, 'physical partial never persists validators from an aliase
 require(session_test, 'legacy unscoped resume validators are discarded but length survives', 'v2 metadata migration regression')
 
 for rel in (
-    'docs/adr/0215-provider-scoped-resume-validators.md',
-    'docs/audits/dev235-partial-reuse-redundant-download-root-cause-audit.md',
-    'docs/audits/dev235-validation-results.md',
+    'docs/archive/adr/0215-provider-scoped-resume-validators.md',
+    'docs/archive/audits/dev235-partial-reuse-redundant-download-root-cause-audit.md',
+    'docs/archive/audits/dev235-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.235 governance file missing: {rel}')

@@ -33,7 +33,7 @@ else:
     ):
         if marker not in block:
             raise SystemExit(f'dev.203 partial-restoration marker missing: {marker}')
-    if not (ROOT / 'docs/adr/0185-partial-headroom-retention-restoration.md').exists():
+    if not (ROOT / 'docs/archive/adr/0185-partial-headroom-retention-restoration.md').exists():
         raise SystemExit('dev.203 supersession ADR0185 missing')
 for forbidden in (
     'sourceHostRemoteIpHash', 'sourceRhttp', 'duplicatePrefixBytes',
@@ -62,9 +62,9 @@ m=re.search(r'versionCode=(\d+)',ANDROID)
 if not m or int(m.group(1)) < 203:
     raise SystemExit('dev.203 Android version floor missing')
 for rel in (
-    'docs/adr/0184-revert-headroom-retention-and-isolate-source-tail.md',
-    'docs/audits/dev203-dev202-regression-and-rollback-audit.md',
-    'docs/audits/dev203-validation-results.md',
+    'docs/archive/adr/0184-revert-headroom-retention-and-isolate-source-tail.md',
+    'docs/archive/audits/dev203-dev202-regression-and-rollback-audit.md',
+    'docs/archive/audits/dev203-validation-results.md',
 ):
     if not (ROOT/rel).exists():
         raise SystemExit(f'dev.203 document missing: {rel}')

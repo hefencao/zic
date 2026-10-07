@@ -79,8 +79,8 @@ require(
 )
 
 for path in (
-    'docs/adr/0251-indexed-durable-partial-read-authority.md',
-    'docs/audits/dev273-durable-partial-read-owner-audit.md',
+    'docs/archive/adr/0251-indexed-durable-partial-read-authority.md',
+    'docs/archive/audits/dev273-durable-partial-read-owner-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.273 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'persistent index/file直接裁决', '不得为读取或存在性探测materialize durable-store `DownloadSession`')

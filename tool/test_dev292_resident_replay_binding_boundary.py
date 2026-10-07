@@ -90,10 +90,10 @@ require(
     "residentReplayChunks: (endExclusive) =>",
     "replaySource(session, endExclusive)",
 )
-req((ROOT / "docs/adr/0271-resident-replay-service-binding-boundary.md").is_file(),
-    "missing dev.292 governance file: docs/adr/0271-resident-replay-service-binding-boundary.md")
+req((ROOT / "docs/archive/adr/0271-resident-replay-service-binding-boundary.md").is_file(),
+    "missing dev.292 governance file: docs/archive/adr/0271-resident-replay-service-binding-boundary.md")
 require(
-    "docs/audits/dev292-resident-replay-binding-boundary-audit.md",
+    "docs/archive/audits/dev292-resident-replay-binding-boundary-audit.md",
     "dev.292",
     "Function(DownloadSession,int)",
     "DownloadResidentReplayChunks",

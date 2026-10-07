@@ -177,6 +177,6 @@ assert 'package:flutter_test/flutter_test.dart' not in geometry_test
 for token in ('_ResolvedSource', 'source.resolveCalls', 'source.loads'):
     assert token in gateway_test
 
-assert (ROOT / 'docs/adr/0065-route-first-reader-and-inflight-upload-lifecycle.md').is_file()
-assert (ROOT / 'docs/audits/dev81-reader-route-streaming-and-test-stability-audit.md').is_file()
+assert (ROOT / 'docs/archive/adr/0065-route-first-reader-and-inflight-upload-lifecycle.md').is_file()
+assert (ROOT / 'docs/archive/audits/dev81-reader-route-streaming-and-test-stability-audit.md').is_file()
 print('dev.81 route-first Reader, direct streaming and deterministic tests: OK')

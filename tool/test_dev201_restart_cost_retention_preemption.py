@@ -74,9 +74,9 @@ if not m or int(m.group(1)) < 201:
     raise SystemExit('dev.201 Android version floor missing')
 
 for rel in (
-    'docs/adr/0182-restart-cost-retention-victim-ranking.md',
-    'docs/audits/dev201-restart-cost-retention-root-cause-audit.md',
-    'docs/audits/dev201-validation-results.md',
+    'docs/archive/adr/0182-restart-cost-retention-victim-ranking.md',
+    'docs/archive/audits/dev201-restart-cost-retention-root-cause-audit.md',
+    'docs/archive/audits/dev201-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.201 document missing: {rel}')

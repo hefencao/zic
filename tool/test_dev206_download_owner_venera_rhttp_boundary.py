@@ -190,9 +190,9 @@ if 'veneraResolverHttp: VeneraResolverHttpTransport' not in host:
     raise SystemExit('native driver host resolver transport ownership missing')
 
 for rel in (
-    'docs/adr/0188-download-owned-partial-and-venera-rhttp-resolver.md',
-    'docs/audits/dev206-owner-boundary-root-cause-audit.md',
-    'docs/audits/dev206-validation-results.md',
+    'docs/archive/adr/0188-download-owned-partial-and-venera-rhttp-resolver.md',
+    'docs/archive/audits/dev206-owner-boundary-root-cause-audit.md',
+    'docs/archive/audits/dev206-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.206 governance file missing: {rel}')

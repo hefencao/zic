@@ -18,7 +18,7 @@ scheduler = read("packages/downloads/lib/src/artifact_cache_read_scheduler.dart"
 pipeline = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 scheduler_test = read("packages/downloads/test/artifact_cache_read_scheduler_test.dart")
 check = read("tool/check.sh")
-adr = read("docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md")
+adr = read("docs/archive/adr/0090-startup-foreground-pressure-whole-body-ingress.md")
 
 for token in (
     "int _activeForeground = 0;",

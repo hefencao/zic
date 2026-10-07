@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-05",
+  "status": "geometry_repair_toolchain_packaging_and_device_verified_scoped",
+  "scope": "SWG-PLAN-100 actual OS rotation and DPR/viewport/stitch absolute navigation geometry; minimal repair in the existing Reader geometry owner.",
+  "pre_modification_root_cause": "The corrected actual slider seed is page86. Rotation produces page85 and DPR changes its selected center offset. _preserveVerticalAnchor uses absolute center only when nextRatios is supplied; viewport, DPR and stitch use ordinary top restoration, including a post-frame jumpTo that can emit content-motion notifications. Eight independent first-layout regressions fail for released slider/interior entry across viewport, DPR, combined viewport+DPR and stitch; ordinary content-motion retirement passes.",
+  "boundary": [
+    "Repair only existing absolute navigation geometry; no source/cache/trust/URI, transport, scheduling or resource-eligibility change.",
+    "Keep Reader read-only Pipeline and all canonical1/isolated2, normal5+current1, encoded7/3, decode2/1 policies.",
+    "Build ordinary Profile/Release from current643 production inputs; only Reader geometry differs from the accepted0401 baseline.",
+    "Restore exact preexisting override density405, auto rotation1, user rotation0 and free mode, not physical default440.",
+    "Do not assert identical page labels for an ordinary interior top anchor after viewport-center size changes; compare the source-defined anchor.",
+    "Do not promote steady screenshots or logical trace into final physical-display performance acceptance."
+  ],
+  "production_changed": true,
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "DPR_first_layout_root_cause": "Current Flutter Scrollable.didChangeDependencies replaces ScrollPosition on DPR changes. ScrollPosition.absorb copies pixels/extents but not haveDimensions; the first applyContentDimensions skips ScrollPhysics.adjustPositionForNewDimensions. The initial candidate computes the correct1320 target but physics is never called and the post-frame callback clears it. Four viewport/stitch cases pass, four DPR/combined cases still fail. Bridge only that first dimension pass to the same existing physics-owned correction; no second anchor or eligibility state.",
+  "remaining_acceptance": [
+    "Original intermittent cached19/20 loading or re-download requires a fresh reproducing trace; this smoke did not reproduce it.",
+    "Active finger/ballistic visual continuity, total GC/input latency and final physical-display performance remain open.",
+    "Parent source/product/platform acceptance and default blocking-system-DNS physical exit remain independent and open."
+  ],
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}

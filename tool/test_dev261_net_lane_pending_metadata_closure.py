@@ -29,7 +29,7 @@ if build >= 268:
     if lane.count('_Pending(') != 2 or lane.count('_pending[key] = _createPending(') != 3:
         raise SystemExit('submit/replace/follow must still use the unique _createPending production constructor')
     require('packages/sessions/lib/src/net_lane.dart', 'releaseResponseReadPermit', 'acquireResponseReadPermit')
-    require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'body-read permit')
+    require('docs/archive/adr/0246-live-response-parking-body-read-permit-separation.md', 'body-read permit')
     print('PASS: dev.261 unique pending construction preserved; retain metadata superseded by dev.268')
     raise SystemExit(0)
 
@@ -64,8 +64,8 @@ require(
     'expect(token.retainFlowResponse, isFalse);',
 )
 for path in (
-    'docs/audits/dev261-net-lane-pending-metadata-closure-audit.md',
-    'docs/audits/dev261-validation-results.md',
+    'docs/archive/audits/dev261-net-lane-pending-metadata-closure-audit.md',
+    'docs/archive/audits/dev261-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.261 governance file: {path}')

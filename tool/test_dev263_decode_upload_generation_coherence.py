@@ -45,8 +45,8 @@ require(
     'expect(reboundUploadSession, isNot(same(oldUploadSession)));',
 )
 for path in (
-    'docs/adr/0241-decode-upload-generation-coherence.md',
-    'docs/audits/dev263-decode-upload-generation-coherence-audit.md',
+    'docs/archive/adr/0241-decode-upload-generation-coherence.md',
+    'docs/archive/audits/dev263-decode-upload-generation-coherence-audit.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.263 governance file: {path}')

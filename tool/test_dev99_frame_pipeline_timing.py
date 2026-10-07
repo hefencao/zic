@@ -149,8 +149,8 @@ require(
 )
 require('tool/check.sh', 'test_dev99_frame_pipeline_timing.py')
 require('tool/check.sh', 'test_frame_pipeline_trace_analyzer.py')
-require('docs/adr/0083-frame-pipeline-timing-and-local-artifact-ingress.md', '0.31.0-dev.99')
-require('docs/audits/dev99-frame-pipeline-timing-audit.md', '被否决方案清单')
-require('docs/audits/dev99-validation-results.md', 'framePipelineTiming')
+require('docs/archive/adr/0083-frame-pipeline-timing-and-local-artifact-ingress.md', '0.31.0-dev.99')
+require('docs/archive/audits/dev99-frame-pipeline-timing-audit.md', '被否决方案清单')
+require('docs/archive/audits/dev99-validation-results.md', 'framePipelineTiming')
 
 print('dev.99 exact frame pipeline timing and local artifact ingress: OK')

@@ -9,8 +9,8 @@ _version_text = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
 _version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', _version_text, re.M)
 if _version_match is not None and int(_version_match.group(1)) >= 316:
     for _rel in (
-        'docs/adr/0293-fixed-position-hidden-static-upload-boundary.md',
-        'docs/audits/dev314-fixed-position-hidden-static-upload-audit.md',
+        'docs/archive/adr/0293-fixed-position-hidden-static-upload-boundary.md',
+        'docs/archive/audits/dev314-fixed-position-hidden-static-upload-audit.md',
     ):
         if not (ROOT / _rel).is_file(): raise SystemExit(f'missing historical dev.314 artifact: {_rel}')
     print('dev.314 fixed-position hidden static upload boundary: FALSIFIED and rolled back')
@@ -69,8 +69,8 @@ for token in (
     require(analyzer, token, 'fixed-position trace analyzer')
 
 for rel in (
-    'docs/adr/0293-fixed-position-hidden-static-upload-boundary.md',
-    'docs/audits/dev314-fixed-position-hidden-static-upload-audit.md',
+    'docs/archive/adr/0293-fixed-position-hidden-static-upload-boundary.md',
+    'docs/archive/audits/dev314-fixed-position-hidden-static-upload-audit.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.314 missing governance artifact: {rel}')
@@ -82,9 +82,9 @@ docs = ''.join(read(path) for path in (
     'docs/IMPLEMENTATION_PLAN.md',
     'docs/IMPLEMENTATION_STATUS.md',
     'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/adr/0287-local-static-prepresentation-and-reverse-geometry-preparation.md',
-    'docs/adr/0293-fixed-position-hidden-static-upload-boundary.md',
-    'docs/audits/dev314-fixed-position-hidden-static-upload-audit.md',
+    'docs/archive/adr/0287-local-static-prepresentation-and-reverse-geometry-preparation.md',
+    'docs/archive/adr/0293-fixed-position-hidden-static-upload-boundary.md',
+    'docs/archive/audits/dev314-fixed-position-hidden-static-upload-audit.md',
 ))
 for token in (
     '148', 'index20=42', '16.163ms', '40.658911', '40.679514',

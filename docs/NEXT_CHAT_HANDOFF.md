@@ -3,15 +3,15 @@
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
 - 当前112项均有current_contract；device23/toolchain6/superseded2/partial36/pending45。038/109冷封面、050/065进度及084真机8/30秒合并已验。061退出80ms根因为全目录布局，详情Sliver后采样19ms/无采样24ms，首末滚动/排序/返回进度通过。063/066/112只复用冷命中分量；110及原加载/性能/真实来源开放。缺失证据不授权重改。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
-- 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
+- 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
-3. `docs/IMPLEMENTATION_STATUS.md`：当前实现与验证矩阵。
+3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。643输入保持，诊断已清理；结论见state-governance-closure的supplemental_acceptance/system-DNS-physical-exit-2026-10-05。
+- 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。
 - 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
@@ -52,8 +52,8 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移exact是title+sequence比较并校验目标native identity；ADR0016/dev146已核对，不新增native ID相等gate。隔离300项/五phase+三callback真kill已验，Plan075仅partial；真实普通确认/alias UI/真实来源callback仍开放，见state-governance-closure的迁移callback条目。
-  Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
+- 迁移exact是title+sequence比较并校验目标native identity；ADR0016/dev146已核对，不新增native ID相等gate。隔离300项/五phase+三callback真kill已验，Plan075仅partial；真实普通确认/alias UI/真实来源callback仍开放，有效剩余项见IMPLEMENTATION_STATE的075。
+  Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。
   两mode跨章开关只gate UI traversal；logical顺序消费source oldest-first投影，Mihon兼容旧opaque ordinal且不改ID。continuous真实首/尾后才pointer pull，显式入口覆盖历史并经布局回执；paged保持PageView pull，preload独立。

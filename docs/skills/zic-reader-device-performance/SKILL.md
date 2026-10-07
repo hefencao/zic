@@ -1,7 +1,8 @@
 ---
 name: zic-reader-device-performance
-version: 1.2.1
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
+metadata:
+  version: "1.2.1"
 ---
 
 # ZIC Reader device performance
@@ -43,10 +44,11 @@ Before the first destructive or Reader-targeted input in a new device session, p
 
 ## Device hygiene
 
-Preserve user data with `adb install -r`. Screenshots go directly to the host:
+Preserve user data with `adb install -r`. Reuse the APK in the current build output instead of copying it into each test directory. Capture screenshots only when they answer a visual question, and overwrite the current file for that purpose:
 
 ```bash
-adb exec-out screencap -p > .log/zic-reader.png
+mkdir -p .log
+adb exec-out screencap -p > .log/current-reader.png
 ```
 
 Do not write temporary screenshots or UI XML into `/sdcard` root. If accessibility inspection is needed while Home is known to be topmost, stream it without a device file:
@@ -55,7 +57,7 @@ Do not write temporary screenshots or UI XML into `/sdcard` root. If accessibili
 adb exec-out uiautomator dump /dev/tty
 ```
 
-Trace exports intentionally belong in the configured `Download/Debug` directory; pull the newest exported JSONL into `.log/` for analysis.
+Trace exports belong in the configured `Download/Debug` directory. Verify that the action created a new export before pulling it. Keep original user-reported traces and the minimum before/after inputs for an open issue; overwrite current working traces for repeated checks. After verification, delete redundant traces, stale screenshots/XML/APKs, completed backup copies and temporary worktrees. A completed check needs a short result in the existing status, not another permanent evidence directory or manifest. Temporary probes must clean their work directory on exit; moving a whole batch to private cache is not cleanup.
 
 ## Reader state: never infer it from Home semantics alone
 
@@ -63,7 +65,7 @@ Flutter/Android accessibility can preserve Home nodes while Reader covers Home. 
 
 Confirm Reader entry from app evidence such as the chapter hydrate/Reader session event plus the selected comic's media open and `pageHostMounted` / `firstFrameReady` / presentation events. Confirm exit with Reader retention/dispose evidence and, when interaction correctness matters, prove that a top-level Home control actually receives input after Back.
 
-Never choose a cover with a hard-coded coordinate. Resolve the intended Home/history node from the current streamed accessibility tree, then tap the center of its returned bounds. Coordinates are acceptable only for the subsequent continuous swipe gesture after the Reader viewport is already confirmed.
+Never choose a cover with a hard-coded coordinate. Resolve the exact, unique visible target from current accessibility XML and tap the intersection of its label bounds with its clickable ancestor, then verify the resulting page. A grouped ancestor may span adjacent controls, so its center is not a valid target. Coordinates are acceptable only for the subsequent continuous swipe gesture after the Reader viewport is already confirmed.
 
 For synthetic paged Reader navigation on the current 1080x2340 device workflow, the swipe path MUST stay on `y=900` (for example `900,900 -> 180,900` or the reverse) and MUST NOT cross the Home reading-history strip. Do not issue any swipe until Reader entry is already confirmed by Reader trace/session evidence. If Reader entry has not been proved, stop and re-resolve the intended cover instead of "trying a swipe". A swipe performed while Home is still active is a test failure and its resulting navigation/history state MUST NOT be used as product evidence.
 

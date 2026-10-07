@@ -125,8 +125,8 @@ require(
 )
 
 for required in (
-    'docs/adr/0062-aspect-preserving-replay-and-raw-diagnostics.md',
-    'docs/audits/dev78-reader-output-replay-and-diagnostics-audit.md',
+    'docs/archive/adr/0062-aspect-preserving-replay-and-raw-diagnostics.md',
+    'docs/archive/audits/dev78-reader-output-replay-and-diagnostics-audit.md',
 ):
     if not (ROOT / required).is_file():
         raise SystemExit(f'ERROR: dev.78 migration artifact is missing: {required}')

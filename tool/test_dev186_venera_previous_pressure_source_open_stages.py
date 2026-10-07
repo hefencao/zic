@@ -80,14 +80,14 @@ require(
     "expect(read.payload['sourceHostOpenMicros'], 3400);",
 )
 require(
-    'docs/adr/0169-venera-previous-request-plan-pressure-and-source-open-stages.md',
+    'docs/archive/adr/0169-venera-previous-request-plan-pressure-and-source-open-stages.md',
     'previous=780',
     '单 invocation',
     'sourceRequestPlanMicros',
     'sourceHostOpenMicros',
 )
 require(
-    'docs/audits/dev186-venera-request-plan-pressure-root-cause-audit.md',
+    'docs/archive/audits/dev186-venera-request-plan-pressure-root-cause-audit.md',
     '6.508 ms',
     '5,133.8 ms',
     'Venera',

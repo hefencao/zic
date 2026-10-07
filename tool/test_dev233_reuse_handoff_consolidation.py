@@ -67,9 +67,9 @@ for token in (
 require(handoff_test, 'hasLength(1)', 'single automatic backend probe regression')
 
 for rel in (
-    'docs/adr/0213-physical-reuse-and-handoff-lifecycle-consolidation.md',
-    'docs/audits/dev233-reuse-handoff-consolidation-audit.md',
-    'docs/audits/dev233-validation-results.md',
+    'docs/archive/adr/0213-physical-reuse-and-handoff-lifecycle-consolidation.md',
+    'docs/archive/audits/dev233-reuse-handoff-consolidation-audit.md',
+    'docs/archive/audits/dev233-validation-results.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.233 governance file missing: {rel}')

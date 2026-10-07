@@ -107,8 +107,8 @@ for token in ('scrub', 'physical trace', 'Reader'):
     if token.lower() not in all_docs.lower():
         raise SystemExit(f'dev.220 governance missing ownership term: {token}')
 for rel in (
-    'docs/adr/0201-reader-scrub-intent-and-physical-trace-fanout-boundary.md',
-    'docs/audits/dev220-navigation-scrub-trace-fanout-root-cause-audit.md',
+    'docs/archive/adr/0201-reader-scrub-intent-and-physical-trace-fanout-boundary.md',
+    'docs/archive/audits/dev220-navigation-scrub-trace-fanout-root-cause-audit.md',
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.220 governance file missing: {rel}')

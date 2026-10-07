@@ -15,7 +15,7 @@ def current_dev() -> int:
             return int(line.rsplit('+', 1)[1].strip())
     raise SystemExit('FAIL: app version code missing')
 dev = current_dev()
-require('docs/audits/dev297-external-texture-subpixel-jitter-audit.md', '414/418', 'fractional', 'SurfaceProducer')
+require('docs/archive/audits/dev297-external-texture-subpixel-jitter-audit.md', '414/418', 'fractional', 'SurfaceProducer')
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
         'forwardEncodedPages: 7','backwardEncodedPages: 3','forwardDecodePages: 2','backwardDecodePages: 1')
 forbid('packages/reader/lib/src/reader_view.dart','presentationExtentAt(')
@@ -26,10 +26,10 @@ if dev == 297:
     require('packages/local_media_ui/lib/src/local_image_player.dart',
             'physicalPixelSnapCorrection(', 'PhysicalPixelAlignedPresentation(',
             'surface is PipelineExternalTextureSurface', 'roundingResidual <= 0.500001')
-    require('docs/adr/0276-stitched-external-texture-physical-pixel-alignment.md',
+    require('docs/archive/adr/0276-stitched-external-texture-physical-pixel-alignment.md',
             '418个sampled page box','414个global top','0.5 physical px')
 elif dev >= 298:
-    require('docs/adr/0276-stitched-external-texture-physical-pixel-alignment.md',
+    require('docs/archive/adr/0276-stitched-external-texture-physical-pixel-alignment.md',
             'Superseded by dev.298', '明显大于1-2px')
     forbid('packages/pipeline_runtime/lib/src/pipeline_media_runtime.dart','PipelineExternalTextureSurface')
     forbid('packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart','PipelineExternalTextureSurface')

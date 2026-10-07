@@ -91,11 +91,26 @@ for token in (
     "SPEC",
     "IMPLEMENTATION_PLAN",
     "IMPLEMENTATION_STATUS",
-    "docs/audits",
+    "IMPLEMENTATION_STATE.json",
+    "docs/archive/adr",
+    "docs/archive/audits",
     "未经验证的推断",
 ):
     if token not in policy:
         raise SystemExit(f"FAIL: documentation policy missing: {token}")
+
+for retired_path in ("docs/adr", "docs/audits"):
+    if (ROOT / retired_path).exists():
+        raise SystemExit(f"FAIL: historical documentation must stay archived: {retired_path}")
+
+details_start = architecture.index("### 详情页与来源迁移组合")
+details_end = architecture.index("### 插件与平台桥", details_start)
+details_architecture = architecture[details_start:details_end]
+if "章节目录直接以 `SliverList`" not in details_architecture:
+    raise SystemExit("FAIL: chapter viewport contract belongs in details architecture")
+home_start = architecture.index("### Home 组合与生命周期")
+if "章节目录直接以 `SliverList`" in architecture[home_start:details_start]:
+    raise SystemExit("FAIL: details layout leaked into Home composition architecture")
 
 app_pubspec = (ROOT / "apps/app/pubspec.yaml").read_text(encoding="utf-8")
 match = re.search(r"^version:\s*0\.31\.0\+(\d+)$", app_pubspec, re.M)

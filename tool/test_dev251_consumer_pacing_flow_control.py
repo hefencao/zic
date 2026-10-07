@@ -120,9 +120,9 @@ reject(
     'bodyActiveForBucket',
 )
 for path in (
-    'docs/adr/0230-consumer-paced-flow-control-fallback.md',
-    'docs/audits/dev251-consumer-pacing-root-cause-audit.md',
-    'docs/audits/dev251-validation-results.md',
+    'docs/archive/adr/0230-consumer-paced-flow-control-fallback.md',
+    'docs/archive/audits/dev251-consumer-pacing-root-cause-audit.md',
+    'docs/archive/audits/dev251-validation-results.md',
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.251 governance file: {path}')

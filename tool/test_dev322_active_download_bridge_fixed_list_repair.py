@@ -58,8 +58,8 @@ for token in (
     require(analyzer, token, 'fail-closed analyzer')
 
 for rel in (
-    'docs/audits/dev322-active-download-bridge-fixed-list-repair-audit.md',
-    'docs/adr/0300-active-download-window-bridge-boundary.md',
+    'docs/archive/audits/dev322-active-download-bridge-fixed-list-repair-audit.md',
+    'docs/archive/adr/0300-active-download-window-bridge-boundary.md',
 ):
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.322 missing artifact: {rel}')

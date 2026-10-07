@@ -113,7 +113,7 @@
 - 让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。
 - 分别制造 source loader错误与 Flutter decode错误；确认 presentation稳定停在占位且不启动 timer/watchdog/resume retry，也不 `ImageCache.evict`；显式来源刷新后才允许发起新请求。
 
-本文件覆盖用户要求的全部产品、性能与来源验收；112项当前合同及剩余验收见`docs/audits/state-governance-closure-2026-10-01.json`，`status`为有效结论，`historical_status`仅留历史。只验证剩余合同，修改生产前须确认新的失败及根因；使用已有文件记录简短结论，不复制完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
+本文件覆盖用户要求的全部产品、性能与来源验收；112项有效状态只读`docs/IMPLEMENTATION_STATE.json`。只验证剩余合同，修改生产前须确认新的失败及根因；更新已有文件，不新增ADR/audit、完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
 
 ## P0：Transition 首帧与切页设备闭环
 

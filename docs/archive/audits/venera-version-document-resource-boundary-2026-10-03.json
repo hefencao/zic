@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-03",
+  "status": "verified_device_document_image_resource_boundary",
+  "scope": "Real-source version discovery acceptance exposed a source document/image resource boundary regression. This is independent of the unresolved chapters19/20 cache/loading report.",
+  "root_cause": [
+    "Venera findComicVersionsControlled fetches the gallery HTML through ordinary loadResourceControlled, whose runtime loadResource path resolves thumbnail/image hooks and requires an encoded-image signature.",
+    "A successful HTML response cannot produce an image-only native token. The current production bootstrap rejects the version document before adapter #gnd parsing.",
+    "Persisted relation projection and HomeVersionReuseLifecycle refresh fallback can keep the existing version panel visible after the fresh discovery fails; seeing stored versions is not evidence of a successful current source request."
+  ],
+  "failing_first": {
+    "bootstrap_log": "/tmp/zic-live-version-document-failing-bootstrap.log",
+    "adapter_protocol_log": "/tmp/zic-live-version-document-failing-adapter.log",
+    "bootstrap_failure": "Production __zicInvoke routes the document to http_image_binary, invokes a thumbnail hook and fails before returning the HTML payload.",
+    "source_snapshot": "/tmp/zic-live-version-document-before-production.json",
+    "intermediate_uncontrolled_coalescing_log": "/tmp/zic-live-version-document-coalescing-before.log"
+  },
+  "production_modified": true,
+  "parent_acceptance_complete": false,
+  "adr": "docs/archive/adr/0385-venera-version-document-resource-boundary.md",
+  "current_requirement_state": "docs/IMPLEMENTATION_STATE.json#requirements"
+}
