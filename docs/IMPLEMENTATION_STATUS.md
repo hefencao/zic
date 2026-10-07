@@ -1,11 +1,7 @@
 # Implementation Status
-
-源码版本：0.31.0-dev.328
-App build：0.31.0+328
-
+源码版本：0.31.0-dev.328，App build：0.31.0+328
 本文件只描述当前源码快照和验证等级。历史见 CHANGELOG.md，单轮证据见 docs/audits/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
-当前源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；标题分源/标签原路由/设备扩展元数据；Trace原始关联/Perfetto有效性分离；独立性能/真实来源验收仍开放。
 ## 1. 当前所有权与实现快照
 
 ### 调度与传输 (NetLane & Transport)
@@ -30,19 +26,23 @@ App build：0.31.0+328
 ### Home 组合与服务代际
 - 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。
 - `HomeShell` 只持真正的 Navigator/presentation 与 composition wiring；library/download/queue 当前 authority 继续由 `HomeLibrarySession` 持有，Reader/source/download/version 等长期职责继续由各自 Home owner 承担。
-- Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。
-- Download Manager 自动缓存 projection 已区分 exact storage identity 与 display metadata：旧 source revision 复用当前同逻辑章节的人类标题并标记为旧版本页面缓存，UI 不再暴露 opaque Mihon identity/raw source id/Exact/Canonical 字段；旧 revision 只可清理，不可直接转为当前手动下载。
+- Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。 ADR0404：单源页首次挂载先接收已有query，再发原source请求；后续queryRevision与标签路由不变，冷真机queryLength2/offset0已验。
+- ADR0399/0400/0401已验保持。0402 Accepted：viewport/DPR/stitch消费原绝对center，DPR首轮接同一layout校正。8先失败、11新合同/105 focused及全门禁通过；Release4bd8351d/PID11582几何28步/真实OS变化16次通过，125完整payload保持。原加载/active视觉/最终显示开放。
+- ADR0384 Accepted：完整组合键脱敏保持原始hash/长度，修正507→511假象；不改缓存身份/URI/信任。2219/Rust22/三ABI与普通Release9214事件通过，127长scope/11exact key独立核对。设备上的Mihon扩展行v1.6.0/ABI1.6、下载、五静置slider/四首尾已验收；性能与原加载开放。
+- ADR0389 Provisional：旧版缺边先失败，9 owner与2235/Rust22/三ABI通过。普通Release3e65ae94/PID23850匹配51文件，正确Mihon/下载、5静置slider/4首尾跨章含历史覆盖通过；119完整章不变。真实predecessor/提醒输入、原加载与性能开放。
 - 自动缓存 projection 进一步收口为 durable inventory only：Reader hot/source-resident session 不再被误计为缓存；本地 `content://` 图册普通读取保持 source-backed、零 artifact write，不会因 Reader session retention 再生成自动缓存项或正文副本。
 - 书架管理/批量选择的 managing、batch 与 source-aware identity selection 已收口到纯 Dart `HomeShelfManagement`；删除/移动/归档等真实 mutation 和 dialog 仍留在 UI/既有 owner。
 - 显式同源版本查看使用的 `originComicId + reuse-preparation Future` 已从 `HomeShell` 移入 `HomeVersionReuseLifecycle`；UI 只负责 route 前 start / finally finish，Reader preparation 从同一 lifecycle 查询 selected target token。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
-- Mihon 1.4/1.6 versioned ABI asset 已共享 canonical `UncaughtExceptionInterceptor`、`UserAgentInterceptor`、`CloudflareInterceptor`；
-  两套 `NetworkHelper.client` 保留 default-client 类型合同，同时 Cloudflare 行为继续委托 `network_bridge` 唯一 owner。
-- 真实肉漫屋扩展 APK 的 default-client guard 已核对：要求上述三类存在且 Brotli 不存在；对应 contract test 已进入 `tool/check.sh`。
-- 同一扩展 bytecode 的 Injekt 请求已核对为 `Application` + `Json`；host 现按 Mihon `AppBindings` 注入
-  `Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把 `Json` 纳入 common-runtime 完整性预检。
+- ADR0400 Accepted：受控先失败确认同步编码堵共享JavaBridge，输出借原executor且退出才dispose/finished，canonical1/isolated2不变。回调6/Binder11/2304/Rust22/native108与六APK已验；真实JM8页runtime≤60.489ms、缓存104读/0重下。0394其余正文、原加载/性能开放。
+- 正文寿命：Binder11/Dart9/Source9/PNG6/FailureRetry6/Network4/Cookie8/NativeWebP6/Mihon6及Delay6/PlanPriority6已验保持。089默认GaiResolver的blocking DNS不能由HTTP取消证明退出；VPN旁路受限，TestNetwork成功对照无DNS包，原生回溯需root，仍未验；未改生产。
+- ADR0395 Accepted：两有效先失败确认入口回执后晚短页ratio误走top anchor；复用原center/revision，99 Reader及2280/Rust22/108、三ABI通过。Release7ad3a60d三次真冷进入JM保持已保存index3，各11缓存/0下载/失败；slider/首尾与3独立历史覆盖通过。
+- ADR0396 Accepted：public显式失效忽略仅touch的recency变化，保留新binding保护与trim/其它完整record比较；受控先失败修复，全门禁/三ABI通过。普通Release单次显式重载仅1预期下载，冷重入11缓存/0重下；未宣称真机强制了touch竞态。
+- ADR0397证据保持；融合locator候选76312组等价，但真机288校验仍2592次所选分配，已撤回并恢复原642/Release。保留Unicode/损坏编码2合同测试；候选Profile74/Release99缓存、0下载失败与六静置slider/首尾通过。原加载/固定顿挫、整体GC/输入延迟/最终显示开放。
+- ADR0406 Accepted：HTTP响应Cookie保留domain/name/path、有效期/Secure，镜像抑制限定请求domain/path。15契约/真机9断言通过；浏览器属性及同名重叠未知镜像开放。0403/0405异常分类/BOM保持；Reader/NetLane/URI/revision不变，原19/20加载开放。
+- 同一扩展 bytecode 的 Injekt请求为`Application`+`Json`；host按Mihon `AppBindings`注入`Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把`Json`纳入common-runtime完整性预检。
 - Mihon 新生成的 opaque page locator 现在统一携带稳定 chapter/page replay 坐标；host-direct plan 另带显式 `directPlanReplay`，
   因此过期签名 URL/旧 page plan 可沿既有一次性 source recovery 重取 page list。runtime-transform locator 仍使用 payload-bound v3：
   `mihon-runtime-transform-v3:<payload-sha256>` 并保留 producer payload authority。
@@ -58,7 +58,6 @@ App build：0.31.0+328
   Android network/Mihon runtime 的 `FallbackDns` 不再强制 IPv4 优先；系统非空 DNS 结果保持原顺序，public fallback 仅在系统失败/空时启动，并同时查询 A/AAAA。
   terminal Reader refresh 仍只由当前失败页触发，但 fresh chapter 的 matched page carriers 现在按稳定 page identity 原子换代并保留旧 page order，
   不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
-
 ### 渲染与几何 (Pipeline & Reader View)
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
@@ -119,7 +118,7 @@ App build：0.31.0+328
   retained survivor不再让旧local restore占slot；点击区域save绑定edit-session token，旧保存不能关闭reopen后的新overlay；
   短页章节真实max extent直接映射最终页。同步做了三项纯减法：scrub ratio去重遍历、decode first-frame候选改为单遍best selection、
   两处点击动作label/icon共用helper。full gate 随后暴露 dev.114/dev.117 对 refill 具体源码字符串的误报，已改为稳定 stage + executable behavior regression 合同；
-  所称 Android API stub 冲突本轮未复现，因此 Android 平台 guard 未做泛化删除。
+  Reader Kotlin compile stub 已补齐当前系统栏使用的 Android API，Android 平台 guard 保留。
   2026-09-28继续对照Mihon后确认剩余represent偏移不是“decoder并发不足”：Mihon WebGPU decode本身单线程，
   但continuous viewer把真实viewport/adjacent页放在同一page-cache生命周期；旧Webtoon holder进入实际绑定后也会从adjacent preload提升为正常page load。
   ZIC随后修正三个边界：transition first-frame从单槽改为可重复viewport role；vertical `viewportVisible` output prewarm不再等待idle；
@@ -149,27 +148,30 @@ App build：0.31.0+328
   same-generation regrant取得新的local attempt但不旋转presentation identity；managed raster decode failure先保留当前error channel而不是伪装成ordinary residency eviction。WebP metadata prefix旧async drain无await，已删除syncing/双revision/递归外壳，只保留同步prefix读取与单调length去重（ADR0337）。
   native decode/source-write worker现在各只安装一次exit listener；worker持有至多一个current active-response completer，真实exit结算当前请求后由pool退休dead worker并有界补位。
   request只持短命response subscription，不再向process-lifetime exit Future持续注册then；真实capacity由active-run unwind结算，decode退化为单live worker时non-current让出最后slot（ADR0338）。
-  静态呈现由App显式绑定同一`PipelineStaticPresentation`供Pipeline/prewarmer/mounted UI消费；独立local raster只消费纯resize；不新增cache owner。
-  最终Profile authoritative Home 1.287s；`zic-debug-trace-2026-09-29T00-52-07.jsonl`中external request/first-frame=33/33、mounted request无后续first-frame=0。
-  同一Trace的sourceRead为33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
+  RMR-032已将延期global耦合改为App显式绑定`PipelineStaticPresentation`：同实例供Pipeline authority/prewarm和mounted UI；local独立raster仅消费纯resize，未新增owner。custom authority失败先行集成回归、local_media_ui34/34与全仓2136项及Rust22/22通过；
+  ADR0351..0353 Accepted：native Profile slider/跨章/重入通过；JM180项/8页、Pixiv五语言/全来源144项0失败。一次JM init HTTP命中10s，30组manifest恢复通过；synthetic requestId诊断盲点已补，第二台8轮冷激活0.98–1.19s、headers699–922ms/body0–4ms，旧长尾子阶段仍未归因。
+  真实MangaFire筛选UI已完成：Safe/OR/Action三项跨重建保留、应用、重开、恢复默认与返回热门均通过；unknown Filter边界由实际Kotlin codec执行验证。
+  第二台API36新02-18-27 Trace有1376事件，真实31→38→31、taskFailed0；14次current边界reconcile中位618µs/max955µs、uploadStarted0。同次内容层667个手势内部gap p99=8.319ms/max8.320ms；FrameTimeline缺ZIC内容层、视觉暂不可用，性能仍partial。
+  本次buffer与service lifetime丢弃计数已分开；副标题opaque locator与关于旧版本已修并实机验证。包含这些修改的2138项+Rust22全门禁通过。
+  ADR0354已Accepted：2140项/Rust22全门禁通过；实机冷页116/21放手后尺寸晚到约808/951ms，首帧自行到达且页码稳定，真实drag正常退休anchor；四次跨章方向/首尾落点正确。新确认冷章节source激活竞态、idle重入伪velocity已最小修复，2148项完整门禁与第二台fresh trace通过：冷入口等待source成功、37条idle速度零且真实drag保留速度（ADR0355/0356 Accepted）。
+  Profile00-52-07 authoritative Home1.287s、external request/first-frame=33/33、mounted无后续first-frame=0；sourceRead33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
   decode pending queue的request-level control已独立治理：`DecodeLane CancelToken`经`DecodeSession -> ScheduledFrameCursor -> NativeCursor`原样进入native pool。
   queued cancellation可直接移除pending，动态numeric priority由同一control驱动class内排序，current/nonCurrent仍只表达execution class；role promotion先迁移DecodeLane rank再迁移同一request class。
   in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。focused DecodeSession/LiveCoordinator回归与native decode ownership guard已通过。
-  最终Profile authoritative Home 1.245s；`zic-debug-trace-2026-09-29T02-34-05.jsonl`完成4次forward+4次reverse，含2次stable `previous` 起手，`taskFailed=0`、decode recovery=0、priority promotion 1次且为active迁移。
-  下载治理：DL-PIPE-001已由2-wide batch改为同一consumer/NetLane上的2-wide sliding page window；DL-PIPE-003、DL-DIR-006/007、DL-MGR-005均已闭合。DL-DIR-019/017仅余真实provider kill/reopen证据。
+  Reader/media40保持36 resolved/2 deleted/2 confirmed，下载原13闭合；原112范围保持，Plan074转partial。0385 Accepted：真实E-Hentai新版发现/551页详情/比较预览与三静置slider/四首尾通过，bootstrap/56项、2221/Rust22及三ABI通过；0383首次入架/后续版本提醒、原加载与最终显示仍开放。
+  progress旧“pop不等durable”文案已按Accepted ADR0303校正；普通翻页仍8s idle/30s active批量，正常pop先final drain/flush，返回仅targeted投影。旧文档guard同步当前合同，产品/性能长会话验收继续。
+  下载治理：下载审计JSON的13项均已闭合。DL-PIPE-001保持共享consumer/NetLane的2-wide滑动窗口；ADR0343保持唯一index，current backup须CRC匹配才恢复，stale intent全CRC，live commit不重扫。SAF真机9组kill/reopen+1组幂等及required-toolchain gate通过；downloads504/504、App383+3既有skip、Rust22/22。
   partial复用继续收口到physical authority：03-03-51 Trace中page79/exact `6d924728a464c2c6`已有7,708,375-byte canonical SAF partial，却因不可borrow而经DownloadSession writer从0本地重放并被投影成receiving；同identity当段无origin sourceRead。
   现在persistent store在per-physical serializer内先将SAF authority安全迁到App-private Direct transfer staging，再borrow给hot session，generic fallback不变（ADR0340）。
   current-source Profile `zic-debug-trace-2026-09-29T03-35-53.jsonl`直接命中同一7,708,375-byte SAF partial：`accessMode=saf/adoptable=true -> adopted-physical`，local hydration结束仍为idle且未发生本地`receiving from 0`；随后03-54-39同页直接`adopted-posix-spool`。
   provider之后对`Range: bytes=7642839-`返回HTTP 200而触发full-body-prefix-catchup属于独立Range rejection；partial仍被保留，不与authority-loss混写。
   ADR0340后续反审计确认首次SAF→Direct接管仍有冗余I/O：旧prefix曾被pre-copy CRC、copy、同步cleanup CRC各完整读取一次。当前实现删除pre-copy扫描，在实际copy中累计cleanup CRC；新Direct authority提交后只登记durable cleanup debt并异步drain。
-  hot takeover/取消不再等待第三遍SAF扫描。稳定7MiB+回归证明takeover返回时SAF正文仅读1遍，delete-time proof为后台第2遍，后续Direct adoption不再读SAF。
-  worker replacement失败也已收窄：只要仍有live worker，decode/source-write pending均保留并继续degraded执行；decode单live worker仍保留current-only最后slot。live worker为0且补位失败才终止无法执行的pending。
-  native decode numeric priority不再镜像到pending或订阅`priorityChanges`，selection时直接读取同一TaskControl实时priority；queued cancellation与显式current promotion不变（ADR0338/0339）。
+  hot takeover/取消不等第三遍SAF扫描；7MiB+回归证明返回时仅读1遍，delete-time proof为后台第2遍，后续Direct adoption不再读SAF。worker补位失败仍有live worker时保留pending、degraded执行，单decode worker保留current-only最后slot；live=0且补位失败才终止pending。
+  decode numeric priority在selection时读取同一TaskControl，不镜像pending或订阅`priorityChanges`；queued cancellation与显式current promotion不变（ADR0338/0339）。
   RMR-022/023已闭合：opaque grant内部绑定DecodeId、UI只见cache/state/ack；唯一PipelinePresentationRasterCache未变，mounted/detached共用owner adapter。focused 33/33+16/16、dev.77/80/114及最终`--require-toolchains` 172.55s均通过，无新增Reader owner。
-  current-source Profile使用release native重新构建/安装，authoritative Home 1.283s；`zic-debug-trace-2026-09-29T06-32-20.jsonl`进入Reader并达到`presentation-widget-first-frame`，`taskFailed=0`，多个multi-MiB Direct physical partial正常`adopted-physical`。
-  设备当前已无可复现canonical SAF physical partial，因此SAF读取次数/取消边界只按确定性fake-SAF回归记账，不冒充真机证据。
-  本轮最终`./tool/check.sh --require-toolchains` exit 0（243.121s）；repository/docs/ownership gates、Dart/Flutter suites、Android build gates与Rust media_core suite通过。
-  presentation sourceRead为48次/38个identity；10个重复pair最短间隔45.634s，5s内同identity重复为0，`taskFailed=0`。剩余重复属于离开resident窗口后的真实重访，不再是prewarm后mounted立即重开encoded source。
+  release-native Profile06-32-20 authoritative Home1.283s、Reader first-frame、taskFailed0及multi-MiB Direct adopted-physical通过；该轮无可复现SAF partial，SAF读取次数/取消边界仅以fake-SAF回归验收。
+  RMR-031闭合基线：Reader73/73、Home11/11、DownloadSession90/90、retention35/35、Kotlin与required-toolchain gate、三ABI debug/Profile、Rust22/22通过；RMR-032全仓/设备复验已通过；扩展Plan验收仍进行中。
+  TTL4/LRU、used texture、active decode/prepare退出保持。pending present退出/重入与prepare原Future期间重入1/12已验，另11时窗未覆盖。新demand可持旧活跃cursor，最后退出才退休；631事件/0失败/0重读。实际CPU blit/GPU、真实代际开放。125完整payload/67read保持；19话APK/1.6.22provenance保持。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，
   但严格max2会让第二个900按stable claim顺序多等约3.7–15.4ms。ADR 0334不全局扩容，而只给同Reader/revision、三者均`localOnly + viewportVisible`的cohort一个第三operation handoff；
   `DownloadDemand.viewportVisible`现直接来自Reader observation而非role推断。修复前13-26-45 matched fast-forward样本`next-current`中位约+18.21ms；
@@ -195,17 +197,16 @@ App build：0.31.0+328
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
-
 ## 2. 当前开放问题
+- RMR-037：ADR0364–0377已验分量保持；8162事件验明静置slider与首尾跨章。48.162ms属拖动→惯性交接，37.640/43.308ms有匹配CPU；旧返回35.255/20.331ms及新21章入口34.772ms无匹配栈。Profile返回GC15.557ms、输入延迟/最终显示仍开放，见cadence/home-alias/source-card审计。
+- RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。
 - 静态竖排功耗报告已于 2026-09-24 重新按当前 owner 链复核：idle 恢复 3/7 static warm 是既定资源平滑策略，不作为功耗缺陷移除。
   Plan 会同时声明 one-frame intents，但真正 decode 仍由 `StagedDecodeRefillPolicy` 每次选一个 refill；Reader profile 的 bounded lanes 不等于整窗同时执行。
 - ratio“逐页整树颠簸”报告部分过时：`reader_runtime` 已按 Flutter frame 合并 source-canvas ratio 发布，decoded raster 不能覆盖已知 source-canvas geometry。
   未取得 fresh trace 证明仍有跨多 frame 的 source-canvas storm 前，不再增加 debounce/Reader-local 几何旁路。
 - 初始 6-screen `cacheExtent` 到首个 ScrollEnd、nominal `current±7` KeepAlive 与每 frame 最多 3 页的 idle recenter 均保留为 composition 策略；
   它们不扩大 Pipeline 资源窗口，offscreen subtree 由 `TickerMode` 静音，暂不按泄漏/功耗 bug 处理。
-- 已确认并修复的额外成本：Dart `verticalSceneMotion` RenderBox/global-matrix probe 现在与 platform cadence probe 共用
-  `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS` opt-in；普通构建不再运行该纯诊断逐帧采样。fresh Profile/Release 功耗复核仍可继续。
-
+- 已确认并修复的额外成本：Dart `verticalSceneMotion` RenderBox/global-matrix probe 与 platform cadence probe 共用 `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS` opt-in；普通构建不运行该纯诊断逐帧采样。fresh功耗复核开放。
 ## 3. 验证矩阵
 | 检查项 | 状态 | 说明 |
 |---|---|---|
@@ -213,7 +214,7 @@ App build：0.31.0+328
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain | Kotlin 与 Android 依赖通过 |
-| 设备性能与真机回归 | Verified-device | 基础链路真机采样验证通过 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2321/Rust22/27analyzer/Android110/Cookie15/真机9/六APK通过；643冻结输入仅CookieJar与门禁变化。native/Dart/公共ABI保持；common资产按新适配器更新。Release1b040401/PID8239/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
+| 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20六静置/两独立历史入口及173缓存读已验。21话三静置步骤有18真实下载/0失败，current115首帧882796µs、邻页6s内自行补齐。125完整payload/67read保持，本轮仅21进度更新。原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-| 当前特性交付与状态 | Implemented | 核心功能均已落盘实现 |
+  当前112项见state-governance-closure-2026-10-01：status为有效验收，historical_status仅留历史；device17/toolchain6/superseded2/partial38/pending49，042/088/090/096/107分量已验、004 ARR已取代。合并46个重复审计，保留根因/边界/验收/未完成项；缺失旧证据不据此改生产。19/20偶发加载、性能及真实来源仍开放；643输入未改。

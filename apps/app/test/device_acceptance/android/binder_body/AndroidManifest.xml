@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.zic.binderbodyprobe">
+ <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+ <application android:label="ZIC Binder body acceptance probe" android:debuggable="true" />
+ <instrumentation android:name="dev.zic.binderbodyprobe.BinderBodyProbe" android:targetPackage="dev.zic.zic" android:functionalTest="true" />
+</manifest>

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.zic.transformencodeprobe">
+ <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+ <application android:label="ZIC transform encoding acceptance" android:debuggable="true" />
+ <instrumentation android:name="dev.zic.transformencodeprobe.TransformEncodingProbe" android:targetPackage="dev.zic.zic" android:functionalTest="true" />
+</manifest>

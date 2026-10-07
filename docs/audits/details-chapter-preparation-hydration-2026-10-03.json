@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-03",
+  "status": "verified_toolchain_packaging_and_ordinary_device_details_hydration",
+  "root_cause": "Details correctly rejects compact placeholders, but HomeShell._ensureSourceChapter immediately source-loads and upserts without asking the existing session to hydrate complete durable authority.",
+  "production_modified": true,
+  "parent_acceptance_complete": false,
+  "adr": "docs/adr/0388-details-chapter-preparation-hydrates-before-source-fallback.md",
+  "failing_first": {
+    "log": "/tmp/zic-details-chapter-hydration-failing-first.log",
+    "log_sha256": "eec17373549038cc4b4f00dc0836a56bef0f07d0a3a5d6664e2660d40e6b74b4",
+    "exit_code": 1,
+    "passed": 5,
+    "failed": 2,
+    "initialization_successful": true,
+    "expected_valid_known_and_unknown_count_source_loads": 0,
+    "actual_valid_known_and_unknown_count_source_loads": 1,
+    "negative_fallback_cases_passed": [
+      "changed revision",
+      "changed known count",
+      "remaining placeholder",
+      "missing durable record",
+      "legacy locator"
+    ],
+    "fixture_compile_and_missing_delegate_errors_excluded_from_root_cause_evidence": true
+  },
+  "remaining": [
+    "Original intermittent19/20 loading/cache failure was not reproduced and its root cause remains unproven.",
+    "Independent GC/CPU and final presentation performance remain open; worst101.623ms timing includes100.469ms vsync overhead and stale callback context.",
+    "Confirmed migration/source acceptance and original112 requirements retain their separate statuses."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

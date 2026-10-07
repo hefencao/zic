@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-01",
+  "status": "verified_toolchain_and_device",
+  "root_cause": "Reader cleared its existing absolute slider geometry anchor when release/completion/idle observation found no pending ratios. A previously unknown selected size could arrive later and use ordinary top anchoring, moving viewport center to a different page and manufacturing velocity.",
+  "boundary": "Only Reader navigation/layout anchoring lifetime. Pointer-up still ends scrubbing and normal Pipeline execution immediately. No media-ready dependency, new owner/timer/queue or scheduler/window/budget change.",
+  "adr": "docs/adr/0354-released-slider-anchor-survives-late-dimensions.md",
+  "failing_first": {
+    "command": "flutter test --no-pub packages/reader/test/reader_navigation_test.dart --plain-name 'released vertical scrub keeps its center through late ratios' --reporter expanded",
+    "exit_code": 1,
+    "variants": 2,
+    "expected_index": 3,
+    "actual_index": 4,
+    "file": "/tmp/zic-released-scrub-late-ratios-failing-first.log",
+    "sha256": "d62e63314a1aa746880647299e16e967139217caeb31518ec6a7c235899d731e"
+  },
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

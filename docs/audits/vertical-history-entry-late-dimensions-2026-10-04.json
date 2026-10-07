@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-04",
+  "status": "toolchain_and_ordinary_release_device_verified",
+  "root_cause": "Initial absolute interior-page entry is acknowledged using provisional page extents. Once that command is cleared, later short-page ratios use ordinary top anchoring; the viewport center changes page identity and persists the next page without physical input.",
+  "failing_first": {
+    "log": "/tmp/zic-reader-history-entry-failing-first.log",
+    "valid_cases": 2,
+    "expected_index": 2,
+    "actual_index": 3,
+    "variants": [
+      "first mount",
+      "replacement controller"
+    ]
+  },
+  "decision": "Reuse the existing absolute center anchor, binding its index to the same navigation revision, for interior entry and slider. Only entry initializes the non-slider anchor; a newer page/viewport command, direction/controller change or actual content motion retires it. First/last entry uses its existing edge policy.",
+  "boundary": [
+    "No Reader transport/page bytes/session/cursor/output/retry/prefetch ownership added.",
+    "No new timer, executor, queue, scheduler or media-ready gate.",
+    "Ordinary idle/content-scroll top-pixel correction, real tail and explicit boundary alignment remain intact.",
+    "NetLane normal5+current1, encoded7/3, decode2/1, canonical Venera1 and isolated transform2 unchanged.",
+    "No cache identity, URI, chapter manifest, trust or download eligibility change."
+  ],
+  "parent_acceptance_complete": false,
+  "scoped_acceptance_complete": true,
+  "remaining_parent_acceptance": [
+    "Original intermittent chapter19/20 loading root cause remains unproven; these scoped regressions do not close that report.",
+    "Final display, GC and input-latency performance remain open; current device FrameTimeline/SurfaceFlinger data are not valid final-presentation evidence.",
+    "Original112 requirement identities, statuses and sealed snapshot remain unchanged."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

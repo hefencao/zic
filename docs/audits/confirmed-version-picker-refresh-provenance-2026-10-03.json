@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-03",
+  "status": "verified_device_picker_refresh_provenance_selection_and_presentation",
+  "root_cause": {
+    "opaque_display": "Generic confirmed-version picker displays version.comicId in subtitle and as missing-title fallback.",
+    "ignored_source_refresh": "_selectConfirmedSourceVersion freezes initial cached state and never consumes its source-owned backgroundRefresh; the shortcut version panel does consume it.",
+    "false_date_provenance": "HomeVersionReuseLifecycle maps ComicVersionRelation.discoveredAt to SourceComicVersion.date. Relation observation time is not the source version update date."
+  },
+  "parent_acceptance_complete": false,
+  "production_modified": [
+    "apps/app/lib/home_shell_source_migration.dart",
+    "apps/app/lib/source_migration_compare.dart",
+    "apps/app/lib/home_version_reuse_lifecycle.dart"
+  ],
+  "failing_first": {
+    "log": "/tmp/zic-confirmed-version-picker-date-failing-first.log",
+    "exit_code": 1,
+    "expected_source_date": null,
+    "actual_source_date": "2026-01-01"
+  },
+  "adr": "docs/adr/0386-confirmed-version-picker-refresh-and-date-provenance.md",
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

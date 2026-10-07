@@ -130,9 +130,12 @@ docs = ''.join(read(path) for path in (
 ))
 for token in (
     '57', '28.194ms', '70', 'FALSIFIED', 'android.view.Choreographer',
-    'isFrameRatePowerSavingsBalanced', 'platformFrameRatePolicy', 'API35',
+    'isFrameRatePowerSavingsBalanced', 'platformFrameRatePolicy',
     'System Trace', 'Perfetto',
 ):
     require(docs, token, 'governed ARR falsification boundary')
+
+if version > 312 and '- P0（dev.312）：' in read('docs/IMPLEMENTATION_PLAN.md'):
+    raise SystemExit('active Plan still requests the superseded ARR experiment')
 
 print('dev.312 Android ARR ballistic boundary: OK')

@@ -121,7 +121,8 @@ for token in (
     "动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2",
     "current 浅水位 bootstrap MUST 优先",
     "NetLane` MUST 是页面网络的唯一调度权威",
-    "LRU最多2个media-empty exact session",
+    "LRU最多2个exact session",
+    "已取消任务真实退出后 MUST成为media-empty shell",
 ):
     require(spec, token, "Spec")
 if spec_build >= 271:

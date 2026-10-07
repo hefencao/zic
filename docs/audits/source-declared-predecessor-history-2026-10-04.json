@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-04",
+  "status": "verified_toolchain_packaging_ordinary_device_regression_predecessor_input_unverified",
+  "production_changed": true,
+  "root_cause": "HomeVersionReuseLifecycle rendered source-declared predecessors but only persisted source-declared successors. A real multi-version discovery could leave multiple terminal nodes and no unique latestKnown head. The new behavior test proves the omitted middle->current edge and offline predecessor loss without relying on unknown device acknowledgement state.",
+  "boundary": [
+    "Persist only source-declared direction via the existing HomeLibrarySession/ComicVersionRelationStore authority.",
+    "No guessed order from titles/dates/generation and no relaxation of ambiguous version heads.",
+    "No chapter/page identity, URI, sourceRevision, trust, transport, NetLane, decode/upload, prefetch or cache proof change.",
+    "Existing relation discovery timestamp and all page mapping proof must remain unchanged."
+  ],
+  "failing_first": {
+    "path": "/tmp/zic-source-predecessor-history-failing-first.log",
+    "sha256": "eb7776aafd02afaddf42c3dbc822aa7dacf96c8b98ce400f2dac9a5e7a792cf6",
+    "exit_code": 1,
+    "expected": [
+      "old-comic",
+      "middle-comic"
+    ],
+    "actual": [
+      "old-comic"
+    ],
+    "compile_or_tool_failure": false
+  },
+  "parent_acceptance_complete": false,
+  "remaining": [
+    "Real source-declared predecessor input remains unverified on device; do not promote ADR0389 to Accepted from ordinary compatibility checks.",
+    "The Reader version-notice acknowledgement precondition is not established.",
+    "Original19/20 cache/loading failure not reproduced; URI/revision/trust were not changed.",
+    "Final physical presentation, visual touch latency and GC attribution remain unverified; second device is offline.",
+    "The parent original112/product/performance/all-source scope remains active."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

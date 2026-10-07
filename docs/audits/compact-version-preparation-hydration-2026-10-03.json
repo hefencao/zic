@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-03",
+  "status": "verified_toolchain_packaging_and_ordinary_device_version_hydration",
+  "root_cause": "HomeVersionReuseLifecycle._loadVersionChapterEntry checks compact placeholder validity before authoritative hydration, unnecessarily reloading an already complete chapter and rewriting importedAt.",
+  "production_modified": [
+    "apps/app/lib/home_version_reuse_lifecycle.dart"
+  ],
+  "adr": "docs/adr/0387-version-preparation-hydrates-before-locator-refresh.md",
+  "failing_first": {
+    "log": "/tmp/zic-compact-version-hydration-failing-first.log",
+    "exit_code": 1,
+    "passed": 1,
+    "failed": 2,
+    "expected_valid_chapter_source_loads": 0,
+    "actual_valid_chapter_source_loads": 1,
+    "expected_cancelled_source_loads": 0,
+    "actual_cancelled_source_loads": 1,
+    "legacy_locator_refresh_negative_case_passed": true,
+    "initialization_successful": true,
+    "log_sha256": "82a14346f43644397b9049986af1d78d3bad6594ae7e30800b21a2ae1fccd876"
+  },
+  "parent_acceptance_complete": false,
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

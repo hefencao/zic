@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-30",
+  "baseline_commit": "16a17020",
+  "status": "resolved_verified",
+  "limitations": [
+    "Input12-30-12 and intermediate14-55-08 are 10000-event truncated rings; final15-50-39 is complete from t1. Four measured chapter and slider sequences are inside the intermediate ring.",
+    "Entry48 has126.618ms provisional layout visibility before real47/48 coverage; current/stable remain48. No instantaneous-layout claim.",
+    "The prior22.239s cold-source latency remains a separate source observation; these lifecycle and navigation fixes do not claim to reduce it.",
+    "Profile evidence is one normal device run; exact lifetime, queued/active cancellation and source identity cases are covered by failing-first deterministic tests and executable Kotlin harnesses."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-05",
+  "status": "scoped_preview_height_layout_verified_toolchain_and_device",
+  "scope": "SWG-PLAN-107 details preview screen-height contract only",
+  "pre_modification_root_cause": {
+    "source": "apps/app/lib/comic_details_extras.dart",
+    "call_path": "_previewItems -> _previewPages -> _previewRows -> _buildPreviewRow",
+    "defect": "_previewPages closes a preceding page when cumulative rows exceed its height, but an oversized single row is still admitted unchanged. _buildPreviewRow never consumes maxHeight.",
+    "failing_first": {
+      "command": "flutter test --no-pub test/comic_preview_layout_test.dart --reporter expanded",
+      "log": "/home/unkloser/.cache/zic-device-evidence/preview-height-bound-2026-10-05/failing-first-v6.log",
+      "exit_code": 1,
+      "logical_view": [
+        800,
+        400
+      ],
+      "DPR": 1,
+      "PNG_dimensions": [
+        48,
+        240
+      ],
+      "tile_width": 800,
+      "tile_height": 1777.7777777777776,
+      "spec_maximum": 360,
+      "other_flutter_exceptions": false
+    },
+    "invalid_fixture_attempts": "v1-v5 fixture construction/API/lazy mounting failures are not product failing-first evidence"
+  },
+  "boundary": {
+    "change": "Pure preview row geometry; consume existing page height before row construction. Only rows exceeding that height use the bounded equal-area calculation.",
+    "preserve": [
+      "Full-width complete rows and equal tile areas",
+      "Sparse final-row maximum 2.4 times reference complete-row area",
+      "Existing 2-landscape/3-portrait and smaller user maximum, minimal local reorder",
+      "Shared folded/expanded first-row geometry and existing pagination",
+      "BoxFit.contain and unified artwork loader, cache, crop/URI identity",
+      "All Reader/Pipeline/NetLane/source/native/runtime ownership and policies"
+    ]
+  },
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "production_changes": [
+    "apps/app/lib/comic_details_extras.dart"
+  ],
+  "remaining_outside_scope": [
+    "Original19/20 intermittent loading and cached presentation/geometry/performance attribution.",
+    "Actual OS rotation/DPR and other Reader geometry scenarios.",
+    "System-DNS physical exit, other real origins/clients and remaining product/migration acceptance."
+  ],
+  "final_validation": {
+    "path": "/home/unkloser/.cache/zic-device-evidence/preview-height-bound-2026-10-05/final-validation.json"
+  },
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

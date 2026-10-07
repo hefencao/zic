@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-02",
+  "status": "scoped_home_query_redundancy_verified_toolchain_and_device_parent_performance_open",
+  "scope": "Source-canonical alias query duplication exposed in matching Reader-exit Home rebuild; independent old35.255ms reused return and parent performance/all-source/original112 remain open.",
+  "root_cause": "Each preference lookup scans saved comics and chapter entries, repeating canonical identity/opaque-ID decode for every chapter sharing the same raw comicId. Source-first current identity and saved offline fallback are correct; duplicate queries/allocations are unnecessary.",
+  "boundary": [
+    "Deduplicate raw comic IDs only inside each existing canonical alias query.",
+    "Keep source-first current identity, saved offline fallback, same-source equivalence, insertion order, alias preference union/LWW and durable progress exit barrier.",
+    "No persistent alias map/cache, source binding mirror, new owner/worker/scheduler/retry/eligibility state.",
+    "Reader/Pipeline/NetLane/workers/7-3/2-1/budget/native ingress unchanged."
+  ],
+  "interpretation": [
+    "VM/Timeline monotonic clock is validated by matching vsyncStart+vsyncOverhead to Animator::BeginFrame start within3us.",
+    "VM tid/pthread number is not interpreted as Android OS tid. Same main isolate/UI timeline is used for CPU/GC comparison.",
+    "Inclusive sample counts are statistical stack presence, not exclusive CPU duration.",
+    "All source/Reader data and source policy were unchanged during capture; Profile overhead does not establish final physical-display performance.",
+    "Old35.255ms Release frame has no matching CPU capture; newer20.282ms reused-return build overlaps13.031ms UI new-generation GC. Its origin cannot automatically be assigned to the old frame.",
+    "First exit73.979/53.244ms build is outside CPU ROI; followup reproduces53.935ms matching FrameTiming,46.856ms BUILD,55.131ms Animator frame; canonical alias chain is in26 of40 frame samples.",
+    "Vertical-scroll ROI maximum Animator frame5118us excludes final physical presentation and unsampled behavior."
+  ],
+  "failing_first": {
+    "status": "valid_behavior_failure",
+    "log": "/tmp/zic-home-alias-query-failing-first.log",
+    "test": "apps/app/test/library_ui_test.dart::canonical alias lookup work does not grow with chapter count",
+    "exit_code": 1,
+    "short_catalog_chapters_per_alias": 1,
+    "long_catalog_chapters_per_alias": 60,
+    "long_catalog_identity_reads": 253,
+    "allowed_identity_reads": 25,
+    "short_catalog_identity_reads": 17,
+    "same_aliases_union_and_live_source_authority_assertions_passed_before_complexity_failure": true,
+    "log_sha256": "022b8b1cfea52e2c485712e091220536fe46d46970795d327073a6047f5dee82"
+  },
+  "remaining": [
+    "Independent older ordinary Release35.255ms cached-return and current ordinary20.331ms build have no matched CPU; final Profile cached-return GC15.557ms and other entry/exit GC remain open.",
+    "Final content presentation/visual smoothness/direct-manipulation latency and independent source-host latency remain open; first-device SurfaceFlinger evidence is invalid and second device is offline.",
+    "All-source product acceptance and original112 requirement scope remain active; scoped Home query/slider/chapter/source-main-list verification does not close them."
+  ],
+  "fixed_behavior": {
+    "query_local_examined_ids": true,
+    "same_source_raw_candidates_resolved_once_per_query": true,
+    "target_raw_identity_not_resolved_again": true,
+    "current_source_identity_read_each_query": true,
+    "preference_union_and_iteration_order_preserved": true,
+    "persistent_alias_cache_added": false,
+    "reader_and_scheduler_production_unchanged": true,
+    "home_updates_test_existing_update_evidence_before_alias_preferences": true,
+    "one_read_only_library_aggregation_per_synchronous_home_build": true
+  },
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

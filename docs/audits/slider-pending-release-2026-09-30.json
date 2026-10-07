@@ -1,0 +1,11 @@
+{
+  "baseline_commit": "16a17020",
+  "failing_first": "Reader widget regression: final scrubToPage(3) and endPageScrub(3) before the final frame; Controller.pageScrubbing=false/currentIndex=3 but last observation is scrubbing instead of idle.",
+  "preserved": [
+    "revision, requested-target, direction and mounted stale-result guards",
+    "real dragging/scrolling ownership and zero phase-change velocity",
+    "Reader observation-only resource boundary and Pipeline phase projection",
+    "NetLane, 7/3 encoded, 2/1 animation decode, bounded grants and 50MB budget"
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

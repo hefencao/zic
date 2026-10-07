@@ -1,0 +1,14 @@
+{
+  "baseline_commit": "16a17020",
+  "failing_first": {
+    "policy": "ready single-frame neighbor returns null",
+    "coordinator": "neighbor DownloadState.promoted; current DecodeState.waitingSource; neighbor has no decode/grant without another observation"
+  },
+  "preserved": [
+    "NetLane and task cancellation/retirement",
+    "7/3 encoded window and 2/1 animation decode window",
+    "DecodeLane/UploadLane capacities and speculative presentation grant cap",
+    "one raster residency owner; no synthetic observation, timer, reload or retry owner"
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

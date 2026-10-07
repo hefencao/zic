@@ -1,17 +1,19 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前已核对的源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；标题分源/标签原路由/设备扩展元数据；Trace原始关联/Perfetto有效性分离；独立性能/真实来源验收仍开放。
+- 当前112项见state-governance-closure-2026-10-01：status为有效验收、historical_status仅历史；042/088/090/096/107分量已验，004 ARR移出Plan。device17/toolchain6/superseded2/partial38/pending49。合并46个重复审计；643输入与普通Release1b040401/PID8239未改。缺失旧证据只触发复核，不重改已验代码。
+- 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
-1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；
-2. `AGENTS.md`：架构边界与无修改/最小修改规则；
-3. `docs/ARCHITECTURE.md`：当前系统所有权与生命周期；
-4. `docs/SPEC.md`：产品与工程长期规范；
-5. `docs/IMPLEMENTATION_STATUS.md`：当前实现与验证矩阵。
+1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；
+2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
+3. `docs/IMPLEMENTATION_STATUS.md`：当前实现与验证矩阵。
 ## 3. 当前开放问题
-- Home shell 已继续抽出纯状态 `HomeRouteAdmission`（Reader 覆盖、Download Manager 单实例、comic identity route lock）和 `HomeShelfManagement`（书架管理/批量选择）；
-  selected version-view preparation 也已归并到 `HomeVersionReuseLifecycle`，`HomeShell` 不再持 version preparation map。
+- 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
+- EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
+- 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。643输入保持，诊断已清理；结论见state-governance-closure的supplemental_acceptance/system-DNS-physical-exit-2026-10-05。
+- 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
+- Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
   后续若继续瘦身，应从明确重复状态或 route builder adapter 入手；禁止新增跨 owner facade，也禁止把 service generation / route admission / version preparation / shelf selection 镜像回 `HomeShell`。
 - 静态竖排功耗下一步只接受 fresh Profile/Release 证据再改行为：idle 3/7 static warm 是刻意的平滑资源分配，staged refill不会整窗同时decode；
@@ -50,10 +52,10 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-  Reader/media反审计见`docs/audits/reader_media_runtime_state_audit.json`：RMR-011..023均已治理；022收口immutable grant/ack，023让mounted/detached共用唯一raster cache adapter。继续禁止删attempt stale-result guard、制造第二cache owner或把cache/retry/scheduler权威上移Reader。
-  Download治理：DL-PIPE-001已闭合为2-wide sliding chapter page admission（仍共用唯一consumer/NetLane/bucket2）；DL-PIPE-003、DL-DIR-006/007、DL-MGR-005已闭合。剩余DL-DIR-019/017真实provider kill/reopen证据。
+- 迁移exact是title+sequence比较并校验目标native identity；ADR0016/dev146已核对，不新增native ID相等gate。隔离300项/五phase+三callback真kill已验，Plan075仅partial；真实普通确认/alias UI/真实来源callback仍开放，见state-governance-closure的迁移callback条目。
+  Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
-  点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
+  点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。
   两mode跨章开关只gate UI traversal；logical顺序消费source oldest-first投影，Mihon兼容旧opaque ordinal且不改ID。continuous真实首/尾后才pointer pull，显式入口覆盖历史并经布局回执；paged保持PageView pull，preload独立。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）；逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 残余水位，不额外扩窗，同一 lease 随页推进伸缩且 priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。
@@ -63,8 +65,7 @@
 - rhttp transport不得再次增加64/256 KiB聚合；DownloadJob 为单一数据聚合 owner。
 - Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、
   `UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
-  不得把这些兜底/验证语义迁到 Reader/Pipeline/Download。Mihon Injekt scope 同样由 plugin host 唯一拥有；`Application`、`NetworkHelper`、
-  `Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
+  不得把这些兜底/验证语义迁到 Reader/Pipeline/Download。Mihon Injekt scope 同样由 plugin host 唯一拥有；`Application`、`NetworkHelper`、`Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
   Mihon 新生成的 opaque page locator 都携带 stable chapter/page replay 坐标；host-direct plan 另有 `directPlanReplay`，可在 host transport failure 后沿现有一次性 source recovery 重取 page list。
   runtime-owned `mihon-runtime-transform-v3:<payload-sha256>` 仍只有非网络 source failure 可发布 replay eligibility，SSL/EOF 继续归 DownloadJob；payload-bound revision 继续绑定实际 extension payload。
   升级前缺 replay 坐标的普通 `mihon:resource:` 持久 locator 由 source-compat gate 识别并在消费前刷新，不要为它引入 sourceRevision/version churn。
@@ -74,7 +75,6 @@
   v1/v2 或 payload SHA 不匹配的 v3 locator 必须在 Reader/下载入口强制 source refresh，不得恢复旧 opaque plan；replacement unavailable/replay source failure 只交给既有
   terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；
   不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime
-  在当前 generation 内按 source+locator 有界保留 fresh source request authority，resolve/re-resolve/runtime load 不得回退旧 opaque plan；source setting mutation
-  推进 transport generation 时必须同步失效该 source 的 retained fresh/replay state。
+  在当前 generation 内按 source+locator 有界保留 fresh source request authority，resolve/re-resolve/runtime load 不得回退旧 opaque plan；source setting mutation 推进 transport generation 时必须同步失效该 source 的 retained fresh/replay state。
   两份 Android `FallbackDns` 已统一为系统 DNS authority 优先且不重排；只有系统失败/空才使用 public A+AAAA fallback，并交错双栈结果。不要把 public-only 过滤施加到系统 DNS，以免破坏 split-DNS/private host。
 - VeneraHttpCacheStore 维持 6h 有效期与 targeted force-miss 规约；Venera 阶段约束见 0169-venera-previous-request-plan-pressure-and-source-open-stages.md。

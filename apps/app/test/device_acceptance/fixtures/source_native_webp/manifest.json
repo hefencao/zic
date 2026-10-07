@@ -1,0 +1,33 @@
+{
+  "generator": "Pillow deterministic lossless WebP with distinct frame markers",
+  "Pillow_version": "11.1.0",
+  "seed": 921,
+  "fixtures": [
+    {
+      "kind": "static",
+      "file": "apps/app/test/device_acceptance/fixtures/source_native_webp/static.webp",
+      "bytes": 627306,
+      "sha256": "3b7ab440192407d099d1ea56b5038d1a9201743d0573c53e8bfceb3042d183b9",
+      "canvas": [
+        640,
+        640
+      ],
+      "frames": 1,
+      "loop": 1,
+      "frame_duration_millis": null
+    },
+    {
+      "kind": "animated",
+      "file": "apps/app/test/device_acceptance/fixtures/source_native_webp/animated.webp",
+      "bytes": 2509314,
+      "sha256": "535a6fd0488bc95671499acc0bb5114e04af7c72e6a5c0cf15a2d343123385ca",
+      "canvas": [
+        640,
+        640
+      ],
+      "frames": 4,
+      "loop": 0,
+      "frame_duration_millis": 120
+    }
+  ]
+}

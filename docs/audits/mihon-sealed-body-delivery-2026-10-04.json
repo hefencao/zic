@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-04",
+  "status": "release_drain_toolchain_packaging_and_scoped_device_verified",
+  "production_changed": true,
+  "pre_modification_root_cause": {
+    "confirmed": "Custom Mihon client loadResource materialized complete response bytes and copied them across runtime/IPC/Dart seams. Authenticated packet files contain codec envelopes, not raw images.",
+    "not_established": "This does not establish the cause of original19/20 intermittent loading,3.9s source wait or remaining physical-display jank.",
+    "assessment": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-owned-binary-body-lease-feasibility-2026-10-04",
+    "release_registration_retired_before_native_ack": "The release callback removed the existing body registration before awaiting native release; a concurrent connection.close snapshot could omit that admitted disposal and complete early. The blocked-release regression fails on the prior implementation. The original loading cause is not inferred."
+  },
+  "scope": "Negotiated Mihon sealed source body only, through existing invocation and transient packet-file owners.",
+  "preserved": [
+    "Source client/interceptors and complete method/header/body authority",
+    "Persistent locator/payload/DownloadId/cache/trust and signed legacy body validator",
+    "NetLane only scheduler; real Future exit;7/3 and2/1 windows",
+    "DownloadJob/DownloadSession encoded aggregation/partial/promotion; Reader read-only",
+    "Direct host and unnegotiated/Venera contracts"
+  ],
+  "failing_first": {
+    "path": "/tmp/zic-sealed-body-contract-failing-first.log",
+    "sha256": "f1dacfa59df5065c9dc314cdb8e1254c973e4550b03574ac4654282c478bd112",
+    "result": "Existing schema rejects explicit sealed-file-v1 admission. This is new-contract baseline, not original user loading reproduction."
+  },
+  "remaining": [
+    "Integrated claimed-read/hash cancellation and source-process generation loss; opening cancellations and physical lifecycle unit proofs do not cover every device race.",
+    "Venera complete-input/transform delivery, live streaming/pipe, Cookie/POST and historical/direct source criteria.",
+    "Original19/20 intermittent loading and cache failure cause remain unestablished; current cache/URI preservation is scoped evidence.",
+    "Source host-open21.396s includes client/network/interceptor/body-seal/host-claim work; TTFB/transfer/copy/hash attribution, input latency, GC and final physical display remain open."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

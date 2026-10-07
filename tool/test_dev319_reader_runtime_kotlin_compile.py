@@ -22,6 +22,7 @@ object Build {
     object VERSION_CODES {
         const val N: Int = 24
         const val O: Int = 26
+        const val R: Int = 30
         const val VANILLA_ICE_CREAM: Int = 35
         const val BAKLAVA: Int = 36
     }
@@ -52,6 +53,13 @@ package android.app
 import android.view.Window
 open class Activity { val window: Window = Window() }
 ''',
+'android/graphics/Color.kt': r'''
+package android.graphics
+object Color {
+    const val TRANSPARENT: Int = 0
+    const val BLACK: Int = -16777216
+}
+''',
 'android/view/Display.kt': r'''
 package android.view
 class Display {
@@ -61,7 +69,42 @@ class Display {
 ''',
 'android/view/View.kt': r'''
 package android.view
-class View { val display: Display? = Display() }
+class View {
+    val display: Display? = Display()
+    var systemUiVisibility: Int = 0
+    companion object {
+        const val SYSTEM_UI_FLAG_LAYOUT_STABLE = 256
+        const val SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN = 1024
+        const val SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION = 512
+        const val SYSTEM_UI_FLAG_FULLSCREEN = 4
+        const val SYSTEM_UI_FLAG_HIDE_NAVIGATION = 2
+        const val SYSTEM_UI_FLAG_IMMERSIVE_STICKY = 4096
+    }
+}
+''',
+'android/view/WindowInsets.kt': r'''
+package android.view
+class WindowInsets {
+    object Type {
+        @JvmStatic fun statusBars(): Int = 1
+        @JvmStatic fun navigationBars(): Int = 2
+    }
+}
+''',
+'android/view/WindowInsetsController.kt': r'''
+package android.view
+interface WindowInsetsController {
+    var systemBarsBehavior: Int
+    val systemBarsAppearance: Int
+    fun setSystemBarsAppearance(appearance: Int, mask: Int)
+    fun show(types: Int)
+    fun hide(types: Int)
+    companion object {
+        const val BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE = 2
+        const val APPEARANCE_LIGHT_STATUS_BARS = 8
+        const val APPEARANCE_LIGHT_NAVIGATION_BARS = 16
+    }
+}
 ''',
 'android/view/FrameMetrics.kt': r'''
 package android.view
@@ -87,6 +130,9 @@ package android.view
 import android.os.Handler
 class Window {
     var isFrameRatePowerSavingsBalanced: Boolean = true
+    var statusBarColor: Int = 0
+    var navigationBarColor: Int = 0
+    val insetsController: WindowInsetsController? = null
     val decorView: View = View()
     fun interface OnFrameMetricsAvailableListener {
         fun onFrameMetricsAvailable(window: Window, frameMetrics: FrameMetrics, dropCountSinceLastInvocation: Int)

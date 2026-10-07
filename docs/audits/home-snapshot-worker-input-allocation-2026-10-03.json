@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-03",
+  "status": "scoped_worker_input_allocation_verified_toolchain_profile_and_ordinary_release",
+  "production_modified": true,
+  "scope": "HomeProjectionSnapshotStore worker input graph only; independent from verified Reader/slider/chapter/source contracts.",
+  "root_cause": {
+    "observed": "Prepared imported chapter projections are reachable from the full HomeProjectionSnapshot held by the worker encoder. Isolate.run copies them during spawn on the caller UI thread, even though ordinary entries persist only compact chapter metadata and pageCount.",
+    "profile_pid": 24570,
+    "apk_sha256": "3307089bd731abac027d8e7b89b4ebb55cfc9bdaf1d9456c81dc4547ff49d8b6",
+    "matching_main_tid": 521873862808,
+    "repeat2_spawn_uri_allocations": 14692,
+    "spawn_vm_start_us": 2682636357308,
+    "spawn_vm_end_us": 2682636368463,
+    "vm_tag": "Isolate_spawnFunction",
+    "copy_span_us": 11155,
+    "limits": [
+      "Per-class URI tracing changes allocation execution. This interval is attribution evidence, not ordinary Release performance.",
+      "The repeat2 matched Reader frame has build12.838ms and Scavenge8.030ms before the snapshot-copy window. Do not claim that later snapshot copy caused that earlier frame.",
+      "AllocationProfile cumulative counters equal live counters even after reset on this AOT build. Do not infer total allocation bytes from their deltas.",
+      "This removes one demonstrated avoidable allocation graph. Other GC/main-build/reconcile and final display causes remain open."
+    ]
+  },
+  "boundary": [
+    "Existing storage owner projects persisted fields before worker handoff; worker retains JSON encode/compression, physical file write/rename and serialized completion lifetime.",
+    "Preserve compact ordinary entries, full orphan download entries, version relations, signals, progress, compression and file schema4.",
+    "No Reader/Pipeline/transport/session state, new worker/cache/queue, NetLane/workers/7/3/2/1/budgets/native lock or cancellation changes."
+  ],
+  "failing_first": {
+    "command": "dart test test/home_projection_snapshot_test.dart --name 'snapshot worker excludes nonpersistent projection owner state'",
+    "exit_code": 1,
+    "log": {
+      "path": "/tmp/zic-home-snapshot-worker-input-failing-first.log",
+      "sha256": "ee2e21a5fd288aae1db3fbb335e5f237d4a98f5100a27c96160ce3a6bd000e74"
+    },
+    "classification": "Valid product-boundary failure: an immutable List view carries a nonpersistent ReceivePort; isolate rejects full receiver graph. Fixture metadata and prepared manifest are consistent.",
+    "failure_path": "_OwnerBoundEntries.ownerPort -> HomeProjectionSnapshot.entries -> _HomeProjectionSnapshotEncoder.snapshot -> Isolate.run computation"
+  },
+  "remaining": [
+    "Plan039/040 product acceptance, ordinary Release performance attribution, final physical display and all-source/original112 remain open."
+  ],
+  "parent_acceptance_complete": false,
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

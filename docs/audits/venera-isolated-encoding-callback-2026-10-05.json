@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-05",
+  "scope": "SWG-PLAN-088 live JM request-plan second-scale attribution and isolated output encode callback/lifetime boundary.",
+  "status": "scoped_isolated_encoding_callback_verified_toolchain_and_device",
+  "scoped_acceptance_complete": true,
+  "parent_acceptance_complete": false,
+  "production_modified": true,
+  "root_cause_before_modification": "Synchronous isolated output encoding occupies the WebViews shared JavaBridge thread. Both real workers preflight successfully with the same finish TID, then a held output encoder prevents the other worker from completing. Live JM19/18 trace shows second-scale runtime-plan waits outside short source-hook and zero bridge-network calls; shared encoding is one confirmed blocking component, not a complete attribution of every origin/network delay.",
+  "candidate_boundary": [
+    "Borrow the existing NativeExternalPluginDriverHost executor; no new thread pool, FIFO, admission or network scheduler.",
+    "Preserve canonical1/isolated2, PNG bytes/file protocol, request identity, cache identity and source/Reader retry ownership.",
+    "JS awaits the original encode completion before disposeAll/finished; cancellation retains original worker capacity until physical exit.",
+    "Original NativeRuntimeWorkDrain joins admitted encode, close reclaims Bitmaps only after drain, and original body owner discards late tokens."
+  ],
+  "remaining": [
+    "Original19/20 intermittent loading, fixed-position stutter, total GC/input latency/final physical display.",
+    "Real system-DNS physical wait cancellation and other open origin/client/product/migration acceptance."
+  ],
+  "failing_first": {
+    "proof": "/home/unkloser/.cache/zic-device-evidence/JM-origin-request-plan-2026-10-05/controlled-baseline-warm/result.json",
+    "sha256": "dd7554a50723b6c5f8d7a47f06fb15b087372f1849e20bee3ee34c27467369f8",
+    "APK_preflight_both_workers_ready": true,
+    "same_JavaBridge_finished_tids": [
+      5093,
+      5093
+    ],
+    "failure": "java.lang.AssertionError: second worker callback cannot run while first output encoder is held",
+    "prod_inputs_unchanged_before_repair": true,
+    "restored_ordinary_release_and_probe_removed": true
+  },
+  "production_changes": [
+    "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraImageTransformRuntime.kt",
+    "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt"
+  ],
+  "Plan_reconciliation": {
+    "removed_current_completed_criterion": "Known real JM second-scale request-plan owner attribution",
+    "selected_priority6_and_JM_attribution_complete": true,
+    "original_Plan_snapshot_unchanged": true,
+    "remaining_physical_system_DNS": true,
+    "current_Plan_sha256": "2181349374f2edc672f6b5c9d6f66b1096dca13fcda4fbd4e79d308179076dab"
+  },
+  "final_validation": {
+    "path": "/home/unkloser/.cache/zic-device-evidence/JM-origin-request-plan-2026-10-05/final-validation.json"
+  },
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

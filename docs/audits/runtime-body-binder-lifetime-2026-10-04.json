@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-04",
+  "status": "native_Binder_lifetime_device_verified",
+  "root_cause_scope": "Verification gap: previous Service fixture was attached in-process, so it did not establish actual Android binding, source death or cross-process large-body lifetime. No new production defect established.",
+  "production_changed": false,
+  "parent_acceptance_complete": false,
+  "boundary": [
+    "Existing source/client/session/invocation/packet owners and executors unchanged.",
+    "Fixture calls actual production PluginRuntimeServiceClient and separate Android Service; no manually attached Service or mock Binder.",
+    "Protocol envelopes and raw-body leases are verified separately; native codec/file lifetime evidence does not by itself prove the entire Dart consumer or final-display latency.",
+    "Complete host input/canonical bytes, real-origin HTTP cancellation, original19/20 cause and final-display/GC acceptance remain open.",
+    "The native cases use two documented fixture source versions; preserved logs record the source/APK hash of each run. The repository runner replays normal with the second source version.",
+    "The 65-second timeout is the original production RPC timer, measured at 65063ms; held replies produce one timeout and are physically cleaned after executor release.",
+    "Neither native FileInputStream lifetime nor this synthetic Venera transform fixture proves full Dart consumer cancellation while physically reading, real-origin HTTP cancellation, complete-input allocation or final-display latency.",
+    "Ordinary restored cold Reader reads valid cached bodies and presents content but drifts to the next short page without input. This is recorded separately as an open geometry regression; no source/cache/trust/URI invalidation is inferred."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

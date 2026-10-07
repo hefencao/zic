@@ -1,22 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.7.0",
-  "last_updated": "2026-09-29T17:39:42+08:00",
-  "baseline_commit": "e4a1111d",
+  "audit_version": "1.11.0",
+  "baseline_commit": "16a17020",
   "system": "zic-reader-media-runtime",
   "scope": "Reader navigation truth, external-static presentation ownership/state handoff, Pipeline presentation recovery, native decode/source-write worker lifecycle, GIF presentation lifecycle",
   "summary": {
-    "total_issues": 25,
-    "confirmed": 25,
-    "resolved": 23,
+    "total_issues": 40,
+    "confirmed": 39,
+    "resolved": 36,
     "deleted_candidates": 2,
     "full_validation_pending": false,
-    "profile_device_validation_pending": false,
-    "open_confirmed": 0,
-    "open_structural": 0
+    "profile_device_validation_pending": true,
+    "open_confirmed": 2,
+    "open_structural": 0,
+    "open_reported": 0
   },
   "governance": {
-    "status": "completed_all_confirmed_items",
+    "status": "registered_state_issues_closed_extended_acceptance_active",
     "rule": "先以当前代码/失败回归/设备trace确认所有权边界，再修改；禁止新增第二套scheduler、presentation cache或navigation authority。",
     "preserve": [
       "NetLane仍是网络执行权威",
@@ -24,7 +24,7 @@
       "native decode前释放source read lock的现有边界不得回退",
       "7/3 Download membership与既有bounded decode/upload/presentation窗口不得因本审计扩大"
     ],
-    "current_focus": "RMR-011..023 已全部治理；RMR-022 保持 opaque immutable grant 边界，RMR-023 保持唯一 raster cache owner + presentation adapter。最终全仓 toolchain gate 已通过；后续只在 fresh 行为/trace 证据下重新打开问题。"
+    "current_focus": "Reader/media登记38项已处理：36 resolved、2 deleted。RMR-034/035/036由2148项/Rust22全门禁、两台APK精确SHA和第二台fresh trace复验闭合；全部112项产品/性能/来源验收仍独立进行，来源初始化HTTP10s和视觉/touch-latency边界不得混为已验证。"
   },
   "issues": [
     {
@@ -232,7 +232,6 @@
       "severity": "P2",
       "title": "SAF physical partial首次Direct接管重复整段扫描且同步cleanup拖住hot takeover/cancel",
       "status": "resolved",
-      "classification": "confirmed_defect",
       "evidence": "e4a1111d中preferDirectStaging跨locator路径先在persistent_download_artifact_store.dart:5414对obsolete SAF prefix做完整CRC扫描，再由_storePhysicalPartialDirect的entry.open从offset0完整复制；commitCurrentPartialAuthority在metadata authority切换后又await _cleanupObsoleteSourceNow，后者经_obsoleteCleanupDebtStillMatches再次完整读取旧prefix且没有TaskControl。对N-byte SAF prefix，成功首次接管的旧SAF正文读取因此为3N；若control在Direct authority提交后取消，调用仍会等待第三遍cleanup checksum结束，随后才在_migrateSafPhysicalPartialAndAdopt的post-store control check退出，hot session尚未adopt。",
       "owner": "packages/downloads/lib/src/persistent_download_artifact_store.dart storage migration + cleanup-debt authority",
       "plan": "复制旧SAF authority到Direct staging时同步累计旧prefix CRC，删除独立迁移前扫描；authority metadata提交后只留下已有obsoletePartialSource cleanup debt并异步drain，不在hot takeover事务同步清理。删除前仍由cleanup-debt owner重新验证locator非authority、长度与CRC。TaskControl只治理hot copy/commit，不把durable cleanup生命周期绑定到Reader cancellation。",
@@ -243,7 +242,6 @@
       "severity": "P2",
       "title": "native worker replacement启动失败会清空幸存worker仍可处理的全部pending请求",
       "status": "resolved",
-      "classification": "confirmed_defect",
       "evidence": "native_decode_pool.dart:497与native_source_write_pool.dart:293的_replenishWorkers catch在单个replacement spawn失败后遍历并completeError全部pending并clear队列。_handleWorkerExit先remove dead worker；只要_workers仍含健康worker，该worker仍可继续执行请求，因此replacement capacity恢复失败不应被升级为pool-wide request failure。decode路径还会连带破坏“最后一个live worker只留给current”的既有reservation语义，因为队列被直接消灭而非按live capacity继续调度。",
       "owner": "packages/bridge/lib/src/native_decode_pool.dart + native_source_write_pool.dart process-lifetime worker-pool capacity owner",
       "plan": "replacement失败只记录capacity degradation并保留pending；立即让现有live workers继续pump。只有live worker count降到0且无法启动任何worker时才向无法执行的请求交付启动失败。decode继续保留current/nonCurrent execution class和最后一个live slot reservation。补齐确定性spawn-failure fault injection。",
@@ -254,7 +252,6 @@
       "severity": "cleanup",
       "title": "decode pending重复镜像TaskControl.priority并维护订阅生命周期",
       "status": "resolved",
-      "classification": "confirmed_structural_debt",
       "evidence": "native_decode_pool.dart:284为每个pending订阅PriorityObservableTaskControl.priorityChanges，将priority镜像进_PendingNativeDecode.priority，并在取消、admission、shutdown/replacement failure多处分离subscription；同文件_takeBestReady按镜像值排序。native_source_write_pool.dart:310已展示更小模型：选取时直接读取pending.control?.priority。decode的executionClass promotion已有独立显式路径，因此numeric priority镜像不是class ownership。未找到当前浏览故障证据。",
       "owner": "packages/bridge/lib/src/native_decode_pool.dart pending scheduling metadata",
       "plan": "在RMR-020稳定后评估改为selection-time读取TaskControl.priority，删除priority字段/subscription/detach分支；保留whenCancelled通知、显式current promotion，以及active run真实退出后释放capacity。先用动态rank回归证明无行为变化。",
@@ -265,7 +262,6 @@
       "severity": "cleanup",
       "title": "external presentation grant只局部原子化，identity/requested/ready/ack凭据仍分散",
       "status": "resolved",
-      "classification": "confirmed_structural_debt",
       "evidence": "PipelinePageOutputStream已有_setExternalPresentationState一次发布requested/ready，但_externalPresentationCacheIdentity仍由独立setter通知；PipelineReaderSession.pageOutput/_syncPageOutputs/rotate路径均先写identity再写state。LocalImagePlayer listener继续从两个bool推导available，并另外维护_externalPresentationAttemptIdentity、loadEpoch与recovery epoch。reportPresentationFrameReady(PageAsset)只带asset，接收端遍历当前decodeDemands寻找DecodeId。该分散状态具备瞬时对账复杂度，但本轮没有fresh trace证明其仍造成浏览故障。",
       "owner": "packages/pipeline_runtime presentation projection + local_media_ui presentation adapter",
       "plan": "不要删除现有attempt stale-result guards。定义不可变presentation grant：内部私有绑定exact DecodeId，对Presentation仅暴露cacheIdentity/state/ack token，再把first-frame ack绑定到该grant；用行为回归证明identity rotation/same-generation regrant后再删除UI镜像判断，且保持ADR 0061的opaque output边界。",
@@ -276,176 +272,377 @@
       "severity": "cleanup",
       "title": "LocalImagePlayer仍直接理解全局raster cache与resident provider实现类型",
       "status": "resolved",
-      "classification": "confirmed_structural_debt",
       "evidence": "local_image_player.dart:423直接访问pipelinePresentationRasterCache.residentProviderForIdentity，:801读取global cache diagnostics；MediaRasterImage在:1189通过image is _ResidentPresentationImageProvider决定跳过resize/二次providerFor，并在:1227再次直接调用global cache。这个分支曾为修复nested managed key所需，但现在把cache接管规则泄漏到展示组件。未发现它本身在当前Profile trace制造新故障。",
       "owner": "packages/local_media_ui presentation adapter/composition boundary",
       "plan": "在RMR-022的grant/projection边界稳定后，让presentation adapter/注入的cache capability返回最终prepared provider与必要diagnostics，UI只消费展示资源，不按私有provider类型决定cache/resize ownership。不得因此创建第二raster cache或Reader-local residency owner。",
       "remediation_applied": "PipelinePresentationRasterCache 继续是唯一 process raster residency/LRU/keepAlive owner；local_media_ui 在同一 owner 文件内增加 presentation-facing _PipelinePresentationRasterAdapter，统一 resident lookup、diagnostics 与 providerForViewport。LocalImagePlayer 和 detached prewarmer 只消费该 capability；private resident-provider 类型判断被收进 adapter，exact resident 直接 handoff，普通 provider 才执行与 detached 路径一致的 resize + managed-cache wrapping。未增加第二 cache、Reader-local residency owner 或 scheduler；dev.114 guard 禁止 mounted UI/prewarmer 再直接引用 process-global cache/private provider，并禁止 LocalImagePlayer 回退到 requested/ready/cacheIdentity 镜像判断。"
-    }
-  ],
-  "validation": {
-    "passed": [
-      "affected Reader/local_media_ui/pipeline_runtime/pipeline_native/reader_runtime Flutter tests: 177 passed",
-      "packages/bridge tests: 3 passed",
-      "focused scrub logical-position, resident-raster reuse, presentation authority, late lease, stale recovery, GIF codec lifecycle, dispose claim/listener, and ticker-gating regressions passed",
-      "./tool/check.sh --require-toolchains: exit 0 in 200.809s; repository/documentation guards, full Dart/Flutter suites, Android three-ABI debug build, and Rust media_core 22/22 passed",
-      "current-tree Profile build/install preflight: authoritative Home in 1.342s on M2007J1SC",
-      "Profile trace zic-debug-trace-2026-09-28T12-30-02.jsonl: held scrub UI pages 74 and 113 publish physical logical positions 73.5 and 112.5 with velocity 0 before pointer-up; first idle observations are identical, delta 0",
-      "same Profile trace: 48 presentation source reads / 38 unique identities; 10 repeated reads are only later revisits with minimum repeat gap 45.634s, zero same-identity repeats under 5s, taskFailed=0",
-      "post-27467b96 focused presentation/cache/recovery suites all passed；packages/bridge native contract 3/3 passed；tool/test_native_worker_exit_ownership.py passed",
-      "Profile build/install on M2007J1SC: authoritative Home ready in 1.287s；trace zic-debug-trace-2026-09-29T00-52-07.jsonl has external-presentation-requested=33 and external-presentation-first-frame=33, mounted requests without later mounted first-frame=0, sourceRead 33/22 unique with repeat<5s=0, taskFailed=0, manual-force-reload=0, presentation-artifact-recovery=0",
-      "./tool/check.sh --require-toolchains: exit 0 in 193.331s；all repository/documentation/ownership checks, Dart/Flutter suites, three-ABI Android debug build and Rust media_core tests passed",
-      "ADR0339 focused control/lifecycle validation: DecodeSession control propagation + queued cancellation + admitted cancellation real-exit tests passed; LiveCoordinator source-retirement barrier test passed; dev.96/dev.128/native-worker/native-decode ownership guards passed",
-      "final-source Profile build/install on M2007J1SC: authoritative Home ready in 1.245s; zic-debug-trace-2026-09-29T02-34-05.jsonl completed 4 forward + 4 reverse committed moves, including 2 stable previous-role starts; taskFailed=0, decode recoveries=0, decode priority promotion count=1 active=1 queued=0",
-      "./tool/check.sh --require-toolchains: exit 0 in 177.969s after ADR0339/source-retirement changes; repository/documentation/ownership gates, Dart/Flutter suites, Android toolchain/build checks and Rust media_core 22/22 passed",
-      "ADR0340 deterministic regression: 7MiB+ SAF physical partial migrates once to Direct staging, hot session stays idle/no restored-physical stream-copy, and second fresh session performs zero additional SAF body reads",
-      "focused existing regressions: validatorless Range ignored reuses one full response for catchup; large unsupported-range catchup remains deferred until foreground-adjacent demand",
-      "Profile build/install: authoritative Home 1.275s; zic-debug-trace-2026-09-29T03-35-53.jsonl exercised the original page79 7,708,375-byte SAF partial as adoptable and completed store-owned adoption without local receiving-from-zero; zic-debug-trace-2026-09-29T03-54-39.jsonl revisited it through Direct adopted-posix-spool",
-      "./tool/check.sh --require-toolchains: exit 0 in 162.134s on final ADR0340 tree; repository/documentation/ownership gates, Dart/Flutter suites, three-ABI Android debug builds and Rust media_core 22/22 passed",
-      "RMR-019 deterministic 7MiB+ SAF regression: hot restore returns while the second SAF body pass is blocked; takeover consumes exactly 1x old prefix, background delete-time proof is the second pass, and a later fresh Direct adoption adds 0 SAF body reads",
-      "RMR-020/021 focused ownership validation: native worker exit/degraded-capacity guard, native decode control guard, dev.128 priority-migration guard and bridge native_contract 3/3 pass; surviving-worker replacement branch contains no pending clear/completeError and decode rank is selection-time TaskControl state",
-      "current-source Profile build/install succeeded with release native media; authoritative Home 1.283s. zic-debug-trace-2026-09-29T06-32-20.jsonl enters Reader, reaches presentation-widget-first-frame, has taskFailed=0, and reuses multiple multi-MiB Direct physical partials through adopted-physical. No canonical SAF physical partial remained on-device to re-exercise SAF migration, so SAF read-count/cancellation is covered by deterministic fake-SAF regression rather than misreported as device evidence",
-      "./tool/check.sh --require-toolchains: exit 0 in 243.121s on the final refined governance tree; repository/documentation/ownership gates, Dart/Flutter suites, Android build gates and Rust media_core suite passed",
-      "RMR-022/023 focused closure: packages/pipeline_runtime media_runtime_ownership 33/33 passed; packages/local_media_ui external-presentation/raster/prewarmer suites 16/16 passed; dev.77/dev.114 ownership guards pass, preserving opaque DecodeId while forbidding LocalImagePlayer grant mirrors and mounted/detached direct cache/private-provider access",
-      "./tool/check.sh --require-toolchains: exit 0 in 172.550s on RMR-022/023 closure tree; all ownership/repository/documentation guards, Dart/Flutter suites, Android three-ABI debug build and Rust media_core 22/22 passed"
-    ],
-    "pending": []
-  },
-  "profile_trace": {
-    "file": "zic-debug-trace-2026-09-28T12-30-02.jsonl",
-    "scrub_release": [
-      {
-        "ui_page": 74,
-        "internal_index": 73,
-        "held_logical_position": 73.5,
-        "held_velocity": 0.0,
-        "idle_logical_position": 73.5,
-        "idle_velocity": 0.0,
-        "logical_delta": 0.0
+    },
+    {
+      "id": "RMR-024",
+      "severity": "P1",
+      "title": "单帧 current 等 source 时已下载静态邻页卡加载，需滑动晋升后才交付",
+      "status": "resolved",
+      "evidence": "09-36-50 Trace: page21 10.065446s sealed / 10.078906s promoted，28.331161s drag 后才在28.347355s获首帧grant；current20仍在独立source open。失败回归稳定证明邻页promoted但无presentation request。",
+      "owner": "packages/sessions/lib/src/decode_refill_policy.dart",
+      "plan": "单帧 current 暂不可执行时仅释放已有单帧邻页或真实transition首帧；保留ready current优先、animation bootstrap、多帧邻页门控及既有bounded grants。",
+      "remediation_applied": "StagedDecodeRefillPolicy 收窄静态等待分支，无新增owner/timer/observation/retry；policy、Coordinator和Pipeline回归证明不依赖后续滑动。"
+    },
+    {
+      "id": "RMR-025",
+      "severity": "P1",
+      "title": "slider 最终跳转回执前松手导致 no-op jump 遗留 scrubbing，静止冷页永远不启动源请求",
+      "status": "resolved",
+      "evidence": "fresh Profile 10-37-52 Trace line958/993/1244: current40 持续 scrubbing；line960 resourceInteractionPhase=transientPreview/full=0；151.036s 静止等待无 idle 或新 downloadStarted。ReaderView vertical non-null request 的完成路径未处理 scrub phase end。",
+      "owner": "packages/reader/lib/src/reader_view.dart::_completeVerticalPageRequest",
+      "plan": "只在同一有效 page-request 完成且旧 interaction=scrubbing、Controller.pageScrubbing=false 时结束 phase；重置实际 geometry velocity baseline，保留 deferred ratio anchor/既有 observation 与 Pipeline authority。",
+      "remediation_applied": "同一有效 vertical page-request completion仅结束已由Controller释放的scrubbing，重置实际geometry velocity baseline并保留既有ratio anchor/commit；不覆盖dragging/scrolling，不增加observation/retry/transport owner。"
+    },
+    {
+      "id": "RMR-026",
+      "severity": "P1",
+      "title": "mounted far PageHost绕过统一raster cache的speculative admission denial，引发淘汰重读循环",
+      "status": "resolved",
+      "evidence": "11-18-13 Profile Trace retained10000条/94.047s；sourceRead1161次、单identity最多176次；far invalidation明确presentationWarmAllowed=false后仍反复mounted grant/first-frame。_externalPresentationAvailable使用mounted || detached，只有detached检查cache admission。",
+      "owner": "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart::_externalPresentationAvailable",
+      "plan": "所有external first-frame consumers共享既有cache authority admission；保留protected/deadline promotion、exact generation、grants及所有容量，不新增Pipeline tombstone或UI gate。",
+      "remediation_applied": "mounted availability消费既有cache authority allowsPresentationWarm；无新增tombstone、cache或scheduler；同generation deadline/protected promotion保留。"
+    },
+    {
+      "id": "RMR-027",
+      "severity": "P1",
+      "title": "Mihon源序号被当成逻辑顺序导致顶部/底部跨章方向反转",
+      "status": "resolved",
+      "owner": "plugin_host_bridge MihonRuntimeDriver + plugin_host source order projection + Home composition",
+      "evidence": "12-30-12输入ring中boundary13→14 next、14→13 previous；生产把Mihon newest-first source index当成逻辑sequence。旧持久目录也携带同一错误投影。",
+      "plan": "opaque ID继续编码原source ordinal，逻辑sequence单独投影；旧目录由plugin-host只读适配，Venera不变。",
+      "remediation_applied": "完整source对象/列表保持原序；新增logicalSequence投影与sourceLogicalChapterOrderKey兼容旧目录，Home只消费只读顺序。"
+    },
+    {
+      "id": "RMR-028",
+      "severity": "P1",
+      "title": "跨章初页在缓存几何尚未落地时完成跳转并回到历史viewport",
+      "status": "resolved",
+      "owner": "ReaderController + ReaderView navigation/layout receipt",
+      "evidence": "line953 initial48，line990 visible32/33；失败回归期望48实际24。缓存ratio先更新几何，ScrollPosition仍有旧范围；旧idle anchor可覆盖显式入口。",
+      "plan": "复用绝对page command，经目标RenderBox与scroll range布局确认后回执，入口首/尾显式对齐；真实drag及controller换代退休旧回执。",
+      "remediation_applied": "forcePosition与alignment导航命令，显式请求覆盖旧anchor，布局确认才ack；首/尾真实min/max，slider默认center；真实拖动ack退休、controller fence。"
+    },
+    {
+      "id": "RMR-029",
+      "severity": "P1",
+      "title": "同漫画Mihon目录并发与FutureTask取消提前报告退休",
+      "status": "resolved",
+      "owner": "MihonRuntimeDriver catalog/invocation lifecycle",
+      "evidence": "line876 reader-metadata-refresh-failed：getMangaUpdate must not be called concurrently for same manga。目录加载无同key互斥；FutureTask.done可早于实际Callable退出；EmptyCoroutineContext不能取消source continuation。",
+      "plan": "runtime内按source+canonical漫画URL互斥，可取消等待；runtime回执/close随实际Callable退休，无可取消context的suspend先drain真实完成。",
+      "remediation_applied": "ref-counted per-catalog exclusion；MihonInvocationTask在run退出才retire，未启动取消立即retire；invokeSuspend drain后保留interruption。无全局FIFO或新的网络authority。"
+    },
+    {
+      "id": "RMR-030",
+      "severity": "P1",
+      "title": "完整sealed WebP早期发布后又rebuild同代source破坏decode生命周期",
+      "status": "resolved",
+      "owner": "DownloadSession.attachSynchronizedIngressProjection",
+      "evidence": "line7533创建cursor，7534发布492754-byte sealed source，7539 decode报native source is disposed。初始probe可精确覆盖正文，catch-up却把sealed排除于suffix并再次rebuild。对象身份回归修复前失败。",
+      "plan": "已发布source精确匹配epoch/length/sealed/failure时直接join，保留partial suffix与physical边界校验；不吞disposed错误。",
+      "remediation_applied": "alreadyCaughtUp分支复用同encoded对象；DownloadSession90/90回归通过，包括旧partial/epoch/promotion边界。"
+    },
+    {
+      "id": "RMR-031",
+      "severity": "P1",
+      "title": "Reader retention提前evict尚在执行的native cursor，绕过真实退出回执",
+      "status": "resolved",
+      "owner": "PipelineReaderSession retention -> LiveCoordinator existing source/lane retirement",
+      "evidence": "14-55-08 line4629 Reader retained后line4631 decode taskFailed，sourceLength0；阻塞cursor回归在release后disposed=true而失败。",
+      "plan": "由现有Coordinator退休无demand媒体；idle立即释放，已取消但仍执行的cursor/source经原lane真实退出才自动释放，无新队列或owner。",
+      "remediation_applied": "retireDetachedMedia复用原source retirement；Pipeline移除直接evict；35/35所有权测试通过，新增回归确认物理返回前存活、返回后自动回收。"
+    },
+    {
+      "id": "RMR-032",
+      "severity": "P2",
+      "title": "Pipeline可注入raster authority但mounted/detached adapter仍绑定process-global实例",
+      "status": "resolved",
+      "owner": "App local_media_composition + local_media_ui PipelineStaticPresentation",
+      "evidence": "RMR-CLEAN-002延期耦合；替换cache authority的真实Pipeline/widget集成回归修复前失败：injected cache entries期望>0实际0，prewarm实际写global owner。默认生产三端原为同一global，未把此前正常Profile误称新回归。",
+      "plan": "将既有adapter变为显式composition-bound capability，同一实例提供authority/prewarm并传给mounted UI；独立local raster只消费纯resize函数。保持唯一cache、claim/generation、预算、NetLane与所有lane真实取消边界。",
+      "remediation_applied": "PipelineStaticPresentation包装既有cache owner，无新状态owner；UI/page screens显式接收，预热从绑定实例发起，capability更换沿已有loadEpoch fence退休旧attempt。"
+    },
+    {
+      "id": "RMR-033",
+      "severity": "high_p1",
+      "title": "Released slider loses absolute anchor before selected dimensions arrive",
+      "status": "resolved",
+      "evidence": "Second-device normal Profile 02-41-12 stationary release selects page114; dimensions arrive1.129s after release, changing page to115 and velocity0.486 without input. Both release/layout widget orderings reproduce index3->4.",
+      "owner": "packages/reader/lib/src/reader_view.dart",
+      "plan": "Keep the existing selected-page center until real content motion or a new command; no media lifetime/eligibility coupling.",
+      "remediation_applied": "Retain the existing anchor after release; idle ratio correction uses selected center. Explicit content motion and new navigation retire it; focused2/2 pass."
+    },
+    {
+      "id": "RMR-034",
+      "severity": "P1",
+      "title": "冷章节入口将尚未完成的来源激活误判为不可用",
+      "status": "resolved",
+      "owner": "App LocalComicDetailsScreen + Home route-owned source activation",
+      "evidence": "Local details paints a durable projection while Home source activation is pending. Unpersisted chapter materialization checks only the synchronous source and fails early; the same existing activation succeeds210.836ms later.",
+      "plan": "App details entry only: await the route-owned activation Future if needed, then resolve the live source. Cached chapter fast path is unchanged; disposal fences materialization; null completion remains one terminal failure. No new activation owner, retry, poll, timer or transport gate."
+    },
+    {
+      "id": "RMR-035",
+      "severity": "P1",
+      "title": "重入Reader将idle几何校正误算为滚动速度",
+      "status": "resolved",
+      "owner": "ReaderView physical velocity baseline",
+      "evidence": "Idle Reader entry differentiates integer historical page115.0 against first physical center115.5, manufacturing97.8665 pages/s without content motion.",
+      "plan": "Reader physical velocity baseline only: synchronize idle and report zero, preserve the real drag/scroll derivative and all observations/current/coverage/geometry. No phase, physics, window, budget or scheduler change."
+    },
+    {
+      "id": "RMR-036",
+      "severity": "P1",
+      "title": "cached跨章在UI线程重复重建全库媒体authority",
+      "status": "resolved",
+      "owner": "HomeLibrarySession",
+      "evidence": "Full chapter upserts mark identical hydrated payloads changed and rebuild all canonical/version authority; the same upsert refreshes the whole scope again after assimilation. Each cached chapter crossing incurs two UI-isolate rebuilds.",
+      "plan": "Existing HomeLibrarySession only. Compare the full serialized chapter before refreshing, retain the new entry/latest progress, and remove only the duplicate post-assimilation refresh. Real same-revision provider changes still publish. Target persistence/final progress flush, proof revocation, source identity, windows and NetLane remain unchanged. No new cache/fingerprint/queue/owner."
+    },
+    {
+      "id": "RMR-037",
+      "severity": "P0",
+      "title": "用户报告加载触发时严重卡顿，此前异步/多线程改善后再次出现",
+      "status": "confirmed",
+      "owner": "Home immutable projection/logical-order composition, storage bulk worker and Reader applied-layout/motion sampling observations",
+      "evidence": [
+        "User report on 2026-10-01: loading produces severe jank after earlier async/worker improvements.",
+        "Previous 667 SurfaceView gaps and toolchain pass do not verify this reported fresh loading scenario.",
+        "Fresh first-device minified Release trace06-07-58: 263/233/66-page preparation with owner log canonical authority build44/85/98ms; this is a confirmed loading cost, not a full attribution of all visible jank.",
+        "263-page synthetic2087-character opaque carrier desktop benchmark before authority median16587us/max24301us; after early opaque rejection median28us/max53us.",
+        "Failing-first canonical contract: opaque hex carrier incorrectly returned a physical hash identity.",
+        "Intermediate fresh06-56-33 confirms remaining whole-library canonical build60/57ms and version build73/71ms. Isolate snapshot encoding remains off the UI isolate; its total duration is not UI-blocking evidence.",
+        "Fresh08-58 and complete09-16 loading-overlap traces repeat false reverse/forward velocity during delayed dimensions; valid tests reproduce transient one-page observation and600px physical reflow.",
+        "Scoped Profile entry BUILD34.546ms:21/27 main-isolate CPU samples include source ordinal decoding in Home sort comparator; failing-first27-chapter sort extracts702 keys.",
+        "Separate startup Profile canonical build87ms has66 scoped samples,64 in first manifest construction and62 in page URI parsing; previous zero-entry startup sample cannot attribute this.",
+        "Fresh Release11:08:48 reverse velocity-40.63 pages/s follows correct prefix layout. Controlled16ms input with layout callback500us before next input reports-26.67 instead of-0.83; sampling-clock defect is independent of applied geometry."
+      ],
+      "plan": [
+        "Attribute current886us drag sample against source pointer timestamps and actual ScrollUpdate deltas; first reproduce a distinct failing contract, preserve ADR0364/0366.",
+        "Correlate35.781ms cadence gap and independent19.477ms session build; final display and all-source/Plan acceptance remain open."
+      ],
+      "root_cause": "Opaque producer carriers are synchronously scanned for hierarchical path/hash identity across every hydrated page during canonical authority rebuild. Separately, both Home authority builds repeatedly call toManifest for unchanged immutable hydrated records, reparsing every URI. Additional confirmed defect: frame-end extent adoption pairs new geometry with old physical pixels; consecutive incoming headers lose cumulative prefix correction for the same reason. Entry CPU sampling additionally confirms repeated opaque chapter ordinal decoding inside Home sort comparator. Persistent bulk read already decodes records off-isolate but their lazy manifest projection initializes only after transfer, putting first URI parsing back on the UI isolate. Motion sampling additionally treats layout-only callbacks and raw pointer phase promotion as physical samples, shortening the following real content input interval; newer direct input can also overtake an older queued sampling request. Separately, durable post-upsert exact read decodes a fresh record and discards the incoming already-prepared immutable manifest; matching next-entry Profile samples attribute4/9 samples in24.122ms BUILD to manifest/URI parsing.",
+      "limits": [
+        "Available device cannot prove final display presentation; user visual observation unavailable.",
+        "Startup first manifest/canonical build and entry build peaks are separate from active-scroll CPU work; no blanket async/worker reversal is justified.",
+        "Repeated adjacent-query aggregation is verified: scoped Profile18.126ms before vs12.537/11.190ms after. Current Release next-entry frame build25.794ms remains un-attributed; inspect a matching CPU/frame window before changing any owner, cache or worker."
+      ],
+      "implementation_status": "known_components_device_verified_remaining_cadence_independent_entry_and_final_display_open",
+      "components": {
+        "opaque_physical_identity_rejection": "verified_toolchain_and_device_cost",
+        "immutable_manifest_projection": "verified_toolchain_and_device_cost",
+        "applied_layout_observations_and_cumulative_anchor": "verified_toolchain_and_scoped_device",
+        "invocation_local_chapter_sort_keys": "verified_full_toolchain_profile_and_ordinary_release",
+        "bulk_worker_manifest_projection": "verified_full_toolchain_profile_and_ordinary_release",
+        "invocation_local_adjacent_pair": "verified_toolchain_scoped_profile_and_release",
+        "layout_preserves_content_sampling_clock": "verified_full_toolchain_and_scoped_ordinary_release",
+        "motion_sampling_request_retirement": "verified_full_toolchain_and_scoped_ordinary_release",
+        "pointer_phase_does_not_resample_content_motion": "verified_full_toolchain_and_scoped_ordinary_release",
+        "upsert_preserves_equivalent_prepared_projection": "verified_full_toolchain_scoped_profile_and_ordinary_release",
+        "boundary_navigation_does_not_fabricate_motion": "verified_full_toolchain_and_scoped_ordinary_release"
       },
-      {
-        "ui_page": 113,
-        "internal_index": 112,
-        "held_logical_position": 112.5,
-        "held_velocity": 0.0,
-        "idle_logical_position": 112.5,
-        "idle_velocity": 0.0,
-        "logical_delta": 0.0
-      }
-    ],
-    "presentation_reads": {
-      "total": 48,
-      "unique_identities": 38,
-      "repeat_pairs": 10,
-      "minimum_repeat_gap_ms": 45633.594,
-      "repeat_pairs_under_5s": 0,
-      "interpretation": "remaining repeats are deliberate far-window revisits after raster residency can legitimately be evicted; no immediate mounted-after-prewarm reopen remains in this run"
-    },
-    "task_failures": 0
-  },
-  "cleanup_review": [
-    {
-      "id": "RMR-CLEAN-001",
-      "title": "WebP metadata-prefix drain保留无await异步外壳",
-      "verdict": "confirmed_removed",
-      "evidence": "_drainStreamingWebpPrefix声明async但函数体无await；单isolate执行期间syncing/revision/while/递归补调度无法与新的stream event交错，只重复了metadataPrefixLength单调去重。",
-      "action": "删除async drain、syncing与双revision状态；保留同步readMetadataPrefix + 最小20B门槛 + 单调requestedLength去重。"
+      "current_pending_scope": "Drag/end/ballistic handoff and input latency, independent entry CPU/final display and all-source/original Plan acceptance remain open. The48.162ms sample crosses drag-to-ballistic activity; matched diagnostic37.640/43.308ms evidence does not establish final presentation or full-performance closure.",
+      "current_device_verification": "docs/audits/reader-cached-entry-after-CookieJar-2026-10-07.json"
     },
     {
-      "id": "RMR-CLEAN-002",
-      "title": "UI/prewarmer直接引用全局presentation raster cache而Pipeline使用可注入authority",
-      "verdict": "confirmed_coupling_deferred_not_current_dual_owner",
-      "evidence": "LocalImagePlayer与prewarmPipelineExternalStaticPresentation直接引用pipelinePresentationRasterCache；PipelineReaderSessionFactory支持注入presentationCacheAuthority。但production apps/app/lib/local_media_composition.dart同时把同一个pipelinePresentationRasterCache实例注入Pipeline，因此当前生产并不存在两套raster owner。",
-      "action": "本轮不为消除global引用而新增跨package cache接口或第二owner。后续若要支持替换cache实现，应在App composition提供typed final-presentation capability并同时供mounted与detached消费者使用。"
-    },
-    {
-      "id": "RMR-CLEAN-003",
-      "title": "native decode pending queue缺少request级cancel control",
-      "verdict": "resolved_governed",
-      "evidence": "DecodeLane CancelToken现经DecodeSession/ScheduledFrameCursor/NativeCursor进入native decode pool。pending item在worker admission前观察同一whenCancelled和PriorityObservableTaskControl.priorityChanges；current/nonCurrent保持execution class，class内按scheduler numeric priority/sequence择优。admission后priority observer解除，cancel不能提前结算active worker。LiveCoordinator source retirement新增DecodeLane/UploadLane idleKeys barrier，避免取消后先dispose仍在FFI使用的cursor/source generation。",
-      "action": "已按ADR0339收口；不增加worker、不扩大2/1、不建立native第二scheduler。稳定guard固定跨层control、queued cancel/rank和last-slot reservation；行为回归固定同control传递、queued cancellation语义、in-flight真实退出barrier及source retirement barrier。"
+      "id": "RMR-038",
+      "severity": "P0",
+      "title": "用户报告开启跨章节后部分Reader切章失败",
+      "status": "confirmed",
+      "owner": "Reader real-scroll boundary / Home authoritative chapter entry",
+      "evidence": [
+        "User report on 2026-10-01: chapter switching sometimes fails with continuous chapters enabled.",
+        "Earlier four successful crossings cover their tested chapters only.",
+        "Failing-first viewport-fitting chapter test: downward pull requested no previous chapter.",
+        "Source-inspected: prepareAdjacent computes lastPage before HomeReaderChapterComposition hydration.",
+        "Fresh06-07-58 trace contains a successful long-chapter next crossing; this does not close the reported partial-failure scenarios.",
+        "Intermediate06-56-33: previous entry initially262/232 then idle controls/viewport change drifts to261/231. Valid failing-first /tmp/zic-tail-viewport-before.log: height600→500 leaves pixels200 at new max300.",
+        "Fresh08-16-38: viewport924.444 stays constant; idle tail262→261 at345484346, before control tap388824350. The introduced geometry-sum end target omits35.555px system inset; failing inset test expects1056 but gets1000.",
+        "Fresh08-38-23 keeps initial/later-ratio tail262, but controls toggle same viewport924.444 then261; dynamic-inset failing-first1176 vs1156 isolates missing20px with unchanged viewport.",
+        "Final dynamic-inset Release08-58 retained six successful crossings with initial indexes262/0/0/232/0/0; UI independently verifies tail263/233 across repeated control changes, cold fourth93 pages and idle slider images.",
+        "Fresh ordinary Release metadata refresh completes with source chapterCount27, but details grows27->34 after host chapter IDs change; cached previous/next still68/68 and1/198. This is a distinct read-only projection join defect requiring source inspection and failing-first."
+      ],
+      "plan": [
+        "Verify only remaining real-source metadata variants; preserve hydrated entry, authoritative order and directional boundary behavior."
+      ],
+      "root_cause": "Confirmed components: viewport-fitting chapters reach both real scroll boundaries, so directionless next-first detection drops downward previous pulls; cold/compact adjacent entry computed last page before authoritative hydration/source refresh. Additional source-inspected boundary: refreshed host ordinal/parent locator changes exact IDs, so the old current chapter can be appended with a stale order; unique complete source-model matching now locates its authoritative catalog position. Idle true-tail geometry changes restore only the old top anchor, leaving the viewport short of its new real max extent. The first tail fix incorrectly derived real scroll extent from page geometry, excluding implicit ListView system insets; final correction must resolve the semantic tail against actual new ScrollMetrics. Separately, changing ListView implicit insets without changing viewport/ratios bypasses Reader anchor preparation; physics must preserve the idle real tail from old to new ScrollMetrics.",
+      "implementation_status": "known_boundary_and_details_metadata_components_verified_other_sources_pending",
+      "limits": [
+        "Same-title device rows have not been proven to have the identical complete source model; do not collapse them by title or URL.",
+        "Live route availability after a metadata refresh remains a separate candidate without an observed failing trace."
+      ],
+      "components": {
+        "fitting_pull_direction": "verified_toolchain",
+        "cold_first_last_entry": "verified_toolchain_and_device",
+        "unique_complete_source_model_catalog_position": "verified_toolchain_and_current_device_crossings",
+        "idle_tail_including_dynamic_insets": "verified_toolchain_and_device",
+        "details_catalog_identity_refresh": "historical_candidate_superseded_by_details_catalog_metadata_projection; historical_memo_not_proven",
+        "details_catalog_metadata_projection": "verified_focused_full_toolchain_and_cold_ordinary_release",
+        "compact_stored_count_display": "verified_full_toolchain_and_cold_ordinary_release"
+      },
+      "current_pending_scope": "Independent real-source catalog variants only; current cached19/20 pull direction and head/tail entry are verified.",
+      "current_device_verification": "docs/audits/reader-cached-entry-after-CookieJar-2026-10-07.json"
     }
   ],
-  "presentation_governance_trace": {
-    "file": "zic-debug-trace-2026-09-29T00-52-07.jsonl",
-    "build": "Profile Dart + release native media",
-    "authoritative_home_seconds": 1.287,
-    "page_current_events": 20,
-    "first_frame_ready_events": 27,
-    "external_presentation_requested": 33,
-    "external_presentation_first_frame": 33,
-    "external_presentation_visible_first_frame": 28,
-    "external_static_mounted_image_frame": 31,
-    "mounted_requests_without_later_mounted_first_frame": 0,
-    "presentation_source_reads": 33,
-    "unique_presentation_source_identities": 22,
-    "source_read_repeat_pairs_under_5s": 0,
-    "task_failures": 0,
-    "manual_force_reload": 0,
-    "presentation_artifact_recovery": 0,
-    "raster_cache_invalidations": 0,
-    "interpretation": "正常Profile前后向阅读验证atomic requested→ready与当前grant首帧回执：本次所有mounted presentation request均得到后续mounted first-frame，且没有短时重复encoded reopen。该run没有故意制造raster eviction、corrupt body或worker crash；这些边界分别由确定性回归/ownership guard验证，不能冒充真机fault injection。"
-  },
-  "decode_pending_control_governance": {
-    "adr": "0339-native-decode-pending-task-control.md",
-    "scheduler_owner": "DecodeLane CancelToken",
-    "projection_path": "DecodeSession -> ScheduledFrameCursor -> NativeCursor -> native decode pool",
-    "queued_cancellation": "remove pending before worker admission and complete with the scheduler-owned typed cancellation",
-    "queued_rank": "current/nonCurrent execution class first; scheduler numeric priority descending then submission sequence ascending within class",
-    "promotion": "LiveCoordinator migrates DecodeLane numeric rank before migrating the same native request to current class",
-    "in_flight": "cancellation never marks worker idle or decrements activeRuns early; real native response/unwind remains the capacity boundary",
-    "generation_retirement": "source/decode generation waits for matching DecodeLane/UploadLane task retirement before invalidation",
-    "policy_unchanged": "2/1 decode window, worker count, current-only handoff, upload/frame/network policy unchanged"
-  },
-  "decode_pending_control_profile_trace": {
-    "file": "zic-debug-trace-2026-09-29T02-34-05.jsonl",
-    "build": "Profile Dart + release native media",
-    "authoritative_home_seconds": 1.245,
-    "committed_forward_moves": 4,
-    "committed_reverse_moves": 4,
-    "stable_previous_role_starts": 2,
-    "previous_mount_to_first_frame_ms": [
-      276.6,
-      161.8
+  "parent_acceptance_complete": false,
+  "current_reader_remaining_GC_attribution": {
+    "date": "2026-10-05",
+    "status": "current_ordinary_Profile_remaining_owner_attribution_reviewed",
+    "scope": "Remaining main-isolate allocation/CPU attribution at actual cached Mihon Reader entry, chapter traversal and stationary slider/continuous scroll, using the current ordinary Profile.",
+    "production_changed": false,
+    "pre_modification_root_cause": "Historical selected-class data identifies locator compatibility parsing and Flutter semantics/layout work; it does not prove the original stutter or loading root cause. Current-profile matched evidence is needed before any behavior change.",
+    "production_source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
+    "frozen_production_inputs": 642,
+    "historical_classification": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/historical-selected-allocation-classification.json",
+    "historical_classification_sha256": "cd5ef00bfe8893f99383255fdf9bb4ae1871b84bd42e9a5a0051c818a528bd4d",
+    "capture_script": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture.py",
+    "capture_script_sha256": "781478a6b373f7d107603cab2e8c81e252fda9997329056e851f4d2a4afda043",
+    "scoped_acceptance_complete": true,
+    "parent_acceptance_complete": false,
+    "analysis_pending": false,
+    "documentation_validation_pending": false,
+    "boundary": [
+      "Profile/selected-allocation instrumentation cannot establish ordinary Release or final physical presentation.",
+      "Historical capture differs only in two transport cancellation files; unchanged locator checks remain candidates, not inferred product defects.",
+      "Preserve library/URI/revision/cache/trust and Reader/NetLane/workers/windows; restore original flags, class tracing, owned ADB forward and ordinary Release in finally."
     ],
-    "task_failures": 0,
-    "decode_recoveries": 0,
-    "decode_priority_promotions": {
-      "count": 1,
-      "queued": 0,
-      "active": 1
+    "remaining": [
+      "Original19/20 intermittent loading, drag/ballistic/input latency and final physical display.",
+      "Remaining Flutter layout/semantics, other allocation/GC owners and source/product acceptance.",
+      "Any fused locator decoder remains a candidate, not a production repair or accepted policy change."
+    ],
+    "updated_at_ns": 1791154706012588116,
+    "diagnostic_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
+    "current_device_installation": {
+      "serial": "72b08a1c",
+      "model": "M2007J1SC",
+      "sdk": 36,
+      "apk": "/home/unkloser/.cache/zic-device-evidence/controlled-open-retirement/ordinary-release-arm64-v8a.apk",
+      "sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
+      "installed_apk_sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
+      "installed_base_apk_sha256_match": true,
+      "app_pid": 28808,
+      "ordinary_release": true,
+      "normal_minified_release": true,
+      "mode": "release",
+      "debuggable": false,
+      "source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
+      "source_input_count": 642,
+      "source_matches_current_workspace": true,
+      "test_only_Pipeline_fixture_uninstalled": true,
+      "fixture_host_and_source_processes_terminated": true,
+      "temporary_diagnostics": false,
+      "temporary_profilers_active": false,
+      "app_foreground": "home",
+      "bounded_open_exit_repair": true,
+      "restore_evidence": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
+      "checked_at_ns": 1791154101826888353,
+      "profile_diagnostic_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
+      "profile_VM_replaced_by_ordinary_release": true
     },
-    "interpretation": "正常final-source双向Reader运行验证本轮scheduler-control/source-retirement改动未造成执行回归。该run未故意制造native queued cancellation、worker crash或in-flight cancellation；这些边界由确定性行为回归和ownership guards覆盖，不能把本Profile样本写成fault injection。"
-  },
-  "saf_physical_partial_governance": {
-    "adr": "0340-saf-physical-partial-direct-staging-adoption.md",
-    "authority_owner": "PersistentDownloadArtifactStore per-physical serializer",
-    "pre_fix_trace": "zic-debug-trace-2026-09-29T03-03-51.jsonl",
-    "pre_fix_identity": "6d924728a464c2c6",
-    "pre_fix_partial_bytes": 7708375,
-    "pre_fix_failure": "SAF physical partial was non-adoptable and replayed through DownloadSession writer from offset zero; session receiving/checkpoints described local copy, not origin network",
-    "post_fix_trace": "zic-debug-trace-2026-09-29T03-35-53.jsonl",
-    "post_fix_evidence": "same 7,708,375-byte page79 partial opens as SAF adoptable=true, migrates under persistent store authority, then adopted-physical/local-hydration-ready while session remains idle; later visits are Direct adoption",
-    "post_fix_revisit_trace": "zic-debug-trace-2026-09-29T03-54-39.jsonl",
-    "transport_distinction": "after local authority is ready, provider may still answer a non-zero Range request with HTTP 200/rangeStart0; existing full-body-prefix-catchup preserves the durable partial and is a separate Range capability path",
-    "policy_unchanged": "7/3 network window, 2/1 decode window, local-preparation cap, 50MB speculative encoded budget and final SAF placement unchanged"
-  },
-  "post_e4a1111d_governance": {
-    "baseline": "e4a1111d",
-    "classification": {
-      "RMR-019": "resolved P2 defect",
-      "RMR-020": "resolved P2 defect",
-      "RMR-021": "resolved structural debt",
-      "RMR-022": "resolved structural debt",
-      "RMR-023": "resolved structural debt"
+    "evidence_grade": "Device-observed/Profile-sampled owner attribution; original regression/performance acceptance remains open.",
+    "capture_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
+    "capture_session_sha256": "e466b87a1d26480e4d80c1cf6d01c206838c1ccfffb0be68c935c81785f1115c",
+    "fresh_locator_attribution": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/fresh-locator-compatibility-attribution.json",
+    "fresh_locator_attribution_sha256": "3f79dbdbb0bce4b0a75cd225c41c06d9f3f7aaed1245627e07851f0bfbd58f42",
+    "frame_review": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/frame-review.json",
+    "frame_review_sha256": "3c41b4f547a879cd6a237b39a1ecc4971b44e6fdd6ca2d6472afca8163cf1c4d",
+    "trace_review": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/trace-review.json",
+    "trace_review_sha256": "33d772ef660a61ee5129fc71c58d580d6cb4dd65cb7f2b6495030287a1ead601",
+    "data_reconciliation": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/data-reconciliation.json",
+    "data_reconciliation_sha256": "37fe4328e71287fe46f1c3f3cb292cb63b2acdc9b67dd6b132829b5d9319ea98",
+    "observed_allocation_root_cause": "The unchanged locator replay-coordinate predicate base64-decodes and materializes a UTF8 string/JSON parser for every checked page; 288 checks yield 288 Uint8List and2304 GrowableList selected allocations. This is not proof of the reported fixed-position stutter or loading cause.",
+    "next_action": "Evaluate fused UTF8/JSON decoding inside the existing pure locator compatibility predicate. Preserve exact malformed/Unicode/replay decisions and original owner; retain an implementation only after equivalent-semantics and actual allocation proof. No skipped validation, memoization owner or added worker.",
+    "final_reconciliation": {
+      "validator": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/finalize_and_validate.py",
+      "validator_sha256": "8c71fb34f1c3fa9855103f8a1eca0e6ca7c0374b29d74a2637850adadd30f930",
+      "proof": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-validation.json",
+      "proof_sha256": "03e50e0fbf9992c0fee19f237d792a07b92404b4e3d00ef9996d386bd29658be",
+      "exit_code": 0,
+      "all_scoped_checks_passed": true
     },
-    "governance_order": [],
-    "constraints": [
-      "recorded before production edits",
-      "do not broaden 7/3 or 2/1 windows",
-      "do not add Reader retry/cache/transport ownership",
-      "preserve decode current-slot reservation",
-      "preserve deletion-time obsolete-locator proof"
-    ]
-  }
+    "documentation_validation": {
+      "checks": [
+        {
+          "command": [
+            "python3",
+            "tool/check_documentation.py"
+          ],
+          "exit_code": 0,
+          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-documentation.log",
+          "sha256": "01a276ad1d8f20e572e4a6c5a3f966759c1e410835c6a13ade66881a7ea6b200"
+        },
+        {
+          "command": [
+            "python3",
+            "tool/check_repo.py"
+          ],
+          "exit_code": 0,
+          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-repository.log",
+          "sha256": "949402e70ddd7d07c4262fb1a93831c2c434f0902d5786b1a1e386e1ca8868b4"
+        },
+        {
+          "command": [
+            "python3",
+            "tool/check_dart_structure.py"
+          ],
+          "exit_code": 0,
+          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-structure.log",
+          "sha256": "e1cb994a399f6f22f97940bdd5aceb46a4847440e177cf49f0c309bf66159c23"
+        },
+        {
+          "command": [
+            "python3",
+            "tool/test_dev139_current_documentation.py"
+          ],
+          "exit_code": 0,
+          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-dev139.log",
+          "sha256": "0400b9d53b30ce93c068d575d5220beec03b0c4d7293de3be4b0fb8d4ad63e24"
+        },
+        {
+          "command": [
+            "git",
+            "diff",
+            "--check"
+          ],
+          "exit_code": 0,
+          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-diff.log",
+          "sha256": "390da95dc81d0ad51c8551f6efba70e650d5330e4efab60c4f2baea8cddb320b"
+        }
+      ],
+      "all_exit_codes": 0
+    }
+  },
+  "installation_before_remaining_GC_attribution": {
+    "serial": "72b08a1c",
+    "model": "M2007J1SC",
+    "sdk": 36,
+    "apk": "/home/unkloser/.cache/zic-device-evidence/controlled-open-retirement/ordinary-release-arm64-v8a.apk",
+    "sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
+    "installed_apk_sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
+    "installed_base_apk_sha256_match": true,
+    "app_pid": 26198,
+    "ordinary_release": true,
+    "normal_minified_release": true,
+    "mode": "release",
+    "debuggable": false,
+    "source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
+    "source_input_count": 642,
+    "source_matches_current_workspace": true,
+    "test_only_Pipeline_fixture_uninstalled": true,
+    "fixture_host_and_source_processes_terminated": true,
+    "temporary_diagnostics": false,
+    "temporary_profilers_active": false,
+    "app_foreground": "home",
+    "bounded_open_exit_repair": true,
+    "restore_evidence": "/home/unkloser/.cache/zic-device-evidence/source-mihon-client-pipeline/device-run-v2/result.json",
+    "checked_at_ns": 1791152914795002017
+  },
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements",
+  "last_updated": "2026-10-07"
 }

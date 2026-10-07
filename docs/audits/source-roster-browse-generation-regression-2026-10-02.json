@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-02",
+  "baseline_commit": "16a17020",
+  "status": "verified_toolchain_and_scoped_ordinary_release_device",
+  "adr": "docs/adr/0374-source-roster-updates-preserve-active-browse-generation.md",
+  "root_cause": "Unrelated source-id roster updates trigger active UI reload, clearing sections/page and forcing cache refresh. Composition also replaces decorators for unchanged raw external producers, creating false active-source replacement. Cache forceRefresh retires the old cache pending entry and starts a new real loader; only the latest UI completion is published.",
+  "failing_first": {
+    "production_changed_before_test": false,
+    "ui_log": "/tmp/zic-source-browser-activation-before.log",
+    "ui_log_sha256": "f0cf64648153ed96d125aefe05fd41086232a2f2e872900ec9b0d66b1e08dda5",
+    "ui_exit_code": 1,
+    "ui_passed": 1,
+    "ui_failed": 2,
+    "actual_pending_loader_calls": 3,
+    "expected_pending_loader_calls": 1,
+    "loaded_second_page_lost": true,
+    "binding_log": "/tmp/zic-source-browser-activation-bindings-before.log",
+    "binding_log_sha256": "e5f362c5837b060ae1a6336da71fa03afdfca6d13f3afef72adc8e4fbc1ac0d6",
+    "binding_exit_code": 1,
+    "binding_failed": 1,
+    "production_before_snapshot": "/tmp/zic-source-browser-activation-bindings-production-before.sha256"
+  },
+  "remaining": [
+    "35.255ms reused-chapter return build needs matched CPU/entry attribution; sampled after boundary completion, not a proved native-page regression",
+    "Independent input/final physical-display performance and all-source contracts remain open",
+    "Original112 requirements and prior resolved Reader/download/source components retained without scope reduction"
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

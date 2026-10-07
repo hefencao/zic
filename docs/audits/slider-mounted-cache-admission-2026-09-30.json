@@ -1,0 +1,12 @@
+{
+  "baseline_commit": "16a17020",
+  "failing_first": "Two warmed far pages retain mounted output listeners and are evicted for budget. Existing regression's new requested=false assertion fails with actual true for a denied far page.",
+  "preserved": [
+    "single composition-owned raster residency/admission authority",
+    "100MiB/1000-entry presentation envelope",
+    "same-generation cache identity, bounded grants, existing role promotion",
+    "NetLane, 7/3 encoded, 2/1 animation decode and 50MB encoded budget",
+    "no Pipeline eviction tombstone, polling or Reader eligibility owner"
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}

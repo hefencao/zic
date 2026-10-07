@@ -1,0 +1,14 @@
+{
+  "summary": {
+    "passed": 10,
+    "real_kill_reopen": 9,
+    "physical_equal_length_noop": 1,
+    "failed": 0
+  },
+  "limits": [
+    "Device evidence covers this real ExternalStorage DocumentsProvider and process death, not sudden power loss or every third-party provider.",
+    "Same-authority physical backup-only recovery is a deterministic cold-intent fixture contract; current physical equal-length store admission skips replacement.",
+    "Typed mismatch and provider target/backup preservation are verified on-device; intent preservation and refused-rename owner release are independently verified by the focused regression suite."
+  ],
+  "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+}
