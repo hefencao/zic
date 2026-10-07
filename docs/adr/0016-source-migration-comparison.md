@@ -1,6 +1,6 @@
 # ADR 0016: Source migration comparison boundary
 
-- Status: accepted
+- Status: Accepted
 - Version: `0.29.0-dev.34`
 
 ## Context

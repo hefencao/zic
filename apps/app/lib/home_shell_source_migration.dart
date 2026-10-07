@@ -59,7 +59,7 @@ List<String> _sourceMigrationResultSummaryMessages(
       if (result.registeredPageEquivalences > 0)
         '登记 ${result.registeredPageEquivalences} 页已验证媒体等价关系',
       if (result.materializedPageArtifacts > 0)
-        '复用 ${result.materializedPageArtifacts} 页旧版离线文件到新 key',
+        '复用 ${result.materializedPageArtifacts} 页已验证的旧版离线文件',
       if (result.replacingSource)
         '旧版本记录已替换，未匹配的旧版离线文件仍保留'
       else
@@ -285,75 +285,25 @@ extension _HomeShellSourceMigration on _HomeShellState {
         );
         return null;
       }
-      return showDialog<_SourceMigrationSelection>(
+      final selection = await showConfirmedSourceVersionSelection(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text('同源版本 · ${source.descriptor.name}'),
-          content: SizedBox(
-            width: 560,
-            child: ListView(
-              shrinkWrap: true,
-              children: <Widget>[
-                for (final version in versions)
-                  ListTile(
-                    title: Text(
-                      version.title.trim().isEmpty
-                          ? version.comicId
-                          : version.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      <String>[
-                        version.isPredecessor ? '旧版' : '新版',
-                        if (version.date != null && version.date!.isNotEmpty)
-                          version.date!,
-                        version.comicId,
-                      ].join(' · '),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Wrap(
-                      spacing: 4,
-                      children: <Widget>[
-                        TextButton(
-                          onPressed: () => Navigator.pop(
-                            context,
-                            _SourceMigrationSelection.version(
-                              source: source,
-                              version: version,
-                              viewOnly: true,
-                            ),
-                          ),
-                          child: const Text('查看'),
-                        ),
-                        FilledButton.tonal(
-                          onPressed: () => Navigator.pop(
-                            context,
-                            _SourceMigrationSelection.version(
-                              source: source,
-                              version: version,
-                              viewOnly: false,
-                            ),
-                          ),
-                          child: Text(
-                            version.isPredecessor ? '迁移旧版状态' : '迁移到此版本',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('关闭'),
-            ),
+        sourceName: source.descriptor.name,
+        versions: versions,
+        backgroundRefresh: state.backgroundRefresh?.then(
+          (refreshed) => <SourceComicVersion>[
+            ...refreshed.successors,
+            ...refreshed.predecessors,
           ],
         ),
+        webUriFor: (version) => _sourceComicWebUri(source, version.comicId),
       );
+      return selection == null
+          ? null
+          : _SourceMigrationSelection.version(
+              source: source,
+              version: selection.version,
+              viewOnly: selection.viewOnly,
+            );
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -769,13 +719,17 @@ extension _HomeShellSourceMigration on _HomeShellState {
         target: manifest,
       );
       if (!mounted) return;
-      final sourceDescriptor = _sourceForId(comic.sourceId)?.descriptor;
+      final source = _sourceForId(comic.sourceId);
       final confirmed = await showSourceMigrationComparison(
         context: context,
         plan: plan,
-        sourceName: sourceDescriptor?.name ?? comic.sourceId,
+        sourceName: source?.descriptor.name ?? comic.sourceId,
         targetName: request.source.descriptor.name,
         replaceSource: replacingSource,
+        sourceWebUri: source == null
+            ? null
+            : _sourceComicWebUri(source, comic.comicId),
+        targetWebUri: _sourceComicWebUri(request.source, request.id),
         loadSourceCover:
             comic.coverSourceId == null && comic.coverChapter == null
             ? null

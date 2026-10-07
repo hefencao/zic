@@ -97,6 +97,7 @@ sealed class Filter<T>(val name: String, var state: T) {
   abstract class CheckBox(name:String,state:Boolean=false): Filter<Boolean>(name,state)
   abstract class TriState(name:String,state:Int=0): Filter<Int>(name,state)
   abstract class Group<V>(name:String,state:List<V>): Filter<List<V>>(name,state)
+  class Unknown(name:String): Filter<Int>(name,37)
   abstract class Sort(name:String,val values:Array<String>,state:Selection?=null): Filter<Sort.Selection?>(name,state) {
     data class Selection(val index:Int,val ascending:Boolean)
   }
@@ -105,20 +106,22 @@ sealed class Filter<T>(val name: String, var state: T) {
         smoke.write_text(r'''
 package dev.zic.pluginhost
 import eu.kanade.tachiyomi.source.model.Filter
-class StatusFilter: Filter.Group<Filter<*>>("状态", listOf(object: Filter.Select<String>("状态", arrayOf("全部","连载中","已完结"),0){}))
+class StatusFilter: Filter.Group<Filter<*>>("状态", listOf(object: Filter.Select<String>("状态", arrayOf("全部","连载中","已完结"),0){}, Filter.Unknown("不支持的子项")))
 class OrderByFilter: Filter.Sort("排序", arrayOf("最新","热门"), Selection(0,true))
 class ScopeFilter: Filter.Text("搜索范围", "")
 class CategoryFilter: Filter.Select<String>("类型", arrayOf("全部","其他","同人"),0)
 class FlagFilter: Filter.CheckBox("仅收藏", false)
 class TagFilter: Filter.TriState("标签", 0)
 fun main() {
-  val filters: List<Any> = listOf(Filter.Header("搜索"), StatusFilter(), CategoryFilter(), OrderByFilter(), ScopeFilter(), FlagFilter(), TagFilter(), Filter.Separator())
+  val filters: List<Any> = listOf(Filter.Header("搜索"), StatusFilter(), CategoryFilter(), OrderByFilter(), ScopeFilter(), FlagFilter(), TagFilter(), Filter.Separator(), Filter.Unknown("不支持的顶级项"))
   val schema = MihonFilterCodec.describe(filters, StatusFilter::class.java.classLoader)
   check(schema.map { it["kind"] } == listOf("header", "group", "select", "sort", "text", "checkBox", "triState", "separator")) { schema.toString() }
   val group = schema[1]["children"] as List<*>
   check((group.single() as Map<*,*>)["kind"] == "select")
-  MihonFilterCodec.apply(filters, mapOf("1.0" to 2, "2" to 1, "3" to mapOf("index" to 1, "ascending" to false), "4" to "标题", "5" to true, "6" to 2), StatusFilter::class.java.classLoader)
-  check(((filters[1] as StatusFilter).state.single() as Filter.Select<*>).state == 2)
+  MihonFilterCodec.apply(filters, mapOf("1.0" to 2, "1.1" to "ignored", "2" to 1, "3" to mapOf("index" to 1, "ascending" to false), "4" to "标题", "5" to true, "6" to 2, "8" to "ignored"), StatusFilter::class.java.classLoader)
+  check(((filters[1] as StatusFilter).state.first() as Filter.Select<*>).state == 2)
+  check(((filters[1] as StatusFilter).state.last() as Filter.Unknown).state == 37)
+  check((filters.last() as Filter.Unknown).state == 37)
   check((filters[2] as CategoryFilter).state == 1)
   check((filters[3] as OrderByFilter).state?.index == 1 && (filters[3] as OrderByFilter).state?.ascending == false)
   check((filters[4] as ScopeFilter).state == "标题")

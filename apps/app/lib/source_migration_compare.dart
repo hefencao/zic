@@ -23,12 +23,98 @@ const sourceMigrationComparisonChaptersKey =
 
 typedef SourceMigrationCoverLoader = Future<Uint8List> Function();
 
+Future<({SourceComicVersion version, bool viewOnly})?>
+    showConfirmedSourceVersionSelection({
+  required BuildContext context,
+  required String sourceName,
+  required List<SourceComicVersion> versions,
+  required Uri Function(SourceComicVersion version) webUriFor,
+  Future<List<SourceComicVersion>>? backgroundRefresh,
+}) =>
+        showDialog<({SourceComicVersion version, bool viewOnly})>(
+          context: context,
+          builder: (context) => FutureBuilder<List<SourceComicVersion>>(
+            initialData: versions,
+            future: backgroundRefresh,
+            builder: (context, snapshot) => AlertDialog(
+              title: Text('同源版本 · $sourceName'),
+              content: SizedBox(
+                width: 560,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: <Widget>[
+                    for (final version in snapshot.data ?? versions)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              version.title.trim().isEmpty
+                                  ? '未命名版本'
+                                  : version.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              <String>[
+                                version.isPredecessor ? '旧版' : '新版',
+                                if (version.date?.trim().isNotEmpty == true)
+                                  version.date!.trim(),
+                                webUriFor(version).toString(),
+                              ].join(' · '),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 4,
+                            children: <Widget>[
+                              TextButton(
+                                onPressed: () => Navigator.pop(
+                                  context,
+                                  (version: version, viewOnly: true),
+                                ),
+                                child: const Text('查看'),
+                              ),
+                              FilledButton.tonal(
+                                onPressed: () => Navigator.pop(
+                                  context,
+                                  (version: version, viewOnly: false),
+                                ),
+                                child: Text(
+                                  version.isPredecessor
+                                      ? '迁移旧版状态'
+                                      : '迁移到此版本',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'),
+                ),
+              ],
+            ),
+          ),
+        );
+
 Future<bool> showSourceMigrationComparison({
   required BuildContext context,
   required ComicSourceMigrationPlan plan,
   required String sourceName,
   required String targetName,
   bool replaceSource = false,
+  Uri? sourceWebUri,
+  Uri? targetWebUri,
   SourceMigrationCoverLoader? loadSourceCover,
   SourceMigrationCoverLoader? loadTargetCover,
 }) async {
@@ -39,6 +125,8 @@ Future<bool> showSourceMigrationComparison({
       sourceName: sourceName,
       targetName: targetName,
       replaceSource: replaceSource,
+      sourceWebUri: sourceWebUri,
+      targetWebUri: targetWebUri,
       loadSourceCover: loadSourceCover,
       loadTargetCover: loadTargetCover,
     ),
@@ -52,6 +140,8 @@ final class _SourceMigrationComparisonDialog extends StatefulWidget {
     required this.sourceName,
     required this.targetName,
     required this.replaceSource,
+    required this.sourceWebUri,
+    required this.targetWebUri,
     required this.loadSourceCover,
     required this.loadTargetCover,
   });
@@ -60,6 +150,8 @@ final class _SourceMigrationComparisonDialog extends StatefulWidget {
   final String sourceName;
   final String targetName;
   final bool replaceSource;
+  final Uri? sourceWebUri;
+  final Uri? targetWebUri;
   final SourceMigrationCoverLoader? loadSourceCover;
   final SourceMigrationCoverLoader? loadTargetCover;
 
@@ -100,6 +192,7 @@ final class _SourceMigrationComparisonDialogState
                       label: '当前来源',
                       sourceName: widget.sourceName,
                       identity: comparison.sourceIdentity,
+                      webUri: widget.sourceWebUri,
                       title: comparison.sourceTitle,
                       authors: comparison.sourceAuthors,
                       chapterSummary:
@@ -114,6 +207,7 @@ final class _SourceMigrationComparisonDialogState
                       label: '目标来源',
                       sourceName: widget.targetName,
                       identity: comparison.targetIdentity,
+                      webUri: widget.targetWebUri,
                       title: comparison.targetTitle,
                       authors: comparison.targetAuthors,
                       chapterSummary:
@@ -153,7 +247,7 @@ final class _SourceMigrationComparisonDialogState
               Text(
                 widget.replaceSource
                     ? '迁移只复制漫画偏好和经过验证的阅读状态。新版本已有状态优先保留；'
-                        '已验证相同的离线页面会写入目标版本 key，'
+                        '已验证相同的离线页面可在目标版本复用，'
                         '无法证明相同的旧版文件保留但不会冒险复用。'
                     : '迁移只复制漫画偏好和经过验证的阅读状态。目标源已有状态优先保留；'
                         '来源专属 URL、离线字节和原来源漫画都不会被删除或替换。',
@@ -166,7 +260,7 @@ final class _SourceMigrationComparisonDialogState
                 onChanged: (value) => setState(
                   () => _acknowledgedIdentity = value ?? false,
                 ),
-                title: const Text('我已核对目标来源、原生 ID 和章节匹配风险'),
+                title: const Text('我已核对目标漫画、来源和章节匹配风险'),
                 controlAffinity: ListTileControlAffinity.leading,
               ),
             ],
@@ -199,6 +293,7 @@ final class _MigrationComicCard extends StatelessWidget {
     required this.label,
     required this.sourceName,
     required this.identity,
+    required this.webUri,
     required this.title,
     required this.authors,
     required this.chapterSummary,
@@ -209,6 +304,7 @@ final class _MigrationComicCard extends StatelessWidget {
   final String label;
   final String sourceName;
   final String identity;
+  final Uri? webUri;
   final String title;
   final List<String> authors;
   final String chapterSummary;
@@ -245,11 +341,13 @@ final class _MigrationComicCard extends StatelessWidget {
                   Text(authors.isEmpty ? '作者未提供' : authors.join('、')),
                   const SizedBox(height: 6),
                   Text('$sourceName · $chapterSummary · $readingDirection'),
-                  const SizedBox(height: 6),
-                  SelectableText(
-                    identity,
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
+                  if (webUri != null) ...<Widget>[
+                    const SizedBox(height: 6),
+                    SelectableText(
+                      webUri.toString(),
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ],
                 ],
               ),
             ),

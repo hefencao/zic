@@ -338,7 +338,9 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
     if (normalized.isEmpty) {
       return;
     }
-    Navigator.of(context).pop();
+    final homeRoute = ModalRoute.of(context);
+    Navigator.of(context).popUntil((route) => homeRoute == null
+        ? route.isFirst : identical(route, homeRoute));
     _setState(() {
       _activeSourceId = source.sourceId;
       _sourcePageVisited = true;
@@ -346,6 +348,50 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
       _sourceSearchRevision++;
       _navigationIndex = 2;
     });
+  }
+
+  Future<void> _searchComicTitle(
+    String query, {
+    required String originSourceId,
+    required String originComicId,
+  }) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return;
+    widget.preferences.rememberSourceSearch(normalized);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => StreamBuilder<void>(
+          stream: _externalSources.sourceProjectionChanges,
+          builder: (_, _) => ComicTitleSearchPage(
+            query: normalized,
+            sources: _enabledSources,
+            onPrepareSources: () =>
+                unawaited(_externalSources.ensureSourcesPublished()),
+            resolveSource: _sourceForId,
+            loadCover: _loadSourceBrowseCover,
+            isInShelf: (source, comic) => _mergedPreferenceFor(
+              source.sourceId, comic.comicId,
+              fallbackSourceKind: ComicSourceKind.remote,
+              fallbackInShelf: false,
+            ).inShelf,
+            hasUpdate: _sourceComicHasUpdate,
+            onOpenUpdate: _openSourceUpdateForSummary,
+            onOpenSourceWebView: _openSourceWebView,
+            onSearchCommitted: widget.preferences.rememberSourceSearch,
+            onOpenComic: (source, comic) async {
+              if (!mounted) return;
+              if (source.sourceId == originSourceId &&
+                  _canonicalComicKey(source.sourceId, comic.comicId) ==
+                      _canonicalComicKey(originSourceId, originComicId)) {
+                Navigator.of(context).pop();
+                return;
+              }
+              await _openSourceComic(source, comic);
+            },
+          ),
+        ),
+      ),
+    );
   }
 
 
@@ -521,6 +567,10 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
               final active = _sourceForId(source.sourceId) ?? source;
               _searchSourceMetadata(active, query);
             },
+            onSearchTitle: (query) => unawaited(_searchComicTitle(
+              query, originSourceId: source.sourceId,
+              originComicId: comic.comicId,
+            )),
             onMigrateSource: () {
               final active = _sourceForId(source.sourceId) ?? source;
               return _openSourceMigrationForSummary(active, comic);
@@ -627,6 +677,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
               ),
               source: resolvedSource,
               resolveSource: _sourceForId,
+              sourceReady: sourceReady,
               ensureSourceChapter: _ensureSourceChapter,
               downloadActions: _detailsDownloadActions,
               onPreferenceChanged: (preference) async {
@@ -701,6 +752,10 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
               onSearchMetadata: resolvedSource == null
                   ? null
                   : (query) => _searchSourceMetadata(resolvedSource, query),
+              onSearchTitle: (query) => unawaited(_searchComicTitle(
+                query, originSourceId: comic.sourceId,
+                originComicId: comic.comicId,
+              )),
               onMigrateSource: resolvedSource == null ||
                       comic.sourceId == 'local-folder'
                   ? null

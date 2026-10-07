@@ -21,7 +21,7 @@ for token in (
     "final stored = await _storedVersionRelationsStable(",
     "final storedSuccessors = stored.successors;",
     "final storedPredecessors = stored.predecessors;",
-    "await _rememberSuccessors(",
+    "await _rememberSourceVersions(",
     "await session.upsertVersionRelation(",
 ):
     if token not in version_lifecycle:

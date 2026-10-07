@@ -656,6 +656,13 @@ final class _InstalledPluginTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final plugin = item.plugin;
+    final metadata = <String?>[
+      plugin.language,
+      'v${plugin.version}',
+      if (plugin.format == ExternalComicPluginFormat.mihonExtension)
+        'ABI ${item.extensionLib ?? '未知'}',
+      if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
+    ].whereType<String>().join(' · ');
     final canRetry = failure != null && retryable && !busy;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -670,12 +677,9 @@ final class _InstalledPluginTile extends StatelessWidget {
       title: Text(plugin.name),
       subtitle: Text(
         failure == null
-            ? <String?>[
-                plugin.language,
-                'v${plugin.version}',
-                if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
-              ].whereType<String>().join(' · ')
-            : '${retryable ? '加载失败，点击重试' : '加载失败，请重新安装'} · $failure',
+            ? metadata
+            : '$metadata\n'
+                '${retryable ? '加载失败，点击重试' : '加载失败，请重新安装'} · $failure',
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
       ),
@@ -1074,11 +1078,17 @@ final class _DeviceMihonSection extends StatelessWidget {
                 return ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                   title: Text(extension.displayName),
-                  subtitle: Text(
-                    '${extension.packageName}\n'
-                    'v${extension.versionName} · ABI ${extension.extensionLib}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        extension.packageName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text('v${extension.versionName} · '
+                          'ABI ${extension.extensionLib}'),
+                    ],
                   ),
                   trailing: busy
                       ? const SizedBox.square(

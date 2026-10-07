@@ -52,14 +52,31 @@ for token in (
     '_selectConfirmedSourceVersion(',
     '_openSourceMigrationForSummary(',
     '_openSourceMigration(',
-    "child: const Text('查看')",
-    "version.isPredecessor ? '迁移旧版状态' : '迁移到此版本'",
+    'showConfirmedSourceVersionSelection(',
+    'backgroundRefresh: state.backgroundRefresh?.then(',
+    '...refreshed.successors,',
+    '...refreshed.predecessors,',
+    'webUriFor: (version) => _sourceComicWebUri(source, version.comicId)',
     "label: const Text('已确认同源版本')",
     'final page = await choice.source.browse(query: comic.title, limit: 12);',
     'showSourceMigrationComparison(',
     'ComicSourceMigrationPlan.build(',
 ):
     require(migration, token, 'unified migration/version/update ownership')
+
+presentation = read('apps/app/lib/source_migration_compare.dart')
+for token in (
+    'showConfirmedSourceVersionSelection(',
+    'future: backgroundRefresh,',
+    'snapshot.data ?? versions',
+    "child: const Text('查看')",
+    "? '迁移旧版状态'",
+    ": '迁移到此版本'",
+    'webUriFor(version).toString()',
+    '(version: version, viewOnly: true)',
+    '(version: version, viewOnly: false)',
+):
+    require(presentation, token, 'readonly confirmed-version presentation')
 for token in (
     'final class HomeSourceMigrationTransaction',
     'await savePreference(mergedPreference);',

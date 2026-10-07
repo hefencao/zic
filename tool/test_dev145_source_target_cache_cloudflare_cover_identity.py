@@ -36,7 +36,8 @@ for token in (
 for token in (
     'String? _projectionSourceId',
     '_restoreTargetProjection(_activeSource)',
-    'final cached = remembered == null',
+    'final rawCached = remembered == null',
+    '_canonicalSourceBrowsePage(source, rawCached)',
     'final projectionMatchesSource = _projectionSourceId == source.sourceId',
     'allowVerificationFallback',
     'failure.shouldAutoOpenVerification',

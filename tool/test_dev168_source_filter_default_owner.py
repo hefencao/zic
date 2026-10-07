@@ -51,8 +51,13 @@ forbid(
 )
 require(
     source,
-    'final cached = remembered == null',
+    'final rawCached = remembered == null',
     'only explicit in-session state may use exact cached projection',
+)
+require(
+    source,
+    '_canonicalSourceBrowsePage(source, rawCached)',
+    'cached source restore must use canonical projection',
 )
 for token in (
     'final orderedSections = _orderedBrowseSections(sections);',

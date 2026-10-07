@@ -239,6 +239,7 @@ final class _ComicDetailsPreviewSectionState
   _ComicDetailsPreviewRow _buildPreviewRow(
     List<int> indices,
     double maxWidth,
+    double maxHeight,
   ) {
     final gapWidth = _previewGridGap * math.max(0, indices.length - 1);
     final availableItemWidth = math.max(1.0, maxWidth - gapWidth);
@@ -246,16 +247,40 @@ final class _ComicDetailsPreviewSectionState
         .map((index) => math.sqrt(_previewAspect(index)))
         .toList(growable: false);
     final rootSum = aspectRoots.fold<double>(0, (sum, value) => sum + value);
-    final targetArea = math.pow(availableItemWidth / rootSum, 2).toDouble();
+    var areaRoot = availableItemWidth / rootSum;
+    final heightLimited = aspectRoots.any((root) => areaRoot / root > maxHeight);
+    if (heightLimited) {
+      // Equal-area tiles keep the full row width even when a tile's height is
+      // capped: its width becomes area / maxHeight. The capped set only shrinks.
+      var cappedCount = -1;
+      for (var pass = 0; pass <= indices.length; pass++) {
+        var nextCappedCount = 0;
+        var freeRootSum = 0.0;
+        for (final root in aspectRoots) {
+          if (areaRoot / root > maxHeight) {
+            nextCappedCount++;
+          } else {
+            freeRootSum += root;
+          }
+        }
+        if (nextCappedCount == cappedCount) break;
+        cappedCount = nextCappedCount;
+        areaRoot = 2 * availableItemWidth /
+            (freeRootSum + math.sqrt(freeRootSum * freeRootSum +
+                4 * cappedCount * availableItemWidth / maxHeight));
+      }
+    }
+    final targetArea = math.pow(areaRoot, 2).toDouble();
     final items = <_ComicDetailsPreviewItemLayout>[];
     var height = 0.0;
     for (var offset = 0; offset < indices.length; offset++) {
       final index = indices[offset];
       final aspect = _previewAspect(index);
+      final itemHeight = math.min(math.sqrt(targetArea / aspect), maxHeight);
       final item = _ComicDetailsPreviewItemLayout(
         index: index,
-        width: math.sqrt(targetArea * aspect),
-        height: math.sqrt(targetArea / aspect),
+        width: heightLimited ? targetArea / itemHeight : math.sqrt(targetArea * aspect),
+        height: itemHeight,
       );
       items.add(item);
       height = math.max(height, item.height);
@@ -273,7 +298,7 @@ final class _ComicDetailsPreviewSectionState
     );
   }
 
-  List<_ComicDetailsPreviewRow> _previewRows(double maxWidth) {
+  List<_ComicDetailsPreviewRow> _previewRows(double maxWidth, double maxHeight) {
     if (_items.isEmpty || maxWidth <= 0) {
       return const <_ComicDetailsPreviewRow>[];
     }
@@ -281,7 +306,7 @@ final class _ComicDetailsPreviewSectionState
     final pending = List<int>.generate(_items.length, (index) => index);
     while (pending.isNotEmpty) {
       final indices = _takePreviewRowIndices(pending);
-      rows.add(_buildPreviewRow(indices, maxWidth));
+      rows.add(_buildPreviewRow(indices, maxWidth, maxHeight));
     }
 
     // Complete rows always consume the full width. Only a sparse final row is
@@ -342,7 +367,7 @@ final class _ComicDetailsPreviewSectionState
       height = 0;
     }
 
-    for (final row in _previewRows(maxWidth)) {
+    for (final row in _previewRows(maxWidth, maxHeight)) {
       final nextHeight = rows.isEmpty
           ? row.height
           : height + _previewGridGap + row.height;

@@ -33,9 +33,19 @@ extension _HomeShellDetailsActions on _HomeShellState {
               entry.chapter.comicId == effectiveComicId,
         )
         .toList(growable: false);
+    final catalogChapters = cachedManifest?.chapters ?? sourceChapters;
     return details.ComicDetailsLibrarySnapshot(
       chapters: chapters,
-      sourceChapters: cachedManifest?.chapters ?? sourceChapters,
+      sourceChapters: catalogChapters,
+      catalogChapterIdsByEntryIdentity: sourceId.startsWith('mihon:')
+          ? details.comicDetailsCatalogEntryProjection(
+              sourceId: sourceId,
+              comicId: effectiveComicId,
+              sourceChapters: catalogChapters,
+              entries: chapters,
+              comparisonKey: mihonChapterModelComparisonKey,
+            )
+          : const <String, String>{},
       sourceComic: cachedManifest?.comic ??
           savedComic?.toComic(),
       sourceManifest: cachedManifest,

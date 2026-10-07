@@ -367,6 +367,77 @@ void main() {
     expect(find.byKey(comicSourceFilterActionKey), findsNothing);
   });
 
+  testWidgets('filter draft survives sheet metrics and dropdown rebuilds',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-filter-draft',
+      '筛选草稿源',
+      searchFilters: const <SourceSearchFilterNode>[
+        SourceSearchFilterNode(
+          filterId: 'group',
+          kind: SourceSearchFilterKind.group,
+          label: '分组',
+          children: <SourceSearchFilterNode>[
+            SourceSearchFilterNode(
+              filterId: 'group.check',
+              kind: SourceSearchFilterKind.checkBox,
+              label: '选项',
+              value: false,
+            ),
+          ],
+        ),
+        SourceSearchFilterNode(
+          filterId: 'type',
+          kind: SourceSearchFilterKind.select,
+          label: '类型',
+          options: <String>['全部', '同人'],
+          value: 0,
+        ),
+      ],
+    );
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(comicSourceFilterActionKey));
+    await _tapVisible(tester, find.byKey(comicSourceFilterActionKey));
+    await _tapVisible(tester, find.byKey(comicSourceFilterKey('group.check')));
+    expect(
+      tester.widget<CheckboxListTile>(
+        find.byKey(comicSourceFilterKey('group.check')),
+      ).value,
+      isTrue,
+    );
+    tester.view.viewInsets = const FakeViewPadding(bottom: 120);
+    await tester.pump();
+    expect(
+      tester.widget<CheckboxListTile>(
+        find.byKey(comicSourceFilterKey('group.check')),
+      ).value,
+      isTrue,
+    );
+    await _tapVisible(tester, find.byKey(comicSourceFilterKey('type')));
+    await _tapVisible(tester, find.text('同人').last);
+    await _tapVisible(tester, find.text('应用'));
+    await tester.pumpAndSettle();
+    expect(source.lastFilterState, <String, Object?>{
+      'group.check': true,
+      'type': 1,
+    });
+  });
+
   testWidgets('source-owned sections floating search and bottom pager preserve order',
       (tester) async {
     final native = _FixtureSource(
@@ -415,6 +486,7 @@ void main() {
       MaterialApp(
         home: StatefulBuilder(
           builder: (context, setState) => Scaffold(
+            resizeToAvoidBottomInset: false,
             body: ComicSourcesPage(
               sources: <BrowsableComicSource>[native, mihon, venera],
               activeSourceId: activeSourceId,
@@ -511,6 +583,24 @@ void main() {
     expect(find.text('漫画'), findsOneWidget);
     expect(find.byKey(comicSourceFilterBarKey), findsNothing);
 
+    // Android can consume the first back event to hide the IME before the
+    // route sees it. Release focus at the start of that inset animation while
+    // keeping the panel available for the following back event.
+    addTearDown(tester.view.resetViewInsets);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 400);
+    await tester.pump();
+    final searchFocus = tester.widget<SearchBar>(
+      find.byKey(comicSourceSearchKey),
+    ).focusNode!;
+    expect(searchFocus.hasFocus, isTrue);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.pump();
+    expect(searchFocus.hasFocus, isFalse);
+    expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(searchFocus.hasFocus, isFalse);
+
     await tester.binding.handlePopRoute();
     await tester.pump();
     expect(find.byKey(comicSourceSearchKey), findsNothing);
@@ -577,6 +667,325 @@ void main() {
     );
     expect(lockedSearch.controller?.text, '漫画');
     expect(native.browseQueries.last, '漫画');
+  });
+
+  testWidgets('unrelated source activation preserves pending browse',
+      (tester) async {
+    final gate = Completer<void>();
+    final cache = ResourceCacheManager();
+    try {
+      final underlying = _FixtureSource(
+        'fixture-pending-browse',
+        '当前源',
+        browseGate: gate,
+      );
+      final active = CachedBrowsableComicSource(
+        source: underlying,
+        cache: cache,
+      );
+      final other = _FixtureSource('fixture-activation-other', '新增源');
+      final third = _FixtureSource('fixture-activation-third', '第三源');
+      var sources = <BrowsableComicSource>[active];
+      late StateSetter update;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return Scaffold(
+                body: ComicSourcesPage(
+                  sources: sources,
+                  activeSourceId: active.sourceId,
+                  onSourceSelected: (_) {},
+                  loadCover: (_, __, ___) async =>
+                      MemoryEncodedResourceSource(_tinyPng()),
+                  onOpenComic: (_, __) async {},
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(underlying.browseCalls, 1);
+      update(() => sources = <BrowsableComicSource>[active, other]);
+      await tester.pump();
+      update(() => sources = <BrowsableComicSource>[active, other, third]);
+      await tester.pump();
+      final pendingBrowseCalls = underlying.browseCalls;
+      gate.complete();
+      await _pumpUntilFound(
+        tester,
+        find.byKey(sourceComicCardKey(active.sourceId, underlying._comicId)),
+      );
+      expect(find.byKey(comicSourceLoadingKey), findsNothing);
+      expect(pendingBrowseCalls, 1);
+      expect(underlying.browseCalls, 1);
+      expect(other.browseCalls, 0);
+      expect(third.browseCalls, 0);
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await tester.pump();
+      final closing = cache.close();
+      await tester.pump();
+      await closing;
+    }
+  });
+
+  testWidgets('unrelated source changes preserve browse section and page',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-browse-list-change',
+      '当前分页源',
+      browseItemCount: 60,
+      browseSections: const <SourceBrowseSection>[
+        SourceBrowseSection(sectionId: 'latest', label: '最新'),
+        SourceBrowseSection(sectionId: 'popular', label: '热门'),
+      ],
+    );
+    final other = _FixtureSource('fixture-browse-unrelated', '其它源');
+    var sources = <BrowsableComicSource>[source];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return Scaffold(
+              body: ComicSourcesPage(
+                sources: sources,
+                activeSourceId: source.sourceId,
+                onSourceSelected: (_) {},
+                loadCover: (_, __, ___) async =>
+                    MemoryEncodedResourceSource(_tinyPng()),
+                onOpenComic: (_, __) async {},
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-0')),
+    );
+    await _tapVisible(tester, find.byKey(comicSourceCategoryKey('popular')));
+    await tester.scrollUntilVisible(
+      find.byKey(comicSourcePagerKey),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-24')),
+    );
+    final calls = source.browseCalls;
+    for (final next in <List<BrowsableComicSource>>[
+      <BrowsableComicSource>[source, other],
+      <BrowsableComicSource>[other, source],
+      <BrowsableComicSource>[source],
+    ]) {
+      update(() => sources = next);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(
+        find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-24')),
+        findsOneWidget,
+      );
+      expect(source.lastBrowseSection, 'popular');
+      expect(source.browseCalls, calls);
+      expect(other.browseCalls, 0);
+    }
+  });
+
+  testWidgets('source roster changes exit aggregate search through normal browse',
+      (tester) async {
+    final source = _FixtureSource('fixture-roster-aggregate', '当前源');
+    final other = _FixtureSource('fixture-roster-other', '其它源');
+    final third = _FixtureSource('fixture-roster-third', '新增源');
+    var sources = <BrowsableComicSource>[source, other];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return Scaffold(
+              body: ComicSourcesPage(
+                sources: sources,
+                activeSourceId: source.sourceId,
+                onSourceSelected: (_) {},
+                loadCover: (_, __, ___) async =>
+                    MemoryEncodedResourceSource(_tinyPng()),
+                onOpenComic: (_, __) async {},
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    final card = find.byKey(sourceComicCardKey(source.sourceId, source._comicId));
+    await _pumpUntilFound(tester, card);
+    final calls = source.browseCalls;
+    await tester.longPress(find.byKey(comicSourceSearchFabKey));
+    await tester.pump();
+    expect(find.byKey(comicSourceAggregateResultsKey), findsOneWidget);
+    update(() => sources = <BrowsableComicSource>[source, other, third]);
+    await _pumpUntilFound(tester, card);
+    expect(find.byKey(comicSourceAggregateResultsKey), findsNothing);
+    expect(source.browseCalls, calls + 1);
+    expect(other.browseCalls, 0);
+    expect(third.browseCalls, 0);
+  });
+
+  testWidgets('native browse pages use source-owned next coordinates',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-native-coordinate',
+      '每页二十项',
+      browseItemCount: 50,
+      nativeBrowsePageSize: 20,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-0')),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(comicSourcePagerKey),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-20')),
+    );
+    expect(source.browseOffsets, <int>[0, 24]);
+    await tester.scrollUntilVisible(
+      find.byKey(comicSourcePagerKey),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('第 2 页'), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourcePreviousPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic-0')),
+    );
+    expect(source.browseOffsets, <int>[0, 24, 0]);
+  });
+
+  testWidgets('empty native browse page can advance to its next coordinate',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-empty-native-page',
+      '空原生页',
+      browsePageOverrides: <int, SourceBrowsePage>{
+        0: SourceBrowsePage(
+          items: const <SourceComicSummary>[],
+          offset: 0,
+          hasMore: true,
+          nextOffset: 24,
+        ),
+        24: SourceBrowsePage(
+          items: const <SourceComicSummary>[
+            SourceComicSummary(
+              sourceId: 'fixture-empty-native-page',
+              comicId: 'after-empty',
+              title: '空页后的漫画',
+              authors: <String>[],
+            ),
+          ],
+          offset: 24,
+          hasMore: false,
+        ),
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(comicSourceEmptyKey));
+    await tester.scrollUntilVisible(
+      find.byKey(comicSourcePagerKey),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, 'after-empty')),
+    );
+    expect(source.browseOffsets, <int>[0, 24]);
+    expect(find.text('第 2 页'), findsOneWidget);
+  });
+
+  testWidgets('floating search history drag collapses without browsing',
+      (tester) async {
+    final source = _FixtureSource('fixture-history-drag', '历史拖动源');
+    final searches = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            searchHistory: <String>[
+              for (var i = 0; i < 20; i++) '历史查询 $i',
+            ],
+            onSearchCommitted: searches.add,
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onSourceSelected: (_) {},
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, '${source.sourceId}-comic')),
+    );
+    final browseCalls = source.browseCalls;
+    for (final dy in <double>[-100, 100]) {
+      await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+      final historyScroll = find.descendant(
+        of: find.byKey(comicSourceSearchHistoryKey),
+        matching: find.byType(SingleChildScrollView),
+      );
+      await tester.drag(historyScroll, Offset(0, dy));
+      await tester.pumpAndSettle();
+      expect(find.byKey(comicSourceSearchKey), findsNothing);
+      expect(find.byKey(comicSourceSearchFabKey), findsOneWidget);
+    }
+    expect(searches, isEmpty);
+    expect(source.browseCalls, browseCalls);
   });
 
   testWidgets('search long press opens aggregate results and exits collapsed',
@@ -687,6 +1096,7 @@ void main() {
     );
     var queryRevision = 0;
     var coverLoads = 0;
+    String? openedComicId;
     late StateSetter updateHost;
 
     await tester.pumpWidget(
@@ -705,7 +1115,9 @@ void main() {
                   coverLoads++;
                   return MemoryEncodedResourceSource(_tinyPng());
                 },
-                onOpenComic: (_, __) async {},
+                onOpenComic: (_, comic) async {
+                  openedComicId = comic.comicId;
+                },
               ),
             );
           },
@@ -715,20 +1127,255 @@ void main() {
 
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey(source.sourceId, source._comicId)),
+      find.byKey(sourceComicCardKey(source.sourceId, 'stable-comic')),
     );
     expect(coverLoads, 1);
 
-    source.browseComicIdOverride = '${source.sourceId}-raw-alias';
-    updateHost(() => queryRevision++);
-    await _pumpUntilFound(
-      tester,
-      find.byKey(
-        sourceComicCardKey(source.sourceId, source.browseComicIdOverride!),
+    final owner = find.byKey(
+      const ValueKey<String>(
+        'source-comic-owner:mihon:canonical-owner\u0000stable-comic',
       ),
     );
+    final image = find.descendant(of: owner, matching: find.byType(Image));
+    await _pumpUntilFound(tester, image);
+    final originalElement = tester.element(owner);
+    final originalImageState = tester.state(image);
+    source.browseComicIdOverride = '${source.sourceId}-raw-alias';
+    updateHost(() => queryRevision++);
+    await tester.pumpAndSettle();
 
     expect(coverLoads, 1);
+    await _pumpUntilFound(tester, image);
+    expect(tester.element(owner), same(originalElement));
+    expect(tester.state(image), same(originalImageState));
+    await tester.tap(find.byKey(sourceComicCardKey(source.sourceId, 'stable-comic')));
+    await tester.pump();
+    expect(openedComicId, source.browseComicIdOverride);
+  });
+
+  for (final explicitNextOffset in <int?>[null, 24]) {
+    testWidgets(
+        'canonical browse aliases keep one card and raw paging stride '
+        '${explicitNextOffset ?? "fallback"}', (tester) async {
+      final rawItemCount = explicitNextOffset == null ? 25 : 2;
+      final nextOffset = explicitNextOffset ?? rawItemCount;
+      const sourceId = 'fixture-canonical-page';
+      SourceComicSummary summary(String rawId) => SourceComicSummary(
+            sourceId: sourceId,
+            comicId: rawId,
+            title: rawId,
+            authors: const <String>[],
+            coverUri: Uri.parse('fixture:canonical-cover'),
+          );
+      final source = _FixtureSource(
+        sourceId,
+        'Canonical Page',
+        canonicalComicIdentityOverride: 'stable-comic',
+        browsePageOverrides: <int, SourceBrowsePage>{
+          0: SourceBrowsePage(
+            items: <SourceComicSummary>[
+              summary('raw-first'),
+              for (var index = 1; index < rawItemCount; index++)
+                summary('raw-alias-$index'),
+            ],
+            offset: 0,
+            hasMore: true,
+            nextOffset: explicitNextOffset,
+          ),
+          nextOffset: SourceBrowsePage(
+            items: <SourceComicSummary>[summary('raw-next-page')],
+            offset: nextOffset,
+            hasMore: false,
+          ),
+        },
+      );
+      var coverLoads = 0;
+      String? openedComicId;
+      final other = _FixtureSource('fixture-canonical-page-other', 'Other');
+      var activeSourceId = sourceId;
+      late StateSetter update;
+      await tester.pumpWidget(MaterialApp(
+        home: StatefulBuilder(builder: (context, setState) {
+          update = setState;
+          return Scaffold(body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source, other],
+            activeSourceId: activeSourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async {
+              coverLoads++;
+              return MemoryEncodedResourceSource(_tinyPng());
+            },
+            onOpenComic: (_, comic) async { openedComicId = comic.comicId; },
+          ));
+        }),
+      ));
+      final card = find.byKey(sourceComicCardKey(sourceId, 'stable-comic'));
+      await _pumpUntilFound(tester, card);
+      expect(source.browseOffsets, <int>[0]);
+      expect(coverLoads, 1);
+      expect(card, findsOneWidget);
+      expect(find.text('raw-alias-1'), findsNothing);
+      await tester.tap(card);
+      expect(openedComicId, 'raw-first');
+      await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
+      await _pumpUntilFound(tester, find.text('raw-next-page'));
+      expect(source.browseOffsets, <int>[0, nextOffset]);
+      expect(card, findsOneWidget);
+      expect(coverLoads, 1);
+      await _tapVisible(tester, card);
+      expect(openedComicId, 'raw-next-page');
+      update(() => activeSourceId = other.sourceId);
+      await tester.pumpAndSettle();
+      update(() => activeSourceId = sourceId);
+      await tester.pumpAndSettle();
+      expect(find.text('raw-next-page'), findsOneWidget);
+      await _tapVisible(tester, find.byKey(comicSourcePreviousPageKey));
+      await tester.pumpAndSettle();
+      expect(source.browseOffsets, <int>[0, nextOffset, nextOffset, 0]);
+      expect(find.text('raw-first'), findsOneWidget);
+    });
+  }
+
+  testWidgets('canonical cached browse aliases compare the same projection',
+      (tester) async {
+    const sourceId = 'fixture-cached-canonical-page';
+    final cache = ResourceCacheManager();
+    addTearDown(() async {
+      final closing = cache.close();
+      await tester.pump();
+      await closing;
+    });
+    final underlying = _FixtureSource(
+      sourceId,
+      'Cached Canonical Page',
+      browseItemCount: 2,
+      canonicalComicIdentityOverride: 'stable-comic',
+    );
+    final source = CachedBrowsableComicSource(source: underlying, cache: cache);
+    final other = _FixtureSource('fixture-cached-canonical-other', 'Other');
+    var activeSourceId = sourceId;
+    final trace = MemoryTraceSink();
+    var revision = 0;
+    var coverLoads = 0;
+    late StateSetter update;
+    await tester.pumpWidget(MaterialApp(
+      home: StatefulBuilder(builder: (context, setState) {
+        update = setState;
+        return Scaffold(body: ComicSourcesPage(
+          sources: <BrowsableComicSource>[source, other],
+          activeSourceId: activeSourceId,
+          onSourceSelected: (_) {},
+          queryRevision: revision,
+          traceSink: trace,
+          loadCover: (_, __, ___) async {
+            coverLoads++;
+            return MemoryEncodedResourceSource(_tinyPng());
+          },
+          onOpenComic: (_, __) async {},
+        ));
+      }),
+    ));
+    final card = find.byKey(sourceComicCardKey(sourceId, 'stable-comic'));
+    await _pumpUntilFound(tester, card);
+    await tester.pumpAndSettle();
+    expect(card, findsOneWidget);
+    final image = find.descendant(of: card, matching: find.byType(Image));
+    final element = tester.element(card);
+    final imageState = tester.state(image);
+    update(() => revision++);
+    await tester.pumpAndSettle();
+    final starts = trace.events.where(
+      (event) => event.payload['stage'] == 'browse-start',
+    ).toList();
+    final completes = trace.events.where(
+      (event) => event.payload['stage'] == 'browse-complete',
+    ).toList();
+    expect(starts.last.payload['cacheHit'], isTrue);
+    expect(starts.last.payload['cacheChanged'], isFalse);
+    expect(completes.last.payload['changed'], isFalse);
+    expect(completes.last.payload['itemCount'], 2);
+    expect(completes.last.payload['projectedItemCount'], 1);
+    expect(underlying.browseCalls, 2);
+    expect(card, findsOneWidget);
+    expect(tester.element(card), same(element));
+    expect(tester.state(image), same(imageState));
+    expect(coverLoads, 1);
+    update(() => activeSourceId = other.sourceId);
+    await tester.pumpAndSettle();
+    update(() => activeSourceId = sourceId);
+    await tester.pumpAndSettle();
+    final restoredStart = trace.events.lastWhere(
+      (event) => event.payload['stage'] == 'browse-start',
+    );
+    expect(restoredStart.payload['cacheHit'], isTrue);
+    expect(restoredStart.payload['cacheChanged'], isFalse);
+    expect(card, findsOneWidget);
+  });
+
+  testWidgets('failed source cover stays terminal across sliver remount until refresh',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-terminal-cover',
+      '终止封面源',
+      browseItemCount: 30,
+    );
+    final comicId = '${source.sourceId}-comic-0';
+    var failedCoverLoads = 0;
+    var recovered = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, comic, __) async {
+              if (comic.comicId == comicId) {
+                failedCoverLoads++;
+                if (!recovered) {
+                  throw Failure(
+                    code: ErrorCode.source,
+                    message: 'terminal cover fixture',
+                  );
+                }
+              }
+              return MemoryEncodedResourceSource(_tinyPng());
+            },
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+    final card = find.byKey(sourceComicCardKey(source.sourceId, comicId));
+    await _pumpUntilFound(tester, card);
+    await tester.pumpAndSettle();
+    expect(failedCoverLoads, 1);
+    final scroll = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byType(CustomScrollView),
+        matching: find.byType(Scrollable),
+      ).first,
+    ).position;
+    scroll.jumpTo(scroll.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(card, findsNothing);
+    scroll.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(card, findsOneWidget);
+    expect(failedCoverLoads, 1);
+
+    recovered = true;
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.descendant(
+        of: find.byKey(comicSourcePullRefreshKey),
+        matching: find.byType(RefreshIndicator),
+      ),
+    );
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(failedCoverLoads, 2);
+    expect(find.descendant(of: card, matching: find.byType(Image)), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('source network failure exposes selectable copyable details',
@@ -1810,7 +2457,7 @@ void main() {
   });
 
   testWidgets(
-      'compact placeholder does not become a page count or mix trace clocks',
+      'compact metadata displays stored count without mixing trace clocks',
       (tester) async {
     const sourceId = 'fixture-compact-details';
     const comicId = 'fixture-compact-details-comic';
@@ -1864,6 +2511,7 @@ void main() {
         comicId: comicId,
       ),
     );
+    expect(details.comicDetailsCanReuseChapterEntry(compact, chapter), isFalse);
     final trace = DebugTraceLog(maxEvents: 100, maxExportEvents: 200);
     addTearDown(trace.dispose);
     var nowMicros = 5000000;
@@ -1908,12 +2556,12 @@ void main() {
     await _pumpUntilFound(tester, chapterTile);
     expect(
       find.descendant(of: chapterTile, matching: find.text('待加载')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: chapterTile, matching: find.text('1页')),
-      findsNothing,
-      reason: 'Home snapshot placeholders are not a historical page-count proof',
+      findsOneWidget,
+      reason: 'stored count is metadata and does not authorize page reuse',
     );
 
     await tester.tap(chapterTile);
@@ -2569,6 +3217,7 @@ void main() {
           comicId: 'fixture-version-new-comic',
           title: '新版标题',
           generation: 2,
+          date: '2026-08-24',
         ),
       ],
     );
@@ -2637,14 +3286,16 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('更新日期：2026-08-25'), findsOneWidget);
+    expect(find.textContaining('更新日期：'), findsNothing,
+        reason: 'relation discovery is not the source version date');
     expect(find.text('fixture-version-new-comic'), findsNothing);
     expect(find.textContaining('版本 2'), findsNothing);
     await tester.tap(find.byIcon(Icons.flip));
     await tester.pump();
     expect(find.text('旧版本'), findsOneWidget);
     expect(find.text('旧版标题'), findsOneWidget);
-    expect(find.text('更新日期：2026-08-20'), findsOneWidget);
+    expect(find.textContaining('更新日期：'), findsNothing,
+        reason: 'stored predecessor source dates are unknown too');
     expect(
       tester
           .widget<IconButton>(
@@ -2657,7 +3308,19 @@ void main() {
     versionLoadGate.complete();
     await tester.tap(find.byIcon(Icons.flip));
     await _pumpUntilFound(tester, find.text('新版标题'));
+    expect(find.text('更新日期：2026-08-24'), findsOneWidget);
+    expect(find.text('更新日期：2026-08-25'), findsNothing);
     expect(find.text('fixture-version-new-comic'), findsNothing);
+    expect(
+      (await store.listComicVersionSuccessors(sourceId, '$sourceId-comic'))
+          .single.discoveredAt,
+      DateTime.utc(2026, 8, 25),
+    );
+    expect(
+      (await store.listComicVersionPredecessors(sourceId, '$sourceId-comic'))
+          .single.discoveredAt,
+      DateTime.utc(2026, 8, 20),
+    );
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',
@@ -3778,6 +4441,9 @@ final class _FixtureSource
     this.catalogPageCount = 1,
     this.chapterUpdatedAt,
     this.browseItemCount = 1,
+    this.browseGate,
+    this.nativeBrowsePageSize,
+    this.browsePageOverrides,
     this.emptyCatalog = false,
     this.comicTags = const <String>[],
     this.firstComicLoadStarted,
@@ -3809,6 +4475,9 @@ final class _FixtureSource
   final int catalogPageCount;
   final DateTime? chapterUpdatedAt;
   final int browseItemCount;
+  final Completer<void>? browseGate;
+  final int? nativeBrowsePageSize;
+  final Map<int, SourceBrowsePage>? browsePageOverrides;
   final bool emptyCatalog;
   final List<String> comicTags;
   final Completer<void>? firstComicLoadStarted;
@@ -3838,6 +4507,7 @@ final class _FixtureSource
   int versionLoadCalls = 0;
   int browseCalls = 0;
   final List<String> browseQueries = <String>[];
+  final List<int> browseOffsets = <int>[];
   int filteredBrowseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
   final List<String?> previewTokens = <String?>[];
@@ -3941,10 +4611,15 @@ final class _FixtureSource
   }) async {
     browseCalls++;
     browseQueries.add(query);
+    browseOffsets.add(offset);
+    final gate = browseGate;
+    if (gate != null) await gate.future;
     final error = browseError;
     if (error != null) {
       throw error;
     }
+    final pageOverride = browsePageOverrides?[offset];
+    if (pageOverride != null) return pageOverride;
     final all = <SourceComicSummary>[
       for (var index = 0; index < browseItemCount; index++)
         SourceComicSummary(
@@ -3961,12 +4636,18 @@ final class _FixtureSource
     final matching = query.isEmpty
         ? all
         : all.where((summary) => summary.title.contains(query)).toList();
-    final start = offset.clamp(0, matching.length).toInt();
-    final end = (start + limit).clamp(start, matching.length).toInt();
+    final nativeSize = nativeBrowsePageSize;
+    final start = (nativeSize == null ? offset : (offset ~/ limit) * nativeSize)
+        .clamp(0, matching.length).toInt();
+    final end = (start + (nativeSize ?? limit))
+        .clamp(start, matching.length).toInt();
     return SourceBrowsePage(
       items: matching.sublist(start, end),
-      offset: start,
+      offset: nativeSize == null ? start : offset,
       hasMore: end < matching.length,
+      nextOffset: nativeSize != null && end < matching.length
+          ? offset + limit
+          : null,
     );
   }
 

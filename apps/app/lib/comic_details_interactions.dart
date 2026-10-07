@@ -81,6 +81,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onSearchTitle,
     this.onMigrateSource,
     required this.onPreferenceChanged,
     required this.progressLabel,
@@ -118,6 +119,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsMetadataSearch? onSearchTitle;
   final ComicDetailsSourceMigrator? onMigrateSource;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final String? progressLabel;
@@ -204,6 +206,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                       categories: widget.categories,
                       onPreferenceChanged: widget.onPreferenceChanged,
                       onSearchMetadata: widget.onSearchMetadata,
+                      onSearchTitle: widget.onSearchTitle,
                       downloadingComic: widget.downloadingComic,
                       onDownloadComic: widget.onDownloadComic,
                       onToggleWholeComicPause: widget.onToggleWholeComicPause,

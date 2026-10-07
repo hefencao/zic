@@ -46,12 +46,14 @@ require(
     'docs/SPEC.md',
     'Presentation MUST NOT 自己做定时 retry',
     'MUST NOT 同时构建第二个 `Image`监听同一 provider',
-    'Reader route MUST NOT 等待 durable barrier',
+    '普通Reader页码变化 MUST NOT 等待durable barrier',
+    '正常route-pop checkpoint flush与app lifecycle flush MUST作为明确durability barrier',
 )
 forbid(
     'docs/SPEC.md',
     'App resume SHOULD 重试仍失败的封面',
     '执行至多一次局部 source revalidation',
+    'Reader route MUST NOT 等待 durable barrier',
 )
 require('tool/check.sh', 'test_dev158_artwork_loader_compile_blocking_cleanup.py')
 print('dev.158 artwork loader / compile / blocking cleanup: OK')

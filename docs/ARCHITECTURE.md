@@ -261,6 +261,10 @@ resolver-visible source list、`CachedBrowsableComicSource` decoration、
 session source publication与source-confirmed canonical comic-id持久化则由独立 `HomeSourceProjection` 持有；
 它只接收普通 `BrowsableComicSource` 集合并显式追踪当前 external source identities，
 不依赖 plugin controller/runtime，也不得用 Mihon/Venera 前缀反推 external ownership。
+source projection 只复用底层 producer、response cache 与创建时 transport generation 都相同的 decorator；
+实时 transport generation 仍由 producer 提供。普通 browse 不因无关来源列表变化刷新或重置分页，聚合列表变化继续退休旧聚合请求。
+`SourceBrowsePage` 可携带来源只读 `nextOffset`；adapter 验证严格前进，Presentation 消费该请求坐标，未声明时按返回项数推进。
+Mihon 以对齐 offset/limit 映射 native page，完整保留原生页；空页的 hasMore 和下一坐标仍归来源，不新增分页缓存或调度 owner。
 durable handoff先构造候选source projection并完成`HomeLibrarySession.adoptServices`；
 library、chapter download、download composition 与 whole-comic queue 的唯一当前authority由`HomeLibrarySession`持有。
 `HomeServiceAdoptionCoordinator`只负责把`HomeServiceHandoff`发布的一代服务按 single-flight 顺序交给 session，
@@ -503,6 +507,12 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 详情优先显示 source timestamp，否则回退本地 imported/catalog sync 时间，compact Home snapshot 必须保留这些字段；
 无命名来源标签组直接渲染 chip Wrap，不建立仅用于显示“标签”标题的父层。
 
+详情内容标题通过独立 `onSearchTitle` 命令进入 `ComicTitleSearchPage`，保留原详情 route。
+首帧后命令既有 external-source lifecycle 发布来源，route消费其只读投影通知；该页按已启用且可搜索的 sourceId 分组，新激活源加入当前查询，原组Future/分页保持。
+各组独立消费既有 source browse Future、canonical page projection与共享 artwork loader；
+查询、分页和显式重试才创建请求，build 不重发。旧查询/已退出页面的回包不再发布；来源 runtime、cache和取消仍归原 owner。
+点原漫画结果返回原详情，其它结果沿既有详情入口；标签仍走 `onSearchMetadata`，退出详情/聚合栈到 Home 的该单源搜索页。
+`ComicSourcesPage`在首次挂载前接收已有`requestedQuery`，初始化原query/controller后才开始source读取；已挂载页仍由`queryRevision`消费新的查询命令，不另建路由或请求owner。
 JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `https://18comic.ink/album/<id>`，合法绝对 HTTP(S) ID 保留。
 该浏览链接与 JS 更新地址和 canonical identity resolver 分离，不更换 source website、comic/chapter identity、locator或 artifact authority。
 
@@ -513,7 +523,9 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
 不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
 同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
+通用确认版本列表消费既有只读首显与source-owned background Future，刷新在当前dialog发布、失败保留首显，关闭不取消owner工作；选择保留精确版本对象。relation discoveredAt只表示发现证据，不能投影为来源更新日期；未知日期省略，实际来源日期随刷新发布。
 迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，
+比较卡片展示标题、作者、来源/章节与由Home既有`ComicWebUriSource`能力提供的普通Web地址；缺失地址只省略该行，不解码或展示内部identity。内部identity仍用于封面seed、比较plan和精确事务目标，确认前不写用户状态。
 只有 exact chapter match复制偏好、阅读位置和已读状态。查看路由只使用 `source-version-view` temporary route identity；
 同源替换完成后新 raw locator成为实体并清理旧 alias preference/metadata。
 已确认同源版本或显式迁移的 page-position relation持久化为compact `ComicVersionPageMapping`：
@@ -550,6 +562,7 @@ exact partial绑定自己的DownloadId/URI validator；
 
 漫画源页使用来源自身声明的 browse section：
 Mihon 映射 Popular/Latest，标准展示顺序为“最新 → 热门”，Venera 枚举 explore loader 与 category target；
+Venera `multiPartPage.load(null)` 返回完整分组集合，由 runtime adapter 按全局 offset 切片并仅以集合余量判定结束；普通页码 load 和既有 loadNext 游标合同独立，不修改插件返回对象或新增分页缓存。
 首次进入来源时默认 section必须由**当前展示顺序的第一项**决定，不能另写 `popular` 默认值，也不能让最近一次 catalog cache projection反向选择 UI。
 未来用户自定义排序若改变 Presentation顺序，同一排序 owner自然同时决定默认焦点。原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。
 `FilterableBrowsableComicSource` 只投影来源真实 `FilterList`：空 schema即没有筛选入口，不另设容易漂移的 capability布尔值。
@@ -557,12 +570,14 @@ Mihon bridge必须按官方 `Filter.Header/Separator/Select/Text/CheckBox/TriSta
 并保留 Group层次与 Text/Sort状态；用户修改以类型化 filter-state override进入 search request。筛选是否激活是独立 Presentation/request mode：
 空 override表示使用插件默认 `FilterList` 状态而非“未筛选”，激活后分类栏焦点属于“筛选”且请求不继承 latest/popular section；
 Catalog cache identity与runtime payload必须显式区分 filter mode和普通 section mode；
+筛选草稿的寿命是单次弹层调用，应用/取消后结束；route 或 IME 重建不得重置尚未应用的修改。
 external browse的 typed factory、wire validator与 adapter payload必须共享同一字段契约，
 schema v1新增 `useFilters` 可缺省兼容但未知字段仍拒绝。Filter不得伪装为 `SourceBrowseSection`，浮动搜索只拥有 query与搜索历史；
 搜索展开与输入只更新自身 listenable 子树，IME inset只按“键盘高度减去浮层原始底部净空”的实际重叠量移动搜索浮层，
-不得压缩或重建 catalog 网格，固定搜索浮层和底部来源栏保持独立 repaint boundary。键盘 inset 开始递减时必须立即释放输入焦点但保留搜索面板，使下一次返回只关闭面板且不得重新请求 IME。
+不得压缩或重建 catalog 网格，固定搜索浮层和底部来源栏保持独立 repaint boundary。键盘 inset 的递减由浮层自身观察并释放搜索焦点，但保留搜索面板，使下一次返回只关闭面板且不得重新请求 IME。
+普通搜索历史的嵌套滚动复用页面已有收起处理；扩展搜索选项列表仍可滚动选择，上方手柄继续独立控制选项展开。
 browse projection revision 只属于 metadata，不能作为整页 artwork reload token；
-source card 的 Sliver child owner 使用 canonical comic identity，raw locator变化不得重置封面 State。
+source card 的 Sliver child 与内部交互祖先 key 都使用来源确认的 canonical comic identity，raw locator变化不得重置封面 State。`sourceComicCardKey` 接受 canonical identity；点击命令仍读取当前 summary 的 raw locator。
 固定大小的 catalog page 仍使用显式上一页/下一页，pager 位于内容滚动尾部。
 列表由 catalog response cache先行投影，但 cache只能服务**当前精确 UI 请求**，不得用“最近 projection”改写 section/query/filter默认状态；
 source切换时 projection owner先原子切换到目标 source，旧 source内容没有展示资格。后台 refresh只有在稳定字段发生变化时才更新 Presentation；
@@ -579,6 +594,7 @@ source切换时 projection owner先原子切换到目标 source，旧 source内�
 详情首帧不得等待下载状态、artifact index、章节 page I/O、跨版本 page mapping proof，或 deferred external source activation。
 已有持久化详情投影时必须先 push route 并完成详情首帧，外部 source activation 只能从下一次 post-frame 异步启动；
 source 后续到达时原地更新同一个 `LocalComicDetailsScreen` identity/State 及其 source-dependent capability，不得重建详情局部状态或要求退出重进。
+未持久化章节在source缺席时等待同一路由既有activation Future，完成后重取live resolver；已有chapter记录不等待该Future，详情已dispose则停止materialize。
 章节状态检查在首帧后以 `inspectMany()` 批量读取；跨版本关系发现由详情/version-state与Reader后台refresh共同消费同一source capability：
 详情不得遍历整本，但version-state发现relation后可异步warm实际有缓存状态的当前chapter。
 普通Reader入口只恢复已有mapping并立即进入Pipeline，不得因为mapping缺失或旧proof模型而同步扫描/重验同漫画历史relation；
@@ -602,8 +618,8 @@ Reader、DownloadSession、NetLane正文与调度ownership不因该后台准备�
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
 预览栏折叠与展开共用同一套顺序布局。实际行含横图时最多 2 张，纯竖图行最多 3 张；只允许在相邻三个候选内做最小局部重排。完整行直接用全部媒体宽度反算等面积 tile，不再把剩余宽度变成外边距或巨大项间距；
 标题保留普通内容边距，但图片区不叠加 Card 或水平 border/padding。只有稀疏末行允许相对完整行放大，面积上限为参考完整行的 2.4 倍。外观设置提供详情预览每行最大数量 1–8，默认 4；它不属于 Reader 操作设置。
-折叠态只显示同一布局第一行，高度取第一行实际高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 90% 封顶，开关位于中间且只显示上下箭头。
-行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。
+折叠态只显示同一布局第一行，高度取第一行实际高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。行规划消费扣除分页指示区的屏高 90% 预算，过高单行以有界高度求等面积并保持完整行全宽；折叠/展开共用结果，开关位于中间且只显示上下箭头。
+行规划使用已解码的可见裁剪尺寸；实测尚不可用时消费 `ComicPreviewAsset.width/height`，两者均缺失时使用正方形占位比例。缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。
 预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
@@ -644,6 +660,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   仓库索引与 executable-plugin gate 使用的 HTTPS trust origin 是两个独立事实，禁止把只有 scheme/host 的 trust origin 当 index 请求）。旧 manifest 未保存精确 index 时，仅对能够由 pinned payload URL 无歧义证明属于历史默认 Keiyoushi/Venera 仓库的记录迁移到当前默认 index；设备导入和无法证明来源的记录不猜测。单个仓库不可达不掩盖其它仓库结果，发现更新以对话框提醒一次并在已安装行保留徽标，仓库行对已安装且可更新的条目显示"更新"。已安装 Venera 插件支持直接编辑 JS：
   `readVeneraJavaScript/saveVeneraJavaScript` 把编辑内容写入新 revision payload、
   重新经过受限元数据检查并以新摘要固定后走与安装相同的 approveAndActivate 事务替换会话，检查或激活失败时旧 payload 保持权威。
+  插件管理中的版本与Mihon ABI只从既有安装记录/设备扫描元数据投影；设备扩展的长包名与版本ABI分行布局，失败态仍保留已知安装信息。来源主列表只投影来源名称、语言及站点，不查询安装记录；UI不扫描或镜像元数据。
   来源管理页是单一未分类的可拖动排序列表（`_buildManagementEntries/_managementList`）：
   Mihon 同扩展多语言变体按 `mihonSourceGroupKey` 折叠为一行，行代表 = 最近启用变体（`ComicSourcePreference.lastEnabledAt`），
   点击行首插件图标展开其余变体，`_enableMihonVariant` 在启用时自动停用同族其它变体；
@@ -2125,7 +2142,8 @@ page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先
   关系必须由 `ComicVersionSource` 或已持久化的来源确认结果产生；标题搜索结果不能自动成为版本关系。
 - **chapter/page identity**：
   章节始终为 `sourceId + chapterId`，Reader 页面为 `sourceId + comicId + chapterId + pageId`。
-  迁移时只有章节原生 identity 精确匹配才复制阅读进度和已读状态；**sequence-only** 匹配仅显示在比较报告中，不复制状态。
+  迁移比较的 `exact` confidence 表示章节序号与归一化标题同时匹配，不能替换上述原生 identity。执行器在写入前重新取得并校验目标 `sourceId + comicId + chapterId`，再复制阅读进度和已读状态；**sequence-only** 匹配仅显示在比较报告中，不复制状态。
+  metadata correspondence 不证明页面内容相同；artifact 复用独立要求 `VerifiedArtifactReusePlan` 的 media proof，保持目标 exact binding 与来源 offline retention 各自独立。
 - **presentation identity**：Flutter key、详情提示和 Reader 一次性提醒只能引用上述稳定复合身份；
   Widget key、当前章节、封面 URL、按钮状态和 runtime adapter 对象都不是持久身份。
 
@@ -2195,6 +2213,12 @@ namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL
 
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；
 Flutter decode 错误只影响 presentation。
+来源列表的既有 canonical card Future 保留成功或失败结果，Sliver 重新挂载不重发失败请求；显式来源刷新仍退休这些 Future。
+普通 browse 在现有查询投影边界按来源 canonical identity保留首条 summary；cached/refreshed比较同一投影，不在逐帧builder归并。
+显示去重不改变来源分页：显式nextOffset优先，fallback使用原始条目数；raw locator继续归来源命令与资源请求。
+既有来源view保存已接纳的访问坐标与不可变快照；上一页使用真实前一坐标，页序号按访问路径展示。
+来源往返按恢复页码重载，缓存恢复同样归并；发现section/filter改变请求分区时回到0并重置路径。
+访问路径只承载UI导航意图，随query/filter/section/page0重置；source/runtime/cache/transport仍拥有原分页与数据authority。
 单张失败的 Trace 至少记录脱敏 `sourceId/raw comicId/resourceRole/URI`、cache origin 和 transport/decode 错误，不能仅凭占位图判断缓存冲突。
 
 ### Reader checkpoint 与历史投影边界

@@ -13,14 +13,105 @@ import 'package:telemetry/telemetry.dart';
 import 'package:zic/artwork_placeholder.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/home_shell.dart';
+import 'package:zic/home_library_session.dart';
 import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
 import 'package:zic/app.dart';
+import 'package:zic/app_preferences.dart';
 
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
+
+final class _CountingCanonicalSource
+    implements BrowsableComicSource, CanonicalComicIdentitySource {
+  @override
+  String get sourceId => 'canonical-alias-fixture';
+
+  int identityReads = 0;
+  bool collapseAliases = true;
+
+  @override
+  String canonicalComicIdentity(String comicId) {
+    identityReads++;
+    return collapseAliases ? 'canonical-comic' : comicId;
+  }
+
+  @override
+  ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
+        sourceId: sourceId,
+        name: 'Canonical alias fixture',
+        language: 'all',
+        website: Uri.https('example.invalid', '/'),
+      );
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) async => SourceBrowsePage(items: const [], offset: offset, hasMore: false);
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) => throw UnimplementedError();
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) async => _tinyPng();
+}
+
+final class _UpdateSignalSource implements BrowsableComicSource {
+  @override
+  String get sourceId => 'remote:update-signal';
+
+  String description = 'Baseline metadata';
+  int comicLoads = 0;
+  int chapterCount = 1;
+
+  @override
+  ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
+        sourceId: sourceId, name: 'Update signal fixture', language: 'en',
+        website: Uri.https('example.invalid', '/'),
+      );
+
+  ComicManifest manifest(String comicId) => ComicManifest(
+        comic: Comic(
+          sourceId: sourceId, comicId: comicId, title: comicId,
+          authors: const <String>[], readingDirection: ReadingDirection.ltr,
+          description: description,
+        ),
+        chapters: <Chapter>[
+          for (var index = 0; index < chapterCount; index++)
+            Chapter(
+              chapterId: index == 0 ? '$comicId:chapter' : '$comicId:chapter-$index',
+              comicId: comicId, title: 'Chapter $index',
+              sequence: index, pageCount: 1, sourceRevision: 'r1',
+            ),
+        ],
+      );
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '', int offset = 0, int limit = 24,
+  }) async => SourceBrowsePage(items: const [], offset: offset, hasMore: false);
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) async {
+    comicLoads++;
+    return manifest(comicId);
+  }
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) =>
+      throw UnsupportedError('Update signal acceptance does not open Reader');
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) async => _tinyPng();
+}
 
 LibraryMigrationIssue _migrationIssue(int issueId, String legacyKey) =>
     LibraryMigrationIssue(
@@ -215,6 +306,228 @@ Future<void> _tapVisible(
 }
 
 void main() {
+  testWidgets('canonical alias lookup work does not grow with chapter count',
+      (tester) async {
+    Future<int> measure(int chapterCount, {bool verifyLiveIdentity = false}) async {
+      final source = _CountingCanonicalSource();
+      final store = MemoryImportedLibraryStore();
+      final preferences = AppPreferencesController();
+      await store.open();
+      for (final comicId in <String>['alias-old', 'alias-new']) {
+        await store.upsertSavedComic(
+          SavedComicRecord(
+            sourceId: source.sourceId,
+            comicId: comicId,
+            canonicalComicId: 'canonical-comic',
+            title: comicId,
+            coverSourceId: 'https://example.invalid/$comicId.png',
+            savedAt: DateTime.utc(2026, 7, 28),
+            updatedAt: DateTime.utc(2026, 7, 28),
+            sourceUpdateAt: DateTime.utc(2026, 7, 29),
+          ),
+        );
+        await store.saveComicPreference(
+          ComicPreference.defaults(
+            sourceId: source.sourceId,
+            comicId: comicId,
+            sourceKind: ComicSourceKind.remote,
+          ).copyWith(
+            inShelf: comicId == 'alias-old',
+            liked: comicId == 'alias-old',
+            collected: comicId == 'alias-new',
+            categoryIds: <String>{comicId},
+            customOrder: comicId == 'alias-old' ? 4 : 2,
+          ),
+        );
+        for (var index = 0; index < chapterCount; index++) {
+          await store.upsertChapter(
+            ImportedChapterRecord(
+              directoryId: '$comicId/$index',
+              displayName: 'Chapter $index',
+              sourceId: source.sourceId,
+              comicId: comicId,
+              chapterId: '$comicId/$index',
+              sourceRevision: 'fixture-v1',
+              comicTitle: comicId,
+              sequence: index,
+              importedAt: DateTime.utc(2026, 7, 28),
+              pages: const <ImportedPageRecord>[
+                ImportedPageRecord(
+                  displayName: '001.png',
+                  sourceId: 'https://example.invalid/page.png',
+                  contentKindHint: ContentKindHint.png,
+                  mediaFormat: 'png',
+                  byteLength: 68,
+                ),
+              ],
+            ),
+          );
+        }
+      }
+      await tester.pumpWidget(
+        App(
+          libraryStore: store,
+          comicSources: <BrowsableComicSource>[source],
+          preferences: preferences,
+          persistHomeProjectionSnapshot: false,
+        ),
+      );
+      await _pumpUntilFound(tester, find.byType(ComicCoverCard));
+      await tester.pump(const Duration(milliseconds: 320));
+      source.identityReads = 0;
+      preferences.setDebugModeEnabled(!preferences.debugModeEnabled);
+      await tester.pump();
+      final reads = source.identityReads;
+      expect(reads, greaterThan(0));
+      final card = tester.widget<ComicCoverCard>(find.byType(ComicCoverCard));
+      expect(card.preference.inShelf, isTrue);
+      expect(card.preference.liked, isTrue);
+      expect(card.preference.collected, isTrue);
+      expect(card.preference.categoryIds, <String>{'alias-old', 'alias-new'});
+      expect(card.preference.customOrder, 2);
+      if (verifyLiveIdentity) {
+        source.collapseAliases = false;
+        preferences.setDebugModeEnabled(!preferences.debugModeEnabled);
+        await tester.pump();
+        // The active source still outranks the saved offline identity. Only
+        // the old alias is in the shelf; its preference must stop inheriting
+        // collection/category flags from the now-independent new alias.
+        final independent =
+            tester.widget<ComicCoverCard>(find.byType(ComicCoverCard));
+        expect(independent.comic.comicId, 'alias-old');
+        expect(independent.preference.liked, isTrue);
+        expect(independent.preference.collected, isFalse);
+        expect(independent.preference.categoryIds, <String>{'alias-old'});
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await store.close();
+      preferences.dispose();
+      return reads;
+    }
+
+    final shortCatalogReads = await measure(1);
+    final longCatalogReads = await measure(60, verifyLiveIdentity: true);
+    expect(
+      longCatalogReads,
+      lessThanOrEqualTo(shortCatalogReads + 8),
+      reason: 'Unchanged comic aliases must not be resolved once per chapter',
+    );
+  });
+
+  testWidgets('home update filtering avoids aliases for comics without updates',
+      (tester) async {
+    Future<int> measure(int unchangedCount) async {
+      final source = _CountingCanonicalSource()..collapseAliases = false;
+      final store = MemoryImportedLibraryStore();
+      final preferences = AppPreferencesController();
+      await store.open();
+      final comicIds = <String>[
+        'updated-on',
+        'updated-off',
+        for (var index = 0; index < unchangedCount; index++) 'unchanged-$index',
+      ];
+      for (final comicId in comicIds) {
+        await store.upsertSavedComic(
+          SavedComicRecord(
+            sourceId: source.sourceId,
+            comicId: comicId,
+            title: comicId,
+            coverSourceId: 'https://example.invalid/$comicId.png',
+            savedAt: DateTime.utc(2026, 7, 28),
+            updatedAt: DateTime.utc(2026, 7, 28),
+            sourceUpdateAt: comicId.startsWith('updated-')
+                ? DateTime.utc(2026, 7, 29)
+                : null,
+          ),
+        );
+        await store.saveComicPreference(
+          ComicPreference.defaults(
+            sourceId: source.sourceId,
+            comicId: comicId,
+            sourceKind: ComicSourceKind.remote,
+          ).copyWith(inShelf: comicId != 'updated-off'),
+        );
+      }
+      await tester.pumpWidget(
+        App(
+          libraryStore: store,
+          comicSources: <BrowsableComicSource>[source],
+          preferences: preferences,
+          persistHomeProjectionSnapshot: false,
+        ),
+      );
+      await _pumpUntilFound(tester, find.byType(ComicCoverCard));
+      await tester.pump(const Duration(milliseconds: 320));
+      source.identityReads = 0;
+      preferences.setDebugModeEnabled(!preferences.debugModeEnabled);
+      await tester.pump();
+      final reads = source.identityReads;
+      final card = tester.widget<ComicCoverCard>(find.byType(ComicCoverCard));
+      expect(card.comic.comicId, 'updated-on');
+      expect(card.preference.inShelf, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await store.close();
+      preferences.dispose();
+      return reads;
+    }
+
+    final smallReads = await measure(8);
+    final largeReads = await measure(32);
+    expect(smallReads, greaterThan(0));
+    expect(
+      largeReads,
+      lessThanOrEqualTo(smallReads * 5),
+      reason: 'Unchanged comics must not multiply preference alias work: '
+          '$smallReads -> $largeReads',
+    );
+  });
+
+  testWidgets('home shares one catalog projection across empty sections',
+      (tester) async {
+    const comicCount = 12;
+    final source = _CountingCanonicalSource()..collapseAliases = false;
+    final store = MemoryImportedLibraryStore();
+    final preferences = AppPreferencesController();
+    await store.open();
+    addTearDown(store.close);
+    addTearDown(preferences.dispose);
+    for (var index = 0; index < comicCount; index++) {
+      await store.upsertSavedComic(
+        SavedComicRecord(
+          sourceId: source.sourceId,
+          comicId: 'unchanged-$index',
+          title: 'unchanged-$index',
+          savedAt: DateTime.utc(2026, 7, 28),
+          updatedAt: DateTime.utc(2026, 7, 28),
+        ),
+      );
+    }
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+        preferences: preferences,
+        persistHomeProjectionSnapshot: false,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.pump(const Duration(milliseconds: 320));
+    source.identityReads = 0;
+    preferences.setDebugModeEnabled(!preferences.debugModeEnabled);
+    await tester.pump();
+    expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
+    expect(find.byKey(homeHistorySectionKey), findsOneWidget);
+    expect(find.byType(ComicCoverCard), findsNothing);
+    expect(source.identityReads, greaterThan(0));
+    expect(
+      source.identityReads,
+      lessThanOrEqualTo(comicCount),
+      reason: 'Sections without cards must not duplicate the catalog query',
+    );
+  });
+
   testWidgets('home and bookshelf share the persisted local library',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -269,6 +582,7 @@ void main() {
     addTearDown(store.close);
     final updateAt = DateTime.utc(2026, 8, 8, 7);
     for (final fixture in <({String id, bool inShelf, DateTime? updateAt})>[
+      (id: 'unshelved-history', inShelf: false, updateAt: null),
       (id: 'unshelved-update', inShelf: false, updateAt: updateAt),
       (id: 'shelved-no-update', inShelf: true, updateAt: null),
       (id: 'shelved-update', inShelf: true, updateAt: updateAt),
@@ -292,15 +606,242 @@ void main() {
       );
     }
 
+    final history = ImportedChapterRecord(
+      directoryId: 'history-only', displayName: 'History chapter',
+      sourceId: 'remote:update-test', comicId: 'unshelved-history',
+      comicTitle: 'unshelved-history', chapterId: 'history-chapter',
+      sourceRevision: 'r1', pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page', sourceId: 'memory:history.png', pageId: 'page',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(history);
+    await store.saveProgress(ReadingProgress(
+      sourceId: history.sourceId, comicId: history.comicId,
+      chapterId: history.chapterId, pageIndex: 0, subPageOffset: 0,
+      readerMode: ReaderMode.paged, updatedAt: DateTime.utc(2026, 10, 3),
+    ));
+
     await tester.pumpWidget(
       App(libraryStore: store, comicSources: const <BrowsableComicSource>[]),
     );
     await _pumpUntilFound(tester, find.byType(ComicCoverCard));
 
-    expect(find.byType(ComicCoverCard), findsOneWidget);
+    final updates = find.byWidgetPredicate((widget) =>
+        widget is SizedBox && widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith('home-update:'));
+    final historyCards = find.byWidgetPredicate((widget) =>
+        widget is SizedBox && widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith('home-history:'));
+    expect(updates, findsOneWidget);
+    expect(historyCards, findsOneWidget);
+    expect(find.descendant(of: updates, matching: find.text('shelved-update')),
+        findsOneWidget);
+    expect(find.descendant(of: historyCards,
+        matching: find.text('unshelved-history')), findsOneWidget);
+    expect(find.descendant(of: updates,
+        matching: find.text('unshelved-history')), findsNothing);
+    expect(find.byType(ComicCoverCard), findsNWidgets(2));
     expect(find.text('shelved-update'), findsOneWidget);
     expect(find.text('unshelved-update'), findsNothing);
     expect(find.text('shelved-no-update'), findsNothing);
+  });
+
+  testWidgets('details metadata-only refresh preserves the Home update signal',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _UpdateSignalSource();
+    final signal = DateTime.utc(2026, 8, 8);
+    for (final id in <String>['with-signal', 'without-signal']) {
+      await store.upsertSavedComic(SavedComicRecord.fromManifest(
+        source.manifest(id), sourceUpdateAt: id == 'with-signal' ? signal : null,
+      ));
+      await store.saveComicPreference(ComicPreference.defaults(
+        sourceId: source.sourceId, comicId: id,
+        sourceKind: ComicSourceKind.remote,
+      ).copyWith(inShelf: true));
+    }
+    await tester.pumpWidget(App(
+      libraryStore: store, comicSources: <BrowsableComicSource>[source],
+    ));
+    await _pumpUntilFound(tester, find.text('with-signal'));
+    await tester.longPress(find.text('with-signal'));
+    await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
+    final screen = tester.widget<details.LocalComicDetailsScreen>(
+        find.byType(details.LocalComicDetailsScreen));
+    final before = source.comicLoads;
+    source.description = 'New metadata, unchanged chapter catalog';
+    await screen.reloadLibrary(refreshContent: true);
+    expect(source.comicLoads, before + 1);
+    final saved = (await store.getSavedComic(source.sourceId, 'with-signal'))!;
+    expect(saved.description, source.description);
+    expect(saved.sourceUpdateAt, signal);
+    Navigator.of(tester.element(find.byType(details.LocalComicDetailsScreen)))
+        .pop();
+    await tester.pumpAndSettle();
+    final updates = find.byWidgetPredicate((widget) =>
+        widget is SizedBox && widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith('home-update:'));
+    expect(updates, findsOneWidget);
+    expect(find.descendant(of: updates, matching: find.text('with-signal')),
+        findsOneWidget);
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('without-signal'));
+    await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
+    final baselineScreen = tester.widget<details.LocalComicDetailsScreen>(
+        find.byType(details.LocalComicDetailsScreen));
+    source.description = 'Another metadata update, still the same catalog';
+    await baselineScreen.reloadLibrary(refreshContent: true);
+    final baseline = (await store.getSavedComic(source.sourceId,
+        'without-signal'))!;
+    expect(baseline.description, source.description);
+    expect(baseline.sourceUpdateAt, isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+
+  testWidgets('first shelf admission acknowledges already discovered updates',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _UpdateSignalSource();
+    final manifest = source.manifest('old-comic');
+    final saved = SavedComicRecord.fromManifest(
+      manifest, sourceUpdateAt: DateTime.utc(2026, 8, 8),
+    );
+    await store.upsertSavedComic(saved);
+    await store.saveComicPreference(ComicPreference.defaults(
+      sourceId: source.sourceId, comicId: 'old-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(inShelf: false));
+    final chapter = ImportedChapterRecord(
+      directoryId: 'before-shelf', displayName: 'History chapter',
+      sourceId: source.sourceId, comicId: 'old-comic', comicTitle: 'old-comic',
+      chapterId: 'old-comic:chapter', sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page', sourceId: 'memory:page.png', pageId: 'page',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    await store.saveProgress(ReadingProgress(
+      sourceId: source.sourceId, comicId: 'old-comic', chapterId: chapter.chapterId,
+      pageIndex: 0, subPageOffset: 0, readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 8, 9),
+    ));
+    await store.saveComicVersionRelation(ComicVersionRelation(
+      sourceId: source.sourceId, predecessorComicId: 'old-comic',
+      successorComicId: 'known-successor', discoveredAt: DateTime.utc(2026, 8, 8),
+    ));
+    await tester.pumpWidget(App(
+      libraryStore: store, comicSources: <BrowsableComicSource>[source],
+    ));
+    await _pumpUntilFound(tester, find.text('old-comic'));
+    final updates = find.byWidgetPredicate((widget) =>
+        widget is SizedBox && widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith('home-update:'));
+    expect(updates, findsNothing);
+    await tester.longPress(find.text('old-comic'));
+    await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
+    final screen = tester.widget<details.LocalComicDetailsScreen>(
+        find.byType(details.LocalComicDetailsScreen));
+    await screen.onPreferenceChanged(ComicPreference.defaults(
+      sourceId: source.sourceId, comicId: 'old-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(inShelf: true));
+    expect((await store.getSavedComic(source.sourceId, 'old-comic'))!
+        .sourceUpdateAt, isNull);
+    expect(await store.listAllComicVersionRelations(), hasLength(1),
+        reason: 'Acknowledging an update must preserve relation provenance');
+    Navigator.of(tester.element(find.byType(details.LocalComicDetailsScreen)))
+        .pop();
+    await tester.pumpAndSettle();
+    expect(updates, findsNothing,
+        reason: 'A successor discovered before admission is not a new update');
+    expect((await store.getComicPreference(source.sourceId, 'old-comic'))!
+        .acknowledgedVersionComicId, 'known-successor');
+
+    await tester.longPress(find.text('old-comic'));
+    await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
+    final admitted = tester.widget<details.LocalComicDetailsScreen>(
+        find.byType(details.LocalComicDetailsScreen));
+    final preference = ComicPreference.defaults(
+      sourceId: source.sourceId, comicId: 'old-comic',
+      sourceKind: ComicSourceKind.remote,
+    );
+    await admitted.onPreferenceChanged(preference.copyWith(liked: true));
+    expect((await store.getComicPreference(source.sourceId, 'old-comic'))!
+        .acknowledgedVersionComicId, 'known-successor',
+        reason: 'An ordinary preference edit cannot replace the acknowledgement');
+    source.chapterCount = 2;
+    await admitted.reloadLibrary(refreshContent: true);
+    final afterChapter = (await store.getSavedComic(source.sourceId,
+        'old-comic'))!;
+    expect(afterChapter.sourceUpdateAt, isNotNull);
+    Navigator.of(tester.element(find.byType(details.LocalComicDetailsScreen)))
+        .pop();
+    await tester.pumpAndSettle();
+    expect(updates, findsOneWidget,
+        reason: 'A real chapter catalog change after admission is new');
+
+    await tester.longPress(find.descendant(of: updates,
+        matching: find.text('old-comic')));
+    await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
+    final readmission = tester.widget<details.LocalComicDetailsScreen>(
+        find.byType(details.LocalComicDetailsScreen));
+    await readmission.onPreferenceChanged(preference.copyWith(inShelf: false));
+    await readmission.onPreferenceChanged(preference);
+    final acknowledged = (await store.getSavedComic(source.sourceId,
+        'old-comic'))!;
+    expect(acknowledged.sourceUpdateAt, isNull);
+    expect(acknowledged.unseenChapterIds, contains('old-comic:chapter-1'));
+    expect(acknowledged.unseenChapterIds, isNot(contains('old-comic:chapter')));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+
+    await tester.runAsync(() async {
+      final downloads = MemoryChapterDownloadService(
+        pageLoader: (_, __) async => Uint8List(1),
+      );
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: store, chapterDownloads: downloads, wholeComicDownloads: queue,
+        sources: <BrowsableComicSource>[source], ownsLibrary: false,
+        ownsChapterDownloads: true, ownsWholeComicDownloads: true,
+        persistSnapshot: false, waitForPrimaryFrame: () async {},
+      );
+      await session.ready;
+      await session.upsertVersionRelation(ComicVersionRelation(
+        sourceId: source.sourceId, predecessorComicId: 'known-successor',
+        successorComicId: 'later-successor', discoveredAt: DateTime.now().toUtc(),
+      ));
+      expect(session.versionBaselines.shelfHeadFor(source.sourceId, 'old-comic'),
+          'old-comic');
+      expect(session.versionBaselines.latestKnownHeadFor(source.sourceId,
+          'old-comic'), 'later-successor');
+      await session.close();
+      session.dispose();
+    });
+    await tester.pumpWidget(App(
+      libraryStore: store, comicSources: <BrowsableComicSource>[source],
+    ));
+    await _pumpUntilFound(tester, updates);
+    expect(updates, findsOneWidget,
+        reason: 'A later successor remains visible after a restart');
+    expect((await store.getSavedComic(source.sourceId, 'old-comic'))!
+        .sourceUpdateAt, isNull,
+        reason: 'This update is from version evidence, not a chapter signal');
+    expect((await store.listAllComicVersionRelations()), hasLength(2));
+    expect((await store.get(source.sourceId, chapter.chapterId))!
+        .progress, isNotNull);
   });
 
   testWidgets('inactive bookshelf does not start cover loads', (tester) async {

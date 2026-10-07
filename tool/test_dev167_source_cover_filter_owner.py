@@ -40,9 +40,14 @@ require(
 require(source, 'CanonicalComicIdentitySource', 'canonical source-card identity capability')
 require(
     source,
-    'key: sourceComicCardKey(source.sourceId, comic.comicId)',
-    'raw locator retained only as interaction key',
+    'key: sourceComicCardKey(\n'
+    '        source.sourceId,\n'
+    '        _stableSourceComicIdentity(source, comic.comicId),\n'
+    '      )',
+    'canonical interaction key preserves the presentation subtree',
 )
+forbid(source, 'key: sourceComicCardKey(source.sourceId, comic.comicId)',
+       'mutable raw interaction key below the canonical card owner')
 require(
     home,
     'cacheComicId: _canonicalComicId(source.sourceId, comic.comicId)',
@@ -94,6 +99,7 @@ for token in (
     "comicSourceCategoryKey('popular')",
     'browse metadata refresh preserves canonical cover presentation owner',
     'expect(coverLoads, 1)',
+    'expect(tester.state(image), same(originalImageState))',
 ):
     require(source_test, token, 'source browser widget contract')
 

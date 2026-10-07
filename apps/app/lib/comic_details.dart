@@ -66,6 +66,8 @@ const comicDetailsDownloadAllKey =
     ValueKey<String>('comic-details-download-all');
 const comicDetailsOpenWebViewKey =
     ValueKey<String>('comic-details-open-webview');
+const comicDetailsTitleSearchKey =
+    ValueKey<String>('comic-details-title-search');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 const comicDetailsSourceSettingsKey =
     ValueKey<String>('comic-details-source-settings');
@@ -319,6 +321,40 @@ Key comicDetailsDeleteChapterKey(String sourceId, String chapterId) =>
 Key comicDetailsDeleteRevealKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-delete-reveal:$sourceId\u0000$chapterId');
 
+// Only projects stored metadata into a unique current catalog row. The caller
+// supplies source-owned comparison; this never grants page or mutation reuse.
+Map<String, String> comicDetailsCatalogEntryProjection({
+  required String sourceId,
+  required String comicId,
+  required Iterable<Chapter> sourceChapters,
+  required Iterable<ImportedLibraryEntry> entries,
+  required String? Function(String chapterId) comparisonKey,
+}) {
+  final keys = <String, String?>{};
+  String? keyFor(String id) => keys.containsKey(id)
+      ? keys[id]
+      : keys[id] = comparisonKey(id);
+  final exactIds = <String>{};
+  final catalogIdsByKey = <String, String?>{};
+  for (final chapter in sourceChapters) {
+    if (chapter.comicId != comicId) continue;
+    exactIds.add(chapter.chapterId);
+    final key = keyFor(chapter.chapterId);
+    if (key == null) continue;
+    catalogIdsByKey[key] =
+        catalogIdsByKey.containsKey(key) ? null : chapter.chapterId;
+  }
+  return <String, String>{
+    for (final entry in entries)
+      if (entry.chapter.sourceId == sourceId &&
+          entry.chapter.comicId == comicId)
+        if (exactIds.contains(entry.chapter.chapterId))
+          entry.identity: entry.chapter.chapterId
+        else if (catalogIdsByKey[keyFor(entry.chapter.chapterId)] != null)
+          entry.identity: catalogIdsByKey[keyFor(entry.chapter.chapterId)]!,
+  };
+}
+
 final class ComicDetailsLibrarySnapshot {
   ComicDetailsLibrarySnapshot({
     required Iterable<ImportedLibraryEntry> chapters,
@@ -329,9 +365,13 @@ final class ComicDetailsLibrarySnapshot {
     this.sourceSyncedAt,
     Iterable<Chapter> sourceChapters = const <Chapter>[],
     Iterable<String> unseenChapterIds = const <String>[],
+    Map<String, String> catalogChapterIdsByEntryIdentity =
+        const <String, String>{},
   })  : chapters = List<ImportedLibraryEntry>.unmodifiable(chapters),
         sourceChapters = List<Chapter>.unmodifiable(sourceChapters),
         unseenChapterIds = Set<String>.unmodifiable(unseenChapterIds),
+        catalogChapterIdsByEntryIdentity =
+            Map<String, String>.unmodifiable(catalogChapterIdsByEntryIdentity),
         readStates = Map<String, ChapterReadState>.unmodifiable(readStates);
 
   ComicDetailsLibrarySnapshot copyWith({
@@ -343,6 +383,7 @@ final class ComicDetailsLibrarySnapshot {
     ComicManifest? sourceManifest,
     DateTime? sourceSyncedAt,
     Iterable<String>? unseenChapterIds,
+    Map<String, String>? catalogChapterIdsByEntryIdentity,
   }) =>
       ComicDetailsLibrarySnapshot(
         chapters: chapters ?? this.chapters,
@@ -353,6 +394,8 @@ final class ComicDetailsLibrarySnapshot {
         sourceManifest: sourceManifest ?? this.sourceManifest,
         sourceSyncedAt: sourceSyncedAt ?? this.sourceSyncedAt,
         unseenChapterIds: unseenChapterIds ?? this.unseenChapterIds,
+        catalogChapterIdsByEntryIdentity: catalogChapterIdsByEntryIdentity ??
+            this.catalogChapterIdsByEntryIdentity,
       );
 
   final List<ImportedLibraryEntry> chapters;
@@ -363,6 +406,7 @@ final class ComicDetailsLibrarySnapshot {
   final ComicManifest? sourceManifest;
   final DateTime? sourceSyncedAt;
   final Set<String> unseenChapterIds;
+  final Map<String, String> catalogChapterIdsByEntryIdentity;
 }
 
 typedef ComicDetailsArtworkLoader = Future<EncodedResourceSource> Function({
@@ -688,10 +732,12 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.downloadActions = ComicDetailsDownloadActions.noop,
     this.source,
     this.resolveSource,
+    this.sourceReady,
     this.ensureSourceChapter,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onSearchTitle,
     this.onMigrateSource,
     this.loadVersionState,
     this.onViewVersion,
@@ -726,10 +772,12 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsDownloadActions downloadActions;
   final BrowsableComicSource? source;
   final ComicDetailsSourceResolver? resolveSource;
+  final Future<BrowsableComicSource?>? sourceReady;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsMetadataSearch? onSearchTitle;
   final ComicDetailsSourceMigrator? onMigrateSource;
   final ComicDetailsVersionStateLoader? loadVersionState;
   final ComicDetailsVersionViewer? onViewVersion;
@@ -1325,8 +1373,20 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<ImportedLibraryEntry> _ensureFresh(Chapter chapter) async {
-    final source = widget.resolveSource?.call(widget.comic.sourceId) ??
+    var source = widget.resolveSource?.call(widget.comic.sourceId) ??
         widget.source;
+    final ready = widget.sourceReady;
+    if (source == null && ready != null) {
+      final activated = await ready;
+      if (!mounted) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message: '章节入口已关闭',
+        );
+      }
+      final resolver = widget.resolveSource;
+      source = resolver == null ? activated : resolver(widget.comic.sourceId);
+    }
     final ensure = widget.ensureSourceChapter;
     if (source == null || ensure == null) {
       throw StateError('该章节尚未持久化，且对应漫画源当前不可用');
@@ -2103,8 +2163,14 @@ final class _LocalComicDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
+    final catalogChapters = _library.sourceChapters;
+    final catalogComicIdsByChapterId = <String, String>{
+      for (final chapter in catalogChapters)
+        chapter.chapterId: chapter.comicId,
+    };
     final entryByChapterId = <String, ImportedLibraryEntry>{};
     final entriesByRevision = <String, ImportedLibraryEntry?>{};
+    final displayEntriesByChapterId = <String, List<ImportedLibraryEntry>>{};
     for (final entry in _library.chapters) {
       if (entry.chapter.sourceId == widget.comic.sourceId) {
         entryByChapterId[entry.chapter.chapterId] = entry;
@@ -2112,11 +2178,17 @@ final class _LocalComicDetailsScreenState
         if (rev.isNotEmpty) {
           entriesByRevision[rev] = entriesByRevision.containsKey(rev) ? null : entry;
         }
+        final catalogId = _library.catalogChapterIdsByEntryIdentity[entry.identity];
+        if (catalogId != null &&
+            catalogComicIdsByChapterId[catalogId] == entry.chapter.comicId) {
+          displayEntriesByChapterId
+              .putIfAbsent(catalogId, () => <ImportedLibraryEntry>[])
+              .add(entry);
+        }
       }
     }
     final models = <_ChapterViewModel>[];
     final catalogIdentities = <String>{};
-    final catalogChapters = _library.sourceChapters;
     for (final chapter in catalogChapters) {
       final identity = comicDetailsChapterIdentity(
         widget.comic.sourceId,
@@ -2130,17 +2202,41 @@ final class _LocalComicDetailsScreenState
       final entry = comicDetailsCanReuseChapterEntry(candidateEntry, chapter)
           ? candidateEntry
           : null;
+      final displayEntries = displayEntriesByChapterId[chapter.chapterId] ??
+          const <ImportedLibraryEntry>[];
+      final projectedEntry = _latestReadingEntry(displayEntries) ??
+          (displayEntries.isEmpty
+              ? null
+              : displayEntries.reduce((a, b) =>
+                  b.chapter.importedAt.isAfter(a.chapter.importedAt) ? b : a));
+      final displayEntry = candidateEntry ?? projectedEntry;
       if (_pendingDeletionIdentities.contains(identity) ||
           _deletedChapterIdentities.contains(identity)) {
         continue;
       }
-      final pageCount = _knownPageCount(chapter, candidateEntry);
-      final progress = candidateEntry?.progress;
-      final readState = _readStateById(
+      final pageCount = _chapterMetadataPageCount(chapter, displayEntry);
+      final progress = candidateEntry?.progress ?? projectedEntry?.progress;
+      final currentReadState = _readStateById(
         _library.readStates,
         widget.comic.sourceId,
         chapter.chapterId,
       );
+      ChapterReadState? projectedReadState;
+      for (final displayEntry in displayEntries) {
+        final state = _readStateById(
+          _library.readStates,
+          displayEntry.chapter.sourceId,
+          displayEntry.chapter.chapterId,
+        );
+        if (state != null && state.manualOverride &&
+            (projectedReadState == null ||
+                state.updatedAt.isAfter(projectedReadState.updatedAt))) {
+          projectedReadState = state;
+        }
+      }
+      final readState = currentReadState?.manualOverride == true
+          ? currentReadState
+          : projectedReadState ?? currentReadState;
       models.add(
         _ChapterViewModel(
           sourceId: widget.comic.sourceId,
@@ -2150,9 +2246,9 @@ final class _LocalComicDetailsScreenState
           pageCount: pageCount,
           progress: progress,
           sourceUpdatedAt:
-              chapter.updatedAt ?? candidateEntry?.chapter.sourceUpdatedAt,
+              chapter.updatedAt ?? displayEntry?.chapter.sourceUpdatedAt,
           syncedAt:
-              candidateEntry?.chapter.importedAt ?? _library.sourceSyncedAt,
+              displayEntry?.chapter.importedAt ?? _library.sourceSyncedAt,
           entry: entry,
           sourceChapter: chapter,
           isRead: _chapterIsRead(
@@ -2176,7 +2272,15 @@ final class _LocalComicDetailsScreenState
         entry.chapter.sourceId,
         entry.chapter.chapterId,
       );
-      if (catalogIdentities.contains(identity) ||
+      final projectedId =
+          _library.catalogChapterIdsByEntryIdentity[entry.identity];
+      final projectedInCatalog =
+          entry.chapter.sourceId == widget.comic.sourceId &&
+          catalogComicIdsByChapterId[projectedId] == entry.chapter.comicId &&
+          projectedId != null && catalogIdentities.contains(
+            comicDetailsChapterIdentity(entry.chapter.sourceId, projectedId),
+          );
+      if (catalogIdentities.contains(identity) || projectedInCatalog ||
           _pendingDeletionIdentities.contains(identity) ||
           _deletedChapterIdentities.contains(identity)) {
         continue;
@@ -2291,6 +2395,7 @@ final class _LocalComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
+      onSearchTitle: widget.onSearchTitle,
       onMigrateSource: widget.onMigrateSource,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
@@ -2388,6 +2493,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
+    this.onSearchTitle,
     this.onMigrateSource,
     this.loadVersionState,
     this.onViewVersion,
@@ -2429,6 +2535,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsMetadataSearch? onSearchTitle;
   final ComicDetailsSourceMigrator? onMigrateSource;
   final ComicDetailsVersionStateLoader? loadVersionState;
   final ComicDetailsVersionViewer? onViewVersion;
@@ -3852,7 +3959,7 @@ final class _RemoteComicDetailsScreenState
           _deletedChapterIdentities.contains(identity)) {
         continue;
       }
-      final count = _knownPageCount(chapter, candidateEntry);
+      final count = _chapterMetadataPageCount(chapter, candidateEntry);
       knownPageCount += count;
       if (count == 0) {
         pageCountPending = true;
@@ -3920,6 +4027,7 @@ final class _RemoteComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
+      onSearchTitle: widget.onSearchTitle,
       onMigrateSource: widget.onMigrateSource,
       loadVersionState: widget.loadVersionState,
       onViewVersion: widget.onViewVersion,
@@ -3997,6 +4105,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
     required this.categories,
     required this.onPreferenceChanged,
     this.onSearchMetadata,
+    this.onSearchTitle,
     required this.downloadingComic,
     required this.onDownloadComic,
     this.onToggleWholeComicPause,
@@ -4014,6 +4123,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final List<LibraryCategory> categories;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsMetadataSearch? onSearchTitle;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
   final Future<void> Function()? onToggleWholeComicPause;
@@ -4038,7 +4148,16 @@ final class _ComicDetailsHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(title, style: Theme.of(context).textTheme.titleLarge),
+                  Tooltip(
+                    message: '在所有漫画源中搜索',
+                    child: InkWell(
+                      key: comicDetailsTitleSearchKey,
+                      onTap: onSearchTitle == null ? null
+                          : () => onSearchTitle!(title),
+                      child: Text(title,
+                          style: Theme.of(context).textTheme.titleLarge),
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(sourceLabel),
                   if (authors.isNotEmpty) ...<Widget>[
@@ -4799,6 +4918,14 @@ int _knownPageCount(Chapter chapter, ImportedLibraryEntry? entry) {
     return 0;
   }
   return cached.pages.length;
+}
+
+int _chapterMetadataPageCount(Chapter chapter, ImportedLibraryEntry? entry) {
+  if (chapter.pageCount > 0) {
+    return chapter.pageCount;
+  }
+  // Compact Home entries preserve the stored count, not reusable page locators.
+  return entry?.chapter.pages.length ?? 0;
 }
 
 String _comicSourceLabel(

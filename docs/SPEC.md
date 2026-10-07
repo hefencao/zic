@@ -365,6 +365,14 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；
   source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，
   不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；
+  来源列表 Sliver 重新挂载 MUST NOT重新发起同一稳定 canonical card 已失败的来源请求。
+  来源 card 的内部交互祖先 key MUST 与 Sliver 使用相同的来源 canonical identity；raw locator 更新不得销毁现有封面 State。
+  `sourceComicCardKey` MUST 使用 canonical identity，点击/来源请求 MUST 继续使用当前 raw locator，不能用 presentation key 改写请求身份。
+  同一普通来源页的 canonical alias MUST 归并为源顺序中的首条 summary；cached/refreshed投影比较 MUST 一致，且不得逐帧重复归并。
+  归并 MUST 保留来源 nextOffset；无显式坐标的后页步长 MUST 使用原始条目数，不得使用显示卡片数。
+  上一页 MUST 使用已接纳的实际访问坐标，序号按访问路径展示；不得用请求limit推算反向坐标。
+  来源view恢复 MUST 保留请求分区内的页码/路径且缓存恢复同样归并；section/filter分区改变 MUST 重置为0。
+  访问路径 MUST 限于UI导航意图，随query/filter/section/page0重置；不得成为source/runtime/cache/transport cursor authority。
   只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - Venera JavaScript `Image` compatibility MUST match the reference runtime rather than Android drawing defaults.
   `Image.fillImageRangeAt(x,y,image,srcX,srcY,width,height)` MUST accept `width==0` or `height==0` as a no-op because source transforms may intentionally emit empty slices;
@@ -453,6 +461,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `deferred-source-ready` 的诊断时间戳 MUST 来自同一个 composition monotonic clock；
   组件本地 fallback clock MAY 用于独立事件，但 MUST NOT 与 composition epoch 混合后推导跨组件延迟。
   未持久化章节每次 materialize/retry MUST 通过 live source resolver 重新取当前 source。
+  source尚在激活时，未持久化章节MUST等待既有route activation Future后重新解析；MUST NOT提前判为不可用或新增轮询/retry。已有chapter记录MUST不等待该Future；详情关闭后MUST不继续materialize。
   Home 的 chapter/whole-comic service mutation MUST 经独立 download-command composition owner 执行；
   该 owner MUST 从 `HomeLibrarySession` 动态读取当前 service generation，不得缓存 handoff 前的 chapter/queue service。
   Network/Download Settings MUST NOT 持有 concrete `WholeComicDownloadQueue`；
@@ -1011,7 +1020,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；
   跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同`sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；
   目标漫画及章节身份 MUST 在任何持久写入前校验。
+  通用同源版本列表 MUST在打开的面板中消费已有来源刷新结果，失败保留已确认首显；关闭面板 MUST NOT取消owner已接纳工作。关系发现时间 MUST NOT冒充来源更新日期，未知来源日期 MUST省略；候选展示 MUST使用来源Web地址，回调 MUST保持精确版本对象。
+- 迁移比较 MUST 使用标题、作者、来源、章节及来源提供的普通Web地址帮助核对；没有Web地址时 MUST省略该行，MUST NOT展示或解析内部opaque identity。展示地址 MUST NOT改变plan、精确匹配、缓存identity或事务目标；用户仍 MUST明确核对目标漫画/来源及章节风险后才能确认。
 - 迁移 MUST 只复制整部漫画偏好、精确章节匹配得到的阅读位置/已读状态和有证据的 artifact复用关系。目标写入成功后，同源替换 MUST 清理旧版本的漫画/章节元数据；跨源迁移 MUST保留原来源。
+  章节比较的 `exact` confidence 指序号与归一化标题同时匹配，目标原生 `sourceId + comicId + chapterId` MUST在写入前独立校验；comparison confidence MUST NOT替换持久身份或充当media proof。sequence-only候选 MUST NOT复制进度、已读或artifact；目标已有阅读状态 MUST优先保留。
   来源专属 URL 和离线字节不得被当作可直接复制的元数据。持久化同源page mapping MUST保持compact affine offset + bounded anchor proof：
   `verifiedPredecessorPageIndexes`只记录最多首/中/末anchor的证明来源，不是逐页reuse白名单；
   accepted offset对两章重叠区整体成立，但仍必须同时绑定精确`predecessorSourceRevision/successorSourceRevision`与pageCount，
@@ -1033,6 +1045,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   Presentation MUST使用声明的下一请求坐标，未声明时继续按 global offset + 返回项数推进；空页但有下一坐标时 MUST保留下一页入口。
   Venera `multiPartPage` MUST 以 null 页码加载完整分组集合，并按全局 offset 投影；集合耗尽 MUST 返回 hasMore=false，不得重复首片。普通页码与 loadNext 游标 MUST 保留来源合同。
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner切换为目标 source；
+  普通 browse 的当前 source binding 未变时，无关 source 列表增删/重排 MUST NOT重新加载或重置 section/page；聚合 source 集变化 MUST继续退休旧聚合请求。
   MUST只使用**当前 Presentation request identity**的目标精确缓存直接投影，没有精确缓存时显示目标 loading/error并按当前 section/query/filter请求加载。
   Catalog可保留目标最近 projection作为诊断/内部 cache事实，但 MUST NOT用它反向改写 UI默认 section/query/filter。
   旧 source页面不得因目标请求失败继续可见。
@@ -1060,10 +1073,12 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   搜索展开和文本输入 MUST 只更新搜索子树，MUST NOT 重建 catalog 网格；
   IME inset MUST 只按键盘与浮层原始位置的实际重叠量移动搜索浮层，不得重复补偿其到底部栏的既有净空或压缩整个漫画源页，固定搜索浮层与底部来源栏 SHOULD 使用独立 repaint boundary。
   IME 开始收起时 MUST 释放输入焦点但保留面板，收起动画期间再次返回 MUST 只关闭面板且 MUST NOT 重新弹起键盘。
+  普通搜索历史的嵌套滚动 MUST 同样收起面板；扩展搜索选项列表 MUST 保持可滚动选择，选项展开手柄仍执行其独立展开/收起动作。
   Mihon `getFilterList()` 返回的 Header、Separator、Select、
   Text、CheckBox、TriState、Group 与 Sort MUST 由 bridge按 Mihon基类继承关系完整投影，
   MUST NOT以插件自定义 concrete class名称猜类型或拍平 Group；空 `FilterList` 表示该 source没有筛选入口。
   用户修改 MUST 以类型化 filter-state override返回 source search调用，Text字符串与 Sort的 index/ascending不得压缩成 toggle ID。
+  单次筛选弹层的草稿 MUST 在 route/IME 重建后保留；只有应用或取消才能结束本次草稿。
   “筛选” MUST 是可获得焦点的独立浏览视图；点击后即使不修改任何选项，直接应用也 MUST 以 source `FilterList` 默认状态执行 filtered browse。
   空 override MUST NOT 被解释为 ordinary Latest/Popular。
   筛选视图激活时 MUST 取消 Latest/Popular焦点，filtered request/cache identity MUST NOT继承先前 section；
@@ -1089,7 +1104,13 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   收起状态搜索按钮的点击与长按 MUST 由同一外层手势 owner 分发，长按 MUST 能进入聚合结果视图。
 - 最近一次聚合结果在来源列表未变化时 MUST 保留为内存投影；切换当前来源 MUST 只退出结果页并关闭搜索框聚合模式，不得清除该投影；
   再次长按搜索按钮 MUST 直接显示该结果及其查询标题，不得显示空结果提示或重复请求。
+- 详情内容区标题 MUST 打开独立的聚合搜索 route，保留原详情，并按已启用且支持搜索的 sourceId 分组；MUST NOT按插件合并来源。
+  冷启动尚未激活的来源 MUST通过既有来源 lifecycle 在首帧后准备，并逐个加入当前查询；新增来源 MUST NOT重发其它来源或重置其分页，MUST NOT建立全源完成后才显示结果的屏障。
+  该页 MUST 保留当前查询用于各源独立分页；每组结果/错误独立显示，慢源或失败 MUST NOT阻塞其它来源。重建 MUST NOT重发，失败只允许显式重试；旧查询/退出后的结果 MUST NOT覆盖当前投影。
+  原漫画结果 MUST返回原详情，其它结果 MUST使用既有详情入口。标签点击 MUST保持该来源的原搜索目的地，包括从聚合结果进入的嵌套详情；漫画源页原聚合/关键词锁定语义不变。
+  从详情进入尚未挂载的漫画源页时，初始查询命令 MUST在首个source请求前生效，MUST使用trim后的标签关键词及offset0；MUST NOT先发空关键词请求或要求再次点击才能搜索。
 - Venera JM 的普通浏览链接 MUST使用漫画 album 地址；JS 更新文件地址 MUST NOT作为漫画网页基址。浏览地址修正 MUST NOT改变 canonical identity、章节缓存或资源 authority。
+- 插件管理 MUST 显示安装元数据中的版本和Mihon ABI，失败态保留已知信息；“漫画源管理 → Mihon 扩展 → 设备上的 Mihon 扩展”的长包名不得挤掉版本/ABI。漫画源主列表只显示来源名称、语言及站点；UI MUST只读既有安装/扫描authority，缺失值不得从版本猜测ABI。
 - Mihon APK 识别 MUST 接受 manifest 中直接字符串或字符串资源形式的 extensionLib/entry class metadata；
   多个 entry class MUST 支持逗号、分号或换行分隔。
   候选识别 MAY 使用标准 extension feature/package prefix，但加载前仍 MUST 完成 package、signer、version、ABI 与 entry class 校验。
@@ -1139,7 +1160,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。
   完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。
   实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。外观设置 MUST 提供详情预览每行最大数量 1–8，默认 4；该项不得混入 Reader 阅读操作设置。
-  图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
+  折叠与展开的图片区域 MUST 不超过屏幕高度的 90%，包括单行过高的情况；高度约束 MUST 与完整行铺满、等面积和稀疏末行上限同时成立，图片在 tile 内保持 contain。展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
 - 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
   这些能力是可选的，来源未声明时不得发起插件请求。评论正文的受限 HTML MUST 将 HTTP(S) `img` 交由统一 artwork loader 作为行内图片并支持 `br`/HTML entity；
   不得把原始 `<img>` 标签显示为文本或建立 emoji 私有网络/缓存 owner。

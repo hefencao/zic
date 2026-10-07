@@ -20,6 +20,8 @@ import 'external_source_settings_screen.dart';
 import 'source_settings_screen.dart';
 import 'startup_platform.dart';
 
+part 'comic_title_search.dart';
+
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
 const sourceManagementScreenKey =
@@ -78,8 +80,9 @@ Key comicSourceAggregatePluginKey(String pluginId) =>
     ValueKey<String>('comic-source-aggregate-plugin:$pluginId');
 Key comicSourceAggregateCategoryKey(String categoryId) =>
     ValueKey<String>('comic-source-aggregate-category:$categoryId');
-Key sourceComicCardKey(String sourceId, String comicId) =>
-    ValueKey<String>('source-comic:$sourceId\u0000$comicId');
+/// The source's canonical identity keeps the card's presentation subtree live.
+Key sourceComicCardKey(String sourceId, String canonicalComicId) =>
+    ValueKey<String>('source-comic:$sourceId\u0000$canonicalComicId');
 Key sourceComicCoverVerificationKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic-verify:$sourceId\u0000$comicId');
 Key sourceComicShelfMarkerKey(String sourceId, String comicId) =>
@@ -121,6 +124,29 @@ String _stableSourceComicIdentity(
     return candidate.canonicalComicIdentity(comicId);
   }
   return comicId;
+}
+
+SourceBrowsePage _canonicalSourceBrowsePage(
+  BrowsableComicSource source,
+  SourceBrowsePage page,
+) {
+  final seen = <String>{};
+  final items = <SourceComicSummary>[];
+  for (final comic in page.items) {
+    if (seen.add(_stableSourceComicIdentity(source, comic.comicId))) {
+      items.add(comic);
+    }
+  }
+  if (items.length == page.items.length) return page;
+  return SourceBrowsePage(
+    items: items,
+    offset: page.offset,
+    hasMore: page.hasMore,
+    // Paging belongs to the original source page, before card projection.
+    nextOffset: page.hasMore
+        ? (page.nextOffset ?? page.offset + page.items.length)
+        : null,
+  );
 }
 
 Color _comicSourceAccent(BrowsableComicSource source) {
@@ -263,6 +289,7 @@ final class _SourceBrowseViewState {
     required this.sectionId,
     required this.query,
     required this.offset,
+    required this.pageOffsets,
     required this.filterState,
     required this.filterViewActive,
   });
@@ -270,6 +297,7 @@ final class _SourceBrowseViewState {
   final String? sectionId;
   final String query;
   final int offset;
+  final List<int> pageOffsets;
   final SourceSearchFilterState filterState;
   final bool filterViewActive;
 }
@@ -351,6 +379,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   bool _hasMore = false;
   int _pageOffset = 0;
   int _nextOffset = 0;
+  final List<int> _browsePageOffsets = <int>[0];
   List<SourceBrowseSection> _sections = const <SourceBrowseSection>[];
   String? _selectedSectionId;
   List<SourceSearchFilterNode> _searchFilters =
@@ -434,6 +463,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       sectionId: _selectedSectionId,
       query: _query,
       offset: _pageOffset,
+      pageOffsets: List<int>.unmodifiable(_browsePageOffsets),
       filterState: Map<String, Object?>.unmodifiable(_filterState),
       filterViewActive: _filterViewActive,
     );
@@ -443,6 +473,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     if (source == null) {
       setState(() {
         _projectionSourceId = null;
+        _pageOffset = 0;
+        _nextOffset = 0;
+        _resetBrowseCoordinates();
         _items = const <SourceComicSummary>[];
         _loading = false;
         _refreshing = false;
@@ -453,6 +486,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final remembered = _sourceViewStates[source.sourceId];
     _query = remembered?.query ?? '';
     _pageOffset = remembered?.offset ?? 0;
+    _browsePageOffsets
+      ..clear()
+      ..addAll(remembered?.pageOffsets ?? const <int>[0]);
     _selectedSectionId = remembered?.sectionId;
     _filterState = remembered?.filterState ?? const <String, Object?>{};
     _filterViewActive = remembered?.filterViewActive ?? false;
@@ -463,7 +499,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cache = source is CachedSourceBrowseProjection
         ? source as CachedSourceBrowseProjection
         : null;
-    final cached = remembered == null
+    final rawCached = remembered == null
         ? null
         : cache?.peekBrowsePage(
             sectionId: _requestSectionId,
@@ -473,6 +509,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             filterState: _filterState,
             useFilters: _filterViewActive,
           );
+    final cached = rawCached == null
+        ? null
+        : _canonicalSourceBrowsePage(source, rawCached);
     setState(() {
       _projectionSourceId = source.sourceId;
       _failure = null;
@@ -491,6 +530,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   @override
   void initState() {
     super.initState();
+    _query = widget.requestedQuery?.trim() ?? '';
+    _search.value = TextEditingValue(
+      text: _query,
+      selection: TextSelection.collapsed(offset: _query.length),
+    );
     scheduleMicrotask(() => unawaited(_loadSource()));
   }
 
@@ -505,6 +549,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       _query = widget.requestedQuery?.trim() ?? '';
       _pageOffset = 0;
+      _resetBrowseCoordinates();
       _search.value = TextEditingValue(
         text: _query,
         selection: TextSelection.collapsed(offset: _query.length),
@@ -517,15 +562,17 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           _sourceForId(oldWidget.sources, widget.activeSourceId!),
           _sourceForId(widget.sources, widget.activeSourceId!),
         );
+    final sourceIdsChanged = !_sameSourceIds(oldWidget.sources, widget.sources);
+    final aggregateSourceSetChanged = sourceIdsChanged &&
+        (_aggregateViewActive || _aggregateLoading || _aggregateSearch.enabled);
+    if (sourceIdsChanged) {
+      _lastAggregateItems = const <_AggregateSearchResult>[];
+      _lastAggregateQuery = '';
+      _lastSearchQuery = '';
+    }
     if (oldWidget.activeSourceId != widget.activeSourceId ||
-        !_sameSourceIds(oldWidget.sources, widget.sources) ||
-        activeSourceReplaced) {
+        activeSourceReplaced || aggregateSourceSetChanged) {
       _exitAggregateSearchView(rebuild: false);
-      if (!_sameSourceIds(oldWidget.sources, widget.sources)) {
-        _lastAggregateItems = const <_AggregateSearchResult>[];
-        _lastAggregateQuery = '';
-        _lastSearchQuery = '';
-      }
       _aggregateSearch.setEnabled(
         false,
         _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
@@ -535,7 +582,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _searchFilters = const <SourceSearchFilterNode>[];
       _restoreTargetProjection(_activeSource);
       if (!_recoveringSourceAccess) {
-        scheduleMicrotask(() => unawaited(_loadSource()));
+        scheduleMicrotask(() => unawaited(_loadSource(browseOffset: _pageOffset)));
       }
     }
   }
@@ -616,17 +663,24 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       for (final entry in _filterState.entries)
         if (availableFilterIds.contains(entry.key)) entry.key: entry.value,
     };
+    final requestChanged = selected != _selectedSectionId ||
+        !_filterStateEquals(retainedFilterState, _filterState) ||
+        (_filterViewActive && filters.isEmpty);
     setState(() {
       _sections = sections;
       _selectedSectionId = selected;
       _searchFilters = filters;
       _filterState = Map<String, Object?>.unmodifiable(retainedFilterState);
       if (filters.isEmpty) _filterViewActive = false;
+      if (requestChanged) {
+        _pageOffset = 0;
+        _resetBrowseCoordinates();
+      }
     });
     return _reload(
       forceRefresh: forceRefresh,
       allowVerificationFallback: allowVerificationFallback,
-      offset: browseOffset,
+      offset: requestChanged ? 0 : browseOffset,
     );
   }
 
@@ -682,11 +736,37 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     SourceBrowsePage page, {
     String? sourceId,
   }) {
+    final visited = _browsePageOffsets.lastIndexOf(page.offset);
+    if (page.offset == 0) {
+      _resetBrowseCoordinates();
+    } else if (visited >= 0) {
+      _browsePageOffsets.removeRange(visited + 1, _browsePageOffsets.length);
+    } else {
+      _browsePageOffsets.add(page.offset);
+    }
     _projectionSourceId = sourceId ?? _activeSource?.sourceId;
     _items = page.items;
     _hasMore = page.hasMore;
     _pageOffset = page.offset;
-    _nextOffset = page.offset + page.items.length;
+    _nextOffset = page.nextOffset ?? page.offset + page.items.length;
+  }
+
+  void _resetBrowseCoordinates() {
+    _browsePageOffsets
+      ..clear()
+      ..add(0);
+  }
+
+  int get _previousBrowseOffset {
+    final index = _browsePageOffsets.lastIndexOf(_pageOffset);
+    if (index > 0) return _browsePageOffsets[index - 1];
+    if (index < 0) return _browsePageOffsets.last;
+    return 0;
+  }
+
+  int get _browsePageNumber {
+    final index = _browsePageOffsets.lastIndexOf(_pageOffset);
+    return index < 0 ? _browsePageOffsets.length + 1 : index + 1;
   }
 
   Future<bool> _reload({
@@ -705,6 +785,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _refreshing = false;
         _hasMore = false;
         _pageOffset = 0;
+        _resetBrowseCoordinates();
         _nextOffset = 0;
         _failure = null;
       });
@@ -714,7 +795,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cache = source is CachedSourceBrowseProjection
         ? source as CachedSourceBrowseProjection
         : null;
-    final cached = forceRefresh
+    final cachedPage = forceRefresh
         ? null
         : cache?.peekBrowsePage(
             sectionId: _requestSectionId,
@@ -724,12 +805,15 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             filterState: _filterState,
             useFilters: _filterViewActive,
           );
+    final cached = cachedPage == null
+        ? null
+        : _canonicalSourceBrowsePage(source, cachedPage);
     final hasCached = cached != null;
     final projectionMatchesSource = _projectionSourceId == source.sourceId;
     final hasVisibleItems = projectionMatchesSource && _items.isNotEmpty;
     final cachedChanged = cached != null &&
         (!projectionMatchesSource ||
-            !_sameBrowsePage(_items, _pageOffset, _hasMore, cached));
+            !_sameBrowsePage(_items, _pageOffset, _hasMore, _nextOffset, cached));
     final startedMicros = _traceClock.nowMicros();
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
@@ -768,7 +852,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     });
     var succeeded = false;
     try {
-      final page = cache != null
+      final rawPage = cache != null
           ? await cache.refreshBrowsePage(
               sectionId: _requestSectionId,
               query: _query,
@@ -783,10 +867,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               forceRefresh: forceRefresh,
             );
       if (!mounted || generation != _generation) return false;
+      final page = _canonicalSourceBrowsePage(source, rawPage);
       final changed = !_sameBrowsePage(
         _items,
         _pageOffset,
         _hasMore,
+        _nextOffset,
         page,
       );
       setState(() {
@@ -803,7 +889,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         source,
         payload: <String, Object?>{
           'durationMicros': _traceClock.nowMicros() - startedMicros,
-          'itemCount': page.items.length,
+          'itemCount': rawPage.items.length,
+          'projectedItemCount': page.items.length,
           'offset': page.offset,
           'hasMore': page.hasMore,
           'changed': changed,
@@ -985,7 +1072,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       return encoded;
     } on Object catch (error) {
-      _cardCoverFutures.remove(identity);
       _recordSourceTrace(
         TraceEventKind.taskFailed,
         'cover-source-failed',
@@ -1319,12 +1405,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   Future<void> _openFilterSheet() async {
     if (_searchFilters.isEmpty) return;
-    final initial = Map<String, Object?>.from(_filterState);
+    // A route/IME rebuild must keep the edits from this sheet invocation.
+    final draft = Map<String, Object?>.from(_filterState);
     final selected = await showModalBottomSheet<SourceSearchFilterState>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) {
-        final draft = Map<String, Object?>.from(initial);
         return StatefulBuilder(
           builder: (context, setSheetState) => SafeArea(
             key: comicSourceFilterSheetKey,
@@ -1383,6 +1469,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _filterState = Map<String, Object?>.unmodifiable(selected);
       _filterViewActive = true;
       _pageOffset = 0;
+      _resetBrowseCoordinates();
     });
     unawaited(_reload(offset: 0));
   }
@@ -1534,6 +1621,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _query = normalized;
       _aggregateQuery = normalized;
       _pageOffset = 0;
+      _resetBrowseCoordinates();
       if (normalized.isNotEmpty) {
         _lastSearchQuery = normalized;
         widget.onSearchCommitted?.call(normalized);
@@ -1553,6 +1641,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     _exitAggregateSearchView();
     _query = normalized;
     _pageOffset = 0;
+    _resetBrowseCoordinates();
     if (normalized.isNotEmpty) {
       _lastSearchQuery = normalized;
       widget.onSearchCommitted?.call(normalized);
@@ -1659,6 +1748,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _selectedSectionId = sectionId;
       _filterViewActive = false;
       _pageOffset = 0;
+      _resetBrowseCoordinates();
     });
     unawaited(_reload(offset: 0));
   }
@@ -1706,6 +1796,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   left: 12,
                   bottom: 12,
                   child: _SourceSearchKeyboardInset(
+                    onKeyboardHiding: () => _searchFocus.unfocus(),
                     child: ValueListenableBuilder<bool>(
                       valueListenable: _searchExpanded,
                       builder: (context, expanded, child) =>
@@ -1981,8 +2072,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               else if (history.isNotEmpty)
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 220),
-                  child: SingleChildScrollView(
-                    child: _buildSearchHistory(context, history),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _handleSourceScroll,
+                    child: SingleChildScrollView(
+                      child: _buildSearchHistory(context, history),
+                    ),
                   ),
                 ),
               ValueListenableBuilder<TextEditingValue>(
@@ -2241,18 +2335,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   ),
                 ),
               ),
-            if (_items.isNotEmpty || _pageOffset > 0)
+            if (_items.isNotEmpty || _pageOffset > 0 || _hasMore)
               SliverToBoxAdapter(
                 child: _SourcePager(
-                  page: (_pageOffset ~/ _pageSize) + 1,
+                  page: _browsePageNumber,
                   hasPrevious: _pageOffset > 0,
                   hasNext: _hasMore,
                   onPrevious: () => unawaited(
-                    _goToPage(
-                      (_pageOffset - _pageSize)
-                          .clamp(0, 1 << 30)
-                          .toInt(),
-                    ),
+                    _goToPage(_previousBrowseOffset),
                   ),
                   onNext: () => unawaited(_goToPage(_nextOffset)),
                 ),
@@ -2388,9 +2478,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 }
 
 final class _SourceSearchKeyboardInset extends StatefulWidget {
-  const _SourceSearchKeyboardInset({required this.child});
+  const _SourceSearchKeyboardInset({
+    required this.child,
+    required this.onKeyboardHiding,
+  });
 
   final Widget child;
+  final VoidCallback onKeyboardHiding;
 
   @override
   State<_SourceSearchKeyboardInset> createState() =>
@@ -2400,7 +2494,16 @@ final class _SourceSearchKeyboardInset extends StatefulWidget {
 final class _SourceSearchKeyboardInsetState
     extends State<_SourceSearchKeyboardInset> {
   double _bottomClearance = 0;
+  double _keyboardInset = 0;
   bool _measurementScheduled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (inset < _keyboardInset) widget.onKeyboardHiding();
+    _keyboardInset = inset;
+  }
 
   void _scheduleBottomClearanceMeasurement() {
     if (_measurementScheduled) return;
@@ -2797,7 +2900,10 @@ final class _SourceComicCard extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
-      key: sourceComicCardKey(source.sourceId, comic.comicId),
+      key: sourceComicCardKey(
+        source.sourceId,
+        _stableSourceComicIdentity(source, comic.comicId),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -4003,9 +4109,11 @@ bool _sameBrowsePage(
   List<SourceComicSummary> currentItems,
   int currentOffset,
   bool currentHasMore,
+  int currentNextOffset,
   SourceBrowsePage next,
 ) {
-  if (currentOffset != next.offset || currentHasMore != next.hasMore) {
+  if (currentOffset != next.offset || currentHasMore != next.hasMore ||
+      currentNextOffset != (next.nextOffset ?? next.offset + next.items.length)) {
     return false;
   }
   if (currentItems.length != next.items.length) return false;
