@@ -16,7 +16,7 @@
     "open_reported": 0
   },
   "governance": {
-    "status": "registered_state_issues_closed_extended_acceptance_active",
+    "status": "registered_state_issues_resolved_remaining_acceptance_active",
     "rule": "先以当前代码/失败回归/设备trace确认所有权边界，再修改；禁止新增第二套scheduler、presentation cache或navigation authority。",
     "preserve": [
       "NetLane仍是网络执行权威",
@@ -24,7 +24,7 @@
       "native decode前释放source read lock的现有边界不得回退",
       "7/3 Download membership与既有bounded decode/upload/presentation窗口不得因本审计扩大"
     ],
-    "current_focus": "Reader/media登记38项已处理：36 resolved、2 deleted。RMR-034/035/036由2148项/Rust22全门禁、两台APK精确SHA和第二台fresh trace复验闭合；全部112项产品/性能/来源验收仍独立进行，来源初始化HTTP10s和视觉/touch-latency边界不得混为已验证。"
+    "current_focus": "40 registered issues:36 resolved,2 deleted,2 confirmed with verified components. RMR-037 loading/GC/input/final-display and RMR-038 remaining real-source metadata variants stay open; the112 current contracts and scoped outcomes are authoritative."
   },
   "issues": [
     {
@@ -491,157 +491,10 @@
   ],
   "parent_acceptance_complete": false,
   "current_reader_remaining_GC_attribution": {
-    "date": "2026-10-05",
-    "status": "current_ordinary_Profile_remaining_owner_attribution_reviewed",
-    "scope": "Remaining main-isolate allocation/CPU attribution at actual cached Mihon Reader entry, chapter traversal and stationary slider/continuous scroll, using the current ordinary Profile.",
-    "production_changed": false,
-    "pre_modification_root_cause": "Historical selected-class data identifies locator compatibility parsing and Flutter semantics/layout work; it does not prove the original stutter or loading root cause. Current-profile matched evidence is needed before any behavior change.",
-    "production_source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
-    "frozen_production_inputs": 642,
-    "historical_classification": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/historical-selected-allocation-classification.json",
-    "historical_classification_sha256": "cd5ef00bfe8893f99383255fdf9bb4ae1871b84bd42e9a5a0051c818a528bd4d",
-    "capture_script": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture.py",
-    "capture_script_sha256": "781478a6b373f7d107603cab2e8c81e252fda9997329056e851f4d2a4afda043",
-    "scoped_acceptance_complete": true,
-    "parent_acceptance_complete": false,
-    "analysis_pending": false,
-    "documentation_validation_pending": false,
-    "boundary": [
-      "Profile/selected-allocation instrumentation cannot establish ordinary Release or final physical presentation.",
-      "Historical capture differs only in two transport cancellation files; unchanged locator checks remain candidates, not inferred product defects.",
-      "Preserve library/URI/revision/cache/trust and Reader/NetLane/workers/windows; restore original flags, class tracing, owned ADB forward and ordinary Release in finally."
-    ],
-    "remaining": [
-      "Original19/20 intermittent loading, drag/ballistic/input latency and final physical display.",
-      "Remaining Flutter layout/semantics, other allocation/GC owners and source/product acceptance.",
-      "Any fused locator decoder remains a candidate, not a production repair or accepted policy change."
-    ],
-    "updated_at_ns": 1791154706012588116,
-    "diagnostic_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
-    "current_device_installation": {
-      "serial": "72b08a1c",
-      "model": "M2007J1SC",
-      "sdk": 36,
-      "apk": "/home/unkloser/.cache/zic-device-evidence/controlled-open-retirement/ordinary-release-arm64-v8a.apk",
-      "sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
-      "installed_apk_sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
-      "installed_base_apk_sha256_match": true,
-      "app_pid": 28808,
-      "ordinary_release": true,
-      "normal_minified_release": true,
-      "mode": "release",
-      "debuggable": false,
-      "source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
-      "source_input_count": 642,
-      "source_matches_current_workspace": true,
-      "test_only_Pipeline_fixture_uninstalled": true,
-      "fixture_host_and_source_processes_terminated": true,
-      "temporary_diagnostics": false,
-      "temporary_profilers_active": false,
-      "app_foreground": "home",
-      "bounded_open_exit_repair": true,
-      "restore_evidence": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
-      "checked_at_ns": 1791154101826888353,
-      "profile_diagnostic_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
-      "profile_VM_replaced_by_ordinary_release": true
-    },
-    "evidence_grade": "Device-observed/Profile-sampled owner attribution; original regression/performance acceptance remains open.",
-    "capture_session": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/capture-session.json",
-    "capture_session_sha256": "e466b87a1d26480e4d80c1cf6d01c206838c1ccfffb0be68c935c81785f1115c",
-    "fresh_locator_attribution": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/fresh-locator-compatibility-attribution.json",
-    "fresh_locator_attribution_sha256": "3f79dbdbb0bce4b0a75cd225c41c06d9f3f7aaed1245627e07851f0bfbd58f42",
-    "frame_review": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/frame-review.json",
-    "frame_review_sha256": "3c41b4f547a879cd6a237b39a1ecc4971b44e6fdd6ca2d6472afca8163cf1c4d",
-    "trace_review": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/trace-review.json",
-    "trace_review_sha256": "33d772ef660a61ee5129fc71c58d580d6cb4dd65cb7f2b6495030287a1ead601",
-    "data_reconciliation": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/data-reconciliation.json",
-    "data_reconciliation_sha256": "37fe4328e71287fe46f1c3f3cb292cb63b2acdc9b67dd6b132829b5d9319ea98",
-    "observed_allocation_root_cause": "The unchanged locator replay-coordinate predicate base64-decodes and materializes a UTF8 string/JSON parser for every checked page; 288 checks yield 288 Uint8List and2304 GrowableList selected allocations. This is not proof of the reported fixed-position stutter or loading cause.",
-    "next_action": "Evaluate fused UTF8/JSON decoding inside the existing pure locator compatibility predicate. Preserve exact malformed/Unicode/replay decisions and original owner; retain an implementation only after equivalent-semantics and actual allocation proof. No skipped validation, memoization owner or added worker.",
-    "final_reconciliation": {
-      "validator": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/finalize_and_validate.py",
-      "validator_sha256": "8c71fb34f1c3fa9855103f8a1eca0e6ca7c0374b29d74a2637850adadd30f930",
-      "proof": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-validation.json",
-      "proof_sha256": "03e50e0fbf9992c0fee19f237d792a07b92404b4e3d00ef9996d386bd29658be",
-      "exit_code": 0,
-      "all_scoped_checks_passed": true
-    },
-    "documentation_validation": {
-      "checks": [
-        {
-          "command": [
-            "python3",
-            "tool/check_documentation.py"
-          ],
-          "exit_code": 0,
-          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-documentation.log",
-          "sha256": "01a276ad1d8f20e572e4a6c5a3f966759c1e410835c6a13ade66881a7ea6b200"
-        },
-        {
-          "command": [
-            "python3",
-            "tool/check_repo.py"
-          ],
-          "exit_code": 0,
-          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-repository.log",
-          "sha256": "949402e70ddd7d07c4262fb1a93831c2c434f0902d5786b1a1e386e1ca8868b4"
-        },
-        {
-          "command": [
-            "python3",
-            "tool/check_dart_structure.py"
-          ],
-          "exit_code": 0,
-          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-structure.log",
-          "sha256": "e1cb994a399f6f22f97940bdd5aceb46a4847440e177cf49f0c309bf66159c23"
-        },
-        {
-          "command": [
-            "python3",
-            "tool/test_dev139_current_documentation.py"
-          ],
-          "exit_code": 0,
-          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-dev139.log",
-          "sha256": "0400b9d53b30ce93c068d575d5220beec03b0c4d7293de3be4b0fb8d4ad63e24"
-        },
-        {
-          "command": [
-            "git",
-            "diff",
-            "--check"
-          ],
-          "exit_code": 0,
-          "log": "/home/unkloser/.cache/zic-device-evidence/reader-remaining-GC-attribution/final-diff.log",
-          "sha256": "390da95dc81d0ad51c8551f6efba70e650d5330e4efab60c4f2baea8cddb320b"
-        }
-      ],
-      "all_exit_codes": 0
-    }
-  },
-  "installation_before_remaining_GC_attribution": {
-    "serial": "72b08a1c",
-    "model": "M2007J1SC",
-    "sdk": 36,
-    "apk": "/home/unkloser/.cache/zic-device-evidence/controlled-open-retirement/ordinary-release-arm64-v8a.apk",
-    "sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
-    "installed_apk_sha256": "f766349c28b42186d60da9c8eaf5f327e598c41041f205719718f1d513624250",
-    "installed_base_apk_sha256_match": true,
-    "app_pid": 26198,
-    "ordinary_release": true,
-    "normal_minified_release": true,
-    "mode": "release",
-    "debuggable": false,
-    "source_snapshot": "/tmp/zic-controlled-open-retirement-production-source-snapshot.json",
-    "source_input_count": 642,
-    "source_matches_current_workspace": true,
-    "test_only_Pipeline_fixture_uninstalled": true,
-    "fixture_host_and_source_processes_terminated": true,
-    "temporary_diagnostics": false,
-    "temporary_profilers_active": false,
-    "app_foreground": "home",
-    "bounded_open_exit_repair": true,
-    "restore_evidence": "/home/unkloser/.cache/zic-device-evidence/source-mihon-client-pipeline/device-run-v2/result.json",
-    "checked_at_ns": 1791152914795002017
+    "audit": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/reader-remaining-GC-attribution-2026-10-05",
+    "followup": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-locator-fused-decoding-2026-10-05",
+    "status": "attribution_completed_fused_candidate_rejected",
+    "next_action": "Attribute fresh remaining layout/semantics/GC/input/final-display failures before any production change; retain original compatibility checks."
   },
   "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements",
   "last_updated": "2026-10-07"

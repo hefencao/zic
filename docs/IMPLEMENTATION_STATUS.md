@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2321/Rust22/27analyzer/Android110/Cookie15/真机9/六APK通过；643冻结输入仅CookieJar与门禁变化。native/Dart/公共ABI保持；common资产按新适配器更新。Release1b040401/PID8239/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20六静置/两独立历史入口及173缓存读已验。21话三静置步骤有18真实下载/0失败，current115首帧882796µs、邻页6s内自行补齐。125完整payload/67read保持，本轮仅21进度更新。原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项见state-governance-closure-2026-10-01：status为有效验收，historical_status仅留历史；device17/toolchain6/superseded2/partial38/pending49，042/088/090/096/107分量已验、004 ARR已取代。合并46个重复审计，保留根因/边界/验收/未完成项；缺失旧证据不据此改生产。19/20偶发加载、性能及真实来源仍开放；643输入未改。
+  当前112项均有显式current_contract，requirement/historical_status仅历史；device17/toolchain6/superseded2/partial41/pending46。014/016/021复用已验Venera gate/HTTP分量，真实Reader时序仍开放；非媒体走typed semantic recovery，fused locator候选已拒绝。合并46个重复审计；19/20加载、性能及真实来源仍开放；生产输入未改。

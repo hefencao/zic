@@ -12,15 +12,15 @@
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。
-- P0：真机验证dev.276 Venera current handoff gate闭环：resolver warm态继续允许3 hit+1 page-specific origin；旧current active invocation降出1000且已有新current1000 waiter时应请求取消旧requestId，但single Venera permit必须等旧invocation真实退出后再转交。若current gate wait明显下降后仍慢，再分别看`sourcePlanRuntimeInvocationMicros/sourceHostOpenMicros`；不扩大JS并发、不预解析整章。
-- 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
+- P0：补dev.276普通来源的resolver warm3 hit+1 page-specific origin与Reader gate/host-open时序；current提升、旧current降级及physical invocation退出的六项设备合同已验。single Venera permit仍须等待JS finished与已接纳native call真实退出，不扩大JS并发或预解析整章。
+- 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
 - 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
 - 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 ## P0：Current 首帧 policy/execution 真机闭环
 
 - 首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。
 - network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
-- Venera current pressure 取消旧 prefetch 时，先按 requestId 断开 native HTTP；Dart single-context permit 只能在旧 JavaScript `finished(requestId)` 后转交。真机 trace 若 current origin仍长尾，再拆 request-plan/JS/onImageLoad/HTTP-open各阶段，而不是继续修改字节chunk或缩7/3。
+- Venera current pressure经requestId取消现有isolated Dart rhttp请求；JS finished与已接纳native call退出齐备后才转交single-context permit。selected gate/held HTTP取消已验，真实来源长尾和default system-DNS退出另验；不得恢复旧native HTTP owner、改chunk或缩7/3。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
@@ -132,7 +132,7 @@
 
 ## P0：远程 Animated WebP 连续性
 
-- 对比 transport chunk、64 KiB session append、source revision、decode batch、holder depth、deadline 和 present cadence。
+- 对比raw transport chunk、DownloadJob首批16KiB/后续64KiB聚合、source revision、decode batch、holder depth、deadline和present cadence；原transport/ingress/decode owner保持，holder不成为network gate。
 - 若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。
 - 真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。
 

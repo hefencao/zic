@@ -2,7 +2,9 @@
 """Keep stable documentation aligned with current production code."""
 from __future__ import annotations
 
+import json
 import re
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,5 +191,33 @@ if f"0.31.0-dev.{build}" not in status or f"0.31.0+{build}" not in status:
     raise SystemExit("Implementation Status does not match App build")
 if f"dev.{build}" not in handoff:
     raise SystemExit("Handoff does not match App build")
+
+# Historical requirements must not become a repair backlog for retired owners.
+governance_path = "docs/audits/state-governance-closure-2026-10-01.json"
+governance = json.loads(read(governance_path))
+requirements = governance["requirements"]
+if len(requirements) != 112 or len({row["id"] for row in requirements}) != 112:
+    raise SystemExit("current governance must retain all 112 requirement IDs")
+if any(not row.get("current_contract", "").strip() for row in requirements):
+    raise SystemExit("every governance requirement needs an explicit current contract")
+if dict(Counter(row["status"] for row in requirements)) != governance["requirement_summary"]:
+    raise SystemExit("current governance status counts are stale")
+if dict(Counter(row["historical_status"] for row in requirements)) != governance["historical_requirement_summary"]:
+    raise SystemExit("historical governance status counts are stale")
+for row in requirements:
+    if row["status"] in {"pending", "partial"} and not row.get("remaining_acceptance"):
+        raise SystemExit(f"{row['id']} hides remaining acceptance")
+rejected = governance["supplemental_acceptance"]["mihon-locator-fused-decoding-2026-10-05"]
+for path in (
+    "docs/audits/reader_media_runtime_state_audit.json",
+    "docs/audits/download_system_state_audit.json",
+    "docs/audits/user-repeated-download-loading-regressions-2026-10-03.json",
+):
+    parent = json.loads(read(path))
+    if parent["current_requirement_state"] != governance_path + "#requirements":
+        raise SystemExit(f"{path} does not reference current governance")
+    attribution = parent.get("current_reader_remaining_GC_attribution", {})
+    if rejected["status"].startswith("candidate_rejected") and "Evaluate fused" in attribution.get("next_action", ""):
+        raise SystemExit(f"{path} reopens a rejected allocation candidate")
 
 print("dev.139 current-code documentation consistency: OK")

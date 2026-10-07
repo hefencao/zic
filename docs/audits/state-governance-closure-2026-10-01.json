@@ -17,10 +17,10 @@
     "7/3 encoded、2/1 deadline与现有cache/presentation budgets"
   ],
   "requirement_summary": {
-    "partial": 38,
+    "partial": 41,
     "verified_device": 17,
     "superseded": 2,
-    "pending": 49,
+    "pending": 46,
     "verified_toolchain": 6
   },
   "historical_requirement_summary": {
@@ -36,7 +36,8 @@
     "pending_partial": "Verify remaining_acceptance while preserving already verified subcontracts.",
     "missing_evidence_is_not_a_production_defect": true,
     "production_reopen_authorized_by_status": false,
-    "repair_precondition": "Confirm a fresh failing production contract and its owner before changing code."
+    "repair_precondition": "Confirm a fresh failing production contract and its owner before changing code.",
+    "requirement": "Original Plan wording retained for historical scope. Current implementation and verification use current_contract and remaining_acceptance, never retired owners from the historical text."
   },
   "requirements": [
     {
@@ -103,7 +104,8 @@
         "Valid final content-layer composition, buffer/fence/GPU and visual/input evidence on the reproducing hardware."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。"
     },
     {
       "id": "SWG-PLAN-003",
@@ -284,7 +286,8 @@
         "P0：真机验证dev.273 durable partial read owner解耦：普通无local state页应记录`local-hydration-miss`且prepare成本显著低于dev.272约87ms中位；exact+verified-equivalent miss不得materialize durable-store `DownloadSession`。真实cold partial命中仍应`local-hydration-ready`且`committedLength>0`，并在provider `downloadStarted`前发布可消费prefix；local bytes继续只由`ArtifactCacheReadScheduler`调度。若真实hit后仍无首帧，冻结下载层并转查Decode→Upload→presentation generation。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "P0：真机验证dev.273 durable partial read owner解耦：普通无local state页应记录`local-hydration-miss`且prepare成本显著低于dev.272约87ms中位；exact+verified-equivalent miss不得materialize durable-store `DownloadSession`。真实cold partial命中仍应`local-hydration-ready`且`committedLength>0`，并在provider `downloadStarted`前发布可消费prefix；local bytes继续只由`ArtifactCacheReadScheduler`调度。若真实hit后仍无首帧，冻结下载层并转查Decode→Upload→presentation generation。"
     },
     {
       "id": "SWG-PLAN-009",
@@ -296,7 +299,8 @@
         "P0：真机验证transport/source lease与body-read permit已解耦：normal steady state `globalTransportLeases<=5`、current handoff最多6；parked live response不得释放transport lease，durable artifact local body必须释放两者。比较`sourceRequestPlanMicros/sourcePlanGateWaitMicros/sourceHostOpenMicros`相对dev.270是否回落；若仍慢，分别下钻Venera单invocation gate与host open，不扩大连接数或缩3/7。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "P0：真机验证transport/source lease与body-read permit已解耦：normal steady state `globalTransportLeases<=5`、current handoff最多6；parked live response不得释放transport lease，durable artifact local body必须释放两者。比较`sourceRequestPlanMicros/sourcePlanGateWaitMicros/sourceHostOpenMicros`相对dev.270是否回落；若仍慢，分别下钻Venera单invocation gate与host open，不扩大连接数或缩3/7。"
     },
     {
       "id": "SWG-PLAN-010",
@@ -308,7 +312,8 @@
         "P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。"
     },
     {
       "id": "SWG-PLAN-011",
@@ -320,7 +325,8 @@
         "后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。"
     },
     {
       "id": "SWG-PLAN-012",
@@ -332,7 +338,8 @@
         "dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。"
     },
     {
       "id": "SWG-PLAN-013",
@@ -344,19 +351,31 @@
         "dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。"
     },
     {
       "id": "SWG-PLAN-014",
       "group": "P0：Current / Previous 真实执行槽真机闭环",
       "requirement": "P0：真机验证dev.276 Venera current handoff gate闭环：resolver warm态继续允许3 hit+1 page-specific origin；旧current active invocation降出1000且已有新current1000 waiter时应请求取消旧requestId，但single Venera permit必须等旧invocation真实退出后再转交。若current gate wait明显下降后仍慢，再分别看`sourcePlanRuntimeInvocationMicros/sourceHostOpenMicros`；不扩大JS并发、不预解析整章。",
       "historical_status": "pending",
-      "status": "pending",
+      "status": "partial",
       "remaining_acceptance": [
-        "P0：真机验证dev.276 Venera current handoff gate闭环：resolver warm态继续允许3 hit+1 page-specific origin；旧current active invocation降出1000且已有新current1000 waiter时应请求取消旧requestId，但single Venera permit必须等旧invocation真实退出后再转交。若current gate wait明显下降后仍慢，再分别看`sourcePlanRuntimeInvocationMicros/sourceHostOpenMicros`；不扩大JS并发、不预解析整章。"
+        "Ordinary real-origin warm resolver3-hit+page-origin sequence and request-plan/gate/host-open timing; preserve the verified current-only gate and single physical permit."
       ],
-      "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "evidence_reproducibility": "available_references",
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Venera cache hits remain source-owned. Current promotion or old-current demotion with a current waiter requests cancellation through the original NetLane TaskControl; the single canonical invocation permit transfers only after JS finished and every admitted native bridge call physically exits. The selected six-case runtime gate is verified; ordinary warm3-hit+page-origin behavior and Reader timing remain independent.",
+      "verified_subcontracts": [
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05",
+          "scope": "Selected actual source/NetLane/Service/Binder/WebView current-only and previous-pressure gate; six cases keep canonical concurrency1 and invocation physical-exit ordering."
+        }
+      ],
+      "current_evidence_references": [
+        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05"
+      ]
     },
     {
       "id": "SWG-PLAN-015",
@@ -392,12 +411,23 @@
       "group": "P0：Current / Previous 真实执行槽真机闭环",
       "requirement": "复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。",
       "historical_status": "pending",
-      "status": "pending",
+      "status": "partial",
       "remaining_acceptance": [
-        "复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。"
+        "Actual Reader previous660-to780 admission-to-downloadStarted latency and real-source gate timing; retain selected runtime previous-pressure/exit acceptance."
       ],
-      "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "evidence_reproducibility": "available_references",
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Previous pressure780 uses the existing gate preemption difference40 and original TaskControl. The selected actual runtime previous-pressure cancellation and invocation-exit ordering are verified. JS finished alone cannot transfer the permit while admitted native calls still run; no second JS context or network gate.",
+      "verified_subcontracts": [
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05",
+          "scope": "Selected actual source/NetLane/Service/Binder/WebView current-only and previous-pressure gate; six cases keep canonical concurrency1 and invocation physical-exit ordering."
+        }
+      ],
+      "current_evidence_references": [
+        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05"
+      ]
     },
     {
       "id": "SWG-PLAN-017",
@@ -409,7 +439,8 @@
         "使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。"
     },
     {
       "id": "SWG-PLAN-018",
@@ -421,7 +452,8 @@
         "同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。"
     },
     {
       "id": "SWG-PLAN-019",
@@ -433,7 +465,8 @@
         "首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。"
     },
     {
       "id": "SWG-PLAN-020",
@@ -470,12 +503,29 @@
       "group": "P0：Current 首帧 policy/execution 真机闭环",
       "requirement": "Venera current pressure 取消旧 prefetch 时，先按 requestId 断开 native HTTP；Dart single-context permit 只能在旧 JavaScript `finished(requestId)` 后转交。真机 trace 若 current origin仍长尾，再拆 request-plan/JS/onImageLoad/HTTP-open各阶段，而不是继续修改字节chunk或缩7/3。",
       "historical_status": "pending",
-      "status": "pending",
+      "status": "partial",
       "remaining_acceptance": [
-        "Venera current pressure 取消旧 prefetch 时，先按 requestId 断开 native HTTP；Dart single-context permit 只能在旧 JavaScript `finished(requestId)` 后转交。真机 trace 若 current origin仍长尾，再拆 request-plan/JS/onImageLoad/HTTP-open各阶段，而不是继续修改字节chunk或缩7/3。"
+        "Actual-origin slow current request-plan/hook/HTTP-open attribution and default system-DNS physical retirement; retain existing lane capacities, chunks and7/3."
       ],
-      "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "evidence_reproducibility": "available_references",
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Venera cancellation follows requestId to the current isolated Dart rhttp CancelToken. Kotlin/JS retain request grouping, Cookie/manual redirect and source cache authority; the canonical permit waits for JS finished plus admitted native-call physical exit. Selected current-pressure gate and held HTTP-body cancellation are verified. HTTP Future cancellation does not prove default system-DNS exit.",
+      "verified_subcontracts": [
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05",
+          "scope": "Selected actual source/NetLane/Service/Binder/WebView current-only and previous-pressure gate; six cases keep canonical concurrency1 and invocation physical-exit ordering."
+        },
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-runtime-network-pipeline-2026-10-05",
+          "scope": "Selected held resolver HTTP-body cancellation and TCP peer exit; default system-DNS waiting is independent."
+        }
+      ],
+      "current_evidence_references": [
+        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/venera-priority-runtime-device-acceptance-2026-10-05",
+        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-runtime-network-pipeline-2026-10-05"
+      ]
     },
     {
       "id": "SWG-PLAN-022",
@@ -827,7 +877,8 @@
         "对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。"
     },
     {
       "id": "SWG-PLAN-032",
@@ -927,7 +978,8 @@
         "在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。"
     },
     {
       "id": "SWG-PLAN-034",
@@ -939,7 +991,8 @@
         "分别执行详情下拉 metadata refresh、章节目录刷新和 Reader progress更新，确认这些操作不删除 retained cover；只有精确 artwork revision/force refresh、整漫画资源删除或用户显式清缓存可以删除。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "分别执行详情下拉 metadata refresh、章节目录刷新和 Reader progress更新，确认这些操作不删除 retained cover；只有精确 artwork revision/force refresh、整漫画资源删除或用户显式清缓存可以删除。"
     },
     {
       "id": "SWG-PLAN-035",
@@ -951,7 +1004,8 @@
         "对同一封面先由 source browse以 transient写入，再从 history/details请求，确认同一个 canonical key只发生 retention promotion，不创建第二文件、第二 namespace或第二下载。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "对同一封面先由 source browse以 transient写入，再从 history/details请求，确认同一个 canonical key只发生 retention promotion，不创建第二文件、第二 namespace或第二下载。"
     },
     {
       "id": "SWG-PLAN-036",
@@ -992,7 +1046,8 @@
         "使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。"
     },
     {
       "id": "SWG-PLAN-038",
@@ -1017,7 +1072,8 @@
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。"
     },
     {
       "id": "SWG-PLAN-039",
@@ -1131,7 +1187,8 @@
         "Original real WNACG HTTP-origin cover/page sample; controlled installed-client HTTP/redirect/Cookie cases remain distinct."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "用 `mihon:6551136894818591762` 重新打开 WNACG 列表、详情和 Reader，确认 `http://img*.wnimg*.ru/...` 封面与正文由原 source request成功返回；不得新增域名白名单、URL改写或第二 transport。"
     },
     {
       "id": "SWG-PLAN-042",
@@ -1214,7 +1271,8 @@
         "真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。"
     },
     {
       "id": "SWG-PLAN-046",
@@ -1226,7 +1284,8 @@
         "在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。"
     },
     {
       "id": "SWG-PLAN-047",
@@ -1236,13 +1295,16 @@
       "status": "pending",
       "current_evidence_references": [
         "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-client-cookie-redirect-2026-10-05",
-        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-failure-retry-pipeline-2026-10-05"
+        "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/source-failure-retry-pipeline-2026-10-05",
+        "docs/SPEC.md",
+        "docs/ARCHITECTURE.md"
       ],
       "remaining_acceptance": [
-        "对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper和非媒体响应必须在进入 Pipeline前切回 source client，正常无状态媒体仍保持 host streaming。"
+        "Actual remaining Mihon/Venera origins, wrappers, redirect and Cookie variants and typed semantic rejection/replacement; selected Cookie8/FailureRetry6 cases remain accepted."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Record host-replay/source-client capability decisions. Redirect, Set-Cookie and unknown/source-owned wrappers preserve their source-client semantics. Non-media2xx is sourceMediaSemanticRejected and enters the single bounded source recovery owner; do not replay the same locator through full runtime merely because sourceMediaProtocolMismatch is present. Stateless supported media keeps host streaming."
     },
     {
       "id": "SWG-PLAN-048",
@@ -1254,7 +1316,8 @@
         "全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。"
     },
     {
       "id": "SWG-PLAN-049",
@@ -1400,7 +1463,8 @@
         "同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。"
     },
     {
       "id": "SWG-PLAN-052",
@@ -1412,7 +1476,8 @@
         "冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。"
     },
     {
       "id": "SWG-PLAN-053",
@@ -1424,7 +1489,8 @@
         "继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。"
     },
     {
       "id": "SWG-PLAN-054",
@@ -1532,7 +1598,8 @@
         "Actual mirror/settings/Web login continuity and more-than-eight mixed-plugin32-session admission."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Venera：连续修改镜像/设置和完成 Web登录，确认 active source/session不被 replacement；安装超过8个混合外部插件，确认生产32-session上限下不会因第9个开始静默消失。"
     },
     {
       "id": "SWG-PLAN-058",
@@ -1544,7 +1611,8 @@
         "真机打开含大量预览/评论头像的详情页，确认普通 artwork每项只有一个 provider listener；裁剪/尺寸测量项只有一个显式 ImageStream listener，build/layout与 decode不因加载占位再挂第二个 Image。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "真机打开含大量预览/评论头像的详情页，确认普通 artwork每项只有一个 provider listener；裁剪/尺寸测量项只有一个显式 ImageStream listener，build/layout与 decode不因加载占位再挂第二个 Image。"
     },
     {
       "id": "SWG-PLAN-059",
@@ -1556,7 +1624,8 @@
         "对 cover/preview/avatar分别导出 gateway role/cache key，确认详情 loader显式透传 role且不会全部误写入 cover namespace。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "对 cover/preview/avatar分别导出 gateway role/cache key，确认详情 loader显式透传 role且不会全部误写入 cover namespace。"
     },
     {
       "id": "SWG-PLAN-060",
@@ -1622,7 +1691,8 @@
         "用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。"
     },
     {
       "id": "SWG-PLAN-063",
@@ -1634,7 +1704,8 @@
         "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。"
     },
     {
       "id": "SWG-PLAN-064",
@@ -1646,7 +1717,8 @@
         "在发生“验证接近完成又重新开始”的设备上确认验证 WebView使用 provider真实 UA；导出 handoff snapshot UA与 Mihon首个重试请求 UA，必须一致。若 challenge仍循环，继续检查 TLS/IP/站点策略，不得重新伪造 UA。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在发生“验证接近完成又重新开始”的设备上确认验证 WebView使用 provider真实 UA；导出 handoff snapshot UA与 Mihon首个重试请求 UA，必须一致。若 challenge仍循环，继续检查 TLS/IP/站点策略，不得重新伪造 UA。"
     },
     {
       "id": "SWG-PLAN-065",
@@ -1674,7 +1746,8 @@
       "missing_local_evidence": [
         "/tmp/zic-source-browser-ui-before.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "首次从漫画源进入远程详情并退出，再连续进入同一漫画；确认第二次及后续导航不被 comic route identity lock吞掉。Reader返回后详情/首页阅读历史应立即反映最终进度。"
     },
     {
       "id": "SWG-PLAN-066",
@@ -1699,7 +1772,8 @@
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在插件 runtime未激活/激活失败时重启 App，确认阅读历史中已有 durable HTTP(S)封面仍可显示；durable miss才等待来源恢复。"
     },
     {
       "id": "SWG-PLAN-067",
@@ -1853,7 +1927,8 @@
         "Actual Web verification, settings mutation and failed same-package replacement preserving the old active source."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "已激活插件连续执行 WebView验证、设置修改和同包更新；故意让 replacement activation失败，旧插件必须继续出现在 activeSources并可请求。"
     },
     {
       "id": "SWG-PLAN-071",
@@ -1865,7 +1940,8 @@
         "使用直接字符串和 `@string/...` metadata 的真实 Mihon APK分别验证 extensionLib、单入口和多入口 class解析。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "使用直接字符串和 `@string/...` metadata 的真实 Mihon APK分别验证 extensionLib、单入口和多入口 class解析。"
     },
     {
       "id": "SWG-PLAN-072",
@@ -1900,7 +1976,8 @@
         "对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断，不能静默表现为“未检测到”。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断，不能静默表现为“未检测到”。"
     },
     {
       "id": "SWG-PLAN-074",
@@ -2025,7 +2102,8 @@
         "在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。"
     },
     {
       "id": "SWG-PLAN-077",
@@ -2066,7 +2144,8 @@
         "在 Venera/Mihon 多次切换且目标请求失败时，确认页面在同一帧切换为目标缓存或目标 loading/error，绝不显示旧 source 卡片。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "在 Venera/Mihon 多次切换且目标请求失败时，确认页面在同一帧切换为目标缓存或目标 loading/error，绝不显示旧 source 卡片。"
     },
     {
       "id": "SWG-PLAN-079",
@@ -2078,7 +2157,8 @@
         "对禁漫天堂执行强制刷新，确认只有真实 Cloudflare challenge 产生 `sourceVerificationRequired`；普通 403/timeout/解析错误保持原分类，主/兼容 interceptor 行为一致。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "对禁漫天堂执行强制刷新，确认只有真实 Cloudflare challenge 产生 `sourceVerificationRequired`；普通 403/timeout/解析错误保持原分类，主/兼容 interceptor 行为一致。"
     },
     {
       "id": "SWG-PLAN-080",
@@ -2090,7 +2170,8 @@
         "完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。"
     },
     {
       "id": "SWG-PLAN-081",
@@ -2102,7 +2183,8 @@
         "验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。"
     },
     {
       "id": "SWG-PLAN-082",
@@ -2114,7 +2196,8 @@
         "让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。"
     },
     {
       "id": "SWG-PLAN-083",
@@ -2177,7 +2260,8 @@
         "验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。"
     },
     {
       "id": "SWG-PLAN-086",
@@ -2189,7 +2273,8 @@
         "确认目标页网络不等待 current source sealed、完整下载或 holder depth。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "确认目标页网络不等待 current source sealed、完整下载或 holder depth。"
     },
     {
       "id": "SWG-PLAN-087",
@@ -2201,7 +2286,8 @@
         "验证 transition 首帧后 current 基础水位先于 transition 深水位，且反向拖动不重建同一 identity。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "验证 transition 首帧后 current 基础水位先于 transition 深水位，且反向拖动不重建同一 identity。"
     },
     {
       "id": "SWG-PLAN-088",
@@ -2299,10 +2385,15 @@
       "historical_status": "pending",
       "status": "pending",
       "remaining_acceptance": [
-        "对比 transport chunk、64 KiB session append、source revision、decode batch、holder depth、deadline 和 present cadence。"
+        "Actual remote animated-source continuous playback correlation across transport, aggregated ingress, source revision, decode batches, deadline and present cadence."
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "Compare raw transport chunks with DownloadJob ingress aggregation: startup16KiB then sourceProgressQuantumBytes64KiB. DecodeSession owns source revision, prefix need-more-data and staged decode batches; holder/deadline/present cadence are observations and never network eligibility gates. Keep the existing streaming and append owners.",
+      "current_evidence_references": [
+        "docs/SPEC.md",
+        "docs/ARCHITECTURE.md"
+      ]
     },
     {
       "id": "SWG-PLAN-092",
@@ -2314,7 +2405,8 @@
         "若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。"
     },
     {
       "id": "SWG-PLAN-093",
@@ -2326,7 +2418,8 @@
         "真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。"
     },
     {
       "id": "SWG-PLAN-094",
@@ -2522,7 +2615,8 @@
         "dev.228后真机验证改为直接统计`verified-transfer-acquire-alias`的join/rejection及physical state；不得再期待`verified-equivalent-promotion-takeover`。若同一强等价页仍出现独立重复physical owner，先区分“alias前已各自创建”“ambiguous existing owners”“proof尚未恢复”三类，再决定是否扩展TransferKey coverage，不恢复artifact promotion observer。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "dev.228后真机验证改为直接统计`verified-transfer-acquire-alias`的join/rejection及physical state；不得再期待`verified-equivalent-promotion-takeover`。若同一强等价页仍出现独立重复physical owner，先区分“alias前已各自创建”“ambiguous existing owners”“proof尚未恢复”三类，再决定是否扩展TransferKey coverage，不恢复artifact promotion observer。"
     },
     {
       "id": "SWG-PLAN-099",
@@ -2534,7 +2628,8 @@
         "dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。"
     },
     {
       "id": "SWG-PLAN-100",
@@ -2870,7 +2965,8 @@
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。"
     },
     {
       "id": "SWG-PLAN-110",
@@ -2882,7 +2978,8 @@
         "设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。"
     },
     {
       "id": "SWG-PLAN-111",
@@ -2894,7 +2991,8 @@
         "验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。"
       ],
       "evidence_reproducibility": "no_recorded_acceptance",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。"
     },
     {
       "id": "SWG-PLAN-112",
@@ -2919,7 +3017,8 @@
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "current_contract": "设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，且未访问书架页不创建额外 cover loader。"
     }
   ],
   "supplemental_acceptance": {
@@ -3327,10 +3426,11 @@
       "remaining": [
         "Original19/20 intermittent loading, drag/ballistic/input latency and final physical display.",
         "Remaining Flutter layout/semantics, other allocation/GC owners and source/product acceptance.",
-        "Any fused locator decoder remains a candidate, not a production repair or accepted policy change."
+        "Fused locator decoding was rejected after equal selected allocations; do not retry it or skip compatibility checks without new matched evidence."
       ],
       "observed_allocation_root_cause": "The unchanged locator replay-coordinate predicate base64-decodes and materializes a UTF8 string/JSON parser for every checked page; 288 checks yield 288 Uint8List and2304 GrowableList selected allocations. This is not proof of the reported fixed-position stutter or loading cause.",
-      "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements"
+      "current_requirement_state": "docs/audits/state-governance-closure-2026-10-01.json#requirements",
+      "followup": "docs/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-locator-fused-decoding-2026-10-05"
     },
     "reader-retained-tail-return-cpu-attribution-2026-10-03": {
       "date": "2026-10-03",
@@ -3852,7 +3952,7 @@
       "parent_acceptance_complete": false,
       "remaining": [
         "SWG-PLAN-088 priority transitions and request-plan preemption physical transfer.",
-        "SWG-PLAN-089 URLConnection / DNS fallback blocking-read cancellation and headers/Cookies.",
+        "SWG-PLAN-089 current isolated rhttp default system-DNS waiting and physical retirement; selected HTTP/Cookie cases remain independently verified.",
         "Original19/20 intermittent loading, fixed-position stutter, total GC, input latency and final physical display.",
         "Other open product/migration/origin/client/partial/live source acceptance."
       ],
@@ -3877,7 +3977,7 @@
       "runner": "apps/app/test/device_acceptance/venera_priority_runtime.py",
       "remaining": [
         "SWG-PLAN-088 real-origin second-scale request-plan/gate/hook/native-network attribution remains open.",
-        "SWG-PLAN-089 URLConnection / DNS fallback blocking-read cancellation and headers/Cookies.",
+        "SWG-PLAN-089 current isolated rhttp default system-DNS waiting and physical retirement; selected HTTP/Cookie cases are independently verified.",
         "Original19/20 intermittent loading, fixed-position stutter, total GC, input latency and final physical display.",
         "Other open product/migration/origin/client/partial/live source acceptance."
       ],
