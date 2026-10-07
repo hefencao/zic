@@ -17,10 +17,10 @@
     "7/3 encoded、2/1 deadline与现有cache/presentation budgets"
   ],
   "requirement_summary": {
-    "partial": 39,
-    "verified_device": 19,
+    "partial": 38,
+    "verified_device": 21,
     "superseded": 2,
-    "pending": 46,
+    "pending": 45,
     "verified_toolchain": 6
   },
   "historical_requirement_summary": {
@@ -1054,25 +1054,31 @@
       "group": "P0：Artwork 生命周期与更新语义真机闭环",
       "requirement": "同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。",
       "historical_status": "partial",
-      "status": "partial",
+      "status": "verified_device",
       "verified_subcontracts": [
         {
           "kind": "Device-observed",
           "file": "/tmp/zic-flushed-static-reader.jsonl",
           "result": "Nine warm Home covers requested in 0..6.457ms, source ready in 50.079..54.963ms, first frames 124.541..156.861ms; all durableCacheFile, before services open81.804ms and external-plugin-host ready49.426s. No shelf cover loader observed before visiting shelf. Cold/source-failure/alias-specific scenarios remain separately unverified."
+        },
+        {
+          "kind": "Device-and-toolchain-verified-current",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+          "scope": "Current process-cold durable-hit covers return and display before external plugin activation. The production gateway returns ResourceCacheManager owned MemoryEncodedResourceSource bytes; existing cache/gateway tests prove durable-cache origin does not lend a file path. Source failure, alias startup and memory-pressure retention remain in063/066/112/037."
         }
       ],
       "current_evidence_references": [
-        "/tmp/zic-flushed-static-reader.jsonl"
+        "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+        "apps/app/lib/source_resource_gateway.dart",
+        "packages/resource_cache/test/resource_cache_test.dart",
+        "apps/app/test/source_resource_gateway_test.dart"
       ],
-      "remaining_acceptance": [
-        "Cold/source-failure/canonical-alias variants and memory-pressure retention beyond the recorded warm startup."
-      ],
-      "evidence_reproducibility": "historical_raw_files_missing",
+      "remaining_acceptance": [],
+      "evidence_reproducibility": "current_available; historical_raw_files_missing",
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "next_action": "closed_cold_gateway_owned_bytes_contract; preserve037_063_066_112_acceptance",
       "current_contract": "同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。"
     },
     {
@@ -1722,13 +1728,24 @@
       "group": "P0：Reader热路径、Mihon章节与Artwork身份设备闭环",
       "requirement": "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。",
       "historical_status": "pending",
-      "status": "pending",
+      "status": "partial",
       "remaining_acceptance": [
-        "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。"
+        "Device mihon:resource: durable hit and source-unavailable durable miss waiting without local-file fallback; preserve the verified HTTP(S) hit."
       ],
-      "evidence_reproducibility": "no_recorded_acceptance",
+      "evidence_reproducibility": "current_available",
       "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
-      "current_contract": "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。"
+      "current_contract": "在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。",
+      "verified_subcontracts": [
+        {
+          "kind": "Device-verified-current-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+          "scope": "Process-cold Home HTTP(S) durable artwork hits display while external source capability is unavailable; production gateway probes owned cached bytes before resolving the source. Existing toolchain tests also cover a mihon:resource: durable hit with zero source resolution."
+        }
+      ],
+      "current_evidence_references": [
+        "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+        "apps/app/test/source_resource_gateway_test.dart"
+      ]
     },
     {
       "id": "SWG-PLAN-064",
@@ -1748,7 +1765,7 @@
       "group": "P0：Cloudflare会话、详情路由与插件恢复设备闭环",
       "requirement": "首次从漫画源进入远程详情并退出，再连续进入同一漫画；确认第二次及后续导航不被 comic route identity lock吞掉。Reader返回后详情/首页阅读历史应立即反映最终进度。",
       "historical_status": "partial",
-      "status": "partial",
+      "status": "verified_device",
       "verified_subcontracts": [
         {
           "kind": "Device-observed",
@@ -1757,19 +1774,24 @@
           "identity_preserved": true,
           "second_details_route_frame_us": 22127,
           "limits": "Reader final progress reflection remains pending."
+        },
+        {
+          "kind": "Device-verified-current-subcontract",
+          "file": "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/route-progress.jsonl",
+          "result": "Ordinary Release Mihon JM new comic enters with localMatched=false, persists144 source chapters and subsequently opens repeatedly with localMatched=true and details-first-frame. Fresh XML chapter entry creates pipeline-reader-16 with33 WebP pages; slider reaches displayedPageIndex1, details immediately shows page2 and first Home return places this comic first. Unknown page-count metadata did not disable Reader entry; current10000-event export has no failure kinds."
         }
       ],
       "current_evidence_references": [
-        "/tmp/zic-source-browser-ui-before.jsonl"
+        "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/route-progress.jsonl",
+        "apps/app/lib/home_shell_source_compat.dart",
+        "apps/app/test/home_route_admission_test.dart"
       ],
-      "remaining_acceptance": [
-        "Remaining repeated details route and immediate final-progress projection cases beyond retained historical observations."
-      ],
-      "evidence_reproducibility": "historical_raw_files_missing",
+      "remaining_acceptance": [],
+      "evidence_reproducibility": "current_available; historical_raw_files_missing",
       "missing_local_evidence": [
         "/tmp/zic-source-browser-ui-before.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "next_action": "closed_remote_to_local_repeated_route_and_immediate_final_progress; preserve_original_loading_and_performance_acceptance",
       "current_contract": "首次从漫画源进入远程详情并退出，再连续进入同一漫画；确认第二次及后续导航不被 comic route identity lock吞掉。Reader返回后详情/首页阅读历史应立即反映最终进度。"
     },
     {
@@ -1783,15 +1805,20 @@
           "kind": "Device-observed",
           "file": "/tmp/zic-flushed-static-reader.jsonl",
           "result": "Nine warm Home covers requested in 0..6.457ms, source ready in 50.079..54.963ms, first frames 124.541..156.861ms; all durableCacheFile, before services open81.804ms and external-plugin-host ready49.426s. No shelf cover loader observed before visiting shelf. Cold/source-failure/alias-specific scenarios remain separately unverified."
+        },
+        {
+          "kind": "Device-verified-current-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+          "scope": "Current ordinary process-cold Home durable HTTP(S) covers display before the external plugin controller is available. This verifies unactivated-source hits; activation failure/miss and canonical-alias shelf variants are separate."
         }
       ],
       "current_evidence_references": [
-        "/tmp/zic-flushed-static-reader.jsonl"
+        "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109"
       ],
       "remaining_acceptance": [
-        "Cold runtime-failure durable cover hit/miss variants; warm-start observations do not prove failure recovery."
+        "Cold activation-failure durable cover hit and durable-miss waiting for source recovery; retain verified unactivated-source hit."
       ],
-      "evidence_reproducibility": "historical_raw_files_missing",
+      "evidence_reproducibility": "current_available; historical_raw_files_missing",
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
@@ -3038,20 +3065,25 @@
           "kind": "Device-observed",
           "file": "/tmp/zic-flushed-static-reader.jsonl",
           "result": "Nine warm Home covers requested in 0..6.457ms, source ready in 50.079..54.963ms, first frames 124.541..156.861ms; all durableCacheFile, before services open81.804ms and external-plugin-host ready49.426s. No shelf cover loader observed before visiting shelf. Cold/source-failure/alias-specific scenarios remain separately unverified."
+        },
+        {
+          "kind": "Device-verified-current-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109",
+          "scope": "Current ordinary process-cold Home durable HTTP(S) covers display before the external plugin controller is available. This verifies unactivated-source hits; activation failure/miss and canonical-alias shelf variants are separate."
         }
       ],
       "current_evidence_references": [
-        "/tmp/zic-flushed-static-reader.jsonl"
+        "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-109"
       ],
       "remaining_acceptance": [
-        "Cold source-failure/canonical-alias startup and unopened-shelf loader absence beyond recorded warm startup."
+        "Persisted canonical-alias shelf deduplication before plugin activation and unopened-shelf loader absence on the current cold process; retain verified source-independent durable cover hits."
       ],
-      "evidence_reproducibility": "historical_raw_files_missing",
+      "evidence_reproducibility": "current_available; historical_raw_files_missing",
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
       "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
-      "current_contract": "设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，且未访问书架页不创建额外 cover loader。"
+      "current_contract": "Source-independent canonical artwork cache hits display without plugin resource requests. Persisted same-source canonical aliases produce one shelf card before activation; unopened shelf does not create extra cover loaders. No raw-key-first compatibility path is restored."
     }
   ],
   "supplemental_acceptance": {

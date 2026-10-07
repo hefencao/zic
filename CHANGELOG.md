@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Close065 on ordinary Mihon JM: first source detail saves144 chapters, repeated local routes open, actual Reader entry reaches page2 and immediately updates details/first Home history. Close038 against current process-cold durable hits and owned-byte tests; reuse only the hit component in063/066/112 and correct112's retired raw-key wording. Keep source failure/miss, alias, pressure and original loading/performance acceptance open. Unknown page-count metadata was a test interpretation error; production is unchanged.
+
 - Close Plan109 against the existing current ordinary Release process-cold startup: new engine and visible Home precede durable capabilities, and nine durable-hit covers display before download queue/plugin readiness. Accept ADR0123, correct its source-availability retry/queue-ready wording and mark ADR0124's superseded file/raw-key clauses. Keep mixed-latency cover110, source/alias and physical-display acceptance open; production is unchanged and no audit file is added.
 
 - Verify ordinary Reader route progress on the current Release: chapters20/21 retain separate pages5/75 and reentry restores5; another existing Venera history advances to page2, moves to first on the initial Home return and restores2. Close only Plan050 and reuse its product result in061/084; checkpoint frame cost, SQLite transaction cadence and original loading/performance remain open. Update existing state and Plan only; production is unchanged.

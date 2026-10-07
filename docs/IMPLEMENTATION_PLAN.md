@@ -45,7 +45,6 @@
 ## P0：Artwork 生命周期与更新语义真机闭环
 
 - 使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
-- 同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。
 - 普通主入口用来源实际确认的同源successor验证Home版本更新筛选；以home-update-shelf-admission审计中的当前筛选/metadata/progress合同为基线，不因父项partial改写已验行为。
 - 普通主入口验证真实来源版本首次入架确认既有chapter/version通知、后续successor仍可提醒；隔离来源验收不得代替真实版本发现流程（ADR0383 Provisional）。
 
@@ -84,13 +83,12 @@
 
 - 对比翻页/退出Reader frame timing：每页checkpoint只发isolate消息，不在UI isolate执行sqlite3/章节JSON解码，不逐页触发Home rebuild；按ADR0303在pop前完成durable barrier，返回后仅targeted progress更新，不整库reload。
 - 用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。
-- 在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。
+- 在source暂不可用时补真机`mihon:resource:` durable封面命中和durable miss等待来源，不能回退local file loader。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
 
 - 在发生“验证接近完成又重新开始”的设备上确认验证 WebView使用 provider真实 UA；导出 handoff snapshot UA与 Mihon首个重试请求 UA，必须一致。若 challenge仍循环，继续检查 TLS/IP/站点策略，不得重新伪造 UA。
-- 首次从漫画源进入远程详情并退出，再连续进入同一漫画；确认第二次及后续导航不被 comic route identity lock吞掉。Reader返回后详情/首页阅读历史应立即反映最终进度。
-- 在插件 runtime未激活/激活失败时重启 App，确认阅读历史中已有 durable HTTP(S)封面仍可显示；durable miss才等待来源恢复。
+- 在插件runtime激活失败时重启App，验证durable封面命中和miss等待来源恢复。
 
 ## P0：Mihon 插件识别设备闭环
 
@@ -149,4 +147,4 @@
 ## P1：首页与缓存身份
 - 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。
 - 验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。
-- 设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，且未访问书架页不创建额外 cover loader。
+- 验证当前冷进程中已持久化canonical alias的同源raw ID在插件激活前只显示一张书架卡片，未访问书架页不创建额外cover loader。
