@@ -8,7 +8,11 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:resource_cache/resource_cache.dart';
+// Test-only access to the existing durable response store.
+// ignore: depend_on_referenced_packages
+import 'package:storage/storage.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
@@ -34,6 +38,7 @@ ComicVersionRelationStore get _versions => _store as ComicVersionRelationStore;
 late MemoryChapterDownloadService _downloads;
 late WholeComicDownloadQueue _queue;
 late ResourceCacheCoordinator _cache;
+final _startup = HomeStartupTelemetry(clock: const SystemClock(), sink: _trace);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +47,7 @@ Future<void> main() async {
   )));
   await _frames(2);
   var completed = false;
+  var resourcesReady = false;
   Directory? root;
   try {
     root = await Directory.systemTemp.createTemp('zic-home-update-');
@@ -51,6 +57,7 @@ Future<void> main() async {
     );
     _queue = WholeComicDownloadQueue(downloads: _downloads);
     _cache = ResourceCacheCoordinator();
+    resourcesReady = true;
     await _seed();
     await _mount();
     _check('four-cases-only-shelved-update-visible',
@@ -175,27 +182,32 @@ Future<void> main() async {
       (await _store.getSavedComic(_sourceId, 'old-comic'))!.sourceUpdateAt == null &&
       (await _versions.listAllComicVersionRelations()).length == 2 &&
       (await _store.get(_sourceId, 'old-comic:chapter'))!.progress != null);
+    await _artworkChecks(root);
     completed = true;
-    await _unmount();
-    await _queue.close();
-    await _downloads.close();
-    await _cache.close();
-    await _store.close();
   } on Object catch (error, stack) {
     _checks.add(<String, Object?>{
       'step': 'fixture', 'status': 'failed', 'error': error.toString(),
       'stack': stack.toString(),
     });
   } finally {
+    if (resourcesReady) {
+      await _unmount();
+      await _queue.close();
+      await _downloads.close();
+      await _cache.close();
+      await _store.close();
+    }
+    if (root != null && await root.exists()) await root.delete(recursive: true);
     final result = <String, Object?>{
       'completed': completed,
       'boundary': 'Production Home/details callbacks and SQLite reopen/backup; '
-          'isolated controlled source, not a real-origin or performance acceptance.',
+          'controlled source/file-store holds verify independent cover display. '
+          'No real-origin or final-display performance claim.',
       'userStoresOpened': false,
       'checks': _checks,
       'comicLoads': _source.comicLoads,
       'trace': _trace.exportEvents.map((event) => event.toJson()).toList(),
-      'temporaryRoot': root?.path,
+      'temporaryRootRemoved': root != null && !await root.exists(),
     };
     await exportDebugTraceFile(
       suggestedName: 'zic-home-update-acceptance-'
@@ -208,6 +220,131 @@ Future<void> main() async {
     )))));
     await _frames(2);
   }
+}
+
+Future<void> _artworkChecks(Directory root) async {
+  await _unmount();
+  await _store.close();
+  await _cache.close();
+  final libraryPath = '${root.path}/artwork-library';
+  final cachePath = '${root.path}/artwork-cache';
+  _store = await openImportedLibraryStore(libraryPath);
+  final held = _HeldArtworkStore(FileResourceCacheByteStore(cachePath));
+  _cache = ResourceCacheCoordinator(responses: ResourceCacheManager(byteStore: held));
+  _source.artworkMode = true;
+  for (final id in <String>['fast-cover', 'slow-cover', 'shelf-only', 'alias-one', 'alias-two']) {
+    await _store.upsertSavedComic(SavedComicRecord.fromManifest(
+      _source.manifest(id), canonicalComicId: id.startsWith('alias-') ? 'alias' : null,
+      sourceUpdateAt: id.endsWith('-cover') ? _signal : null,
+    ));
+    await _store.saveComicPreference(ComicPreference.defaults(
+      sourceId: _sourceId, comicId: id, sourceKind: ComicSourceKind.remote,
+    ).copyWith(inShelf: true));
+  }
+  int frames(String id) => _trace.exportEvents.where((event) =>
+      event.kind == TraceEventKind.homeCoverFirstFrame &&
+      event.identityHash == 'home-update:$_sourceId\u0000$id').length;
+  try {
+    await _mount();
+    await _wait(() => held.started.isCompleted && frames('fast-cover') == 1);
+    _check('fast-cover-paints-before-slow-source-or-durable-write',
+      !_source.slowCover.isCompleted && !held.release.isCompleted &&
+      held.writesCompleted == 0 && frames('slow-cover') == 0);
+    _check('unopened-shelf-does-not-start-hidden-cover-loaders',
+      _element((element) => element.widget.key == bookshelfPageKey) == null &&
+      !_source.resourceLoads.containsKey('shelf-only') &&
+      !_source.resourceLoads.containsKey('alias'));
+    _source.slowCover.complete(_source.png);
+    await _wait(() => frames('slow-cover') == 1);
+    _check('slow-cover-paints-while-first-persistence-still-held',
+      !held.release.isCompleted && held.writesCompleted == 0);
+  } finally {
+    if (!held.release.isCompleted) held.release.complete();
+    if (!_source.slowCover.isCompleted) _source.slowCover.complete(_source.png);
+  }
+  await _cache.responses.drainPersistence();
+  _check('both-covers-persist-through-original-file-store', held.writesCompleted == 2);
+  await _unmount();
+  await _cache.close();
+  await _store.close();
+  _store = await openImportedLibraryStore(libraryPath);
+  for (final id in <String>['fast-cover', 'slow-cover']) {
+    final saved = (await _store.getSavedComic(_sourceId, id))!;
+    await _store.upsertSavedComic(saved.copyWith(
+      coverSourceId: 'fixture:$id?token=changed',
+    ));
+  }
+  _cache = ResourceCacheCoordinator(responses: ResourceCacheManager(
+    byteStore: FileResourceCacheByteStore(cachePath),
+  ));
+  final calls = Map<String, int>.from(_source.resourceLoads);
+  // These owners reopen in the same process; process-cold alias acceptance
+  // remains separate from this source-free App remount.
+  await _mount(sources: const <BrowsableComicSource>[]);
+  await _wait(() => frames('fast-cover') == 2 && frames('slow-cover') == 2);
+  _check('cold-token-change-hits-durable-cover-without-live-source',
+    _cache.responses.stats.persistentHits >= 2 &&
+    _source.resourceLoads.toString() == calls.toString());
+  _check('cold-unopened-shelf-remains-unmounted',
+    _element((element) => element.widget.key == bookshelfPageKey) == null);
+  _selectNavigation(1);
+  await _frames(30);
+  final aliases = _elements((element) => element.widget is ComicCoverCard &&
+      (element.widget as ComicCoverCard).coverIdentity == '$_sourceId\u0000alias');
+  _check('persisted-canonical-aliases-show-one-cold-shelf-card', aliases.length == 1);
+  _check('cold-shelf-does-not-call-unactivated-source',
+    _source.resourceLoads.toString() == calls.toString());
+  await _unmount();
+  final artifacts = await PersistentDownloadArtifactStore.open('${root.path}/proof-cache');
+  try {
+    final cache = ArtifactCacheManager(backend: artifacts);
+    DownloadId id(String comic) => DownloadId(
+      content: ContentId(sourceId: _sourceId, comicId: comic, chapterId: 'chapter', pageId: 'page'),
+      sourceRevision: 'fixture-r1', canonicalUri: Uri.parse('fixture:$comic/page.png'),
+    );
+    final original = id('original');
+    final proven = id('proven');
+    await cache.storePromotedArtifact(id: original, bytes: _source.png);
+    cache.linkEquivalent(first: original, second: proven);
+    _check('verified-artifact-equivalence-keeps-real-physical-identity',
+      (await cache.lookup(proven))?.storageId == original &&
+      await cache.lookupAuthoritative(proven) == null);
+    _check('unproven-page-does-not-inherit-artwork-or-equivalent-artifact',
+      await cache.lookup(id('unproven')) == null && cache.equivalenceCount == 1);
+  } finally {
+    await artifacts.close();
+  }
+}
+
+// Only the fixture's durable write seam is held; reads, retain and actual
+// filesystem work delegate to the production store, without changing its owner.
+final class _HeldArtworkStore implements ResourceCacheByteStore {
+  _HeldArtworkStore(this.store);
+  final FileResourceCacheByteStore store;
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int writesCompleted = 0;
+  @override
+  Future<void> write({required ResourceCacheKey key, required Uint8List bytes,
+      required DateTime? expiresAt,
+      ResourceCacheRetention retention = ResourceCacheRetention.transient}) async {
+    if (!started.isCompleted) started.complete();
+    await release.future;
+    await store.write(key: key, bytes: bytes, expiresAt: expiresAt, retention: retention);
+    writesCompleted++;
+  }
+  @override
+  Future<PersistedResourceBytes?> read(ResourceCacheKey key) => store.read(key);
+  @override
+  Future<void> retain(ResourceCacheKey key) => store.retain(key);
+  @override
+  Future<void> remove(ResourceCacheKey key) => store.remove(key);
+  @override
+  Future<void> removeWhere(bool Function(ResourceCacheKey) predicate) => store.removeWhere(predicate);
+  @override
+  Future<void> clear() => store.clear();
+  @override
+  Future<void> close() => store.close();
 }
 
 Future<void> _seed() async {
@@ -246,12 +383,13 @@ Future<void> _seed() async {
   ));
 }
 
-Future<void> _mount() async {
+Future<void> _mount({List<BrowsableComicSource>? sources}) async {
   runApp(App(
     libraryStore: _store, chapterDownloads: _downloads, wholeComicDownloads: _queue,
-    comicSources: <BrowsableComicSource>[_source], cacheCoordinator: _cache,
+    comicSources: sources ?? <BrowsableComicSource>[_source], cacheCoordinator: _cache,
     persistHomeProjectionSnapshot: false, persistMissingPreferences: false,
     homeKey: _homeKey, preferences: _preferences, debugTrace: _trace,
+    startupTelemetry: _startup,
   ));
   await _wait(() => _element((element) =>
     element.widget.key == homeUpdatesSectionKey) != null);
@@ -331,6 +469,11 @@ void _selectNavigation(int index) => (_element((element) =>
 final class _UpdateSource implements BrowsableComicSource {
   String description = 'Baseline metadata';
   final chapterCounts = <String, int>{};
+  bool artworkMode = false;
+  final resourceLoads = <String, int>{};
+  final slowCover = Completer<Uint8List>();
+  final png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+      'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
   int comicLoads = 0;
   @override
   String get sourceId => _sourceId;
@@ -342,7 +485,8 @@ final class _UpdateSource implements BrowsableComicSource {
   ComicManifest manifest(String id) => ComicManifest(
     comic: Comic(sourceId: sourceId, comicId: id, title: id,
       authors: const <String>[], readingDirection: ReadingDirection.ltr,
-      description: description),
+      description: description,
+      coverUri: artworkMode ? Uri.parse('fixture:${id.startsWith('alias-') ? 'alias' : id}') : null),
     chapters: <Chapter>[
       for (var index = 0; index < (chapterCounts[id] ?? 1); index++) Chapter(
         chapterId: index == 0 ? '$id:chapter' : '$id:chapter-$index',
@@ -364,6 +508,9 @@ final class _UpdateSource implements BrowsableComicSource {
   Future<ChapterManifest> loadChapter(String chapterId) =>
       throw StateError('No Reader source in fixture');
   @override
-  Future<Uint8List> loadResource(Uri uri) =>
-      throw StateError('No resource transport in fixture');
+  Future<Uint8List> loadResource(Uri uri) async {
+    if (!artworkMode) throw StateError('No resource transport in update fixture');
+    resourceLoads.update(uri.path, (count) => count + 1, ifAbsent: () => 1);
+    return uri.path == 'slow-cover' ? slowCover.future : png;
+  }
 }
