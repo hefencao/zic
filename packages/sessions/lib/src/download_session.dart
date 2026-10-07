@@ -3061,7 +3061,16 @@ final class DownloadSession {
             current.length <= targetLength &&
             !current.sealed &&
             current.failure == null;
-        if (canAppendSuffix) {
+        final alreadyCaughtUp = current.sourceReady &&
+            current.epoch == epoch &&
+            current.length == targetLength &&
+            current.sealed == sealed &&
+            current.failure == null;
+        if (alreadyCaughtUp) {
+          // The initial probe can contain the entire sealed WebP. Decode may
+          // already hold this published source; joining fan-out must preserve
+          // it instead of disposing it through another same-epoch rebuild.
+        } else if (canAppendSuffix) {
           var offset = current.length;
           final remainingSuffix = targetLength - offset;
           if (remainingSuffix > 0) {

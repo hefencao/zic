@@ -3883,6 +3883,158 @@ void main() {
     expect(requested, <DecodeId>[decodeId]);
   });
 
+  test('downloaded static neighbor presents while single-frame current waits', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_waiting_static_current_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    DownloadId download(String pageId) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.jpg'),
+        );
+    DecodeId decodeId(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final currentId = download('waiting-current');
+    final nextId = download('downloaded-next');
+    final currentDecode = decodeId(currentId);
+    final nextDecode = decodeId(nextId);
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'waiting-static-current',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: const _NeverUsedCursorFactory(),
+      clock: clock,
+    );
+    final currentTransport = _ControlledTransport();
+    final requested = <DecodeId>[];
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (uri) => uri == currentId.canonicalUri
+          ? currentTransport
+          : const _ImmediateTransport(
+              <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+      clock: clock,
+      decodes: decodes,
+      onExternalPresentationRequested: (id, _) => requested.add(id),
+      externalPresentationAvailable: (_) => true,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        currentId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'static-current',
+          expirationRevision: 2,
+        ),
+        nextId: const DownloadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'static-next',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        currentDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'static-current',
+          expirationRevision: 2,
+        ),
+        nextDecode: const DecodeDemand(
+          role: PageRole.next,
+          priority: 820,
+          targetWatermark: 1,
+          reason: 'static-next',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        currentDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'static-current',
+          expirationRevision: 2,
+        ),
+        nextDecode: const UploadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'static-next',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(currentId),
+        ResourceId.download(nextId),
+        ResourceId.decode(currentDecode),
+        ResourceId.decode(nextDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{0: PageRole.current, 1: PageRole.next},
+        ),
+      ),
+    );
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (!requested.contains(nextDecode)) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('downloaded neighbor stayed loading without another Reader observation: '
+            'download=${downloads.find(nextId)?.state}, '
+            'current=${decodes.find(currentDecode)?.state}, '
+            'next=${decodes.find(nextDecode)?.state}');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(decodes.find(currentDecode)?.state, DecodeState.waitingSource);
+    expect(requested, <DecodeId>[nextDecode]);
+    expect(coordinator.completeExternalPresentation('reader', nextDecode), isTrue);
+    currentTransport.add(<int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    await currentTransport.close();
+    await coordinator.idle();
+    expect(requested, <DecodeId>[nextDecode, currentDecode]);
+    expect(coordinator.completeExternalPresentation('reader', currentDecode), isTrue);
+  });
+
   test('external fallback presentation releases one speculative page at a time', () async {
     final temp = await Directory.systemTemp.createTemp(
       'live_external_presentation_refill_test_',

@@ -726,10 +726,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   只有当前 generation 无 exact hot bytes 时，仍 active 的 caller 才 MUST 等待 mutation barrier 后重新选择 authority；
   caller 自身取消 MUST保持终局且 MUST NOT重试。
   每个Reader仍 MUST通过自己的`DownloadIngressProjection`消费encoded prefix，decode/upload/presentation保持局部；
-  Reader route 的短期 re-entry retention MAY以TTL 2分钟、LRU最多2个media-empty exact session保留章节级控制与可重建transfer/encoded authority；
-  第三个不同key MUST淘汰最旧会话；无论是否进入retention，route退出时都 MUST立即释放全部 Reader-local DecodeSession/UploadSession、
-  native cursor/decoder canvas、decoded frames、Ingress/NativeSource 与 output/texture claims；
-  不得让已无 presentation demand 的 cursor 通过 source `Arc` 延长整页 encoded body 的 native residency。
+  Reader route 的短期 re-entry retention MAY以TTL 2分钟、LRU最多2个exact session保留章节级控制与可重建transfer/encoded authority；
+  第三个不同key MUST淘汰最旧会话；route退出 MUST立即撤销demand与presentation claims，由现有Coordinator退休Reader-local媒体；
+  idle的Decode/Upload、cursor/canvas、frames与Ingress/Source MUST立即释放；仍在执行的已取消任务 MUST等原lane真实退出后自动释放，Pipeline MUST NOT提前evict；
+  已取消任务真实退出后 MUST成为media-empty shell；不得让已无 presentation demand 和执行任务的 cursor 通过 source `Arc` 延长整页 encoded body 的 native residency。
   快速重进 MAY从保留的 encoded authority重新 decode/upload首帧，不得以保留 native media working set 换取零 decode 重进。
   deferred resident range hydration若在某一physical `SourceEpoch`失败，
   MUST将该Reader-local replay视为该epoch的terminal failure，
@@ -1174,7 +1174,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - current 浅水位 bootstrap MUST 优先：
   动态 current holder depth < 3 时，speculative next/next2/previous 不得启动新的 decode refill；静态 current 一帧即满足。
   若 current 暂时在等待 source，真实已进入 viewport 的 transition MAY 独立取得一帧，避免拖动目标黑屏。
-- current bootstrap 建立后才恢复 next/next2/previous staged refill；transition 不得用深水位抢占 current 的基础播放水位。
+  单帧 current 的 source 暂不可执行时，已有单帧静态邻页 MUST 能由自身 source 通知继续首帧交付，不得等待滑动或其它页的 source；统一 grant 上限 MUST 保留。
+- current bootstrap 建立后才恢复 next/next2/previous 多帧 staged refill；transition 不得用深水位抢占 current 的基础播放水位。
 - midpoint 后新 stable page MUST 成为 current；旧 current 的已上传 output MAY 作为独立 retained/last presentation 保留并暂停播放，
   但该 retention MUST NOT占用或跳过相对 previous/next slot。相邻旧 current仍 MUST按 offset -1/+1参与 encoded/decode window；
   大跳后若已离开7/3窗口则 retention不得单独制造 download/decode demand。
@@ -1189,8 +1190,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   窗口内只提交最新整数页，不得为滑杆跨过的每个中间页制造navigationRevision/PageView jump/Pipeline reconcile。整数页量化 MUST由scrubber自身完成；
   长章节的Flutter `Slider` MUST NOT以`pages-1` divisions/ticks把每一页物化为RenderSlider/semantics离散刻度。
   首个目标 MAY立即推进viewport，`onChangeEnd` MUST取消pending并立即精确提交最终页、结束`Interaction.scrubbing`。
-  程序化 vertical animate/jump 的 completion callback MUST只确认命令并读取实际ScrollMetrics，MUST NOT自行写入`Interaction.idle`；
-  dragging/scrolling/scrubbing/idle唯一由raw pointer与ScrollNotification生命周期裁决，旧动画Future不得覆盖新的真实输入状态。
+  程序化 vertical animate/jump 的 completion callback MUST只确认有效命令并读取实际ScrollMetrics，MUST NOT把真实dragging/scrolling覆盖为`Interaction.idle`；
+  若pointer-up已结束Controller scrub但最终目标尚未回执，同一有效命令的completion MUST结束遗留的scrubbing并重置physical velocity baseline；no-op jump MUST NOT依赖ScrollEnd或后续滑动才能恢复stable phase。
+  pointer-up flush不同最终目标时，绝对jump后 MUST立即同步physical baseline，MUST NOT让早于completion的idle observation把slider距离学习为content velocity。
+  dragging/scrolling/scrubbing/idle由raw pointer、Controller输入阶段与ScrollNotification生命周期裁决，旧动画Future不得覆盖新的真实输入状态。
   scrub MUST NOT拥有current-only/visible-only资源窗口；Pipeline membership MUST继续由真实current与viewport coverage解析正常7/3工作集。
   相邻preview移动 SHOULD只产生实际窗口差集（稳定profile中通常为一项far退出/一项far进入），不得每50ms批量detach再在松手后重建。
   `Interaction.scrubbing` MAY用于方向学习抑制、UI、诊断与resource execution projection，但 MUST NOT单独改变download/decode/upload membership。
@@ -1212,6 +1215,11 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   多consumer映射到同一physical body时，priority与provider MUST按执行资格聚合：retained/local-only claim不得提升另一个full claim的network rank，也不得为其提供remote transport authority。
   viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。slider-selected page只可覆盖navigation identity；
   `logicalPosition` MUST始终来自同一physical vertical geometry；absolute slider scrub不是content travel，因此scrubbing observation MUST同步该physical baseline但投影`velocity=0`，MUST NOT更新travel direction。
+  idle observation MUST同步physical baseline并投影`velocity=0`；初始整数页号转为viewport-center坐标、idle geometry更新MUST NOT制造content motion。真实drag/scroll MUST继续报告实测速度。
+  active layout-only观察 MUST保留最近实测速度且 MUST NOT推进content motion采样时钟；有效physical sample仅随实际layout校正移位，前后pixels MUST在同一applied geometry计速。真实drag/ballistic更新 MUST按真实采样间隔计算，MUST NOT混用不同geometry的逻辑坐标或布局回调间隔。
+  连续drag的source pointer时间递增时 MUST使用同域输入间隔；首个/缺失/相等时间与ballistic MUST保留Reader回调间隔，MUST NOT跨绝对时间域相减。倒退时间 MUST继续发布physical coverage/position并保留最新有效motion baseline/velocity；layout/phase MUST NOT推进baseline，scroll start/idle/scrub/controller更换或真实非source采样 MUST退休旧时间。
+  raw pointer推进dragging phase时 MUST NOT再次采样当前physical position；同一输入的ScrollUpdate MUST保持真实content采样间隔，MUST NOT将phase promotion到ScrollUpdate的同步调用间隔当成运动间隔。
+  新的直接运动采样 MUST退休更早的合并采样请求；原post-layout回调仍 MUST刷新coverage，MUST NOT因旧请求再次推进采样时钟。稀疏outlier诊断 MUST NOT成为policy输入。
   held scrub中的post-frame ratio收敛若再次改变vertical layout，实际应用该layout revision的frame MUST在post-frame重发physical observation；MUST NOT依赖下一pointer事件，pointer-up/input phase变化本身 MUST NOT首次暴露最终center或制造velocity。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade enqueue `ReadingProgress`，普通翻页 MUST NOT等待 SQLite；
   persistent SQLite progress isolate尚未ready或启动失败时，enqueue MUST只在内存latest-wins缓冲并低频重试writer，
@@ -1249,9 +1257,13 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   关闭后允许自由拖出视口。
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
 - 阅读设置 UI MUST 至少先区分“布局 / 界面 / 分页模式 / 连续模式”；两个 mode 内再保持双击与长按设置成组排列，双击倍率/锚点不得与长按倍率/释放/移动方式交错。相同项的 paged / continuous 控件不得绑定同一可变 preference。
-- “连续阅读” MUST 在 paged 与 continuous 两个 mode 中分别设置。开启时 Reader 只在当前章首/尾的明确边界 pull 后请求上一/下一章；关闭时 MUST 只禁用该 UI traversal。逻辑 previous/next MUST 由 chapter `sequence` 定义，MUST NOT 受详情列表或 source chapter 的展示顺序影响；底部始终进入逻辑下一章，顶部始终进入逻辑上一章。章节 manifest/session MUST 继续一章一个，不得把多章拼成一个 Reader chapter。
+- “连续阅读” MUST 在 paged 与 continuous 两个 mode 中分别设置。开启时 Reader 只在当前章首/尾的明确边界 pull 后请求上一/下一章；关闭时 MUST 只禁用该 UI traversal。逻辑previous/next MUST消费source的oldest-first顺序投影，不受详情展示顺序影响；底部下一章、顶部上一章。manifest/session MUST继续一章一个。
+- 每次逻辑章节排序 MUST为每章只投影一次来源序号，比较器 MUST只比较本次投影值；同序号 MUST保持来源顺序，后续调用 MUST重新消费当前来源序号，不得复用过期目录状态。
+- 同次同步Reader构建 MAY共用previous/next查询结果；后续切章与预加载 MUST重新查询当前目录，不得把presentation查询结果变为跨调用目录缓存。
+- Reader邻章查询 MUST只物化当前source的canonical comic family，保留既有raw代表身份、章节catalog与entry/progress引用；本次canonical memo MUST NOT跨调用存活，后续查询 MUST读取当前source authority（ADR0381）。
+- 跨章首/尾入口 MUST 在目标完整页表hydrate/source refresh后解析索引，显式initialPage MUST覆盖历史进度；next进入首端、previous进入尾端，倒置页序时使用对应反端。vertical绝对页面请求MUST经实际布局确认目标和scroll范围才完成；旧idle锚点不得覆盖请求，真实拖动接管和controller换代MUST阻止旧回执重新跳页。
 - continuous 的章节边界 MUST 由 ScrollPosition 的真实 `extentBefore/extentAfter` 判断，不能用 coverage-current page 代替；
-  边界后的提交距离 MUST 基于单指 pointer motion，不得依赖平台 overscroll physics。
+  边界后的提交距离 MUST 基于单指 pointer motion，不得依赖平台 overscroll physics；短章节同时处于首尾时 MUST按拉动方向选择上一/下一章。
   普通interior current MAY按viewport center映射，但真实min/max scroll extent MUST分别映射首/末页；
   显式slider scrub anchor存在时selected page MUST保持navigation identity，无scroll range时不得仅凭中心几何伪造另一个current。
   layout/ballistic 触发的 ScrollNotification MUST NOT 在 layout pass 中同步驱动 ValueNotifier/widget rebuild，应复用 post-frame observation owner。
@@ -1275,12 +1287,20 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 ### 2.4 页面几何、输出与预热合同
 
 纵向Reader的异步尺寸更新 MUST 在finger-owned dragging/scrolling/settling期间冻结所有会改变当前viewport前缀的sliver geometry；
-idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续。
+idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续；准备到应用之间的新drag MUST保留prefix补偿并叠加真实motion，重复layout MUST幂等，诊断读取 MUST NOT固定补偿目标，已应用补偿 MUST在frame末退休。
+idle已位于可滚动章节真实尾端时，ratio/viewport/DPR变化 MUST以同一layout-time correction保持新ScrollMetrics的maxScrollExtent，包含系统insets，MUST NOT从页面extent总和推算；显式slider center anchor优先，首端/interior及无独立尾端的短章仍保持原top anchor。
+implicit insets单独改变scroll范围时，idle末页Controller MUST保持旧真实尾端；pending page/viewport命令、controller换代、slider center与真实motion MUST优先，不得用旧尾端覆盖新入口。
+物理pixels观测、scene诊断与top-anchor准备 MUST使用同一ListView布局捕获的geometry；帧末新ratio不得提前解释旧pixels。多次header更新 MUST从同一物理anchor累计校正，不得发布中间页码或伪造速度，见ADR0361。
+首尾页导航位置 MUST保持真实ScrollMetrics边界语义；速度 MUST由同一已布局geometry的连续视口中心坐标采样，首尾页语义覆盖 MUST NOT被当作运动位移。不得以velocity clamp替代物理采样。
 slider `Interaction.scrubbing` 是绝对page-index导航，不属于上述content-drag冻结。
 slider-selected整数页 MUST在整个scrub transaction内保持显式center anchor；所有已知`index <= selected`的authoritative source ratio MUST在pointer-up前提交，
 因为任一prefix extent都会改变该绝对目标的物理offset。已真实visible的post-anchor ratio也 MUST立即采用并重发coverage。
 若layout新暴露的相邻页ratio已经在pending中，后续held-scrub layout MUST继续消费，不得等待另一次dimensions event。
-pointer-up只结束input phase；首次pending ratio commit MUST继续保持同一selected-page center，geometry/coverage收敛后才释放scrub anchor。
+pointer-up只结束input phase；selected-page center MUST继续锚定放手后才到达的ratio，pending map暂时为空 MUST NOT作为尺寸收敛证明。
+纵向Reader的内部页入口（包括历史恢复和Controller更换）MUST保留其绝对page center锚点，物理offset按真实ScrollMetrics范围约束，直到真实内容运动或新导航接管；布局回执 MUST NOT证明后续尺寸已收敛。首/末页入口保持显式边界对齐。
+idle viewport、DPR及stitch变化 MUST在同一次layout以新geometry保留既有绝对page center；DPR替换ScrollPosition后的首个dimension pass MUST仍应用pending校正及真实首尾范围，不得降级为普通top anchor或以jumpTo伪造内容运动。
+真实content motion、新的page/viewport命令、direction或Controller更换 MUST退休该既有导航锚点；
+锚点寿命 MUST NOT等待下载/首帧、延长scrubbing或改变Pipeline执行资格。
 该规则只修正absolute navigation geometry；新暴露页仍只获得既有transientPreview资格，MUST NOT扩大hidden decode/upload窗口。
 DecodeSession首个成功frame MAY触发尺寸事实提前解析，但Reader页面几何的最终authority MUST是source canvas而非decoded raster；
 Pipeline只读`PipelinePageDimensionsFeed` MUST携带dimension basis并优先`PageAsset`/WebP source canvas，
@@ -1299,11 +1319,9 @@ consumer attach MUST可重放retained dimension facts，publish/clear MUST保持
 Pipeline output/progress core同样 MUST NOT直接依赖`WidgetsBinding`/`SchedulerBinding`或Flutter notifier；
 visual frame boundary MUST通过`PipelineFrameScheduler`由presentation adapter注入，
 transfer progress MUST通过只读`PipelineTransferProgressFeed`投影。
-严格位于真实visible tail之后的future page source ratio MAY在active scroll中提前采用，因为它不得改变当前viewport prefix；
-visible tail及之前的新ratio MUST继续等待idle。
+forward方向严格位于真实visible tail之后的future source ratio MAY提前采用；reverse incoming prefix MAY以提交前top-pixel anchor在同一次layout原子补偿。真实visible页的新ratio通常 MUST等待idle，slider-visible采用保持既有例外。
 不得恢复dev.286 visual extent/OverflowBox workaround，也不得以扩大decode previous1/next2掩盖source geometry authority错误。
-vertical drag/ballistic期间 MAY 暂缓非可见next2 output upload，
-但 MUST 保留next2 decode与current/transition/visible/immediate-next需求。
+vertical active期间far/near hidden native static upload MUST继续defer；既有2/1 deadline中的next/next2/previous一帧 MAY提前UploadLane/present且 MUST retain，保持encoded7/3与唯一调度owner。
 生产Reader MUST默认保留native decode与Android SurfaceProducer output；
 dev.311 Flutter `ui.Image/RawImage`默认实验已被设备证据否证，不得继续作为生产默认。
 该路径的UploadDemand只准备/持有output，真正RGBA Surface copy发生在presentation；
@@ -1378,6 +1396,7 @@ consumer只可持有当前 `ImageInfo`，Pipeline撤销external presentation per
 Flutter generic `ImageCache` 仍可服务非 Reader 图片和 provider decode backend，但其可用 bytes/entries MUST扣除 managed Reader raster 的精确占用，
 两者共享当前100MiB/1000-entry presentation 总额度，MUST NOT成为两套独立 LRU authority。
 当统一owner因预算回收speculative raster后，MUST由该owner同时拒绝同identity的speculative re-admission，直到claim提升为deadline/protected；Pipeline MUST NOT另存far-eviction tombstone或被动revalidation状态。
+mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHost listener MUST NOT绕过owner denial重新申请first-frame grant。
 `clearPresentationRasters()` / memory pressure MUST只清residency而保留现有demand claim；被clear的speculative identity MUST进入同一owner-side admission denial，deadline/protected claim MAY按当前需求恢复。
 
 ## 3. Pipeline 与角色合同
@@ -1463,6 +1482,8 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
 Pipeline external presentation request MUST携带 typed presentation fit；`contain` MUST按 viewport physical width/height 双轴导出 raster key，
 纵向 stitched `fitWidth` MUST只按 physical width 约束，source aspect 派生的 long-page height MUST NOT被 viewport height 截断。
 mounted `MediaRasterImage` 与 detached prewarmer MUST共享同一 raster-key policy，并消费同一个 composition-owned `PipelinePresentationRasterCache` entry。
+Pipeline cache authority、detached prewarm与mounted UI MUST由同一composition-bound `PipelineStaticPresentation`关联；展示端MUST NOT固定选择process-global实例。替换authority后的首帧、resident复用、eviction/regrant与claim清理MUST仍归同一owner。
+同一owner的capability重建MUST保留mounted attempt；owner更换MUST复用既有loadEpoch/token fence退休旧绑定，MUST NOT新增cache、队列、timer或扩大预算；capability不复制residency/claim/LRU状态（ADR0351）。
 Pipeline MUST只投影 residency claim：`far/detached` 为 speculative，`next2/next/previous/near/last` 为 deadline，真实 viewport/current/transition 为 protected。
 cache owner MUST只在预算压力下回收 speculative entry，并在真实回收时主动向 Pipeline 发 exact invalidation；Pipeline MUST NOT通过 `obtainCacheStatus`/`statusForKey` 轮询 Flutter residency，也 MUST NOT把角色提升实现成被动 revalidation。
 `externalPresentationSatisfied` MUST只代表统一 cache owner 当前仍持有该 raster；收到 owner eviction 后 MUST撤销该 proof，让既有 staged refill 在需求仍有效时补帧。
@@ -1478,6 +1499,8 @@ fit 变化 MUST只失效/旋转 presentation cache generation 与 external first
 该 adapter 状态 MUST NOT升级成 Reader retry、transport、cache 或 scheduling authority。
 每次artifact-cache presentation bytes/file read MUST携带同一次读取的不可变`storageId + generation` authority；自动decode failure recovery MUST回传该exact authority，MUST NOT按page查询最近generation。manual force reload无旧read token时 MAY让cache owner解析当前authority。
 `LocalImagePlayer`取得presentation file lease后 MUST立即进入release保护；取消/替换发生在await期间时late lease仍 MUST释放。automatic recovery/retry结果 MUST绑定启动时load generation/token，旧结果不得重启新图片。
+文件presentation的release MUST等已启动的file/buffer/codec Future实际退出才关闭descriptor；取消listener MUST NOT提前关闭仍被共享pending completer读取的fd。
+mounted teardown MAY异步请求release，detached prewarm MUST等待该物理release完成；已release的provider MUST NOT启动新读取，失败路径仍 MUST完成释放。缓存key/residency/调度权威保持不变（ADR0380）。
 GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NOT在旧fetch未完成时发起第二fetch，loading→ready MUST NOT改变媒体子树identity或重建codec。
 实际首帧回报后才可满足该watermark并释放下一张speculative fallback，新的current/transition MAY抢占等待中的后台request。
 真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。
@@ -1729,8 +1752,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - 两个 Dart decode isolate MUST 在 App 运行期常驻；libwebp 帧内 MUST 单线程。
 - 首次 decode SHOULD 优先单帧；current 后续 MAY 每次批量返回最多两帧。
 - holder MUST 是 decoded successor 的权威所有者；可见 output 不得计入 successor depth。
-- current bootstrap MUST 先建立静态1帧或动态最多3帧的浅水位；bootstrap 未满足时 speculative neighbor refill MUST 为0。
-  current 等 source 时，真实 transition depth=0 MAY 独立取得1帧；bootstrap完成后恢复 staged current/neighbor refill。
+- current bootstrap MUST 优先建立静态1帧或动态最多3帧的浅水位；动态 bootstrap 未满足时 speculative neighbor refill MUST 为0。
+  current 等 source 时，真实 transition depth=0 MAY 独立取得1帧；单帧 current 暂不可执行时 MAY 释放既有单帧静态邻页，MUST NOT 绕行多帧水位。
+  bootstrap完成后恢复 staged current/neighbor refill；单帧等待例外 MUST NOT改变 encoded/network admission、窗口或并发。
 - 不得恢复独立 startup-buffer 或以 playback timer/underflow 控制网络 eligibility；
   current bootstrap 只属于 decode refill policy，不创建第二套 Reader gate。
 - metadata 未完成且 source 增长时 demux MUST 可刷新；未封缄 need-more-data MUST 等待 source revision，而不是定时销毁 cursor。
@@ -1750,6 +1774,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   并 MUST NOT因此invalidate decode/upload。旧same-id physical teardown MUST做concrete session identity校验。
   synchronized late join MUST在加入physical live fan-out前同时证明physical boundary稳定且projection snapshot的epoch/length/sealed/failure精确闭合，
   MUST NOT仅因physical revision未变就宣称incomplete projection已attached。
+  已发布的same-epoch source若精确匹配physical length/sealed且无failure，late join MUST复用该对象，MUST NOT因source已sealed而再次从零rebuild。
   UploadSession在physical-generation invalidation触发的dispose MUST立即退休当前uploader slot并清除deferred-release请求；
   旧generation pending prepare随后结束 MUST NOT再次按logical DecodeId release replacement generation。
   普通demand detach的pending-upload release语义保持不变。
@@ -1766,7 +1791,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 
 - replacement 前旧 frame MUST 保持有效；release MUST 等待最后一个 frame owner。
 - 生产Reader Android SurfaceProducer output MUST使用一个串行blit lane，
-  `scheduleFrame()`和MethodChannel result必须在platform thread有序完成；
+  `scheduleFrame()` MUST在platform thread执行；MethodChannel result MAY在对应完成边界由blit/回包线程发送，不得为回包延长UI turn；
   同一 output 在主线程忙于 Flutter frame 时 MAY 合并待调度回调，但 MUST 对每个调用完成回调，且以最新 resident frame 执行一次真实 `scheduleFrame()`。
 - SurfaceProducer的platform queue、schedule queue/call、blit和channel dispatch MUST分别计时；
   正常逐帧 `TexturePresentTelemetry` MAY 不另写一条重复 `frameUploaded` Trace，
@@ -1778,9 +1803,11 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 ## 8. Reader 资源会话生命周期
 
 - Reader Host MUST 通过 factory acquire/release 资源会话，不能在 Widget dispose 中直接销毁所有章节资源。
-- 实现 MAY有界保留一个 idle 章节会话最多两分钟以复用Reader-local Source/Decode状态；
+- 实现 MAY以两分钟TTL保留最多两个idle exact session key；第三个key MUST淘汰最旧项，仅保留download/encoded body authority；
   physical Download状态 MAY由composition transfer runtime独立于该Reader retention继续持有，
   但不得因此保留已退出Reader的native ingress/transport provider。
+  Reader-local decode/upload、cursor/canvas、frame与ingress/source MUST在退出时由原Coordinator退休；
+  仍真实执行的任务 MUST保留原具体source/cursor到原Lane退出回执后回收，不得提前evict或等待retention TTL。
 - retention key MUST 使用稳定章节/source/loader revision，不得依赖临时 loader 对象 identity。
 - retain 时 MUST 释放 Reader binding、page projection、playback wake、present claim和 used texture。
 - TTL、key 变化、容量淘汰或 composition shutdown 时 MUST 完整逆序 dispose。
@@ -2014,8 +2041,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   WebP、Reader playback-controlled GIF、缺少可信intrinsic dimensions、
   平台不支持descriptor reopen或lease preflight失败时 MUST退回既有encoded-byte/native路径；
   该fallback MUST NOT改变3/7、decode2/1、UploadDemand、NetLane、SAF executor数量或read/open watchdog。
-- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT在finger-owned dragging/scrolling/settling期间改变真实visible tail及之前的 `ReaderVerticalGeometry` / `itemExtentBuilder`；
-  一次连续用户滚动 MUST保持当前viewport prefix稳定。
+- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT在finger-owned dragging/scrolling/settling期间改变真实visible页的extent；
+  offscreen reverse prefix采用 MUST在同一次layout原子补偿，保持当前viewport prefix的top-pixel视觉anchor。
   DecodeSession已成功decode的frame可触发Pipeline提前解析尺寸，但`PipelinePageDimensionsFeed`的最终geometry fact MUST区分`sourceCanvas`与`decodedRaster`：
   source canvas优先，decoded raster仅provisional且不得覆盖source；
   dimension event MUST携带稳定`pageIndex/assetKey/width/height/basis`并由ReaderRuntime现有ratio owner消费。
@@ -2217,8 +2244,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    MUST NOT 从 manga URL生成兼容单章，也不得按标题、`SChapter.url`、number或sequence推断、增加、删除或合并章节。
 7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；
    普通 Reader 页面变化只入队 latest checkpoint，不得逐页发布 Home/library projection或等待 durable I/O。
-   Reader route MUST NOT 等待 durable barrier；该约束禁止把逐页交互或普通 Reader 运行路径串行到 durable 写入。
-   最终 route-pop checkpoint flush 与 app lifecycle flush MAY 作为明确 durability barrier 排空已接纳 checkpoint；
+   普通Reader页码变化 MUST NOT 等待durable barrier；逐页交互不得串行到durable写入。
+   正常route-pop checkpoint flush与app lifecycle flush MUST作为明确durability barrier排空已接纳checkpoint；失败 MAY记录并允许退出，不能伪称durable success。
    barrier 后 Home/详情与下一次 Reader hydrate MUST 通过 store-owned targeted progress authority 合并最新值，
    manifest/version hydration cache 只缓存章节/page authority，MUST NOT 回滚 mutable progress。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；

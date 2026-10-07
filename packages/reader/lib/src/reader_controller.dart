@@ -34,6 +34,7 @@ final class ReaderController extends ChangeNotifier {
   int? _requestedIndex;
   double? _requestedViewportFraction;
   bool _requestedPageAnimated = false;
+  double _requestedPageAlignment = 0.5;
   static const Duration _scrubDispatchInterval = Duration(milliseconds: 50);
 
   bool _pageScrubbing = false;
@@ -56,6 +57,7 @@ final class ReaderController extends ChangeNotifier {
   int? get requestedIndex => _requestedIndex;
   double? get requestedViewportFraction => _requestedViewportFraction;
   bool get requestedPageAnimated => _requestedPageAnimated;
+  double get requestedPageAlignment => _requestedPageAlignment;
   bool get pageScrubbing => _pageScrubbing;
   int get navigationRevision => _navigationRevision;
   int get rotationQuarterTurns => _rotationQuarterTurns;
@@ -82,10 +84,24 @@ final class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void requestPage(int index, {bool animated = false}) {
+  void requestPage(
+    int index, {
+    bool animated = false,
+    bool forcePosition = false,
+    double alignment = 0.5,
+  }) {
+    if (!alignment.isFinite || alignment < 0 || alignment > 1) {
+      throw RangeError.range(alignment, 0, 1, 'alignment');
+    }
     _cancelScrubDispatch();
     _pageScrubbing = false;
-    _requestPage(index, forceRevision: false, animated: animated);
+    _requestPage(
+      index,
+      forceRevision: false,
+      animated: animated,
+      forcePosition: forcePosition,
+      alignment: alignment,
+    );
   }
 
   void requestViewportStep(
@@ -161,11 +177,13 @@ final class ReaderController extends ChangeNotifier {
     int index, {
     required bool forceRevision,
     required bool animated,
+    bool forcePosition = false,
+    double alignment = 0.5,
   }) {
     if (index < 0 || index >= chapter.pages.length) {
       throw RangeError.range(index, 0, chapter.pages.length - 1, 'index');
     }
-    if (_currentIndex == index) {
+    if (_currentIndex == index && !forcePosition) {
       if (_requestedIndex == null &&
           _requestedViewportFraction == null &&
           !forceRevision) {
@@ -178,12 +196,13 @@ final class ReaderController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (_requestedIndex == index && !forceRevision) {
+    if (_requestedIndex == index && !forceRevision && !forcePosition) {
       return;
     }
     _requestedIndex = index;
     _requestedViewportFraction = null;
     _requestedPageAnimated = animated;
+    _requestedPageAlignment = alignment;
     _navigationRevision++;
     notifyListeners();
   }

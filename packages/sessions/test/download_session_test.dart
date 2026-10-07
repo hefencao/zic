@@ -2375,6 +2375,34 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 1);
   });
 
+  test('sealed WebP late join keeps the source published to the decoder',
+      () async {
+    final writer = session.acquireWriter();
+    final body = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(64 * 1024, 7),
+    ];
+    await session.append(writer, 0, body);
+    await session.seal(writer, expectedLength: body.length);
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-complete-probe',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024 * 1024),
+    );
+    addTearDown(projection.ingress.dispose);
+    EncodedSource? publishedSource;
+    projection.addSourceListener((snapshot) {
+      if (snapshot.sourceReady) publishedSource ??= projection.source;
+    });
+
+    await session.attachSynchronizedIngressProjection(projection);
+
+    expect(publishedSource, isNotNull);
+    expect(projection.source, same(publishedSource));
+    expect(projection.source!.length, body.length);
+    expect(projection.snapshot.sealed, isTrue);
+    expect(session.snapshot.ingressProjectionCount, 1);
+  });
+
   test('late Reader replay survives artifact promotion path handoff', () async {
     final writer = session.acquireWriter();
     final body = <int>[

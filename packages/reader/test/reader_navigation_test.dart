@@ -20,6 +20,166 @@ Future<void> _pumpUntilFound(
 
 
 void main() {
+  for (final replaceController in <bool>[false, true]) {
+    testWidgets(
+      'vertical history entry keeps its center through late short-page ratios '
+      '(replace controller: $replaceController)',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final base = _chapter(pageCount: 20);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = FakeClock();
+        ReaderController controllerAt(int index) {
+          final controller = ReaderController(
+            sessionId: 'reader-history-entry-$index',
+            chapter: chapter,
+            initialPage: index,
+            onObservation: observations.add,
+            clock: clock,
+          );
+          addTearDown(controller.dispose);
+          return controller;
+        }
+        final ratios = ValueNotifier<Map<String, double>>(
+          const <String, double>{},
+        );
+        addTearDown(ratios.dispose);
+        Widget view(ReaderController controller) => MaterialApp(
+              home: ReaderView(
+                controller: controller,
+                clock: clock,
+                verticalStitch: true,
+                pageAspectRatiosListenable: ratios,
+                pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                  key: ValueKey<String>('history-entry:${asset.pageId}'),
+                  color: Colors.black,
+                ),
+              ),
+            );
+        if (replaceController) {
+          await tester.pumpWidget(view(controllerAt(0)));
+          await tester.pumpAndSettle();
+        }
+        final controller = controllerAt(2);
+        await tester.pumpWidget(view(controller));
+        await tester.pumpAndSettle();
+        expect(controller.currentIndex, 2);
+        expect(controller.requestedIndex, isNull);
+
+        // Entry was already acknowledged against provisional viewport-sized
+        // pages. Later source dimensions must preserve the requested center,
+        // rather than treating that absolute entry as an ordinary top anchor.
+        for (final ratio in <double>[0.75, 0.65]) {
+          await tester.pump(const Duration(seconds: 1));
+          ratios.value = <String, double>{
+            for (final page in chapter.pages) page.assetKey: ratio,
+          };
+          await tester.pumpAndSettle();
+          expect(controller.currentIndex, 2);
+          expect(controller.requestedIndex, isNull);
+          expect(observations.last.logicalPosition, closeTo(2.5, 0.001));
+          expect(observations.last.velocity, closeTo(0, 0.001));
+          expect(observations.last.interaction, Interaction.idle);
+        }
+
+        await tester.timedDrag(
+          find.byKey(const ValueKey<String>('reader-vertical-list')),
+          const Offset(0, -500),
+          const Duration(seconds: 1),
+        );
+        await tester.pumpAndSettle();
+        final movedIndex = controller.currentIndex;
+        expect(movedIndex, greaterThan(2));
+        final movedPage = find.byKey(ValueKey<String>(
+          'history-entry:${chapter.pages[movedIndex].pageId}',
+        ));
+        final movedTop = tester.getTopLeft(movedPage).dy;
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages.first.assetKey: 0.5,
+        };
+        await tester.pumpAndSettle();
+        expect(controller.currentIndex, movedIndex);
+        expect(tester.getTopLeft(movedPage).dy, closeTo(movedTop, 0.5),
+            reason: 'real content motion retires the entry center anchor');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final warmRatios in <bool>[false, true]) {
+    testWidgets(
+      'vertical entry does not manufacture idle velocity '
+      '(warm ratios: $warmRatios)',
+      (tester) async {
+        final base = _chapter(pageCount: 8);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = FakeClock();
+        final controller = ReaderController(
+          sessionId: 'reader-idle-entry-velocity',
+          chapter: chapter,
+          initialPage: 3,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        await tester.pumpWidget(MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: clock,
+            verticalStitch: true,
+            pageAspectRatios: <String, double>{
+              if (warmRatios)
+                for (final page in chapter.pages) page.assetKey: 2.0,
+            },
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        expect(controller.currentIndex, 3);
+        final idle = observations.where(
+          (observation) => observation.interaction == Interaction.idle,
+        );
+        expect(idle, isNotEmpty);
+        expect(idle.map((observation) => observation.velocity),
+            everyElement(closeTo(0, 1e-9)),
+            reason: 'integer entry identity becoming a physical center '
+                'coordinate is not content motion');
+
+        observations.clear();
+        await tester.drag(
+          find.byKey(const ValueKey<String>('reader-vertical-list')),
+          const Offset(0, -220),
+        );
+        await tester.pumpAndSettle();
+        expect(observations.any((observation) =>
+            observation.interaction == Interaction.dragging &&
+            observation.velocity.abs() > 0.01), isTrue,
+            reason: 'actual content motion still publishes measured velocity');
+        expect(observations.last.interaction, Interaction.idle);
+        expect(observations.last.velocity, closeTo(0, 1e-9));
+      },
+    );
+  }
+
   testWidgets(
     'continuous single tap does not publish drag motion before tap resolves',
     (tester) async {
@@ -195,6 +355,54 @@ void main() {
   );
 
   testWidgets(
+    'real drag retires an unfinished absolute page command',
+    (tester) async {
+      final base = _chapter(pageCount: 8);
+      final controller = ReaderController(
+        sessionId: 'reader-absolute-drag-interrupt',
+        chapter: ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        ),
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          pageBuilder: (context, asset, reportFirstFrame) =>
+              const ColoredBox(color: Colors.black),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final scrollable = find.descendant(of: list, matching: find.byType(Scrollable));
+      controller.requestPage(6, animated: true);
+      await tester.pump(const Duration(milliseconds: 24));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -80));
+      await tester.pump(const Duration(milliseconds: 24));
+      final position = tester.state<ScrollableState>(scrollable).position;
+      final draggedPixels = position.pixels;
+      expect(controller.requestedIndex, isNull);
+
+      await tester.pump(const Duration(milliseconds: 220));
+      await tester.pump();
+      expect(position.pixels, closeTo(draggedPixels, 0.01));
+      expect(controller.lastObservation?.interaction, Interaction.dragging);
+      expect(controller.currentIndex, lessThan(6));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'continuous viewport command scrolls by a fraction of the visible screen',
     (tester) async {
       final base = _chapter(pageCount: 6);
@@ -315,6 +523,83 @@ void main() {
     expect(controller.requestedIndex, isNull);
   });
 
+
+  testWidgets(
+    'chapter reentry reaches the requested boundary after cached ratios arrive',
+    (tester) async {
+      final base = _chapter(pageCount: 49);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final clock = FakeClock();
+      final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+        for (final page in chapter.pages) page.assetKey: 1,
+      });
+      addTearDown(ratios.dispose);
+      ReaderController controllerAt(int index) {
+        final controller = ReaderController(
+          sessionId: 'reader-chapter-entry-$index',
+          chapter: chapter,
+          initialPage: index,
+          onObservation: (_) {},
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        return controller;
+      }
+      Widget view(ReaderController controller) => MaterialApp(
+            home: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          );
+
+      final history = controllerAt(12);
+      await tester.pumpWidget(view(history));
+      await tester.pump();
+      final scrollable = find.descendant(
+        of: find.byKey(const ValueKey<String>('reader-vertical-list')),
+        matching: find.byType(Scrollable),
+      );
+      expect(history.currentIndex, 12);
+
+      // Cached dimensions arrive after this frame's old extents have been
+      // applied, before the replacement controller's initial sync. The old
+      // viewport must not become the landing anchor of the new entry command.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ratios.value = <String, double>{
+          for (final page in chapter.pages)
+            page.assetKey: page.index == 48 ? 0.25 : 2,
+        };
+      });
+      final previousEntry = controllerAt(48);
+      await tester.pumpWidget(view(previousEntry));
+      for (var frame = 0; frame < 8; frame++) {
+        await tester.pump();
+      }
+      final end = tester.state<ScrollableState>(scrollable).position;
+      expect(previousEntry.currentIndex, 48);
+      expect(end.pixels, closeTo(end.maxScrollExtent, 0.01));
+
+      final nextEntry = controllerAt(0);
+      await tester.pumpWidget(view(nextEntry));
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump();
+      }
+      final start = tester.state<ScrollableState>(scrollable).position;
+      expect(nextEntry.currentIndex, 0);
+      expect(start.pixels, closeTo(start.minScrollExtent, 0.01));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
       'paged chapter-boundary traversal is gated only by cross-chapter UI setting',
@@ -500,7 +785,6 @@ void main() {
       of: list,
       matching: find.byType(Scrollable),
     );
-    await tester.drag(list, const Offset(0, 800));
     await tester.pumpAndSettle();
     final scrollableBefore =
         tester.state<ScrollableState>(scrollableFinder);
@@ -663,6 +947,285 @@ void main() {
       );
     },
   );
+
+  testWidgets('idle chapter tail remains the tail when the viewport changes',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(400, 600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final chapter = _chapter(pageCount: 8);
+    final controller = ReaderController(
+      sessionId: 'reader-tail-viewport-resize',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    controller.setDirection(ReadingDirection.vertical);
+    addTearDown(controller.dispose);
+    final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+      for (final page in chapter.pages) page.assetKey: 0.25,
+    });
+    addTearDown(ratios.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ReaderView(
+        controller: controller,
+        clock: FakeClock(),
+        verticalStitch: true,
+        pageAspectRatiosListenable: ratios,
+        pageBuilder: (context, asset, reportFirstFrame) =>
+            const ColoredBox(color: Colors.black),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    controller.requestPage(7, forcePosition: true, alignment: 1);
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollable = find.descendant(of: list, matching: find.byType(Scrollable));
+    final position = tester.state<ScrollableState>(scrollable).position;
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    tester.view.physicalSize = const Size(400, 500);
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    expect(controller.lastObservation?.velocity, 0);
+    for (final size in <Size>[
+      const Size(400, 700),
+      const Size(500, 700),
+    ]) {
+      tester.view.physicalSize = size;
+      await tester.pumpAndSettle();
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+      expect(controller.currentIndex, 7);
+      expect(controller.lastObservation?.velocity, 0);
+    }
+    ratios.value = <String, double>{
+      for (final page in chapter.pages) page.assetKey: 0.5,
+    };
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    expect(controller.lastObservation?.velocity, 0);
+  });
+
+  testWidgets('real chapter tail includes the scroll view system insets',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(400, 600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final chapter = _chapter(pageCount: 8);
+    final controller = ReaderController(
+      sessionId: 'reader-tail-system-insets',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    controller.setDirection(ReadingDirection.vertical);
+    addTearDown(controller.dispose);
+    final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+      for (final page in chapter.pages) page.assetKey: 0.25,
+    });
+    addTearDown(ratios.dispose);
+    final insets = ValueNotifier<EdgeInsets>(
+      const EdgeInsets.only(top: 36, bottom: 20),
+    );
+    addTearDown(insets.dispose);
+    await tester.pumpWidget(MaterialApp(
+      builder: (context, child) => ValueListenableBuilder<EdgeInsets>(
+        valueListenable: insets,
+        builder: (context, padding, _) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(padding: padding),
+          child: child!,
+        ),
+      ),
+      home: ReaderView(
+        controller: controller,
+        clock: FakeClock(),
+        verticalStitch: true,
+        pageAspectRatiosListenable: ratios,
+        pageBuilder: (context, asset, reportFirstFrame) =>
+            const ColoredBox(color: Colors.black),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    controller.requestPage(7, forcePosition: true, alignment: 1);
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollable = find.descendant(of: list, matching: find.byType(Scrollable));
+    final position = tester.state<ScrollableState>(scrollable).position;
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    ratios.value = <String, double>{
+      for (final page in chapter.pages) page.assetKey: 0.5,
+    };
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    tester.view.physicalSize = const Size(400, 500);
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    expect(controller.lastObservation?.velocity, 0);
+    insets.value = const EdgeInsets.only(top: 36, bottom: 40);
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+    expect(controller.lastObservation?.velocity, 0);
+    insets.value = const EdgeInsets.only(top: 36);
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(controller.currentIndex, 7);
+  });
+
+  for (final initialPixels in <double>[0, 150]) {
+    testWidgets('viewport resize preserves the non-tail anchor at $initialPixels',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(400, 600);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final chapter = _chapter(pageCount: 8);
+      final controller = ReaderController(
+        sessionId: 'reader-non-tail-viewport-resize',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      controller.setDirection(ReadingDirection.vertical);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          verticalStitch: true,
+          pageAspectRatios: <String, double>{
+            for (final page in chapter.pages) page.assetKey: 0.25,
+          },
+          pageBuilder: (context, asset, reportFirstFrame) =>
+              const ColoredBox(color: Colors.black),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final scrollable = find.descendant(of: list, matching: find.byType(Scrollable));
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(initialPixels);
+      await tester.pumpAndSettle();
+      expect(position.pixels, lessThan(position.maxScrollExtent));
+      tester.view.physicalSize = const Size(400, 500);
+      await tester.pumpAndSettle();
+      expect(position.pixels, closeTo(initialPixels, 0.5));
+      expect(position.pixels, lessThan(position.maxScrollExtent));
+      expect(controller.lastObservation?.velocity, 0);
+    });
+  }
+
+  testWidgets('a fitting chapter stays at the head when late dimensions grow',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(400, 600);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final chapter = _chapter(pageCount: 1);
+    final controller = ReaderController(
+      sessionId: 'reader-fitting-chapter-dimension-growth',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    controller.setDirection(ReadingDirection.vertical);
+    addTearDown(controller.dispose);
+    final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+      chapter.pages.single.assetKey: 0.25,
+    });
+    addTearDown(ratios.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: ReaderView(
+        controller: controller,
+        clock: FakeClock(),
+        verticalStitch: true,
+        pageAspectRatiosListenable: ratios,
+        pageBuilder: (context, asset, reportFirstFrame) =>
+            const ColoredBox(color: Colors.black),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollable = find.descendant(of: list, matching: find.byType(Scrollable));
+    final position = tester.state<ScrollableState>(scrollable).position;
+    expect(position.maxScrollExtent, 0);
+    ratios.value = <String, double>{chapter.pages.single.assetKey: 2};
+    await tester.pumpAndSettle();
+    expect(position.maxScrollExtent, greaterThan(0));
+    expect(position.pixels, 0);
+    expect(controller.currentIndex, 0);
+    expect(controller.lastObservation?.velocity, 0);
+  });
+
+  testWidgets('viewport-fitting chapter chooses boundary from pull direction',
+      (tester) async {
+    final base = _chapter(pageCount: 1);
+    final chapter = ChapterManifest(
+      sourceId: base.sourceId,
+      comicId: base.comicId,
+      chapter: base.chapter,
+      pages: base.pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-fitting-chapter-boundary',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <ReaderChapterBoundary>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          verticalStitch: true,
+          crossChapterReading: true,
+          canReadPreviousChapter: true,
+          canReadNextChapter: true,
+          onChapterBoundaryRequested: requested.add,
+          pageAspectRatios: <String, double>{
+            chapter.pages.single.assetKey: 0.25,
+          },
+          pageBuilder: (context, asset, reportFirstFrame) =>
+              const ColoredBox(color: Colors.black),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+    final scrollable = tester.state<ScrollableState>(find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    ));
+    expect(scrollable.position.maxScrollExtent, 0);
+
+    final down = await tester.startGesture(tester.getCenter(list));
+    await down.moveBy(const Offset(0, 80));
+    await tester.pump();
+    await down.up();
+    await tester.pumpAndSettle();
+    expect(requested, <ReaderChapterBoundary>[ReaderChapterBoundary.previous]);
+
+    final up = await tester.startGesture(tester.getCenter(list));
+    await up.moveBy(const Offset(0, -80));
+    await tester.pump();
+    await up.up();
+    await tester.pumpAndSettle();
+    expect(requested, <ReaderChapterBoundary>[
+      ReaderChapterBoundary.previous,
+      ReaderChapterBoundary.next,
+    ]);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('single-page RTL maps forward boundary gesture to next chapter',
       (tester) async {
@@ -2276,6 +2839,127 @@ void main() {
   );
 
 
+  for (final releaseBeforeLayout in <bool>[false, true]) {
+    testWidgets(
+      'released vertical scrub keeps its center through late ratios '
+      '(pending layout: $releaseBeforeLayout)',
+      (tester) async {
+        final chapter = ChapterManifest(
+          sourceId: 'source',
+          comicId: 'vertical-released-scrub-comic',
+          chapter: const Chapter(
+            chapterId: 'vertical-released-scrub-chapter',
+            comicId: 'vertical-released-scrub-comic',
+            title: 'vertical released scrub',
+            sequence: 0,
+            pageCount: 8,
+            sourceRevision: 'r1',
+          ),
+          pages: List<PageAsset>.generate(
+            8,
+            (index) => PageAsset(
+              pageId: 'vertical-released-scrub-$index',
+              chapterId: 'vertical-released-scrub-chapter',
+              index: index,
+              uri: Uri.parse('asset:///vertical-released-scrub-$index.png'),
+            ),
+          ),
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = FakeClock();
+        final controller = ReaderController(
+          sessionId: 'reader-vertical-released-scrub-test',
+          chapter: chapter,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        final ratios = ValueNotifier<Map<String, double>>(
+          const <String, double>{},
+        );
+        addTearDown(ratios.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ReaderView(
+              controller: controller,
+              clock: clock,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('released-scrub:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        controller.beginPageScrub();
+        controller.scrubToPage(3);
+        if (!releaseBeforeLayout) {
+          await tester.pump();
+          await tester.pump();
+        }
+        controller.endPageScrub(3);
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+        expect(controller.pageScrubbing, isFalse);
+        expect(observations.last.interaction, Interaction.idle);
+        expect(controller.currentIndex, 3);
+
+        await tester.pump(const Duration(seconds: 2));
+        ratios.value = <String, double>{chapter.pages[3].assetKey: 0.25};
+        await tester.pump();
+        await tester.pump();
+        expect(controller.currentIndex, 3,
+            reason: 'the first measurement can arrive after pointer-up');
+        expect(observations.last.logicalPosition, closeTo(3.5, 0.001));
+        expect(observations.last.velocity, closeTo(0, 0.001));
+        expect(observations.last.interaction, Interaction.idle);
+
+        await tester.pump(const Duration(seconds: 1));
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages[2].assetKey: 0.25,
+          chapter.pages[4].assetKey: 0.25,
+        };
+        await tester.pump();
+        await tester.pump();
+        expect(controller.currentIndex, 3);
+        expect(observations.last.logicalPosition, closeTo(3.5, 0.001));
+        expect(observations.last.velocity, closeTo(0, 0.001));
+
+        await tester.drag(find.byType(ReaderView), const Offset(0, -500));
+        await tester.pumpAndSettle();
+        final movedIndex = controller.currentIndex;
+        expect(movedIndex, greaterThan(3));
+        final movedTop = tester.getTopLeft(
+          find.byKey(ValueKey<String>(
+            'released-scrub:${chapter.pages[movedIndex].pageId}',
+          )),
+        ).dy;
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages[1].assetKey: 0.25,
+        };
+        await tester.pump();
+        await tester.pump();
+        expect(controller.currentIndex, movedIndex,
+            reason: 'content dragging retires the absolute scrub anchor');
+        expect(
+          tester.getTopLeft(find.byKey(ValueKey<String>(
+            'released-scrub:${chapter.pages[movedIndex].pageId}',
+          ))).dy,
+          closeTo(movedTop, 0.5),
+        );
+      },
+    );
+  }
+
+
   testWidgets(
     'vertical scrub release preserves physical logical position and zero phase velocity',
     (tester) async {
@@ -2372,6 +3056,84 @@ void main() {
     },
   );
 
+
+  testWidgets(
+    'vertical scrub release before final layout exits preview without another scroll',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-scrub-pending-release',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: clock,
+            pageAspectRatios: <String, double>{
+              for (final page in chapter.pages) page.assetKey: 1,
+            },
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      observations.clear();
+
+      // The final jump is already physical, but its post-frame observation has
+      // not updated currentIndex. Pointer-up therefore requests the same offset
+      // again; that no-op jump cannot supply a ScrollEnd notification.
+      controller.beginPageScrub();
+      controller.scrubToPage(3);
+      expect(controller.currentIndex, 0);
+      expect(controller.requestedIndex, 3);
+      controller.endPageScrub(3);
+      await tester.pump();
+      await tester.pump();
+
+      expect(controller.pageScrubbing, isFalse);
+      expect(controller.currentIndex, 3);
+      expect(observations.last.interaction, Interaction.idle);
+      expect(observations.last.logicalPosition, closeTo(3.5, 0.001));
+      expect(observations.last.velocity, closeTo(0, 0.001));
+      expect(controller.requestedIndex, isNull);
+
+      // Pointer-up may also flush a different final target. Its jump must not
+      // turn absolute slider travel into a learned content-scroll velocity.
+      observations.clear();
+      controller.beginPageScrub();
+      controller.scrubToPage(2);
+      controller.endPageScrub(4);
+      await tester.pump();
+      await tester.pump();
+      expect(controller.currentIndex, 4);
+      expect(observations.last.interaction, Interaction.idle);
+      expect(observations.last.logicalPosition, closeTo(4.5, 0.001));
+      expect(observations.last.velocity, closeTo(0, 0.001));
+      expect(
+        observations
+            .where((item) => item.currentIndex == 4 &&
+                item.interaction == Interaction.idle)
+            .map((item) => item.velocity),
+        everyElement(closeTo(0, 0.001)),
+      );
+    },
+  );
 
   testWidgets(
     'vertical measured ratios stay frozen until active scrolling is idle',
@@ -2561,8 +3323,10 @@ void main() {
       final priorHeight = tester.getSize(priorPage).height;
       final futureHeight = tester.getSize(futurePage).height;
       final gesture = await tester.startGesture(tester.getCenter(list));
-      await gesture.moveBy(const Offset(0, -18));
+      await gesture.moveBy(const Offset(0, -24));
       await tester.pump();
+
+      expect(controller.lastObservation?.interaction, Interaction.dragging);
 
       ratios.value = <String, double>{
         chapter.pages.first.assetKey: 3.0,
@@ -2684,6 +3448,881 @@ void main() {
             'once travel reverses, an already-known still-offscreen incoming page must install its real extent before visibility',
       );
 
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'post-frame prefix adoption observes only geometry applied to scroll metrics',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-post-frame-prefix',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -100));
+      await tester.pump();
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages.first.assetKey: 3.0,
+      };
+      await tester.pump();
+      // Reversal schedules the already-known prefix adoption at frame end.
+      // A later observation callback in that same frame still has old pixels.
+      await gesture.moveBy(const Offset(0, 30));
+      final before = observations.last.logicalPosition;
+      final page = find.byKey(
+        const ValueKey<String>('reader-vertical-page:3'),
+        skipOffstage: false,
+      );
+      final topBefore = tester.getTopLeft(page).dy;
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(of: list, matching: find.byType(Scrollable)),
+      );
+      ScrollUpdateNotification(
+        metrics: scrollable.position,
+        context: tester.element(list),
+        scrollDelta: 0,
+      ).dispatch(tester.element(list));
+      observations.clear();
+      await tester.pump();
+      await tester.pump();
+      expect(observations, isNotEmpty);
+      expect(
+        observations.map((observation) => observation.logicalPosition),
+        everyElement(closeTo(before, 0.001)),
+        reason: 'new prefix extents at old pixels must never be published '
+            'as a transient page jump or reverse velocity',
+      );
+      expect(tester.getTopLeft(page).dy, closeTo(topBefore + 30, 0.001));
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  for (final head in <bool>[true, false]) {
+    testWidgets(
+      'vertical ${head ? 'head' : 'tail'} navigation keeps physical motion continuous',
+      (tester) async {
+        final base = _chapter(pageCount: 8);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = _ControlledClock();
+        final controller = ReaderController(
+          sessionId: 'reader-endpoint-motion-${head ? 'head' : 'tail'}',
+          chapter: chapter,
+          initialPage: 4,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        await tester.pumpWidget(MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 400,
+              height: 400,
+              child: ReaderView(
+                controller: controller,
+                clock: clock,
+                verticalStitch: true,
+                pageAspectRatios: <String, double>{
+                  for (final page in chapter.pages) page.assetKey: 0.25,
+                },
+                pageBuilder: (context, asset, reportFirstFrame) =>
+                    const ColoredBox(color: Colors.black),
+              ),
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+        final scrollable = tester.state<ScrollableState>(
+          find.descendant(of: list, matching: find.byType(Scrollable)),
+        );
+        final position = scrollable.position;
+        position.jumpTo(head
+            ? position.minScrollExtent + 30
+            : position.maxScrollExtent - 30);
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 16000;
+        await gesture.moveBy(Offset(0, head ? 24 : -24));
+        final priorPixels = position.pixels;
+        expect(priorPixels, greaterThan(position.minScrollExtent));
+        expect(priorPixels, lessThan(position.maxScrollExtent));
+        clock.micros = 32000;
+        await gesture.moveBy(Offset(0, head ? 48 : -48));
+        final endpointPixels = position.pixels;
+        expect(endpointPixels,
+            head ? position.minScrollExtent : position.maxScrollExtent);
+        final endpoint = observations.last;
+        expect(endpoint.interaction, Interaction.dragging);
+        expect(endpoint.currentIndex, head ? 0 : 7);
+        expect(endpoint.logicalPosition, head ? 0 : 7);
+        expect(endpoint.velocity,
+            closeTo((endpointPixels - priorPixels) / 100 / 0.016, 0.001),
+            reason: 'semantic first/last page identity is not physical displacement');
+
+        clock.micros = 48000;
+        await gesture.moveBy(Offset(0, head ? -12 : 12));
+        expect(observations.last.velocity,
+            closeTo((position.pixels - endpointPixels) / 100 / 0.016, 0.001),
+            reason: 'leaving the endpoint must use the same physical baseline');
+        await gesture.up();
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  testWidgets(
+    'pointer drag promotion preserves the real content sampling interval',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = _ControlledClock();
+      final controller = ReaderController(
+        sessionId: 'reader-pointer-promotion-motion-clock',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatios: <String, double>{
+                for (final page in chapter.pages) page.assetKey: 1.5,
+              },
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      final before = observations.last;
+      clock.micros = 16000;
+      await gesture.moveBy(const Offset(0, 100));
+      final motion = observations.last;
+      expect(motion.interaction, Interaction.dragging);
+      final expected = (motion.logicalPosition - before.logicalPosition) / 0.016;
+      expect(expected, lessThan(0));
+      expect(motion.velocity, closeTo(expected, 0.001),
+        reason: 'raw pointer phase promotion and the ScrollUpdate from the '
+            'same input must not become two physical movement samples');
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  for (final delta in <double>[-8, 8]) {
+    testWidgets(
+      'drag velocity uses input timestamps across bunched delivery ($delta)',
+      (tester) async {
+        final base = _chapter(pageCount: 6);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = _ControlledClock();
+        final controller = ReaderController(
+          sessionId: 'reader-bunched-input-motion-clock',
+          chapter: chapter,
+          initialPage: 3,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        final ratios = ValueNotifier<Map<String, double>>(
+          <String, double>{
+            for (final page in chapter.pages) page.assetKey: 1.5,
+          },
+        );
+        addTearDown(ratios.dispose);
+        await tester.pumpWidget(MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 400,
+              height: 400,
+              child: ReaderView(
+                controller: controller,
+                clock: clock,
+                verticalStitch: true,
+                pageAspectRatiosListenable: ratios,
+                pageBuilder: (context, asset, reportFirstFrame) =>
+                    const ColoredBox(color: Colors.black),
+              ),
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+        final gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 16000;
+        await gesture.moveBy(Offset(0, delta * 12.5),
+          timeStamp: const Duration(microseconds: 1016000));
+        await tester.pump();
+        var prior = observations.last.logicalPosition;
+
+        // One input waits longer in delivery; the following input catches up.
+        // Their source timestamps remain16ms apart in their own time domain.
+        clock.micros = 45000;
+        await gesture.moveBy(Offset(0, delta),
+          timeStamp: const Duration(microseconds: 1032000));
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - prior) / 0.016, 0.001),
+            reason: 'delivery latency must not change measured input speed');
+        prior = observations.last.logicalPosition;
+        final velocity = observations.last.velocity;
+        clock.micros = 45500;
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages.last.assetKey: 3.0,
+        };
+        await tester.pump();
+        expect(observations.last.logicalPosition, closeTo(prior, 0.001));
+        expect(observations.last.velocity, closeTo(velocity, 0.001));
+        clock.micros = 46000;
+        await gesture.moveBy(Offset(0, delta),
+          timeStamp: const Duration(microseconds: 1048000));
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - prior) / 0.016, 0.001),
+            reason: 'bunched callbacks must not compress16ms input to1ms');
+        prior = observations.last.logicalPosition;
+        final priorVelocity = observations.last.velocity;
+        // A backdated source event can rewind the physical viewport shortly
+        // after the latest real input. Coverage must stay current, but elapsed
+        // source time is invalid for another motion derivative.
+        clock.micros = 49000;
+        await gesture.moveBy(Offset(0, -delta),
+          timeStamp: const Duration(microseconds: 1047600));
+        expect(observations.last.logicalPosition,
+            delta > 0 ? greaterThan(prior) : lessThan(prior),
+            reason: 'physical coverage must still observe the rewind');
+        expect(observations.last.velocity, closeTo(priorVelocity, 0.001),
+            reason: 'a source timestamp rewind must not manufacture a3ms '
+                'opposite-direction derivative');
+        clock.micros = 64000;
+        await gesture.moveBy(Offset(0, delta * 2),
+          timeStamp: const Duration(microseconds: 1064000));
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - prior) / 0.016, 0.001),
+            reason: 'the next valid input must keep the last increasing '
+                'source position and timestamp baseline');
+        await gesture.up();
+        await tester.pumpAndSettle();
+        final idlePosition = observations.last.logicalPosition;
+        expect(observations.last.interaction, Interaction.idle);
+        clock.micros = 80000;
+        final nextGesture =
+            await tester.startGesture(tester.getCenter(list));
+        await nextGesture.moveBy(Offset(0, delta * 12.5),
+          timeStamp: const Duration(microseconds: 2016000));
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - idlePosition) / 0.016,
+                0.001),
+            reason: 'a new gesture has no preceding source input sample; '
+                'idle must retire the old input timestamp');
+        await nextGesture.up();
+        await tester.pumpAndSettle();
+        clock.micros = 250000;
+        await tester.fling(list, Offset(0, delta * 25), 1000);
+        final beforeInterruption = observations.last.logicalPosition;
+        final scrollable = tester.state<ScrollableState>(
+          find.descendant(of: list, matching: find.byType(Scrollable)),
+        );
+        expect(scrollable.position.isScrollingNotifier.value, isTrue,
+            reason: 'the next gesture interrupts before the first ballistic tick');
+        clock.micros = 266000;
+        final interruptingGesture =
+            await tester.startGesture(tester.getCenter(list));
+        await interruptingGesture.moveBy(Offset(0, delta * 12.5),
+          timeStamp: const Duration(microseconds: 3016000));
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - beforeInterruption) /
+                0.016, 0.001),
+            reason: 'a new scroll activity must retire the old source timestamp '
+                'even when idle observation has not run');
+        await interruptingGesture.up();
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  for (final delta in <double>[-100, 100]) {
+    testWidgets(
+      'idle prefix correction preserves the next drag and read-only timing '
+      '(delta: $delta)',
+      (tester) async {
+        final base = _chapter(pageCount: 8);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = _ControlledClock();
+        final timings = _TestFrameTimingSource();
+        final controller = ReaderController(
+          sessionId: 'reader-idle-prefix-motion-handoff',
+          chapter: chapter,
+          initialPage: 3,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        });
+        addTearDown(ratios.dispose);
+        await tester.pumpWidget(MaterialApp(
+          home: Center(child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              frameTimingSource: timings,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          )),
+        ));
+        await tester.pumpAndSettle();
+        final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+        final page = find.byKey(
+          const ValueKey<String>('reader-vertical-page:3'),
+          skipOffstage: false,
+        );
+        var gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 16000;
+        await gesture.moveBy(const Offset(0, -100));
+        await tester.pump();
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages[0].assetKey: .75,
+          chapter.pages[1].assetKey: .75,
+        };
+        expect(observations.last.interaction, Interaction.dragging);
+        clock.micros = 32000;
+        await gesture.up();
+        expect(observations.last.interaction, Interaction.idle);
+        await tester.pump();
+        // Idle has prepared the changed prefix; its layout applies next frame.
+        // Reading timing context must not freeze the target before new input.
+        final top = tester.getTopLeft(page).dy;
+        final position = tester.state<ScrollableState>(
+          find.descendant(of: list, matching: find.byType(Scrollable)),
+        ).position;
+        final pixels = position.pixels;
+        timings.emit(const <ReaderFrameTimingSample>[
+          ReaderFrameTimingSample(
+            buildMicros: 22000,
+            rasterMicros: 3000,
+            totalSpanMicros: 26000,
+            vsyncOverheadMicros: 400,
+            vsyncStartMicros: 100000,
+            frameIntervalMicros: 16667,
+          ),
+        ]);
+        gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 48000;
+        await gesture.moveBy(Offset(0, delta),
+          timeStamp: const Duration(microseconds: 1016000));
+        final movement = position.pixels - pixels;
+        expect(movement.abs(), greaterThan(0));
+        final prior = observations.last.logicalPosition;
+        await tester.pump();
+        expect(tester.getTopLeft(page).dy, closeTo(top - movement, .001),
+            reason: 'prefix compensation and intervening physical motion '
+                'must apply atomically through repeated layout passes');
+        final appliedPixels = position.pixels;
+        await tester.pump();
+        expect(position.pixels, closeTo(appliedPixels, .001));
+        clock.micros = 64000;
+        await gesture.moveBy(Offset(0, delta * .08),
+          timeStamp: const Duration(microseconds: 1032000));
+        expect(position.pixels, closeTo(appliedPixels - delta * .08, .001),
+            reason: 'the applied correction must not swallow later motion');
+        expect(observations.last.velocity,
+            closeTo((observations.last.logicalPosition - prior) / .016, .001));
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final delta in <double>[-40, 40]) {
+    testWidgets(
+      'visible ratio handoff rebases motion without consuming its input interval '
+      '(delta: $delta)',
+      (tester) async {
+        final base = _chapter(pageCount: 8);
+        final chapter = ChapterManifest(
+          sourceId: base.sourceId,
+          comicId: base.comicId,
+          chapter: base.chapter,
+          pages: base.pages,
+          readingDirection: ReadingDirection.vertical,
+        );
+        final observations = <ReaderObs>[];
+        final clock = _ControlledClock();
+        final controller = ReaderController(
+          sessionId: 'reader-visible-ratio-motion-handoff',
+          chapter: chapter,
+          initialPage: 3,
+          onObservation: observations.add,
+          clock: clock,
+        );
+        addTearDown(controller.dispose);
+        final ratios = ValueNotifier<Map<String, double>>(<String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        });
+        addTearDown(ratios.dispose);
+        await tester.pumpWidget(MaterialApp(
+          home: Center(child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          )),
+        ));
+        await tester.pumpAndSettle();
+        final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+        final page = find.byKey(
+          const ValueKey<String>('reader-vertical-page:3'),
+          skipOffstage: false,
+        );
+        var gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 16000;
+        await gesture.moveBy(const Offset(0, 100));
+        await tester.pump();
+        ratios.value = <String, double>{
+          ...ratios.value,
+          chapter.pages[0].assetKey: .75,
+          chapter.pages[3].assetKey: .75,
+        };
+        expect(tester.getSize(page).height, 600);
+        clock.micros = 32000;
+        await gesture.up();
+        await tester.pump();
+        // The idle commit changes a visible extent as well as the prefix.
+        // The next gesture starts before that revision applies.
+        gesture = await tester.startGesture(tester.getCenter(list));
+        clock.micros = 48000;
+        await gesture.moveBy(Offset(0, delta),
+          timeStamp: const Duration(microseconds: 1016000));
+        await tester.pump();
+        final height = tester.getSize(page).height;
+        expect(height, 300);
+        final top = tester.getTopLeft(page).dy;
+        clock.micros = 80000;
+        await tester.pump();
+        clock.micros = 81000;
+        await gesture.moveBy(Offset(0, delta * .2),
+          timeStamp: const Duration(microseconds: 1032000));
+        expect(observations.last.velocity,
+            closeTo(-delta * .2 / height / .016, .001),
+            reason: 'different logical center coordinates across a geometry '
+                'revision are not real displacement; layout must retain '
+                'the16ms source input interval');
+        await tester.pump();
+        expect(tester.getTopLeft(page).dy, closeTo(top + delta * .2, .001));
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'active prefix layout refresh preserves the content motion sampling interval',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = _ControlledClock();
+      final controller = ReaderController(
+        sessionId: 'reader-prefix-motion-clock',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      clock.micros = 16000;
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+      clock.micros = 32000;
+      await gesture.moveBy(const Offset(0, 8));
+      final lastMotion = observations.last.logicalPosition;
+      final lastVelocity = observations.last.velocity;
+      expect(observations.last.velocity, lessThan(0));
+
+      // A header arrives between two input samples, shortly before the next
+      // input. Applying its prefix correction does not move the visible page.
+      clock.micros = 47500;
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages.first.assetKey: 3.0,
+      };
+      await tester.pump();
+      expect(observations.last.logicalPosition, closeTo(lastMotion, 0.001));
+      expect(observations.last.velocity, closeTo(lastVelocity, 0.001));
+      clock.micros = 48000;
+      await gesture.moveBy(const Offset(0, 8));
+      final motion = observations.last;
+      final expected = (motion.logicalPosition - lastMotion) / 0.016;
+      expect(motion.velocity, closeTo(expected, 0.001),
+        reason: 'the geometry callback is not a new content input sample; '
+            'it must not shorten the16ms motion interval to500us');
+      expect(motion.velocity, lessThan(0));
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'direct drag retires a queued ballistic motion sampling request',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = _ControlledClock();
+      final controller = ReaderController(
+        sessionId: 'reader-superseded-ballistic-motion-clock',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      clock.micros = 16000;
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+      // An earlier non-drag scroll notification requested a coalesced sample.
+      // A new direct drag samples the current physical position before that
+      // callback runs, so the earlier sampling request has been consumed.
+      clock.micros = 31500;
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(of: list, matching: find.byType(Scrollable)),
+      );
+      ScrollUpdateNotification(
+        metrics: scrollable.position,
+        context: tester.element(list),
+        scrollDelta: 0,
+      ).dispatch(tester.element(list));
+      clock.micros = 32000;
+      await gesture.moveBy(const Offset(0, 8));
+      final lastMotion = observations.last.logicalPosition;
+      final lastVelocity = observations.last.velocity;
+      expect(observations.last.velocity, lessThan(0));
+
+      // A header arrives between two input samples, shortly before the next
+      // input. Applying its prefix correction does not move the visible page.
+      clock.micros = 47500;
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages.first.assetKey: 3.0,
+      };
+      await tester.pump();
+      expect(observations.last.logicalPosition, closeTo(lastMotion, 0.001));
+      expect(observations.last.velocity, closeTo(lastVelocity, 0.001));
+      clock.micros = 48000;
+      await gesture.moveBy(const Offset(0, 8));
+      final motion = observations.last;
+      final expected = (motion.logicalPosition - lastMotion) / 0.016;
+      expect(motion.velocity, closeTo(expected, 0.001),
+        reason: 'the geometry callback is not a new content input sample; '
+            'it must not shorten the16ms motion interval to500us');
+      expect(motion.velocity, lessThan(0));
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'ballistic motion still samples velocity through coalesced layout observations',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final clock = _ControlledClock();
+      final controller = ReaderController(
+        sessionId: 'reader-ballistic-motion-clock',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: observations.add,
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      clock.micros = 250000;
+      await tester.fling(list, const Offset(0, -200), 1000);
+      clock.micros += 16000;
+      await tester.pump(const Duration(milliseconds: 16));
+      var prior = observations.last;
+      for (var frame = 0; frame < 4; frame++) {
+        clock.micros += 16000;
+        if (frame == 1) {
+          ratios.value = <String, double>{
+            ...ratios.value,
+            chapter.pages.last.assetKey: 3.0,
+          };
+        }
+        await tester.pump(const Duration(milliseconds: 16));
+        final motion = observations.last;
+        expect(motion.interaction, Interaction.scrolling);
+        final seconds =
+            (motion.monotonicMicros - prior.monotonicMicros) / 1000000.0;
+        expect(seconds, greaterThan(0));
+        final expected =
+            (motion.logicalPosition - prior.logicalPosition) / seconds;
+        expect(expected, greaterThan(0));
+        expect(motion.velocity, closeTo(expected, 0.001),
+          reason: 'coalescing must retain a real ballistic sampling request '
+              'when geometry also schedules an observation');
+        prior = motion;
+      }
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'multiple active prefix measurements share the physically applied anchor',
+    (tester) async {
+      final base = _chapter(pageCount: 6);
+      final chapter = ChapterManifest(
+        sourceId: base.sourceId,
+        comicId: base.comicId,
+        chapter: base.chapter,
+        pages: base.pages,
+        readingDirection: ReadingDirection.vertical,
+      );
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-multiple-prefix-measurements',
+        chapter: chapter,
+        initialPage: 3,
+        onObservation: (_) {},
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          for (final page in chapter.pages) page.assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+      await tester.pumpWidget(MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: clock,
+              verticalStitch: true,
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+      final page = find.byKey(
+        const ValueKey<String>('reader-vertical-page:3'),
+        skipOffstage: false,
+      );
+      final topBefore = tester.getTopLeft(page).dy;
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages[0].assetKey: 3.0,
+      };
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages[1].assetKey: 3.0,
+      };
+      await tester.pump();
+      expect(
+        tester.getTopLeft(page).dy,
+        closeTo(topBefore, 0.001),
+        reason: 'back-to-back header facts must accumulate prefix correction '
+            'against the geometry belonging to the current physical pixels',
+      );
+      expect(controller.currentIndex, 3);
       await gesture.up();
       await tester.pumpAndSettle();
     },
@@ -2919,4 +4558,11 @@ final class FakeClock implements MonoClock {
 
   @override
   int nowMicros() => _micros++;
+}
+
+final class _ControlledClock implements MonoClock {
+  int micros = 0;
+
+  @override
+  int nowMicros() => micros;
 }

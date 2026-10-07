@@ -15,6 +15,9 @@ import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+final _testStaticPresentation =
+    PipelineStaticPresentation(pipelinePresentationRasterCache);
+
 void main() {
   testWidgets(
     'mounted external static reloads when Pipeline presentation generation changes',
@@ -71,6 +74,7 @@ void main() {
               },
               pageStream: stream,
               pageOutput: output,
+              staticPresentation: _testStaticPresentation,
             ),
           ),
         ),
@@ -127,8 +131,12 @@ void main() {
   testWidgets(
     'detached resident raster mounts exactly and same generation regrants after eviction',
     (tester) async {
+      final cache = PipelinePresentationRasterCache(imageCache: ImageCache());
+      final presentation = PipelineStaticPresentation(cache);
       pipelinePresentationRasterCache.clearPresentationRasters();
+      cache.clearPresentationRasters();
       addTearDown(() {
+        cache.clearPresentationRasters();
         pipelinePresentationRasterCache.clearPresentationRasters();
         while (SchedulerBinding.instance.handleEventLoopCallback()) {}
       });
@@ -141,8 +149,8 @@ void main() {
         mediaRuntimeFactory: const _RuntimeFactory(),
         pageDownloadLane: NetLane(maxActive: 5),
         externalPresentationPrewarmer:
-            prewarmPipelineExternalStaticPresentation,
-        presentationCacheAuthority: pipelinePresentationRasterCache,
+            presentation.prewarm,
+        presentationCacheAuthority: presentation.cacheAuthority,
         loaderSources: <Uri, LoaderTransportSource>{
           for (final page in chapter.pages)
             page.uri: LoaderTransportSource(
@@ -164,18 +172,24 @@ void main() {
       await _pumpUntil(tester, () => output.externalPresentationReady);
       expect(output.externalPresentationCacheIdentity, isNotNull);
       expect(
-        pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+        cache.inspectPresentationRasters().entries,
         greaterThan(0),
+      );
+      expect(
+        pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+        0,
+        reason: 'injected presentation authority must not warm the global owner',
       );
       final presentationIdentity =
           output.externalPresentationCacheIdentity!;
-      final residentBeforeMount = pipelinePresentationRasterCache
+      final residentBeforeMount = cache
           .residentProviderForIdentity(presentationIdentity);
       expect(residentBeforeMount, isNotNull);
       final residentKeyBeforeMount = await residentBeforeMount!.obtainKey(
         ImageConfiguration.empty,
       );
 
+      var mountedFirstFrames = 0;
       var presentationFileOpens = 0;
       var byteLoads = 0;
       final image = PickedImage(
@@ -184,7 +198,7 @@ void main() {
         displayName: 'resident-static.png',
         sourceId: asset.uri.toString(),
       );
-      await tester.pumpWidget(
+      Widget mountedPresentation(PipelineStaticPresentation binding) =>
         MaterialApp(
           home: SizedBox(
             width: 240,
@@ -203,10 +217,12 @@ void main() {
               },
               pageStream: stream,
               pageOutput: output,
+              staticPresentation: binding,
+              onFirstFrame: () => mountedFirstFrames++,
             ),
           ),
-        ),
-      );
+        );
+      await tester.pumpWidget(mountedPresentation(presentation));
       await _pumpUntil(
         tester,
         () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
@@ -220,7 +236,17 @@ void main() {
             'identity, so mounted binding must not reopen encoded storage',
       );
       expect(byteLoads, 0);
-      final residentAfterMount = pipelinePresentationRasterCache
+      await _pumpUntil(tester, () => mountedFirstFrames == 1);
+      await tester.pumpWidget(
+        mountedPresentation(PipelineStaticPresentation(cache)),
+      );
+      await tester.pump();
+      expect(
+        mountedFirstFrames,
+        1,
+        reason: 'rebuilding a capability for the same owner keeps the attempt',
+      );
+      final residentAfterMount = cache
           .residentProviderForIdentity(presentationIdentity);
       expect(residentAfterMount, isNotNull);
       expect(
@@ -240,7 +266,7 @@ void main() {
       );
       await tester.pump();
       expect(find.byKey(imageFolderFlutterPreviewKey), findsNothing);
-      pipelinePresentationRasterCache.clearPresentationRasters();
+      cache.clearPresentationRasters();
 
       session.accept(_observationAt(chapter, 2, 3));
       await _pumpUntil(
@@ -280,7 +306,7 @@ void main() {
 
       await session.dispose();
       await tester.pumpWidget(const SizedBox.shrink());
-      pipelinePresentationRasterCache.clearPresentationRasters();
+      cache.clearPresentationRasters();
       for (var turn = 0; turn < 2; turn++) {
         while (SchedulerBinding.instance.handleEventLoopCallback()) {}
         await tester.pump(const Duration(milliseconds: 1));
@@ -340,6 +366,7 @@ void main() {
               },
               pageStream: stream,
               pageOutput: output,
+              staticPresentation: _testStaticPresentation,
             ),
           ),
         ),
@@ -485,6 +512,7 @@ void main() {
               },
               pageStream: stream,
               pageOutput: output,
+              staticPresentation: _testStaticPresentation,
             ),
           ),
         ),
@@ -578,6 +606,7 @@ void main() {
               },
               pageStream: stream,
               pageOutput: output,
+              staticPresentation: _testStaticPresentation,
             ),
           ),
         ),

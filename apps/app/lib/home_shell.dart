@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
+import 'package:plugin_host/plugin_host.dart'
+    show mihonChapterModelComparisonKey, sourceLogicalChapterOrderKey;
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';

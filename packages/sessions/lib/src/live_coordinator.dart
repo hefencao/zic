@@ -399,6 +399,26 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  /// Retires media after route retention has withdrawn its demand. Active
+  /// workers still own their cursor/source until the existing lane barrier.
+  void retireDetachedMedia() {
+    final ids = <DecodeId>{
+      ...?decodes?.sessions.map((session) => session.id),
+      ...?uploads?.sessions.map((session) => session.id),
+    };
+    for (final id in ids) {
+      if (_decodes.containsKey(id) || _uploads.containsKey(id)) continue;
+      uploads?.detach(id);
+      final keys = <String>{id.key};
+      if (decode.hasWorkFor(keys) || upload.hasWorkFor(keys)) continue;
+      uploads?.evict(id);
+      decodes?.evict(id);
+    }
+    for (final id in _sourceWatches.keys.toList(growable: false)) {
+      _releaseSourceIfUnused(id);
+    }
+  }
+
   bool freezePlayback(DecodeId id) => uploads?.freezePlayback(id) ?? false;
 
   bool resumePlayback(DecodeId id) => uploads?.resumePlayback(id) ?? false;

@@ -138,6 +138,7 @@ unfinished/failed或pending-late-attach source按DownloadSession object identity
 already sealed/sourceReady/no-failure且无pending attachment的same-exact immutable projection可跨transient physical session recreation保留。
 旧same-id session teardown必须校验concrete session identity，不能删除replacement entry。
 synchronized late join只有Reader-local projection自身追平稳定physical epoch/length/sealed且无failure后才能加入live fan-out；
+早期probe已发布且精确追平同代sealed正文时，最终join直接复用该encoded source；不能再次从零rebuild而处置decode已绑定的对象。
 replay期间consumer通知可暂时隐藏，但publish必须以replay开始前的projection snapshot作为事务基线与最终状态比较，
 不能在prefix/kind/revision已更新后才截取`before`。
 Reader source watch把encoded content classification与native source growth同等视为decode evidence：
@@ -162,11 +163,12 @@ logical DecodeId复用时，registry get/prepare必须先与DecodeRegistry当前
 Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 download/decode/upload session，
 发布 `PipelinePageStream`，管理 frame budget、共享 page download lane、artifact handoff 和短期资源会话 retention。
 短期 Reader re-entry retention 的 idle LRU 最多保留最近两个 exact session key、TTL 仍为两分钟；
-第三个 key 立即淘汰最旧项，且只有已释放 decode/upload/ingress/streaming source 的 media-empty shell 才有资格进入。
+第三个 key 立即淘汰最旧项。
 短期 Reader re-entry retention 只允许保留 download/physical transfer/encoded source authority；
-route 退出进入 retention 时必须立即释放全部 Reader-local decode/upload session、
-native cursor/WebP canvas、decoded frame 与 output/texture ownership，
-禁止为了两分钟快速重进让 cursor 的 source `Arc` 继续钉住已可由 transfer/artifact 重放的整页 encoded bytes。
+route 退出必须立即撤销 demand 与 presentation claims，由现有 Coordinator 退休 Reader-local 媒体。
+idle decode/upload、cursor/canvas、frames 与 ingress/source 立即释放；已取消但仍执行的任务保留具体 cursor/source，
+经原 DecodeLane/UploadLane 真实退出回执自动回收，不等待 retention TTL，也不得由 Pipeline 提前 evict。
+除真实执行期外，不得为了快速重进让 cursor 的 source `Arc` 钉住可由 transfer/artifact 重放的整页 encoded bytes。
 它也接收 Presentation 的语义失败反馈并保存最后一次 page-body authority：artifact-cache body 的展示失败可触发每页每 Reader session 一次自动恢复；
 显式重试走同一 composition recovery。cache 等价复用时必须保存实际 `storageId + mutation generation`；
 恢复只能条件失效产生失败字节的那一代，旧 failure 若晚于 authority 换代到达只能重载当前 generation，禁止删除或 reset 新 authority；
@@ -656,6 +658,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 - `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
 - `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
 - `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release；
+  SurfaceProducer创建/销毁与scheduleFrame由平台线程执行，MethodChannel result从对应完成lane回包。
+  output release先撤销native登记，再由blit lane释放resident frame并投递平台销毁；回包不测量GPU/fence退休。
+  已承载output的lease随output退休，只有从未呈现过的prewarm lease可进入idle pool。
   精确尺寸的 idle prewarm 在同一 blit lane 先 materialize surface，
   并用 acceleration-only native prepare 预配置目标 RGBA geometry。
   prepare 只减少首个真实 blit 的平台配置成本，不能取得 surface correctness authority：
@@ -754,6 +759,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   Pipeline 只向该 owner 投影 cache claim：`far/detached` 为 `speculative`，`next2/next/previous/near/last` 为 `deadline`，
   real viewport/current/transition 为 `protected`；cache owner 只可在压力下回收 speculative entry，并在真实回收时主动发送 exact invalidation。
   budget eviction后对同一identity的speculative re-admission backpressure也属于该cache owner；claim升为deadline/protected时才解除。
+  mounted与detached首帧消费者均消费该准入事实；Sliver/PageView挂载的屏外listener不得绕过owner denial重新取得grant。
   Pipeline不得再维护`evicted-while-far`等镜像tombstone去猜测owner何时允许重建。
   Pipeline 不得通过 `ImageProvider.obtainCacheStatus()` / `ImageCache.statusForKey()` 轮询 residency，也不得用角色提升做被动 cache revalidation。
   `externalPresentationSatisfied` 只是当前 manager residency proof；owner 的真实 eviction 会主动撤销它并让既有 staged refill 在需要时补帧。
@@ -790,7 +796,10 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   禁止 stale grant 继续制造黑屏。
   这只修正 geometry observation→Pipeline staging，不给 Reader/UI 增加 decode/network/retry owner。
   native decoded/upload residency 由 `FrameBudgeter` 拥有；
-  Reader external-static fallback raster residency 由 composition `PipelinePresentationRasterCache` 拥有，并通过 `ResourceCacheCoordinator.presentationRasters` 统一 inspect/trim/clear；mounted UI不得直接识别private resident-provider或process-global cache。local_media_ui composition只暴露`_PipelinePresentationRasterAdapter`给presentation widget/prewarmer：adapter统一做resident lookup与`providerForViewport`，exact resident直接handoff，否则才按同一规则resize并wrap进唯一managed cache，不建立第二份residency owner。
+  Reader external-static fallback raster residency 由 composition `PipelinePresentationRasterCache` 拥有，并通过 `ResourceCacheCoordinator.presentationRasters` 统一 inspect/trim/clear。
+  App将同一owner绑定为`PipelineStaticPresentation`，其cacheAuthority/prewarm供Pipeline使用，同一capability显式传给mounted UI；展示与预热不得固定选择process-global实例。capability只保存不可变owner引用，不复制residency/claim/LRU状态（ADR0351）。
+  capability只委托resident lookup、diagnostics和viewport resize/managed wrapping，不拥有第二份residency或scheduler；exact resident直接handoff，普通local raster只消费纯resize函数。
+  同owner的新capability值不更换mounted attempt；owner更换沿既有loadEpoch/token退休旧绑定，旧异步尾部不得发布到新展示。
   generic Flutter 图片缓存与该 managed raster plane 共享 100MiB/1000-entry presentation 总额度，但不参与 Reader role/claim 决策；
   encoded speculative I/O 继续由共享 `SpeculativeEncodedReadBudget` 拥有。
 - Reader navigation只提交 observation/用户命令并消费只读输出，不直接操作 transport/session/artifact/lane/frame/texture。
@@ -821,9 +830,16 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   scrub中slider-selected page是显式center anchor；所有已知`index <= anchor`的source ratio必须立即进入layout，
   因为任一prefix extent都会改变绝对page-index的物理offset。已真实visible的post-anchor ratio也必须立即采用。
   ratio提交后立即重发coverage；若新暴露页的ratio已在pending中，下一layout pass继续消费，不等待新dimensions event或pointer-up。
-  pointer-up只结束input phase；scrub期间遗留的首次pending commit仍保持同一selected-page center，收敛后才释放scrub anchor。
+  pointer-up只结束input phase；selected-page center继续锚定放手后才到达的尺寸，pending map暂时为空不代表尺寸已知。
+  真实content motion、新的page/viewport命令、direction或Controller更换才退休该既有导航锚点；不等待下载/首帧，也不延长scrubbing。
+  内部页入口与slider复用同一绝对center anchor；index绑定原navigation revision，入口回执后仍消费晚到ratio，真实motion、新命令及direction/Controller更换退休该锚点。首/末页入口保留边界对齐。
+  idle viewport、DPR及stitch变化继续消费该center anchor，以投影的新geometry在同一layout校正。DPR替换ScrollPosition时，首个dimension pass也消费同一pending correction及真实ScrollMetrics范围，不新增锚点状态或以jumpTo产生内容运动。
   普通idle/content-scroll采用其余新ratio时，top-pixel offset仍通过ScrollPhysics/ScrollPosition的layout-time scroll correction与新content dimensions原子收敛，
   不得先换extent再以`jumpTo`制造可观察中间页。
+  idle位于可滚动章节真实尾端且无slider center anchor时，ratio/viewport/DPR变化保留tail语义；同一ScrollPhysics layout-time correction从新ScrollMetrics读取包含系统insets的maxScrollExtent。首端/interior及无独立尾端的短章保持原top anchor。
+  implicit insets单独改变scroll范围时，同一physics仅在Controller已报末页、无pending page/viewport命令且idle时保留旧真实尾端；显式命令、controller更换、slider center与真实motion优先。
+  物理pixels观测、scene诊断与top-anchor准备只使用ListView当前捕获的不可变geometry；帧末采用的新ratio在下一list build前不得解释旧pixels。连续header更新从同一物理anchor累计layout correction，见ADR0361。
+  首尾页导航位置由实际ScrollMetrics边界确立；运动速度使用同一已布局geometry的连续视口中心坐标，不把首尾页语义覆盖当作物理位移。采样时钟仍由真实内容运动推进。
   Pipeline在vertical active presentation期间对generic/unresolved以及仍走native texture的non-visible `far/near` speculative static output只defer新presentation work；对应UploadDemand identity继续保留，但`prepareOutput=false`，已有resident output/retention bookkeeping不被当成需要重建的资源；
   既有2/1 decode deadline窗口中的`next/next2/previous`在静态一帧已经decode-ready后必须允许提前进入UploadLane/present，并以`retainOutput`交给FrameBudgeter保留到viewport消费，避免把RGBA→SurfaceProducer首拷贝推迟到visible/transition seam。
   该deadline preupload不扩大2/1 decode或3/7 encoded窗口，仍受UploadLane并发/优先级/抢占与FrameBudgeter约束；更远页仍只在idle阶段恢复普通speculative upload。两个有更强证据的例外仍可在既有3/7 one-frame static intent envelope内提前UploadDemand/present：
@@ -847,6 +863,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   SurfaceProducer cleanup/recreate后的重画继续由texture_bridge平台callback owner完成。
   slider scrub的thumb/页码实时跟手，但Reader viewport采用Controller-owned 50ms latest-wins coalescing：
   首个目标可立即推进，时间窗内只保留最后整数页，避免每跨一页都生成navigationRevision/PageView jump与整套Pipeline control churn。
+  pointer-up早于最后目标的post-frame回执时，同一有效命令的completion也必须结束已释放的scrubbing；no-op jump无需ScrollEnd即可发布idle。final flush绝对跳转后即同步physical baseline，真实drag/scroll不被覆盖。
   `Interaction.scrubbing`只描述输入生命周期并禁止把这些中间页学习成阅读方向；它不得拥有另一套resource membership。
   Pipeline始终由真实current + vertical visible coverages解析同一7/3工作窗；相邻scrub只能按真实窗口差集增量迁移，
   不得把稳定11-page transport window压成current-only/visible-only后再在松手时重建。
@@ -877,6 +894,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   不得detach binding、清空download demand或重建navigation controller。
   纵向continuous的coverage fraction/velocity/logicalPosition属于Reader连续几何事实；slider scrub期间selected page只覆盖navigation identity，
   `logicalPosition`仍来自同一physical `ScrollMetrics + ReaderVerticalGeometry`坐标，但absolute scrub jump本身不是content travel：`Interaction.scrubbing`只同步physical baseline并投影`velocity=0`，不得更新travel direction。
+  `Interaction.idle`同样只同步physical baseline并投影零速度；entry整数页号转为viewport-center坐标或idle布局更新不得被学习为content motion，真实drag/scroll仍报告实测速度。
   scrub中若ratio收敛在post-frame阶段再次改变layout，新的`_verticalLayoutRevision`必须由实际重建ListView的frame在post-frame重发physical observation；不得等待下一次pointer事件或在pointer-up才暴露最终center。
   当current/stable、target page、visible page membership与interaction control phase均不变时，
   PipelineReaderSession MUST在enqueue边界丢弃该control-no-op observation，
@@ -1008,8 +1026,16 @@ Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipe
 settled scale 经既有 `onZoomScaleChanged` 投影给 zoom decode boost，仅为可视区域提高解码分辨率。
 
 章节 UI 与章节预加载是两个独立边界。Reader 仍保持“一章一个不可变 `ChapterManifest` / `PipelineReaderSessionHost`”，不得把相邻章节页面拼成一个伪 manifest。
-逻辑章节 previous/next 由 chapter `sequence` 升序定义，详情列表或 source chapter 的展示顺序不得成为 Reader 导航 authority；因此列表正序/倒序都不改变“底部=逻辑下一章、顶部=逻辑上一章”。
+逻辑章节previous/next按source的oldest-first顺序投影定义；Mihon旧目录由plugin-host保留的source ordinal兼容适配，其余来源继续按sequence升序。
+Home在每次排序开始时为每章投影一次逻辑序号；比较器只比较该调用内的整数，同序号保持来源顺序，不跨调用缓存目录或改写章节身份。
+同一次同步Reader screen构建共用一份previous/next查询结果；切章命令和预加载仍重新消费当前canonical目录与完整source-model定位，不把构建期结果保存为目录authority。
+当前章与目录先按 exact ID 定位；同一 source/comic 内仅在完整 Mihon source model 唯一一致时忽略 host ordinal/parent locator 定位逻辑位置。URL/name/memo 保持比较输入，不改 runtime/download ID，也不建立正文等价。
+Home详情composition以同一source-owned比较键生成不可变的stored-entry到唯一catalog行投影；详情按快照实际章节的source/comic作用域归并页数、进度、已读与同步时间，不以route原始别名过滤快照，重复历史行不再另加计数。
+该投影不进入entry复用裁决或打开/下载/删除目标；详情展示可读紧凑快照的已存页数，预览跳章仍沿用原有效页数裁决，占位页面仍不得复用。正文与mutation消费原exact/revision合同，继续阅读保留真实历史身份，来源目录与持久记录不改写。
+详情/source展示顺序不改变底部下一章、顶部上一章。跨章首/尾命令由Home composition在hydrate/source refresh后解析成显式initialPage，优先于历史进度；首/末页进入对应真实scroll边界。
+vertical初页同步复用Controller绝对页面请求，显式请求覆盖旧idle锚点；目标RenderBox与滚动范围经布局确认后才回执，真实拖动接管即退休旧请求，旧controller回执不得触及新章。
 每个 mode 的 `ReaderModeSettings.crossChapterReading` 只 gate 章节边界 UI traversal。paged 使用 PageView 的明确边界 pull；continuous 必须先由 ScrollPosition 的真实首/尾几何确认到章边界，再从边界后的单指 pointer pull 计算提交距离，不能用 coverage-current page 或 Android overscroll physics 代替边界 authority。
+短章节同时处于真实首尾时，由pointer pull方向选择上一/下一章，不以检查顺序固定优先下一章。
 continuous current/progress 的普通interior仍由viewport center推导，但真实min/max scroll extent分别映射首/末页；
 显式slider scrub anchor存在时selected page优先作为navigation identity，无scroll range时保留既有current。
 这样短页章节的边界落点、slider与progress不再因center不可达而回退。
@@ -1018,14 +1044,16 @@ ScrollPosition 因 layout/ballistic correction 产生的通知 MAY 更新内部�
 它延伸的是同一个稳定前 7 / 后 3 encoded window，而不是额外再加 7/3：先扣掉当前章按实际阅读顺序仍可覆盖的页数，只把残余水位补到下一章开头或上一章结尾；因此跨章后总逻辑窗口不扩张。adjacent claim priority 500 低于当前章 far window 的最低 520，
 并继续受共享 `SpeculativeEncodedReadBudget`（默认 50MB）和既有 source bucket/concurrency 限制。页面推进时只更新同一 preload lease 的 demand 集，不因水位伸缩反复创建物理 transfer owner。它不得读取 `crossChapterReading`、不得创建第二个 scheduler、不得绕过 ArtifactCache/partial/physical-session authority。
 真正跨章时先 flush 当前 Reader progress checkpoint，再通过 `HomeLibrarySession.upsertChapter` 确立目标章 durable identity，然后替换 prepared chapter；预加载本身不得因“只是预热”提前持久化未进入章节。相邻章 preparation 可在同一路由内合并并复用成功结果，但 null/error 必须从 coalescing cache 退役，使瞬时 source/plugin 失败可以在后续边界 pull 重试。
+Reader邻章目录查询先筛当前source，再按本次调用的canonical authority限定当前comic family，复用原catalog/alias投影；raw代表身份、entry/progress引用与logical排序保持原边界。
+canonical memo仅活在单次查询；后续调用重新读取source authority和目录，Home全库projection不变，不新增Reader状态或持久cache（ADR0381）。
 `reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 提交最新 checkpoint。
 SQLite 实现使用独立 progress isolate/WAL connection；
 Reader 热路径只将 checkpoint 有序入队，不执行同步 sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。
 writer尚未ready/启动失败时persistent store只保留每章latest checkpoint并以有界backoff重试writer，
 只有route/lifecycle flush或close durability barrier允许同步fallback。
 每个 Reader route 只在 composition 内持有自己的 latest progress；
-route 返回后只把该最终 progress 发布到 `HomeLibrarySession` 一次，不等待 durable barrier，也不 reload library/history。
-磁盘完成不得成为翻页或退出动画的前置条件。
+正常route pop前先drain Reader-local writer并等待storage-owned durable flush；失败可记录后退出。route返回后只把最终progress发布到 `HomeLibrarySession` 一次，不再等待额外barrier或reload library/history。
+磁盘完成不得成为普通翻页的前置条件；最终退出barrier不扩散到逐页checkpoint（ADR0303）。
 `HomeLibrarySession` 同时记录 library projection revision；
 reload 在开始阶段捕获的 entries/SavedComic snapshot如果在 enrichment期间已被 write-through mutation超越，
 结束时不得覆盖更新后的 mounted projection，download snapshot也必须基于最终可见 entries。
@@ -1229,7 +1257,7 @@ current / logical next / next2 / previous = 7 / 5 / 3 / 2
 ```
 
 current 的浅水位 bootstrap 优先于 speculative neighbor：动态 current depth < 3 时，next/next2/previous 的实际 refill 目标暂为 0；
-静态 current 只需 1 帧。
+静态 current 只需 1 帧；其 source 暂不可执行时，既有 `targetWatermark=1` 邻页可按 priority 独立完成首帧，仍服从统一 presentation grant 上限。
 
 ```text
 current depth < min(3, role max) -> current bootstrap；current 等 source 时，真实 viewport transition 可执行 `t>0` 独立取得 1 帧
@@ -1241,8 +1269,8 @@ bootstrap 完成后恢复 staged refill：
 n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 ```
 
-阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；
-真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
+阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行多帧 refill；
+真实 transition 只在 current 暂时无 source 资格时可取一帧；等待单帧 current 的静态邻页仅消费已有 one-frame intent，不要求新的 Reader observation。
 静态页一帧即满足；
 positive static evidence MAY在稳定 encoded previous3/next7 envelope 内建立 `targetWatermark=1` 的 DecodeDemand/UploadDemand，
 但这些只是 one-frame intent，真正执行由 `StagedDecodeRefillPolicy` 按 priority 一次释放一个尚未满足的 speculative static presentation，
@@ -1290,11 +1318,15 @@ LocalImagePlayer的output/surface raster只属于presentation，不得经`onDime
 该feed只允许订阅/退订并在attach时重放retained facts，publish/clear保持Pipeline library-private；
 公共边界不得暴露Flutter `ValueNotifier`/`ValueListenable`。
 一次finger-owned drag/ballistic/settling期间，`ReaderVerticalGeometry`与`ListView.itemExtentBuilder`继续绑定scroll-stable layout snapshot；
-会改变当前真实viewport前缀的ratio（visible tail及之前）只做latest-wins pending。
+真实visible页的新ratio只做latest-wins pending；forward方向严格位于真实visible tail之后的future页可提前采用，reverse incoming prefix可按提交前top-pixel anchor在同一次layout原子补偿。
 slider scrub不属于该冻结边界：当前已visible页的authoritative source ratio MAY立即提交，并以slider-selected current为center anchor做layout-time correction后重发visible coverage；
 否则unknown ratio的一屏provisional extent会让相邻已挂载页永远无法成为visible，从而与transientPreview的hidden decode/upload gate形成闭环。
-只有严格位于真实visible tail之后、尚未可见的future page source ratio MAY在active scroll中提前合入layout snapshot；
-进入idle后其余pending ratio仍由dev.281 top-pixel layout correction一次提交。
+active物理观察继续消费ListView已采用的immutable geometry；Reader保留最新有效motion pixels，仅按private ScrollPhysics实际layout校正移位；前后pixels在同一applied geometry计速。layout重发coverage与倒退输入不推进有效physical sample或采样时钟。
+raw pointer跨过touch slop只推进interaction并观察coverage，不推进运动采样时钟；同一输入的ScrollUpdate才采样真实位移。
+真实drag直接采样并退休更早的合并采样请求，ballistic ScrollUpdate通过同一post-frame observer采样；idle/scrub保持零速度，controller/composition更换清掉待采样fact。
+连续drag有递增source pointer时间时以同域输入间隔计速；首个/缺失/相等时间与ballistic保持Reader回调间隔，绝不跨域相减。倒退时间只刷新physical coverage/position，保留最新有效motion baseline/velocity；layout/phase不推进baseline，scroll start/idle/scrub/controller更换或真实非source采样退休旧时间。
+实测速度outlier只稀疏记录采样入口、前后位置、实际采样与回调间隔，诊断事件不得参与navigation、geometry或Pipeline policy。
+进入idle后其余pending ratio仍由top-pixel layout correction一次提交；prefix补偿保留准备时pixels，首次layout叠加期间真实motion并跨重复layout幂等。新drag保留该未完成补偿，frame timing只读预览，frame末退休；slider/tail绝对导航仍按既有规则退休。
 不得恢复dev.286的独立visual presentation extent/OverflowBox裁切workaround，也不得以扩大decode 2/1替代geometry authority修复；
 Pipeline dimension metadata不得参与download/decode/upload admission。
 dev.294起，纵排抖动诊断的`pageLayoutSnapshot`只在Reader debug Trace中低频采样真实可见RenderBox的constraints/size/global rect/transform，
@@ -1791,6 +1823,9 @@ transport / artifact stream
   `ArtifactCacheManager`在交付前后校验mutation generation，Pipeline拒绝WebP/GIF并要求可信source dimensions，
   Presentation只消费file lease而不取得cache path/descriptor ownership。
   fd path不是缓存identity，Flutter ImageCache key绑定manager epoch + `storageId` + generation；
+  storage_bridge的EncodedFileImageLease把同一descriptor钉到已启动的file/buffer/codec Future实际退出；
+  取消listener不等于取消engine读取。prewarm等待该release完成，mounted替换/销毁只请求release而不阻塞Reader；
+  release后不得启动新的读取，已有pending completer的共享consumer仍可取得首帧，失败路径同样退休租约（ADR0380）。
   平台/尺寸资格失败必须释放lease并退回既有full-byte path。
   每个lease仍独立拥有自己的release Future，但Android bridge可把同一event-loop内多个descriptor close合成一次native batch，
   避免长纵排退出时大量MethodChannel completion挤占下一Reader的local file-open continuation；
@@ -1853,12 +1888,13 @@ platform queue、schedule queue/call、blit和channel dispatch继续分别计时
 
 Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在退出时 `release`。退出 Reader 不等于立即驱逐整章资源：
 
-- retention pool 最多保留 2 个 media-empty idle 章节会话（LRU）；TTL 为 2 分钟；第三个不同key进入时立即完整淘汰最旧会话；
+- retention pool 最多保留 2 个无UI lease的章节会话（LRU）；TTL 为 2 分钟；lane退出后媒体为空，第三个不同key进入时完整淘汰最旧会话；
   显式切换下载目录等 exclusive storage 操作必须先排空该 idle retention pool，再检查 composition transfer consumers；
   仍挂载的 active Reader lease 不属于 idle drain，必须继续阻止目录切换。
 - key 包含稳定章节/source revision、loader URI/revision 和 composition 能力指纹；临时 loader 对象 identity 不参与；
 - 保留Reader-local SourcePool、Decode/Upload/media runtime这些轻量容器以及对composition transfer runtime的consumer lease，
-  但进入idle retention前其Decode/Upload session、Ingress projection、NativeSource与used output必须全部为空；
+  retention由现有Coordinator退休无demand媒体：idle立即回收，已取消但仍执行的decode/upload通过原lane真实退出回执释放cursor/source，不允许Pipeline直接提前evict；
+  无新owner、timer或退休队列；重入恢复demand继续使用原source-retirement换代校验，不能由旧回执回收新代；
   physical DownloadRegistry、artifact/partial handoff与transfer workspace独立于Reader会话生命周期；
 - 释放 Reader binding、page projection、playback wake、present claim 和 renderer output资源；
 - 不同 key、TTL 到期、容量淘汰或 composition shutdown 时才完整逆序 dispose。

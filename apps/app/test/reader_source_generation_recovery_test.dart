@@ -4,7 +4,10 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:telemetry/telemetry.dart';
+import 'package:zic/home_reader_composition.dart';
 import 'package:zic/home_shell.dart';
+import 'package:zic/source_resource_gateway.dart';
 
 void main() {
   Failure failure(Map<String, Object?> details) => Failure(
@@ -107,6 +110,8 @@ void main() {
   });
 
   test('legacy direct Mihon resource locators require source refresh', () {
+    const currentAuthority =
+        'mihon-runtime-transform-v3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     String locator({required bool replayCoordinates}) {
       final payload = <String, Object?>{
         'kind': 'resource',
@@ -143,15 +148,86 @@ void main() {
     expect(
       chapterRequiresSourceLocatorRefresh(
         direct(locator(replayCoordinates: false)),
+        currentMihonResourceAuthorityRevision: currentAuthority,
       ),
       isTrue,
     );
     expect(
       chapterRequiresSourceLocatorRefresh(
         direct(locator(replayCoordinates: true)),
+        currentMihonResourceAuthorityRevision: currentAuthority,
       ),
       isFalse,
     );
+  });
+
+  test('plain Mihon chapters do not inherit installed payload authority', () {
+    const currentAuthority =
+        'mihon-runtime-transform-v3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    for (final revision in <String>[
+      '/chapter:0',
+      '/mihon-runtime-transform-v3:chapter:0',
+    ]) {
+      expect(
+        chapterRequiresSourceLocatorRefresh(
+          chapter('cdn.example',
+              sourceId: 'mihon:fixture', sourceRevision: revision),
+          currentMihonResourceAuthorityRevision: currentAuthority,
+        ),
+        isFalse,
+        reason: 'host-direct media is not bound to a runtime transform payload',
+      );
+    }
+  });
+
+  test('Reader accepts a fresh direct chapter after old payload refresh',
+      () async {
+    const currentAuthority =
+        'mihon-runtime-transform-v3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final stale = ImportedLibraryEntry(chapter: chapter(
+      'old.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision:
+          '/chapter:0:mihon-runtime-transform-v3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    ));
+    final refreshed = ImportedLibraryEntry(chapter: chapter(
+      'cdn.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision: '/chapter:0',
+    ));
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    addTearDown(gateway.close);
+    var refreshCalls = 0;
+    final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {},
+      hydrateEntry: (entry, {required awaitCanonicalPhysicalBackfill}) async =>
+          entry,
+      sourceResources: gateway,
+      downloadComposition: () => null,
+      requiresSourceLocatorRefresh: (chapter) => chapterRequiresSourceLocatorRefresh(
+        chapter,
+        currentMihonResourceAuthorityRevision: currentAuthority,
+      ),
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) async {
+        expect(entry, same(stale));
+        expect(forceSourceRefresh, isTrue);
+        refreshCalls++;
+        return refreshed;
+      },
+      prepareVersionAuthority: (_) async => 0,
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 1,
+    );
+    addTearDown(composition.close);
+
+    final prepared = await composition.prepare(
+      () async => stale,
+      refreshRemote: false,
+    );
+    expect(prepared.entry, same(refreshed));
+    expect(prepared.responseSources, hasLength(2));
+    expect(refreshCalls, 1,
+        reason: 'valid refreshed media must not demand another source refresh');
   });
 
   test('route refresh only owns terminal unavailable source generations', () {

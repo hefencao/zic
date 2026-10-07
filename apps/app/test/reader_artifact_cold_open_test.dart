@@ -10,7 +10,8 @@ import 'package:local_media_ui/local_media_ui.dart';
 import 'package:transport/transport.dart';
 import 'package:zic/media_load_token.dart';
 import 'package:zic/reader_runtime.dart';
-import 'package:zic/webp_demo.dart' show defaultLocalMediaPipelineFactory;
+import 'package:zic/webp_demo.dart'
+    show defaultLocalMediaPipelineFactory, defaultPipelineStaticPresentation;
 
 const _readyKey = ValueKey<String>('cold-reader-artifact-ready');
 
@@ -114,6 +115,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: ImportedImageChapterScreen(
+              staticPresentation: defaultPipelineStaticPresentation,
               record: record,
               pipelineFactory: defaultLocalMediaPipelineFactory
                   .withArtifactCacheManager(
@@ -177,6 +179,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: ImportedImageChapterScreen(
+              staticPresentation: defaultPipelineStaticPresentation,
               record: record,
               pipelineFactory: defaultLocalMediaPipelineFactory
                   .withArtifactCacheManager(
@@ -247,6 +250,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: ImportedImageChapterScreen(
+              staticPresentation: defaultPipelineStaticPresentation,
               record: record,
               pipelineFactory: defaultLocalMediaPipelineFactory
                   .withArtifactCacheManager(

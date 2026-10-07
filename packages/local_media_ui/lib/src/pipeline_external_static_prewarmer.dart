@@ -7,11 +7,13 @@ part of '../local_media_ui.dart';
 /// the same raster policy. Pipeline supplies the typed presentation fit while
 /// this composition layer owns the managed provider/ResizeImage key and raster
 /// residency authority; Flutter ImageCache is only the decode backend.
-Future<void> prewarmPipelineExternalStaticPresentation(
+Future<void> _prewarmPipelineExternalStaticPresentation(
   PipelineExternalPresentationWarmRequest request,
+  PipelineStaticPresentation presentation,
 ) async {
   request.token.throwIfCancelled();
   PipelineEncodedPresentationFileLease? lease;
+  EncodedFileImageLease? fileLease;
   ImageProvider<Object>? provider;
   int? sourceWidth;
   int? sourceHeight;
@@ -21,14 +23,16 @@ Future<void> prewarmPipelineExternalStaticPresentation(
     if (lease != null) {
       sourceWidth = lease.width;
       sourceHeight = lease.height;
-      provider = encodedResourceImageProvider(
-        FileEncodedResourceSource(
+      fileLease = EncodedFileImageLease(
+        source: FileEncodedResourceSource(
           path: lease.path,
           lengthInBytes: lease.length,
           origin: EncodedResourceOrigin.durableCacheFile,
           cacheIdentity: request.cacheIdentity,
         ),
+        releaseFile: lease.release,
       );
+      provider = fileLease.imageProvider;
     } else {
       final bytes = await request.loadBytes(request.token);
       request.token.throwIfCancelled();
@@ -65,7 +69,7 @@ Future<void> prewarmPipelineExternalStaticPresentation(
         'external static prewarm requires intrinsic dimensions',
       );
     }
-    provider = _pipelinePresentationRasterAdapter.providerForViewport(
+    provider = presentation.providerForViewport(
       image: provider,
       sourceWidth: sourceWidth,
       sourceHeight: sourceHeight,
@@ -77,9 +81,10 @@ Future<void> prewarmPipelineExternalStaticPresentation(
 
     await _resolveFirstStaticImageFrame(provider, request.token);
   } finally {
-    final currentLease = lease;
-    if (currentLease != null) {
-      await currentLease.release();
+    if (fileLease != null) {
+      await fileLease.release();
+    } else if (lease != null) {
+      await lease.release();
     }
   }
 }

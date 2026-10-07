@@ -6,14 +6,17 @@ final _defaultNativeMediaRuntimeFactory = NativePipelineMediaRuntimeFactory();
 
 final defaultDownloadResourceCoordinator = DownloadResourceCoordinator();
 
+final defaultPipelineStaticPresentation =
+    PipelineStaticPresentation(pipelinePresentationRasterCache);
+
 final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
   mediaRuntimeFactory: _defaultNativeMediaRuntimeFactory,
   artifactReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
   speculativeEncodedReadBudget:
       defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
   pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,
-  externalPresentationPrewarmer: prewarmPipelineExternalStaticPresentation,
-  presentationCacheAuthority: pipelinePresentationRasterCache,
+  externalPresentationPrewarmer: defaultPipelineStaticPresentation.prewarm,
+  presentationCacheAuthority: defaultPipelineStaticPresentation.cacheAuthority,
 );
 
 Future<void> prewarmDefaultLocalMediaPipeline() =>

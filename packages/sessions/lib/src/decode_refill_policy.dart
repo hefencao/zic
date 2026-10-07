@@ -33,11 +33,11 @@ final class DecodeRefillDecision {
 /// cursor batching may overshoot naturally.
 ///
 /// Current bootstrap is authoritative: until current reaches min(3, its role
-/// maximum), neighbor decode targets are effectively zero, matching
+/// maximum), multi-frame neighbor decode targets are effectively zero, matching
 /// VibeVenera's shallow FrameDepthTable. If current is waiting for source, an
 /// actually visible drag `transition` may still acquire its independent first
-/// frame; speculative next/next2/previous work does not run around a stalled
-/// current. After bootstrap, deeper refills follow
+/// frame. A waiting one-frame current also permits ready one-frame neighbors;
+/// an animated current still gates speculative work. After bootstrap, deeper refills follow
 /// `n2, m2, p2, c5, n3, c7, n4, m3, n5`.
 /// The role maxima remain c/n/m/p = 7/5/3/2; last remains keep-only.
 final class StagedDecodeRefillPolicy {
@@ -93,6 +93,7 @@ final class StagedDecodeRefillPolicy {
       );
     }
 
+    var singleFrameCurrentWaiting = false;
     final current = currentId;
     if (current != null &&
         !terminalOf(current) &&
@@ -113,10 +114,11 @@ final class StagedDecodeRefillPolicy {
             targetWatermark: bootstrapTarget,
           );
         }
-        // A real viewport transition may make progress while current waits on
-        // source ingress. Other neighbors remain download-only until current
-        // bootstrap can resume.
-        return transitionFirstFrame();
+        // Animation bootstrap still gates speculative work. A one-frame
+        // current waiting on its source must not strand already-downloaded
+        // static neighbors until another viewport observation promotes them.
+        if (bootstrapTarget != 1) return transitionFirstFrame();
+        singleFrameCurrentWaiting = true;
       }
     }
 
@@ -143,6 +145,12 @@ final class StagedDecodeRefillPolicy {
             threshold: 0,
             targetWatermark: 1,
           );
+
+    if (singleFrameCurrentWaiting) {
+      // Release only an existing one-frame intent (or visible transition),
+      // never a deeper animation waterline around the waiting current.
+      return transitionFirstFrame() ?? oneFrameDecision;
+    }
 
     final byRole = <PageRole, DecodeId>{};
     for (final entry in demands.entries) {

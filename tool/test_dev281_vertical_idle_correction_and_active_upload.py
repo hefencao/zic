@@ -44,17 +44,37 @@ physics_target_marker = (
 )
 for marker in (
     'final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics',
-    'double? Function() geometryCorrectionTarget;',
+    '_ReaderVerticalGeometryCorrection? Function() geometryCorrectionTarget;',
     'double adjustPositionForNewDimensions({',
     physics_target_marker,
-    '.clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)',
-    'double? _pendingVerticalGeometryCorrection;',
+    'target.resolve(newPosition)',
+    'offset ?? metrics.maxScrollExtent',
+    '.clamp(metrics.minScrollExtent, metrics.maxScrollExtent)',
+    '_ReaderVerticalGeometryCorrection? _pendingVerticalGeometryCorrection;',
+    'preserveIdleTail: () => _canPreserveIdleVerticalTail',
+    'correctedPixels = newPosition.maxScrollExtent;',
     'nextRatios: pending,',
     'final nextGeometry = _verticalGeometry(ratios: nextRatios);',
-    '_pendingVerticalGeometryCorrection = nextGeometry.restoreTop(anchor);',
+    'nextGeometry.restoreTop(anchor)',
     '_scheduleVerticalGeometryCorrectionClear();',
 ):
     req(marker in reader, f'atomic idle geometry correction missing: {marker}')
+
+# An absolute slider command keeps its center through measurements arriving
+# after release; non-tail scrolling preserves the top-pixel anchor. A real
+# tail resolves through ScrollMetrics, including implicit system insets.
+# Executable Reader regressions cover these paths and anchor retirement.
+require(
+    'packages/reader/test/reader_navigation_test.dart',
+    'released vertical scrub keeps its center through late ratios',
+    'idle chapter tail remains the tail when the viewport changes',
+    'real chapter tail includes the scroll view system insets',
+    'idle prefix correction preserves the next drag and read-only timing',
+)
+timing_start = reader.index('  void _handleFrameTimings(')
+timing_end = reader.index('  bool _isFrameTimingOutlier(', timing_start)
+req('_pendingVerticalGeometryCorrection?.resolve(' not in reader[timing_start:timing_end],
+    'frame timing diagnostics must not resolve a geometry transaction')
 if int(m.group(1)) >= 308:
     for marker in (
         'if (_lastVerticalTravelDirection < 0 &&',
@@ -226,7 +246,15 @@ if int(m.group(1)) >= 327:
     )
 else:
     require('docs/IMPLEMENTATION_STATUS.md', 'vertical hidden-upload规则不变', 'anchor/geometry rebuild')
-require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
+if int(m.group(1)) >= 327:
+    # Accepted mechanics belong in their audit; Plan contains only the remaining
+    # visual/cadence criteria under the current selective-geometry contract.
+    require('docs/IMPLEMENTATION_PLAN.md', 'dev.280', '真机视觉验收',
+            '物理观察只用已布局geometry', 'ballistic')
+    require('docs/audits/dev281-release-jitter-and-dart-compile-audit.md',
+            '慢拖松手', '_ReaderVerticalScrollPhysics.adjustPositionForNewDimensions')
+else:
+    require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
 require('CHANGELOG.md', '0.31.0-dev.281', 'layout-time correction')
 
 print('PASS: dev.281 vertical idle correction + active next2 upload deferral')

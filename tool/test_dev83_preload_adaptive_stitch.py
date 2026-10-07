@@ -133,13 +133,20 @@ def main() -> None:
         "authors: record.comicAuthors",
     )
     require(
-        "packages/local_media_ui/lib/src/local_image_player.dart",
+        "packages/local_media_ui/lib/src/catalog_and_codec.dart",
         "animatedHint: image.format == LocalImageFormat.gif",
+    )
+    require(
+        "packages/local_media_ui/lib/src/local_image_player.dart",
         "webpNativeTextureViewportKey",
         "FilterQuality.low",
     )
     reject(
         "packages/local_media_ui/lib/src/local_image_player.dart",
+        "image.format == LocalImageFormat.webp ||",
+    )
+    reject(
+        "packages/local_media_ui/lib/src/catalog_and_codec.dart",
         "image.format == LocalImageFormat.webp ||",
     )
     require(

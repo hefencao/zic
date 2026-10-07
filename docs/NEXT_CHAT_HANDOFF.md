@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前已核对的源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；独立性能/真实来源验收仍开放。
+- 当前已核对的源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；独立性能/真实来源验收仍开放。
 - 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；
@@ -54,7 +54,7 @@
   Download治理：DL-PIPE-001已闭合为2-wide sliding chapter page admission（仍共用唯一consumer/NetLane/bucket2）；DL-PIPE-003、DL-DIR-006/007、DL-MGR-005已闭合。剩余DL-DIR-019/017真实provider kill/reopen证据。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Android API stub冲突未复现，平台guard保留。
-  两个 mode 各有独立“连续阅读”开关；它只 gate Reader 章节边界 UI traversal。logical previous/next 按 chapter sequence 升序定义，与详情/source chapter 展示顺序无关。continuous 先由 ScrollPosition 真实首/尾确认到章边界，再按边界后的单指 pointer pull 提交；paged 继续使用 PageView 边界 pull。相邻章节预加载与该 UI 开关完全解耦。
+  两mode跨章开关只gate UI traversal；logical顺序消费source oldest-first投影，Mihon兼容旧opaque ordinal且不改ID。continuous真实首/尾后才pointer pull，显式入口覆盖历史并经布局回执；paged保持PageView pull，preload独立。
   章节仍一章一个 immutable manifest/session，跨章前 flush progress 并由 HomeLibrarySession upsert；系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态且默认显示，Android 16/targetSdk 36 由 reader_runtime WindowInsetsController owner 实际 show/hide，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）；逻辑/解码窗口仍为前7/后3与前2/后1。跨章节 preload 只补当前章 7/3 残余水位，不额外扩窗，同一 lease 随页推进伸缩且 priority 500 < far 520，并受共享 50MB budget；禁止 UI prefetch gate 或第二 scheduler。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture；传输租约竞争采用 ranked-transport-lease-reclaim，支持 active current-class demotion 与 新current waiter 的 40分 差值抢占。

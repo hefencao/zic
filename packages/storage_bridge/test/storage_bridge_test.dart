@@ -57,9 +57,18 @@ void main() {
         cacheIdentity: Object(),
       ),
     );
+    final leased = EncodedFileImageLease(
+      source: FileEncodedResourceSource(
+        path: '/proc/self/fd/97',
+        cacheIdentity: generation,
+      ),
+      releaseFile: () async {},
+    );
 
     expect(memory, file);
     expect(memory.hashCode, file.hashCode);
+    expect(leased.imageProvider, memory);
+    expect(leased.imageProvider.hashCode, memory.hashCode);
     expect(memory, isNot(nextGeneration));
   });
 

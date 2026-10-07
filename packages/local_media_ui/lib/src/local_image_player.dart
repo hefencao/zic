@@ -23,6 +23,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.playback,
     this.pageStream,
     this.pageOutput,
+    this.staticPresentation,
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
     this.fit = BoxFit.contain,
@@ -31,6 +32,10 @@ final class LocalImagePlayer extends StatefulWidget {
   }) : assert(
           pageStream == null || pageOutput != null,
           'Pipeline page streams must be paired with their owned output',
+        ),
+        assert(
+          pageOutput == null || staticPresentation != null,
+          'Pipeline output must use its composition-bound static presentation',
         );
 
   final PickedImage image;
@@ -55,6 +60,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final ReaderPlaybackController? playback;
   final PipelinePageStream? pageStream;
   final PipelinePageOutputStream? pageOutput;
+  final PipelineStaticPresentation? staticPresentation;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
   final BoxFit fit;
@@ -83,7 +89,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late LocalImageFormat _detectedFormat;
   Uint8List? _bytes;
   ImageProvider<Object>? _imageProvider;
-  PipelineEncodedPresentationFileLease? _presentationFileLease;
+  EncodedFileImageLease? _presentationFileLease;
   int _loadEpoch = 0;
   int _scheduledStaticFrameLoadEpoch = -1;
   late MediaLoadToken _loadToken;
@@ -177,7 +183,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         oldWidget.image.displayName != widget.image.displayName ||
         oldWidget.image.format != widget.image.format ||
         oldWidget.pageStream != widget.pageStream ||
-        oldWidget.pageOutput != widget.pageOutput) {
+        oldWidget.pageOutput != widget.pageOutput ||
+        oldWidget.staticPresentation != widget.staticPresentation) {
       _advanceLoadEpoch();
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
@@ -429,7 +436,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     // attempt. Ordinary raster eviction can revoke/regrant the same immutable
     // cache identity and must still receive a fresh attempt token.
     _externalPresentationAttemptToken = grant.acknowledgementToken;
-    final resident = _pipelinePresentationRasterAdapter.residentProvider(
+    final resident = widget.staticPresentation!.residentProvider(
       grant.cacheIdentity,
     );
     if (resident != null) {
@@ -472,14 +479,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             if (!mounted || loadEpoch != _loadEpoch || token != _loadToken) {
               return;
             }
-            final provider = encodedResourceImageProvider(
-              FileEncodedResourceSource(
+            final fileLease = EncodedFileImageLease(
+              source: FileEncodedResourceSource(
                 path: lease.path,
                 lengthInBytes: lease.length,
                 origin: EncodedResourceOrigin.durableCacheFile,
                 cacheIdentity:
                     _pageOutputGrant?.cacheIdentity ?? lease.cacheIdentity,
               ),
+              releaseFile: lease.release,
             );
             final width = lease.width;
             final height = lease.height;
@@ -488,7 +496,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
                 'presentation file lease is missing intrinsic dimensions',
               );
             }
-            _presentationFileLease = lease;
+            _presentationFileLease = fileLease;
             _presentationRecoveryAuthority = lease.authority;
             retained = true;
             _reportPlaybackCapability(false);
@@ -496,7 +504,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             setState(() {
               _detectedFormat = presentationFormat;
               _bytes = null;
-              _imageProvider = provider;
+              _imageProvider = fileLease.imageProvider;
             });
             return;
           } finally {
@@ -742,7 +750,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   Future<void> _releasePresentationFileLeaseBestEffort(
-    PipelineEncodedPresentationFileLease lease,
+    EncodedFileImageLease lease,
   ) async {
     try {
       await lease.release();
@@ -806,7 +814,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     final clock = widget.traceClock;
     if (clock != null && widget.pageOutput != null) {
-      final usage = _pipelinePresentationRasterAdapter.inspect();
+      final usage = widget.staticPresentation!.inspect();
       widget.traceSink.record(
         traceEvent(
           clock: clock,
@@ -1139,6 +1147,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         fit: widget.fit,
         presentationIdentity:
             _pageOutputGrant?.cacheIdentity,
+        staticPresentation: widget.staticPresentation,
         imageKey: imageFolderFlutterPreviewKey,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (frame != null || wasSynchronouslyLoaded) {
@@ -1178,16 +1187,18 @@ final class MediaRasterImage extends StatelessWidget {
     required this.dimensions,
     required this.fit,
     this.presentationIdentity,
+    this.staticPresentation,
     this.imageKey,
     this.frameBuilder,
     this.errorBuilder,
     super.key,
-  });
+  }) : assert(presentationIdentity == null || staticPresentation != null);
 
   final ImageProvider<Object> image;
   final Size? dimensions;
   final BoxFit fit;
   final Object? presentationIdentity;
+  final PipelineStaticPresentation? staticPresentation;
   final Key? imageKey;
   final ImageFrameBuilder? frameBuilder;
   final ImageErrorWidgetBuilder? errorBuilder;
@@ -1203,21 +1214,31 @@ final class MediaRasterImage extends StatelessWidget {
             constraints.hasBoundedHeight &&
             constraints.maxWidth > 0 &&
             constraints.maxHeight > 0;
-        final provider = _pipelinePresentationRasterAdapter.providerForViewport(
-          image: image,
-          sourceWidth: source?.width.round(),
-          sourceHeight: source?.height.round(),
-          maxPhysicalWidth: boundedViewport
-              ? math.max(8, (constraints.maxWidth * ratio).floor())
-              : null,
-          maxPhysicalHeight: boundedViewport
-              ? math.max(8, (constraints.maxHeight * ratio).floor())
-              : null,
-          fit: fit == BoxFit.fitWidth
-              ? PipelineExternalPresentationFit.fitWidth
-              : PipelineExternalPresentationFit.contain,
-          presentationIdentity: managedIdentity,
-        );
+        final physicalWidth = boundedViewport
+            ? math.max(8, (constraints.maxWidth * ratio).floor()) : null;
+        final physicalHeight = boundedViewport
+            ? math.max(8, (constraints.maxHeight * ratio).floor()) : null;
+        final presentationFit = fit == BoxFit.fitWidth
+            ? PipelineExternalPresentationFit.fitWidth
+            : PipelineExternalPresentationFit.contain;
+        final provider = managedIdentity == null
+            ? _mediaRasterProviderForViewport(
+                image: image,
+                sourceWidth: source?.width.round(),
+                sourceHeight: source?.height.round(),
+                maxPhysicalWidth: physicalWidth,
+                maxPhysicalHeight: physicalHeight,
+                fit: presentationFit,
+              )
+            : staticPresentation!.providerForViewport(
+                image: image,
+                sourceWidth: source?.width.round(),
+                sourceHeight: source?.height.round(),
+                maxPhysicalWidth: physicalWidth,
+                maxPhysicalHeight: physicalHeight,
+                fit: presentationFit,
+                presentationIdentity: managedIdentity,
+              );
         return MediaAspectViewport(
           dimensions: source,
           fit: fit,
@@ -1520,70 +1541,3 @@ final class MediaAspectViewport extends StatelessWidget {
   }
   return null;
 }
-
-ImportedChapterRecord imageFolderChapterRecord(
-  PickedImageFolder folder, {
-  ReadingDirection readingDirection = ReadingDirection.ltr,
-  DateTime? importedAt,
-}) {
-  final explicitCoverIndex = folder.files.indexWhere(_isExplicitFolderCover);
-  final cover = explicitCoverIndex < 0
-      ? folder.files.first
-      : folder.files[explicitCoverIndex];
-  final pageFiles = explicitCoverIndex >= 0 && folder.files.length > 1
-      ? <PickedImage>[
-          for (var index = 0; index < folder.files.length; index++)
-            if (index != explicitCoverIndex) folder.files[index],
-        ]
-      : folder.files;
-  return ImportedChapterRecord.folder(
-    directoryId: folder.directoryPath,
-    displayName: folder.displayName,
-    coverSourceId: cover.sourceId,
-    coverMediaFormat: cover.format.name,
-    coverAnimatedHint:
-        cover.format == LocalImageFormat.gif ||
-        cover.format == LocalImageFormat.webp,
-    readingDirection: readingDirection,
-    importedAt: importedAt,
-    pages: pageFiles
-        .map(
-          (image) => ImportedPageRecord(
-            displayName: image.displayName,
-            sourceId: image.sourceId,
-            contentKindHint: _contentKindHint(image.format),
-            mediaFormat: image.format.name,
-            byteLength: image.byteLength,
-            // GIF is intrinsically animated. WebP is an unresolved animation
-            // candidate until the decoder reports authoritative container
-            // metadata; treating it as static here can suppress frame-zero
-            // bootstrap before runtime classification has a chance to run.
-            animatedHint: image.format == LocalImageFormat.gif ||
-                image.format == LocalImageFormat.webp,
-          ),
-        )
-        .toList(growable: false),
-  );
-}
-
-bool _isExplicitFolderCover(PickedImage image) {
-  final normalized = image.displayName.trim().replaceAll('\\', '/');
-  if (normalized.isEmpty || normalized.contains('/')) {
-    return false;
-  }
-  final dot = normalized.lastIndexOf('.');
-  final stem = dot <= 0 ? normalized : normalized.substring(0, dot);
-  return stem.toLowerCase() == 'cover';
-}
-
-ContentKindHint _contentKindHint(LocalImageFormat format) => switch (format) {
-      LocalImageFormat.jpeg => ContentKindHint.jpeg,
-      LocalImageFormat.png => ContentKindHint.png,
-      LocalImageFormat.gif => ContentKindHint.gif,
-      LocalImageFormat.webp => ContentKindHint.webp,
-      LocalImageFormat.avif => ContentKindHint.avif,
-      LocalImageFormat.bmp ||
-      LocalImageFormat.tiff ||
-      LocalImageFormat.ico ||
-      LocalImageFormat.heif => ContentKindHint.fallback,
-    };

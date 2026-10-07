@@ -39,6 +39,9 @@ void _drainSchedulerTasks() {
   while (SchedulerBinding.instance.handleEventLoopCallback()) {}
 }
 
+final _testStaticPresentation =
+    PipelineStaticPresentation(pipelinePresentationRasterCache);
+
 void main() {
   testWidgets(
     'presentation raster owner trims speculative entries by managed claim',
@@ -272,6 +275,7 @@ void main() {
             width: 32,
             height: 32,
             child: MediaRasterImage(
+              staticPresentation: _testStaticPresentation,
               image: baseProvider,
               dimensions: null,
               fit: BoxFit.contain,

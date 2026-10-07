@@ -17,6 +17,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImportedImageChapterScreen(
+          staticPresentation:
+              PipelineStaticPresentation(pipelinePresentationRasterCache),
           record: ImportedChapterRecord(
             directoryId: 'test',
             displayName: 'test',

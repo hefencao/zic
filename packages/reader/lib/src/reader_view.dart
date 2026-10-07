@@ -78,18 +78,61 @@ double _clampAxisForImage(
 }
 
 
+final class _ReaderVerticalGeometryCorrection {
+  _ReaderVerticalGeometryCorrection.offset(this.offset) : referencePixels = null;
+  _ReaderVerticalGeometryCorrection.tail()
+      : offset = null, referencePixels = null;
+  _ReaderVerticalGeometryCorrection.preservingMotion(
+    this.offset, {
+    required this.referencePixels,
+  });
+
+  final double? offset;
+  final double? referencePixels;
+  double? _resolvedMotionOffset;
+
+  bool get preservesMotion => referencePixels != null;
+
+  double resolve(ScrollMetrics metrics) {
+    // Resolve the accumulated real input once, when the new geometry first
+    // applies. Subsequent layout passes must use the same target rather than
+    // applying the prefix delta again to already-corrected pixels.
+    final reference = referencePixels;
+    if (reference != null) {
+      _resolvedMotionOffset ??= offset! + metrics.pixels - reference;
+    }
+    return preview(metrics);
+  }
+
+  double preview(ScrollMetrics metrics) {
+    // Trace context is read-only: only layout may fix the one-frame target.
+    final reference = referencePixels;
+    final target = reference == null
+        ? offset ?? metrics.maxScrollExtent
+        : _resolvedMotionOffset ?? offset! + metrics.pixels - reference;
+    return target.clamp(metrics.minScrollExtent, metrics.maxScrollExtent)
+        .toDouble();
+  }
+}
+
 final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics {
   const _ReaderVerticalScrollPhysics({
     required this.geometryCorrectionTarget,
+    required this.preserveIdleTail,
+    required this.onDimensionCorrection,
     super.parent,
   });
 
-  final double? Function() geometryCorrectionTarget;
+  final _ReaderVerticalGeometryCorrection? Function() geometryCorrectionTarget;
+  final bool Function() preserveIdleTail;
+  final ValueChanged<double> onDimensionCorrection;
 
   @override
   _ReaderVerticalScrollPhysics applyTo(ScrollPhysics? ancestor) {
     return _ReaderVerticalScrollPhysics(
       geometryCorrectionTarget: geometryCorrectionTarget,
+      preserveIdleTail: preserveIdleTail,
+      onDimensionCorrection: onDimensionCorrection,
       parent: buildParent(ancestor),
     );
   }
@@ -102,17 +145,87 @@ final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics {
     required double velocity,
   }) {
     final target = geometryCorrectionTarget();
+    // Explicit corrections take priority. Implicit system insets can change
+    // the range without changing Reader geometry; keep only an idle real tail.
+    final double correctedPixels;
     if (target != null) {
-      return target
-          .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
-          .toDouble();
+      correctedPixels = target.resolve(newPosition);
+    } else if (!isScrolling &&
+        preserveIdleTail() &&
+        oldPosition.maxScrollExtent > oldPosition.minScrollExtent &&
+        (oldPosition.pixels - oldPosition.maxScrollExtent).abs() <= 0.5) {
+      correctedPixels = newPosition.maxScrollExtent;
+    } else {
+      correctedPixels = super.adjustPositionForNewDimensions(
+        oldPosition: oldPosition,
+        newPosition: newPosition,
+        isScrolling: isScrolling,
+        velocity: velocity,
+      );
     }
-    return super.adjustPositionForNewDimensions(
-      oldPosition: oldPosition,
-      newPosition: newPosition,
-      isScrolling: isScrolling,
-      velocity: velocity,
-    );
+    final pixelShift = correctedPixels - newPosition.pixels;
+    if (pixelShift != 0) onDimensionCorrection(pixelShift);
+    return correctedPixels;
+  }
+}
+
+final class _ReaderVerticalScrollController extends ScrollController {
+  _ReaderVerticalScrollController({super.initialScrollOffset});
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) =>
+      _ReaderVerticalScrollPosition(
+        physics: physics,
+        context: context,
+        initialPixels: initialScrollOffset,
+        keepScrollOffset: keepScrollOffset,
+        oldPosition: oldPosition,
+        debugLabel: debugLabel,
+      );
+}
+
+final class _ReaderVerticalScrollPosition extends ScrollPositionWithSingleContext {
+  _ReaderVerticalScrollPosition({
+    required super.physics,
+    required super.context,
+    required super.initialPixels,
+    required super.keepScrollOffset,
+    super.oldPosition,
+    super.debugLabel,
+  });
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    // DPR changes recreate ScrollPosition. Its first dimension pass skips
+    // adjustPositionForNewDimensions, so apply the same pending correction
+    // against the real incoming range before accepting that first layout.
+    final readerPhysics = physics;
+    if (!haveDimensions && hasPixels && hasViewportDimension &&
+        readerPhysics is _ReaderVerticalScrollPhysics) {
+      final correction = readerPhysics.geometryCorrectionTarget();
+      if (correction != null) {
+        final metrics = FixedScrollMetrics(
+          minScrollExtent: minScrollExtent,
+          maxScrollExtent: maxScrollExtent,
+          pixels: pixels,
+          viewportDimension: viewportDimension,
+          axisDirection: axisDirection,
+          devicePixelRatio: devicePixelRatio,
+        );
+        final target = correction.resolve(metrics);
+        final shift = target - pixels;
+        if (shift != 0) {
+          readerPhysics.onDimensionCorrection(shift);
+          correctPixels(target);
+          return false;
+        }
+      }
+    }
+    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
   }
 }
 
@@ -238,6 +351,8 @@ final class _ReaderViewState extends State<ReaderView>
   late final _ReaderVerticalScrollPhysics _verticalScrollPhysics;
   double _lastLogicalPosition = 0;
   int _lastMicros = 0;
+  int? _lastVerticalSourcePointerMicros;
+  double? _lastVerticalMotionPixels;
   double? _lastPagedVelocity;
   int? _lastPagedMetricsMicros;
   Interaction _interaction = Interaction.idle;
@@ -279,12 +394,19 @@ final class _ReaderViewState extends State<ReaderView>
   late final ValueNotifier<int> _verticalLayoutRevision;
   late Map<String, double> _runtimePageAspectRatios;
   late Map<String, double> _verticalLayoutRatios;
+  // Observations and anchor corrections must pair physical pixels with the
+  // immutable geometry captured by ListView, including between frame callbacks.
+  ReaderVerticalGeometry? _verticalListGeometry;
   Map<String, double>? _pendingVerticalLayoutRatios;
-  int? _verticalScrubAnchorIndex;
+  // Retain an absolute slider or interior-entry center across late dimensions.
+  // The command revision lets deferred entry positioning keep the same anchor;
+  // content motion or a new command still supersedes it.
+  ({int index, int revision})? _verticalPageAnchor;
   bool _verticalRatioCommitScheduled = false;
   bool _verticalFutureRatioAdoptionScheduled = false;
   bool _verticalObservationRefreshScheduled = false;
-  double? _pendingVerticalGeometryCorrection;
+  bool _verticalObservationRefreshSamplesMotion = false;
+  _ReaderVerticalGeometryCorrection? _pendingVerticalGeometryCorrection;
   bool _verticalGeometryCorrectionClearScheduled = false;
   double? _lastVerticalScrollPixels;
   double? _lastVerticalLogicalPosition;
@@ -403,6 +525,8 @@ final class _ReaderViewState extends State<ReaderView>
     _verticalController = _createVerticalController();
     _verticalScrollPhysics = _ReaderVerticalScrollPhysics(
       geometryCorrectionTarget: () => _pendingVerticalGeometryCorrection,
+      preserveIdleTail: () => _canPreserveIdleVerticalTail,
+      onDimensionCorrection: _shiftVerticalMotionBaseline,
     );
     _lastLogicalPosition = widget.controller.currentIndex.toDouble();
     _lastMicros = widget.clock.nowMicros();
@@ -477,6 +601,7 @@ final class _ReaderViewState extends State<ReaderView>
       _verticalInitialOffsetApplied = false;
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
       _lastMicros = widget.clock.nowMicros();
+      _lastVerticalSourcePointerMicros = null;
       _interaction = Interaction.idle;
       _handledNavigationRevision = widget.controller.navigationRevision;
       _zoomedPage = null;
@@ -498,8 +623,9 @@ final class _ReaderViewState extends State<ReaderView>
           widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
       _verticalLayoutRatios = _runtimePageAspectRatios;
       _pendingVerticalLayoutRatios = null;
-      _verticalScrubAnchorIndex = null;
+      _verticalPageAnchor = null;
       _verticalRatioCommitScheduled = false;
+      _syncScheduled = false;
       _pendingVerticalGeometryCorrection = null;
       _resetVerticalCompositionCache();
       _scheduleSyncToCurrentPage();
@@ -576,6 +702,7 @@ final class _ReaderViewState extends State<ReaderView>
                 oldRatios: _verticalLayoutRatios,
                 oldStitch: widget.verticalStitch,
                 oldDevicePixelRatio: previous,
+                nextDevicePixelRatio: nextDevicePixelRatio,
               );
             }
             _devicePixelRatio = nextDevicePixelRatio;
@@ -593,6 +720,7 @@ final class _ReaderViewState extends State<ReaderView>
                 oldRatios: _verticalLayoutRatios,
                 oldStitch: widget.verticalStitch,
                 oldViewport: previousViewport,
+                nextViewport: nextViewport,
               );
             }
             _viewport = nextViewport;
@@ -622,19 +750,22 @@ final class _ReaderViewState extends State<ReaderView>
                 ? _ReaderVerticalScrollPhysics(
                     geometryCorrectionTarget: () =>
                         _pendingVerticalGeometryCorrection,
+                    preserveIdleTail: () => _canPreserveIdleVerticalTail,
+                    onDimensionCorrection: _shiftVerticalMotionBaseline,
                     parent: const AlwaysScrollableScrollPhysics(),
                   )
                 : _verticalScrollPhysics;
             final list = ValueListenableBuilder<int>(
               valueListenable: _verticalLayoutRevision,
               builder: (_, _, _) {
+                final geometry = _verticalGeometry();
+                _verticalListGeometry = geometry;
                 // A geometry revision is not complete until the rebuilt
                 // ListView has applied the new extents/corrected pixels. The
                 // resulting physical viewport observation must be published
                 // from this frame, especially while a slider is held and no
                 // further pointer event is guaranteed.
                 _scheduleVerticalObservationRefreshAfterLayout();
-                final geometry = _verticalGeometry();
                 return ListView.builder(
                   key: const ValueKey<String>('reader-vertical-list'),
                   controller: _verticalController,
@@ -996,7 +1127,7 @@ final class _ReaderViewState extends State<ReaderView>
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
-    final scrubAnchor = (_verticalScrubAnchorIndex ??
+    final scrubAnchor = (_verticalPageAnchor?.index ??
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
@@ -1034,8 +1165,9 @@ final class _ReaderViewState extends State<ReaderView>
 
     final nextRatios = Map<String, double>.unmodifiable(merged!);
     final nextGeometry = _verticalGeometry(ratios: nextRatios);
-    _pendingVerticalGeometryCorrection =
-        nextGeometry.centeredOffsetFor(scrubAnchor);
+    _pendingVerticalGeometryCorrection = _ReaderVerticalGeometryCorrection.offset(
+      nextGeometry.centeredOffsetFor(scrubAnchor),
+    );
     _scheduleVerticalGeometryCorrectionClear();
     _verticalLayoutRatios = nextRatios;
     _invalidateVerticalGeometryCache();
@@ -1051,7 +1183,7 @@ final class _ReaderViewState extends State<ReaderView>
           'visibleMinIndex': visibleMin,
           'visibleMaxIndex': visibleMax,
           'scrubAnchorIndex': scrubAnchor,
-          'geometryCorrectionTarget': _pendingVerticalGeometryCorrection,
+          'geometryCorrectionTarget': _pendingVerticalGeometryCorrection?.offset,
           'interaction': _interaction.name,
           'source': 'scrub-visible-ratio',
         },
@@ -1071,7 +1203,7 @@ final class _ReaderViewState extends State<ReaderView>
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
-    final oldGeometry = _verticalGeometry();
+    final oldGeometry = _verticalListGeometry ?? _verticalGeometry();
     final oldPixels = _verticalController.hasClients
         ? _verticalController.position.pixels
         : null;
@@ -1117,7 +1249,11 @@ final class _ReaderViewState extends State<ReaderView>
       correction = _verticalGeometry(ratios: nextRatios)
           .restoreTop(oldAnchor);
       if ((correction - oldPixels).abs() > 0.01) {
-        _pendingVerticalGeometryCorrection = correction;
+        _pendingVerticalGeometryCorrection =
+            _ReaderVerticalGeometryCorrection.preservingMotion(
+          correction,
+          referencePixels: oldPixels,
+        );
         _scheduleVerticalGeometryCorrectionClear();
       }
     }
@@ -1219,18 +1355,16 @@ final class _ReaderViewState extends State<ReaderView>
           identical(pending, _verticalLayoutRatios) ||
           _sameVerticalRatios(_verticalLayoutRatios, pending)) {
         _pendingVerticalLayoutRatios = null;
-        if (_interaction == Interaction.idle) {
-          _verticalScrubAnchorIndex = null;
-        }
         return;
       }
-      final scrubAnchor = _verticalScrubAnchorIndex;
+      final scrubAnchor = _verticalPageAnchor?.index;
       if (scrubAnchor != null) {
         final boundedAnchor = scrubAnchor
             .clamp(0, widget.controller.chapter.pages.length - 1)
             .toInt();
-        _pendingVerticalGeometryCorrection =
-            _verticalGeometry(ratios: pending).centeredOffsetFor(boundedAnchor);
+        _pendingVerticalGeometryCorrection = _ReaderVerticalGeometryCorrection.offset(
+          _verticalGeometry(ratios: pending).centeredOffsetFor(boundedAnchor),
+        );
         _scheduleVerticalGeometryCorrectionClear();
       } else {
         _preserveVerticalAnchor(
@@ -1247,14 +1381,19 @@ final class _ReaderViewState extends State<ReaderView>
     });
   }
 
-  void _scheduleVerticalObservationRefreshAfterLayout() {
-    if (_verticalObservationRefreshScheduled ||
-        widget.controller.direction != ReadingDirection.vertical) {
+  void _scheduleVerticalObservationRefreshAfterLayout({
+    bool sampleMotion = false,
+  }) {
+    if (widget.controller.direction != ReadingDirection.vertical) {
       return;
     }
+    _verticalObservationRefreshSamplesMotion |= sampleMotion;
+    if (_verticalObservationRefreshScheduled) return;
     _verticalObservationRefreshScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _verticalObservationRefreshScheduled = false;
+      final sampleMotion = _verticalObservationRefreshSamplesMotion;
+      _verticalObservationRefreshSamplesMotion = false;
       if (!mounted ||
           widget.controller.direction != ReadingDirection.vertical ||
           !_verticalController.hasClients ||
@@ -1264,6 +1403,8 @@ final class _ReaderViewState extends State<ReaderView>
       _emitFromVerticalMetrics(
         _verticalController.position,
         forceLayoutSnapshot: true,
+        sampleMotion: sampleMotion,
+        samplingSource: sampleMotion ? 'ballistic-scroll-update' : 'layout-only',
       );
       final pending = _pendingVerticalLayoutRatios;
       if (_interaction == Interaction.scrubbing && pending != null) {
@@ -1281,10 +1422,6 @@ final class _ReaderViewState extends State<ReaderView>
           // The ValueListenableBuilder schedules the authoritative observation
           // from the frame that actually applies this geometry revision.
         }
-      }
-      if (_interaction == Interaction.idle &&
-          _pendingVerticalLayoutRatios == null) {
-        _verticalScrubAnchorIndex = null;
       }
       if (_interaction == Interaction.idle &&
           _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
@@ -1307,6 +1444,9 @@ final class _ReaderViewState extends State<ReaderView>
 
   void _resetVerticalCompositionCache() {
     _invalidateVerticalGeometryCache();
+    _verticalListGeometry = null;
+    _lastVerticalMotionPixels = null;
+    _verticalObservationRefreshSamplesMotion = false;
     _verticalCacheScreens = 2;
     _verticalInitialCompositionWarmupScheduled = false;
     _verticalInitialCompositionPrimed = false;
@@ -1370,7 +1510,7 @@ final class _ReaderViewState extends State<ReaderView>
   ScrollController _createVerticalController({
     double initialScrollOffset = 0,
   }) =>
-      ScrollController(initialScrollOffset: initialScrollOffset);
+      _ReaderVerticalScrollController(initialScrollOffset: initialScrollOffset);
 
   // ---------------------------------------------------------------------------
   // Continuous strip zoom. One uniform matrix scales every page together so
@@ -1627,13 +1767,24 @@ final class _ReaderViewState extends State<ReaderView>
           !widget.controller.pageScrubbing &&
           _verticalController.hasClients &&
           _verticalController.position.hasContentDimensions) {
+        // Physical dragging takes over from an unfinished absolute command.
+        // Its post-layout callback must not pull the pointer back to the target.
+        _verticalPageAnchor = null;
+        widget.controller.acknowledgePageRequest(
+          widget.controller.navigationRevision,
+        );
         _lastVerticalTravelDirection =
             event.position.dy > scrollAnchor.dy ? -1 : 1;
         _interaction = Interaction.dragging;
         _startVerticalSceneMotionProbe();
+        // This promotes the input phase at the current physical position. The
+        // ScrollUpdate from the same pointer event measures its real movement;
+        // advancing the sampling clock here would time that movement twice.
         _emitFromVerticalMetrics(
           _verticalController.position,
           forceLayoutSnapshot: true,
+          sampleMotion: false,
+          samplingSource: 'pointer-drag-start',
         );
       }
     }
@@ -2044,12 +2195,21 @@ final class _ReaderViewState extends State<ReaderView>
     return bounds;
   }
 
+  bool get _canPreserveIdleVerticalTail =>
+      _interaction == Interaction.idle &&
+      _verticalPageAnchor == null &&
+      widget.controller.requestedIndex == null &&
+      widget.controller.requestedViewportFraction == null &&
+      widget.controller.currentIndex == widget.controller.chapter.pages.length - 1;
+
   void _preserveVerticalAnchor({
     required Map<String, double> oldRatios,
     required bool oldStitch,
     Size? oldViewport,
     double? oldDevicePixelRatio,
     Map<String, double>? nextRatios,
+    Size? nextViewport,
+    double? nextDevicePixelRatio,
   }) {
     if (widget.controller.direction != ReadingDirection.vertical ||
         !_verticalController.hasClients ||
@@ -2059,15 +2219,44 @@ final class _ReaderViewState extends State<ReaderView>
         _viewport == Size.zero) {
       return;
     }
-    final anchor = _verticalGeometry(
+    final position = _verticalController.position;
+    if (_verticalPageAnchor == null &&
+        position.maxScrollExtent > position.minScrollExtent &&
+        (position.pixels - position.maxScrollExtent).abs() <= 0.5) {
+      // A real chapter tail is an edge anchor, not a top-of-viewport anchor.
+      // ScrollMetrics owns the real extent, including system insets. Resolve
+      // the end in the same layout correction as ratio/slider changes; a
+      // fitting chapter has no distinct tail and keeps its ordinary anchor.
+      _pendingVerticalAnchor = null;
+      _pendingVerticalGeometryCorrection =
+          _ReaderVerticalGeometryCorrection.tail();
+      _scheduleVerticalGeometryCorrectionClear();
+      return;
+    }
+    final anchor = (_verticalListGeometry ?? _verticalGeometry(
       ratios: oldRatios,
       stitch: oldStitch,
       viewport: oldViewport,
       devicePixelRatio: oldDevicePixelRatio,
-    ).anchorForTop(_verticalController.position.pixels);
-    if (nextRatios != null) {
-      final nextGeometry = _verticalGeometry(ratios: nextRatios);
-      _pendingVerticalGeometryCorrection = nextGeometry.restoreTop(anchor);
+    )).anchorForTop(_verticalController.position.pixels);
+    final scrubAnchor = _verticalPageAnchor?.index;
+    if (nextRatios != null || scrubAnchor != null) {
+      // Viewport, DPR and stitch changes preserve absolute navigation too.
+      // Correct in layout without a jumpTo that impersonates content motion.
+      final nextGeometry = _verticalGeometry(
+        ratios: nextRatios,
+        viewport: nextViewport,
+        devicePixelRatio: nextDevicePixelRatio,
+      );
+      _pendingVerticalAnchor = null;
+      _pendingVerticalGeometryCorrection = scrubAnchor == null
+          ? _ReaderVerticalGeometryCorrection.preservingMotion(
+              nextGeometry.restoreTop(anchor),
+              referencePixels: position.pixels,
+            )
+          : _ReaderVerticalGeometryCorrection.offset(
+              nextGeometry.centeredOffsetFor(scrubAnchor),
+            );
       _scheduleVerticalGeometryCorrectionClear();
       return;
     }
@@ -2105,6 +2294,18 @@ final class _ReaderViewState extends State<ReaderView>
   double _verticalOffsetFor(int index) =>
       _verticalGeometry().centeredOffsetFor(index);
 
+  double _verticalRequestOffsetFor(int index) {
+    final alignment = widget.controller.requestedPageAlignment;
+    final position = _verticalController.position;
+    if (index == 0 && alignment == 0) return position.minScrollExtent;
+    if (index == widget.controller.chapter.pages.length - 1 && alignment == 1) {
+      return position.maxScrollExtent;
+    }
+    final bounds = _verticalBoundsFor(index);
+    return bounds.start +
+        (bounds.end - bounds.start - position.viewportDimension) * alignment;
+  }
+
   void _prepareVerticalControllerForCurrentPage() {
     if (_verticalController.hasClients || _viewport == Size.zero) return;
     final initialOffset = math.max(
@@ -2128,7 +2329,7 @@ final class _ReaderViewState extends State<ReaderView>
       _resetStripZoom();
       _verticalKeepAliveCenter.value = controller.currentIndex;
       _resetVerticalCompositionCache();
-      _verticalScrubAnchorIndex = null;
+      _verticalPageAnchor = null;
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
         _verticalLayoutRatios = _runtimePageAspectRatios;
@@ -2153,6 +2354,7 @@ final class _ReaderViewState extends State<ReaderView>
     if (revision == _handledNavigationRevision) return;
     final viewportFraction = controller.requestedViewportFraction;
     if (viewportFraction != null) {
+      _verticalPageAnchor = null;
       if (controller.direction != ReadingDirection.vertical) {
         _handledNavigationRevision = revision;
         controller.acknowledgePageRequest(revision);
@@ -2213,9 +2415,6 @@ final class _ReaderViewState extends State<ReaderView>
           _interaction = Interaction.idle;
           _emitFromVerticalMetrics(position);
           _schedulePendingVerticalRatioCommit();
-          if (_pendingVerticalLayoutRatios == null) {
-            _verticalScrubAnchorIndex = null;
-          }
         } else {
           _interaction = Interaction.idle;
           _emitObservation(
@@ -2235,11 +2434,18 @@ final class _ReaderViewState extends State<ReaderView>
         return;
       }
       _handledNavigationRevision = revision;
+      // An explicit page command supersedes any idle viewport anchor queued
+      // by a ratio update before this command reached the laid-out scrollable.
+      _pendingVerticalGeometryCorrection = null;
+      _pendingVerticalAnchor = null;
+      final endingScrub = !controller.pageScrubbing &&
+          _interaction == Interaction.scrubbing;
       if (controller.pageScrubbing || _interaction == Interaction.scrubbing) {
-        // Keep the absolute slider selection as geometry authority until all
-        // ratios observed during this scrub are committed. `currentIndex` is
-        // viewport-derived and may otherwise drift on the first idle layout.
-        _verticalScrubAnchorIndex = requested;
+        // Keep the absolute selection through later measurements too. An empty
+        // pending map at release does not mean the target's size is known.
+        _verticalPageAnchor = (index: requested, revision: revision);
+      } else if (_verticalPageAnchor?.revision != revision) {
+        _verticalPageAnchor = null;
       }
       final animated =
           controller.requestedPageAnimated && !controller.pageScrubbing;
@@ -2251,7 +2457,7 @@ final class _ReaderViewState extends State<ReaderView>
       // enabled while zoomed, so navigation must not reset it either.
       final maxExtent = _verticalController.position.maxScrollExtent;
       final target =
-          _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble();
+          _verticalRequestOffsetFor(requested).clamp(0.0, maxExtent).toDouble();
       if (animated) {
         unawaited(
           _verticalController
@@ -2266,6 +2472,16 @@ final class _ReaderViewState extends State<ReaderView>
         );
       } else {
         _verticalController.jumpTo(target);
+        if (endingScrub) {
+          // ScrollEnd can queue an idle observation before the final request's
+          // completion. A released slider's last jump is still absolute input.
+          _resetVelocityBaseline(
+            _verticalNavigationPosition(
+              _verticalGeometry(),
+              _verticalController.position,
+            ).logicalPosition,
+          );
+        }
         _completeVerticalPageRequest(revision, requested);
       }
       return;
@@ -2340,9 +2556,15 @@ final class _ReaderViewState extends State<ReaderView>
     });
   }
 
-  void _completeVerticalPageRequest(int revision, int requested) {
+  void _completeVerticalPageRequest(
+    int revision,
+    int requested, {
+    double? previousMaxExtent,
+  }) {
+    final controller = widget.controller;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
+          !identical(widget.controller, controller) ||
           widget.controller.direction != ReadingDirection.vertical ||
           widget.controller.navigationRevision != revision ||
           widget.controller.requestedIndex != requested) {
@@ -2359,48 +2581,106 @@ final class _ReaderViewState extends State<ReaderView>
       final viewportEnd = viewportStart + position.viewportDimension;
       final targetVisible =
           bounds.end > viewportStart && bounds.start < viewportEnd;
-      if (!targetVisible) {
+      final targetOffset = _verticalRequestOffsetFor(requested)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if (!targetVisible || position.outOfRange ||
+          (position.pixels - targetOffset).abs() > 0.5) {
         final maxExtent = position.maxScrollExtent;
         _verticalController.jumpTo(
-          _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
+          _verticalRequestOffsetFor(requested)
+              .clamp(position.minScrollExtent, maxExtent)
+              .toDouble(),
         );
         _completeVerticalPageRequest(revision, requested);
         return;
       }
+      final targetLayout =
+          _verticalPageLayoutKeys[requested].currentContext?.findRenderObject();
+      if (targetLayout is! RenderBox ||
+          !targetLayout.hasSize ||
+          (targetLayout.size.height -
+                  _verticalGeometry().extentAt(requested)).abs() > 0.5) {
+        _completeVerticalPageRequest(revision, requested);
+        return;
+      }
+      if (previousMaxExtent != position.maxScrollExtent) {
+        // A variable-extent sliver may publish its final range one frame after
+        // mounting the target. Do not acknowledge against the old clamp range.
+        _completeVerticalPageRequest(
+          revision,
+          requested,
+          previousMaxExtent: position.maxScrollExtent,
+        );
+        WidgetsBinding.instance.scheduleFrame();
+        return;
+      }
       _lastLogicalPosition = requested.toDouble();
       _verticalKeepAliveCenter.value = requested;
+      final scrubEnded = _interaction == Interaction.scrubbing &&
+          !widget.controller.pageScrubbing;
+      if (scrubEnded) {
+        // Pointer-up can precede the final jump's post-frame acknowledgment.
+        // Repeating its offset emits no ScrollEnd, so complete the input phase
+        // here without treating the phase change as physical travel.
+        _interaction = Interaction.idle;
+      }
+      if (_interaction == Interaction.idle) {
+        _resetVelocityBaseline(
+          _verticalNavigationPosition(_verticalGeometry(), position)
+              .logicalPosition,
+        );
+      }
       _emitFromVerticalMetrics(
         position,
         forceLayoutSnapshot: true,
       );
       widget.controller.acknowledgePageRequest(revision);
+      if (scrubEnded) {
+        _schedulePendingVerticalRatioCommit();
+      }
     });
   }
 
   void _scheduleSyncToCurrentPage() {
     if (_syncScheduled) return;
     _syncScheduled = true;
+    final controller = widget.controller;
+    final index = controller.currentIndex;
+    final revision = controller.navigationRevision;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncScheduled = false;
-      if (mounted) _syncToCurrentPage();
+      if (mounted &&
+          identical(widget.controller, controller) &&
+          controller.navigationRevision == revision &&
+          _interaction == Interaction.idle) {
+        _syncToCurrentPage(pageIndex: index);
+      }
     });
   }
 
-  void _syncToCurrentPage() {
+  void _syncToCurrentPage({int? pageIndex}) {
     final controller = widget.controller;
-    final index = controller.currentIndex;
+    final index = pageIndex ?? controller.currentIndex;
     if (controller.direction == ReadingDirection.vertical) {
-      if (!_verticalController.hasClients ||
-          _viewport == Size.zero ||
-          !_verticalController.position.hasContentDimensions) {
-        _scheduleSyncToCurrentPage();
-        return;
-      }
-      final maxExtent = _verticalController.position.maxScrollExtent;
-      _verticalKeepAliveCenter.value = index;
-      _verticalController.jumpTo(
-        _verticalOffsetFor(index).clamp(0.0, maxExtent).toDouble(),
+      // Cached ratios can precede the layout's new max extent. Use the same
+      // absolute command/visibility acknowledgment as an explicit page jump,
+      // rather than completing entry at an offset clamped by the old layout.
+      controller.requestPage(
+        index,
+        forcePosition: true,
+        alignment: index == 0
+            ? 0
+            : index == controller.chapter.pages.length - 1 ? 1 : 0.5,
       );
+      if (index > 0 && index < controller.chapter.pages.length - 1) {
+        // Entry is absolute navigation too. Completing against provisional
+        // dimensions does not turn its selected center into a viewport top.
+        _verticalPageAnchor = (
+          index: index,
+          revision: controller.navigationRevision,
+        );
+      }
       return;
     }
     if (_pageController.hasClients) {
@@ -2450,7 +2730,11 @@ final class _ReaderViewState extends State<ReaderView>
       layoutMicros: vertical ? _lastVerticalLayoutMicros : null,
       interaction: _interaction,
       geometryCorrectionTarget:
-          vertical ? _pendingVerticalGeometryCorrection : null,
+          vertical && _verticalController.hasClients
+              ? _pendingVerticalGeometryCorrection?.preview(
+                  _verticalController.position,
+                )
+              : null,
       stitched: vertical && widget.verticalStitch,
     );
     for (var index = 0; index < timings.length; index++) {
@@ -2555,7 +2839,9 @@ final class _ReaderViewState extends State<ReaderView>
     }
   }
 
-  ReaderChapterBoundary? _verticalChapterBoundaryAtCurrentScroll() {
+  ReaderChapterBoundary? _verticalChapterBoundaryAtCurrentScroll({
+    double? pullDeltaY,
+  }) {
     if (!widget.crossChapterReading ||
         widget.onChapterBoundaryRequested == null ||
         _chapterBoundaryRequestInFlight ||
@@ -2564,10 +2850,22 @@ final class _ReaderViewState extends State<ReaderView>
       return null;
     }
     final position = _verticalController.position;
-    if (position.extentAfter <= 0.5 && widget.canReadNextChapter) {
+    final atStart = position.extentBefore <= 0.5;
+    final atEnd = position.extentAfter <= 0.5;
+    if (atStart && atEnd) {
+      if (pullDeltaY != null && pullDeltaY > 0 &&
+          widget.canReadPreviousChapter) {
+        return ReaderChapterBoundary.previous;
+      }
+      if (pullDeltaY != null && pullDeltaY < 0 && widget.canReadNextChapter) {
+        return ReaderChapterBoundary.next;
+      }
+      return null;
+    }
+    if (atEnd && widget.canReadNextChapter) {
       return ReaderChapterBoundary.next;
     }
-    if (position.extentBefore <= 0.5 && widget.canReadPreviousChapter) {
+    if (atStart && widget.canReadPreviousChapter) {
       return ReaderChapterBoundary.previous;
     }
     return null;
@@ -2582,10 +2880,10 @@ final class _ReaderViewState extends State<ReaderView>
         _stripPinchActive) {
       return;
     }
+    _chapterBoundaryPointerAnchor = event.position;
     final boundary = _verticalChapterBoundaryAtCurrentScroll();
     if (boundary == null) return;
     _chapterBoundaryPointerBoundary = boundary;
-    _chapterBoundaryPointerAnchor = event.position;
     _chapterBoundaryOverscroll = boundary;
     _chapterBoundaryOverscrollDistance = 0;
     _scheduleChapterBoundaryVisualRefresh();
@@ -2601,7 +2899,10 @@ final class _ReaderViewState extends State<ReaderView>
       _clearChapterBoundaryOverscrollUi();
       return;
     }
-    final boundary = _verticalChapterBoundaryAtCurrentScroll();
+    final anchor = _chapterBoundaryPointerAnchor;
+    final boundary = _verticalChapterBoundaryAtCurrentScroll(
+      pullDeltaY: anchor == null ? null : event.position.dy - anchor.dy,
+    );
     if (boundary == null) {
       _chapterBoundaryPointerBoundary = null;
       _chapterBoundaryPointerAnchor = null;
@@ -2609,8 +2910,8 @@ final class _ReaderViewState extends State<ReaderView>
       return;
     }
     final previousBoundary = _chapterBoundaryPointerBoundary;
-    final anchor = _chapterBoundaryPointerAnchor;
-    if (previousBoundary != boundary || anchor == null) {
+    if ((previousBoundary != null && previousBoundary != boundary) ||
+        anchor == null) {
       _chapterBoundaryPointerBoundary = boundary;
       _chapterBoundaryPointerAnchor = event.position;
       _chapterBoundaryOverscroll = boundary;
@@ -2621,6 +2922,7 @@ final class _ReaderViewState extends State<ReaderView>
     final wasReady =
         _chapterBoundaryOverscrollDistance >= _chapterBoundaryThreshold;
     final deltaY = event.position.dy - anchor.dy;
+    _chapterBoundaryPointerBoundary = boundary;
     _chapterBoundaryOverscroll = boundary;
     _chapterBoundaryOverscrollDistance = math.max(
       0,
@@ -2768,8 +3070,11 @@ final class _ReaderViewState extends State<ReaderView>
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
       _resetChapterBoundaryOverscroll();
+      _lastVerticalSourcePointerMicros = null;
       _pendingVerticalAnchor = null;
-      _pendingVerticalGeometryCorrection = null;
+      if (_pendingVerticalGeometryCorrection?.preservesMotion != true) {
+        _pendingVerticalGeometryCorrection = null;
+      }
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
       _resetVerticalScrollCadenceSummary(widget.clock.nowMicros());
@@ -2791,6 +3096,14 @@ final class _ReaderViewState extends State<ReaderView>
       if (dragDriven && delta != null && delta.abs() <= 0.01) {
         return false;
       }
+      if (!widget.controller.pageScrubbing &&
+          widget.controller.requestedIndex == null &&
+          widget.controller.requestedViewportFraction == null &&
+          delta != null && delta.abs() > 0.01) {
+        // Non-command content motion (including semantics scrolling) takes
+        // over the viewport. Layout correction itself emits no scroll update.
+        _verticalPageAnchor = null;
+      }
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : dragDriven
@@ -2804,9 +3117,14 @@ final class _ReaderViewState extends State<ReaderView>
         dragDriven: dragDriven,
       );
       if (dragDriven) {
-        _emitFromVerticalMetrics(notification.metrics);
+        _emitFromVerticalMetrics(
+          notification.metrics,
+          samplingSource: 'drag-scroll-update',
+          sourcePointerMicros:
+              notification.dragDetails?.sourceTimeStamp?.inMicroseconds,
+        );
       } else {
-        _scheduleVerticalObservationRefreshAfterLayout();
+        _scheduleVerticalObservationRefreshAfterLayout(sampleMotion: true);
       }
     } else if (notification is OverscrollNotification) {
       _trackChapterBoundaryOverscroll(notification);
@@ -2943,7 +3261,12 @@ final class _ReaderViewState extends State<ReaderView>
       _maybeFlushVerticalSceneMotionSummary(nowMicros);
       return;
     }
-    final geometry = _verticalGeometry();
+    final geometry = _verticalListGeometry;
+    if (geometry == null) {
+      _verticalSceneMotionMissingRenderBoxCount++;
+      _maybeFlushVerticalSceneMotionSummary(nowMicros);
+      return;
+    }
     final scenePosition = geometry.positionAt(
       pixels: position.pixels,
       viewportDimension: position.viewportDimension,
@@ -3342,10 +3665,105 @@ final class _ReaderViewState extends State<ReaderView>
   void _emitFromVerticalMetrics(
     ScrollMetrics metrics, {
     bool forceLayoutSnapshot = false,
+    bool sampleMotion = true,
+    String samplingSource = 'physical-observation',
+    int? sourcePointerMicros,
   }) {
-    final geometry = _verticalGeometry();
+    final geometry = _verticalListGeometry;
+    if (geometry == null) return;
+    // A direct sample consumes any earlier coalesced sampling request. The
+    // pending layout callback still refreshes coverage, but must not resample
+    // the clock after this newer input has already established its baseline.
+    if (sampleMotion) _verticalObservationRefreshSamplesMotion = false;
     final position = _verticalNavigationPosition(geometry, metrics);
-    final velocity = _verticalVelocityFor(position.logicalPosition);
+    // First/last navigation identity is a semantic endpoint override. Motion
+    // must use the continuous viewport center from this same applied geometry,
+    // including arrival at and departure from a physical scroll boundary.
+    final motionPosition = geometry.positionAt(
+      pixels: metrics.pixels,
+      viewportDimension: metrics.viewportDimension,
+    ).logicalPosition;
+    final priorMotionPixels = _lastVerticalMotionPixels;
+    if (priorMotionPixels != null) {
+      // Compare both physical samples in this applied geometry. A visible
+      // extent can change their logical coordinates without content motion.
+      // Layout corrections port the valid pixel baseline; coverage refreshes
+      // and backdated inputs must not replace it or advance either clock.
+      _lastLogicalPosition = geometry.positionAt(
+        pixels: priorMotionPixels,
+        viewportDimension: metrics.viewportDimension,
+      ).logicalPosition;
+    }
+    final priorMotionPosition = _lastLogicalPosition;
+    final priorMotionMicros = _lastMicros;
+    final priorSourcePointerMicros = _lastVerticalSourcePointerMicros;
+    final priorVelocity = _lastVerticalVelocity;
+    final velocity = _verticalVelocityFor(
+      motionPosition,
+      pixels: metrics.pixels,
+      sampleMotion: sampleMotion,
+      sourcePointerMicros: sourcePointerMicros,
+    );
+    if (sampleMotion && sourcePointerMicros != null &&
+        priorSourcePointerMicros != null &&
+        sourcePointerMicros < priorSourcePointerMicros) {
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.clock,
+          sessionId: widget.controller.sessionId,
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{
+            'stage': 'vertical-motion-source-time-rewind',
+            'samplingSource': samplingSource,
+            'interaction': _interaction.name,
+            'priorMotionPosition': priorMotionPosition,
+            'priorMotionPixels': priorMotionPixels,
+            'logicalPosition': motionPosition,
+            'sourcePointerMicros': sourcePointerMicros,
+            'priorSourcePointerMicros': priorSourcePointerMicros,
+            'sourceIntervalMicros': sourcePointerMicros - priorSourcePointerMicros,
+            'motionSampled': false,
+            'velocity': velocity,
+            'scrollPixels': metrics.pixels,
+          },
+        ),
+      );
+    }
+    if (velocity.abs() > 5 && sampleMotion &&
+        (sourcePointerMicros == null || priorSourcePointerMicros == null ||
+            sourcePointerMicros >= priorSourcePointerMicros)) {
+      final sourceIntervalMicros = sourcePointerMicros == null ||
+              priorSourcePointerMicros == null
+          ? null
+          : sourcePointerMicros - priorSourcePointerMicros;
+      final callbackIntervalMicros = _lastMicros - priorMotionMicros;
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.clock,
+          sessionId: widget.controller.sessionId,
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{
+            'stage': 'vertical-motion-sampling-outlier',
+            'samplingSource': samplingSource,
+            'interaction': _interaction.name,
+            'priorMotionPosition': priorMotionPosition,
+            'priorMotionPixels': priorMotionPixels,
+            'logicalPosition': motionPosition,
+            'navigationLogicalPosition': position.logicalPosition,
+            'sampleIntervalMicros': sourceIntervalMicros != null &&
+                    sourceIntervalMicros > 0
+                ? sourceIntervalMicros
+                : callbackIntervalMicros,
+            'callbackIntervalMicros': callbackIntervalMicros,
+            'sourcePointerMicros': sourcePointerMicros,
+            'priorSourcePointerMicros': priorSourcePointerMicros,
+            'priorVelocity': priorVelocity,
+            'velocity': velocity,
+            'scrollPixels': metrics.pixels,
+          },
+        ),
+      );
+    }
     _lastVerticalScrollPixels = metrics.pixels;
     _lastVerticalLogicalPosition = position.logicalPosition;
     _lastVerticalVelocity = velocity;
@@ -3458,7 +3876,7 @@ final class _ReaderViewState extends State<ReaderView>
     }
 
     final scrubAnchor = widget.controller.pageScrubbing
-        ? _verticalScrubAnchorIndex
+        ? _verticalPageAnchor?.index
         : null;
     if (scrubAnchor == null) return physicalPosition;
     final index = scrubAnchor
@@ -3626,25 +4044,74 @@ final class _ReaderViewState extends State<ReaderView>
     );
   }
 
-  double _verticalVelocityFor(double logicalPosition) {
-    if (_interaction == Interaction.scrubbing) {
-      // Slider jumps are absolute navigation, not content travel. Keep the
-      // baseline synchronized to physical geometry without teaching a reading
-      // direction from the distance between successive slider targets.
+  double _verticalVelocityFor(
+    double logicalPosition, {
+    required double pixels,
+    bool sampleMotion = true,
+    int? sourcePointerMicros,
+  }) {
+    if (_interaction == Interaction.idle ||
+        _interaction == Interaction.scrubbing) {
+      // Idle layout/entry and absolute slider input are not content travel.
+      // Synchronize the physical center baseline without turning an integer
+      // entry index or a geometry revision into measured reading velocity.
       _resetVelocityBaseline(logicalPosition);
+      _lastVerticalMotionPixels = pixels;
       return 0;
     }
-    return _velocityFor(logicalPosition);
+    // Layout observations refresh physical coverage, not the content sampling
+    // clock. Resetting it here makes the next input use the callback interval
+    // instead of the interval since the preceding real scroll sample.
+    if (!sampleMotion) return _lastVerticalVelocity ?? 0;
+    final priorSourcePointerMicros = _lastVerticalSourcePointerMicros;
+    if (sourcePointerMicros != null && priorSourcePointerMicros != null &&
+        sourcePointerMicros < priorSourcePointerMicros) {
+      // A backdated input still refreshes physical coverage, but cannot time
+      // another derivative from a newer source sample. Keep that valid motion
+      // baseline for the next increasing input instead of timing the rewind
+      // against callback delivery and manufacturing opposite travel.
+      return _lastVerticalVelocity ?? 0;
+    }
+    _lastVerticalSourcePointerMicros = sourcePointerMicros;
+    _lastVerticalMotionPixels = pixels;
+    final sourceIntervalMicros = sourcePointerMicros == null ||
+            priorSourcePointerMicros == null
+        ? null
+        : sourcePointerMicros - priorSourcePointerMicros;
+    // Consecutive real drag inputs carry their own elapsed time. Dispatch can
+    // bunch them after a delayed frame, so callback time is not input time.
+    // Missing/equal stamps and ballistic samples retain Reader time;
+    // never subtract timestamps from these independent absolute time domains.
+    return _velocityFor(
+      logicalPosition,
+      sampleIntervalMicros: sourceIntervalMicros != null &&
+              sourceIntervalMicros > 0
+          ? sourceIntervalMicros
+          : null,
+    );
   }
 
   void _resetVelocityBaseline(double logicalPosition) {
     _lastLogicalPosition = logicalPosition;
     _lastMicros = widget.clock.nowMicros();
+    _lastVerticalSourcePointerMicros = null;
+    _lastVerticalMotionPixels =
+        widget.controller.direction == ReadingDirection.vertical &&
+            _verticalController.hasClients &&
+            _verticalController.position.hasContentDimensions
+        ? _verticalController.position.pixels
+        : null;
   }
 
-  double _velocityFor(double logicalPosition) {
+  void _shiftVerticalMotionBaseline(double pixelShift) {
+    final pixels = _lastVerticalMotionPixels;
+    if (pixels != null) _lastVerticalMotionPixels = pixels + pixelShift;
+  }
+
+  double _velocityFor(double logicalPosition, {int? sampleIntervalMicros}) {
     final now = widget.clock.nowMicros();
-    final elapsedSeconds = math.max(1, now - _lastMicros) / 1000000.0;
+    final elapsedSeconds =
+        math.max(1, sampleIntervalMicros ?? now - _lastMicros) / 1000000.0;
     final velocity = (logicalPosition - _lastLogicalPosition) / elapsedSeconds;
     _lastLogicalPosition = logicalPosition;
     _lastMicros = now;

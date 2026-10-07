@@ -96,11 +96,12 @@ for token in (
     "_externalPresentationAttemptToken",
     "_retireExternalPresentationBinding()",
     "reportExternalPresentationFrameReady(grant)",
-    "_pipelinePresentationRasterAdapter",
+    "widget.staticPresentation",
 ):
     require(player, token, "LocalImagePlayer revocable external presentation gate")
 for token in (
     "pipelinePresentationRasterCache",
+    "cacheAuthority",
     "_ResidentPresentationImageProvider",
     "externalPresentationRequested",
     "externalPresentationReady",
@@ -109,6 +110,7 @@ for token in (
     forbid(player, token, "LocalImagePlayer grant/cache implementation boundary")
 for token in (
     "pipelinePresentationRasterCache",
+    "cacheAuthority",
     "_ResidentPresentationImageProvider",
 ):
     forbid(prewarmer, token, "detached prewarmer cache implementation boundary")
@@ -160,10 +162,22 @@ for token in (
     "PipelinePresentationCacheClaim.speculative",
     "_syncGlobalImageCacheBudget()",
     "PresentationRasterCacheMaintenance",
-    "_PipelinePresentationRasterAdapter",
+    "PipelineStaticPresentation",
     "providerForViewport",
 ):
     require(presentation_cache, token, "unified presentation raster cache owner")
+composition = read("apps/app/lib/local_media_composition.dart")
+for token in (
+    "PipelineStaticPresentation(pipelinePresentationRasterCache)",
+    "externalPresentationPrewarmer: defaultPipelineStaticPresentation.prewarm",
+    "presentationCacheAuthority: defaultPipelineStaticPresentation.cacheAuthority",
+):
+    require(composition, token, "composition-bound presentation owner")
+require(
+    generation_test,
+    "injected presentation authority must not warm the global owner",
+    "injected presentation owner integration regression",
+)
 for owner, text in (
     ("LocalImagePlayer", player),
     ("PipelinePresentationRasterCache", presentation_cache),

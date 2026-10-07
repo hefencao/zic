@@ -5,7 +5,7 @@ App build：0.31.0+328
 
 本文件只描述当前源码快照和验证等级。历史见 CHANGELOG.md，单轮证据见 docs/audits/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
-当前源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；独立性能/真实来源验收仍开放。
+当前源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；独立性能/真实来源验收仍开放。
 ## 1. 当前所有权与实现快照
 
 ### 调度与传输 (NetLane & Transport)
@@ -131,8 +131,7 @@ App build：0.31.0+328
   因此主要current偏置已关闭，剩余尾部约两帧暂不通过扩大speculative并发处理。
   2026-09-28继续复现出release geometry漂移：backward slider held 47%时current=82/logical=82.5，pointer-up后约38ms变为current83/48%；
   同时scrollPixels约75549.63→74784.19。根因是held scrub按selected center提交ratio，而pointer-up后的pending prefix ratio改用idle top-anchor。
-  现slider-selected index贯穿整个scrub transaction作为center anchor；已知prefix ratio在held阶段即提交，新暴露visible的pending ratio继续在后续layout消费；
-  pointer-up遗留的首次pending commit仍保持selected center，收敛后才释放anchor。新Profile backward 8%→8%、forward 49%→49%，均无release漂移。
+  slider-selected index在放手后的晚到尺寸更新中仍保持center anchor，直到真实content motion或新命令退休；已知prefix ratio在held阶段即提交，新暴露visible的pending ratio在后续layout消费（ADR0354）。
   同轮确认previous慢不是“只有两个worker”：旧transient static次序为current1000/next820/next2 800/previous780，即使3 slot仍会让previous最后。
   scrub现把immediate next/previous统一为820，next2保留800；Profile可见相邻首帧prev n18 median/p90/max=48.8/82.3/98.3ms，
   next n17=47.4/76.7/80.5ms，两次held均在UP前完成相邻firstFrameReady且`taskFailed=0`。worker与7/3/NetLane边界未改。
@@ -150,7 +149,7 @@ App build：0.31.0+328
   same-generation regrant取得新的local attempt但不旋转presentation identity；managed raster decode failure先保留当前error channel而不是伪装成ordinary residency eviction。WebP metadata prefix旧async drain无await，已删除syncing/双revision/递归外壳，只保留同步prefix读取与单调length去重（ADR0337）。
   native decode/source-write worker现在各只安装一次exit listener；worker持有至多一个current active-response completer，真实exit结算当前请求后由pool退休dead worker并有界补位。
   request只持短命response subscription，不再向process-lifetime exit Future持续注册then；真实capacity由active-run unwind结算，decode退化为单live worker时non-current让出最后slot（ADR0338）。
-  global presentation cache引用确有composition耦合，但production Pipeline/UI/prewarmer使用同一`pipelinePresentationRasterCache`实例，本轮不制造第二cache abstraction。
+  静态呈现由App显式绑定同一`PipelineStaticPresentation`供Pipeline/prewarmer/mounted UI消费；独立local raster只消费纯resize；不新增cache owner。
   最终Profile authoritative Home 1.287s；`zic-debug-trace-2026-09-29T00-52-07.jsonl`中external request/first-frame=33/33、mounted request无后续first-frame=0。
   同一Trace的sourceRead为33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
   decode pending queue的request-level control已独立治理：`DecodeLane CancelToken`经`DecodeSession -> ScheduledFrameCursor -> NativeCursor`原样进入native pool。

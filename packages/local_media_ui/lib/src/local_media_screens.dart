@@ -12,6 +12,7 @@ final class ImageFolderScreen extends StatelessWidget {
     this.onFavoriteChanged,
     this.onDownloadRequested,
     required this.pipelineFactory,
+    required this.staticPresentation,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
     super.key,
@@ -27,6 +28,7 @@ final class ImageFolderScreen extends StatelessWidget {
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
   final PipelineReaderSessionFactory pipelineFactory;
+  final PipelineStaticPresentation staticPresentation;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
 
@@ -53,6 +55,7 @@ final class ImageFolderScreen extends StatelessWidget {
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
       pipelineFactory: pipelineFactory,
+      staticPresentation: staticPresentation,
       initialReaderSettings: initialReaderSettings,
       onReaderSettingsChanged: onReaderSettingsChanged,
     );
@@ -201,6 +204,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.onFirstPresentationFrame,
     this.onPagePresentationRecovery,
     required this.pipelineFactory,
+    required this.staticPresentation,
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
@@ -229,6 +233,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final VoidCallback? onFirstPresentationFrame;
   final ImportedPagePresentationRecovery? onPagePresentationRecovery;
   final PipelineReaderSessionFactory pipelineFactory;
+  final PipelineStaticPresentation staticPresentation;
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
@@ -290,7 +295,12 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         onChapterBoundaryRequested: onChapterBoundaryRequested,
         pageSubtitleBuilder: (asset) {
           final current = record.pages[asset.index];
-          return '${current.displayName} · ${_importedPageFormat(current).label}';
+          final uri = current.uri;
+          final displayName = !uri.hasScheme ||
+                  uri.scheme == 'file' || uri.scheme == 'content'
+              ? current.displayName
+              : '第 ${asset.index + 1} 页';
+          return '$displayName · ${_importedPageFormat(current).label}';
         },
         artifactPageBuilder: (
           context,
@@ -366,6 +376,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               playback: runtime.playback,
               pageStream: runtime.pageStream,
               pageOutput: runtime.pageOutput,
+              staticPresentation: staticPresentation,
               onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
               onDimensionsChanged: (size) => runtime.reportDimensions(
                 size.width.round(),

@@ -458,6 +458,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ImageFolderScreen(
+          staticPresentation: defaultPipelineStaticPresentation,
           folder: _folderFixture(),
           pipelineFactory: defaultLocalMediaPipelineFactory,
           bytesLoader: (image) => pending[image.displayName]!.future,

@@ -159,3 +159,69 @@ ImageProvider<Object>? localImageDirectFileProvider(PickedImage image) {
   );
 }
 
+ImportedChapterRecord imageFolderChapterRecord(
+  PickedImageFolder folder, {
+  ReadingDirection readingDirection = ReadingDirection.ltr,
+  DateTime? importedAt,
+}) {
+  final explicitCoverIndex = folder.files.indexWhere(_isExplicitFolderCover);
+  final cover = explicitCoverIndex < 0
+      ? folder.files.first
+      : folder.files[explicitCoverIndex];
+  final pageFiles = explicitCoverIndex >= 0 && folder.files.length > 1
+      ? <PickedImage>[
+          for (var index = 0; index < folder.files.length; index++)
+            if (index != explicitCoverIndex) folder.files[index],
+        ]
+      : folder.files;
+  return ImportedChapterRecord.folder(
+    directoryId: folder.directoryPath,
+    displayName: folder.displayName,
+    coverSourceId: cover.sourceId,
+    coverMediaFormat: cover.format.name,
+    coverAnimatedHint:
+        cover.format == LocalImageFormat.gif ||
+        cover.format == LocalImageFormat.webp,
+    readingDirection: readingDirection,
+    importedAt: importedAt,
+    pages: pageFiles
+        .map(
+          (image) => ImportedPageRecord(
+            displayName: image.displayName,
+            sourceId: image.sourceId,
+            contentKindHint: _contentKindHint(image.format),
+            mediaFormat: image.format.name,
+            byteLength: image.byteLength,
+            // GIF is intrinsically animated. WebP is an unresolved animation
+            // candidate until the decoder reports authoritative container
+            // metadata; treating it as static here can suppress frame-zero
+            // bootstrap before runtime classification has a chance to run.
+            animatedHint: image.format == LocalImageFormat.gif ||
+                image.format == LocalImageFormat.webp,
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+bool _isExplicitFolderCover(PickedImage image) {
+  final normalized = image.displayName.trim().replaceAll('\\', '/');
+  if (normalized.isEmpty || normalized.contains('/')) {
+    return false;
+  }
+  final dot = normalized.lastIndexOf('.');
+  final stem = dot <= 0 ? normalized : normalized.substring(0, dot);
+  return stem.toLowerCase() == 'cover';
+}
+
+ContentKindHint _contentKindHint(LocalImageFormat format) => switch (format) {
+      LocalImageFormat.jpeg => ContentKindHint.jpeg,
+      LocalImageFormat.png => ContentKindHint.png,
+      LocalImageFormat.gif => ContentKindHint.gif,
+      LocalImageFormat.webp => ContentKindHint.webp,
+      LocalImageFormat.avif => ContentKindHint.avif,
+      LocalImageFormat.bmp ||
+      LocalImageFormat.tiff ||
+      LocalImageFormat.ico ||
+      LocalImageFormat.heif => ContentKindHint.fallback,
+    };

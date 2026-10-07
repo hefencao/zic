@@ -201,6 +201,7 @@ Widget? _buildMediaReaderPage(
       onRetry: runtime.retryPresentation,
       pageStream: runtime.pageStream,
       pageOutput: runtime.pageOutput,
+      staticPresentation: defaultPipelineStaticPresentation,
       onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
       onDimensionsChanged: (size) => runtime.reportDimensions(
         size.width.round(),

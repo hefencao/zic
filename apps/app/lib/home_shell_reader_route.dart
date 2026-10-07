@@ -180,14 +180,12 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
   List<_ReaderAdjacentChapterRef> _readerChapterSequence(
     ImportedLibraryEntry current,
   ) {
-    LibraryComic? comic;
-    for (final candidate in _libraryComics) {
-      if (candidate.sourceId == current.chapter.sourceId &&
-          candidate.comicId == current.chapter.comicId) {
-        comic = candidate;
-        break;
-      }
-    }
+    final comic = homeReaderComicForChapter(
+      current: current,
+      entries: _libraryEntries,
+      savedComics: _savedComics,
+      canonicalIdentity: _canonicalComicKey,
+    );
     final byChapterId = <String, ImportedLibraryEntry>{
       if (comic != null)
         for (final entry in comic.chapters) entry.chapter.chapterId: entry,
@@ -214,7 +212,12 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
         );
       }
     }
-    if (!refs.any((ref) => ref.chapterId == current.chapter.chapterId)) {
+    if (homeReaderChapterIndex(
+          refs,
+          chapterId: current.chapter.chapterId,
+          chapterIdOf: (ref) => ref.chapterId,
+          comparisonKeyOf: mihonChapterModelComparisonKey,
+        ) < 0) {
       refs.add(
         _ReaderAdjacentChapterRef(
           chapterId: current.chapter.chapterId,
@@ -225,7 +228,10 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     }
     return homeReaderLogicalChapterOrder(
       refs,
-      sequenceOf: (ref) => ref.sequence,
+      sequenceOf: (ref) => sourceLogicalChapterOrderKey(
+        chapterId: ref.chapterId,
+        sequence: ref.sequence,
+      ),
     );
   }
 
@@ -233,15 +239,27 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     ImportedLibraryEntry current,
     ReaderChapterBoundary boundary,
   ) {
+    final adjacent = _readerAdjacentChapters(current);
+    return boundary == ReaderChapterBoundary.previous
+        ? adjacent.previous
+        : adjacent.next;
+  }
+
+  ({_ReaderAdjacentChapterRef? previous, _ReaderAdjacentChapterRef? next})
+      _readerAdjacentChapters(ImportedLibraryEntry current) {
     final sequence = _readerChapterSequence(current);
-    final index = sequence.indexWhere(
-      (ref) => ref.chapterId == current.chapter.chapterId,
+    final index = homeReaderChapterIndex(
+      sequence,
+      chapterId: current.chapter.chapterId,
+      chapterIdOf: (ref) => ref.chapterId,
+      comparisonKeyOf: mihonChapterModelComparisonKey,
     );
-    if (index < 0) return null;
-    final adjacentIndex =
-        boundary == ReaderChapterBoundary.previous ? index - 1 : index + 1;
-    if (adjacentIndex < 0 || adjacentIndex >= sequence.length) return null;
-    return sequence[adjacentIndex];
+    return (
+      previous: index > 0 ? sequence[index - 1] : null,
+      next: index >= 0 && index + 1 < sequence.length
+          ? sequence[index + 1]
+          : null,
+    );
   }
 
   Future<ImportedLibraryEntry?> _loadReaderAdjacentEntry(
@@ -346,6 +364,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
             versionSource,
             current.chapter.comicId,
           );
+    final adjacent = _readerAdjacentChapters(current);
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
       adaptiveMetadata: versionSource == null
@@ -421,13 +440,11 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
                 error,
                 userInitiated: userInitiated,
               ),
-      canReadPreviousChapter:
-          _readerAdjacentChapter(current, ReaderChapterBoundary.previous) !=
-              null,
-      canReadNextChapter:
-          _readerAdjacentChapter(current, ReaderChapterBoundary.next) != null,
+      canReadPreviousChapter: adjacent.previous != null,
+      canReadNextChapter: adjacent.next != null,
       onChapterBoundaryRequested: onChapterBoundaryRequested,
       pipelineFactory: _readerPipelineFactory(),
+      staticPresentation: defaultPipelineStaticPresentation,
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {
         final currentPreference = _preferences[
@@ -543,18 +560,15 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
               entry.chapter.comicId,
             );
             final inverted = settings.effectiveInvertPageOrder;
-            final lastPage = entry.chapter.pages.length - 1;
-            final initial = boundary == ReaderChapterBoundary.previous
-                ? inverted
-                    ? 0
-                    : lastPage
-                : inverted
-                    ? lastPage
-                    : 0;
+            final enterAtLastPage = boundary == ReaderChapterBoundary.previous
+                ? !inverted
+                : inverted;
             return _readerChapterComposition.prepare(
               () async => entry,
               refreshRemote: false,
-              initialPageIndex: initial,
+              initialChapterEntry: enterAtLastPage
+                  ? HomeReaderChapterEntry.lastPage
+                  : HomeReaderChapterEntry.firstPage,
             );
           },
         );

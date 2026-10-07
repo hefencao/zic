@@ -1563,19 +1563,14 @@ final class PipelineReaderSession {
     // its encoded ByteSource plus a full RGBA canvas; keeping one detached
     // decode frame per old viewport therefore pins both the compressed page
     // body and native raster working set even after the physical transfer
-    // registry retires that page. Retire uploads first so their frame claims
-    // are released, then retire every decode/cursor. Re-entry recreates this
-    // cheap Reader-local media layer from the retained DownloadSession bytes.
+    // registry retires that page. The coordinator retires idle media now and
+    // keeps any admitted cursor/source alive until its lane actually exits.
+    // Re-entry recreates idle media from the retained DownloadSession bytes.
     final retainedDecodedBytes = _decodes.totalBytes;
     final retainedOutputBytes = _uploads.totalBytes;
     final retainedUploadSessions = _uploads.sessions.toList(growable: false);
-    for (final upload in retainedUploadSessions) {
-      _uploads.evict(upload.id);
-    }
     final retainedDecodeSessions = _decodes.sessions.toList(growable: false);
-    for (final decode in retainedDecodeSessions) {
-      _decodes.evict(decode.id);
-    }
+    _coordinator.retireDetachedMedia();
     trace.record(
       traceEvent(
         clock: clock,
@@ -1587,10 +1582,12 @@ final class PipelineReaderSession {
           'uploadSessions': _uploads.sessions.length,
           'ingressProjections': _ingresses.projections.length,
           'streamingSources': _streamingSources.ids.length,
-          'releasedDecodeSessions': retainedDecodeSessions.length,
-          'releasedUploadSessions': retainedUploadSessions.length,
-          'releasedDecodedBytes': retainedDecodedBytes,
-          'releasedOutputBytes': retainedOutputBytes,
+          'releasedDecodeSessions':
+              retainedDecodeSessions.length - _decodes.sessions.length,
+          'releasedUploadSessions':
+              retainedUploadSessions.length - _uploads.sessions.length,
+          'releasedDecodedBytes': retainedDecodedBytes - _decodes.totalBytes,
+          'releasedOutputBytes': retainedOutputBytes - _uploads.totalBytes,
         },
       ),
     );
@@ -2936,9 +2933,17 @@ final class PipelineReaderSession {
     );
   }
 
-  bool _externalPresentationAvailable(DecodeId id) =>
-      _hasMountedExternalPresentationConsumer(id) ||
-      _canDetachedExternalPresentationPrewarm(id);
+  bool _externalPresentationAvailable(DecodeId id) {
+    if (_hasMountedExternalPresentationConsumer(id)) {
+      // Sliver/PageView may retain an offscreen host. Its listener does not
+      // override the raster owner's speculative admission denial.
+      return _presentationCacheAuthority?.allowsPresentationWarm(
+            _externalPresentationCacheIdentityFor(id),
+          ) ??
+          true;
+    }
+    return _canDetachedExternalPresentationPrewarm(id);
+  }
 
   Object _externalPresentationCacheIdentityFor(DecodeId id) {
     final existing = _externalPresentationCacheIdentities[id];

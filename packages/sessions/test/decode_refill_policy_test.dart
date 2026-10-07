@@ -197,6 +197,69 @@ void main() {
         reason: 'Vibe-style shallow bootstrap keeps neighbors download-only while current has no source');
   });
 
+  test('waiting single-frame current releases a ready single-frame neighbor', () {
+    final current = _id('waiting-static-current');
+    final next = _id('ready-static-next');
+    final previous = _id('ready-static-previous');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 1),
+      previous: const DecodeDemand(
+        role: PageRole.previous,
+        priority: 780,
+        targetWatermark: 1,
+        reason: 'static-previous',
+        expirationRevision: 2,
+      ),
+      next: const DecodeDemand(
+        role: PageRole.next,
+        priority: 820,
+        targetWatermark: 1,
+        reason: 'static-next',
+        expirationRevision: 2,
+      ),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id != current,
+    );
+
+    expect(decision?.id, next);
+    expect(decision?.stage, DecodeWaterlineStage.oneFrame);
+    expect(decision?.targetWatermark, 1);
+  });
+
+  test('waiting single-frame current keeps multi-frame neighbors gated', () {
+    final current = _id('waiting-static-current');
+    final next = _id('ready-animated-next');
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: <DecodeId, DecodeDemand>{
+        current: _demand(PageRole.current, 1),
+        next: _demand(PageRole.next, 5),
+      },
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id != current,
+    );
+
+    expect(decision, isNull);
+  });
+
+  test('waiting animated current keeps single-frame neighbors gated', () {
+    final current = _id('waiting-animated-current');
+    final next = _id('ready-static-next');
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: <DecodeId, DecodeDemand>{
+        current: _demand(PageRole.current, 7),
+        next: _demand(PageRole.next, 1),
+      },
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id != current,
+    );
+
+    expect(decision, isNull);
+  });
+
   test('ready current bootstrap outranks transition first frame', () {
     final current = _id('current-low');
     final transition = _id('transition-empty');

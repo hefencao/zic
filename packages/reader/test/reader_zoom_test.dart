@@ -1053,10 +1053,14 @@ void main() {
         .height;
     expect(pageHeight(), 600); // provisional unknown-ratio extent
 
-    final page = find.byKey(const ValueKey<String>('reader-vertical-page:0'));
-    await tester.tap(page, warnIfMissed: false);
+    // Chapter entry is at the true leading edge. A tall page's transformed
+    // center can leave the viewport at 2x; use a real visible pointer location.
+    final tapPosition = tester.getCenter(
+      find.byKey(const ValueKey<String>('reader-vertical-list')),
+    );
+    await tester.tapAt(tapPosition);
     await tester.pump(kDoubleTapMinTime);
-    await tester.tap(page, warnIfMissed: false);
+    await tester.tapAt(tapPosition);
     await tester.pumpAndSettle();
     expect(_stripScale(tester), 1.5);
 
@@ -1069,13 +1073,14 @@ void main() {
     expect(pageHeight(), 600, reason: 'zoomed strip must not resize');
 
     // Returning to 1x releases the deferred commits.
-    await tester.tap(page, warnIfMissed: false);
+    await tester.tapAt(tapPosition);
     await tester.pump(kDoubleTapMinTime);
-    await tester.tap(page, warnIfMissed: false);
+    await tester.tapAt(tapPosition);
     await tester.pumpAndSettle();
-    await tester.tap(page, warnIfMissed: false);
+    expect(_stripScale(tester), 2.0);
+    await tester.tapAt(tapPosition);
     await tester.pump(kDoubleTapMinTime);
-    await tester.tap(page, warnIfMissed: false);
+    await tester.tapAt(tapPosition);
     await tester.pumpAndSettle();
     expect(_stripScale(tester), 1.0);
     expect(pageHeight(), 400);

@@ -607,10 +607,22 @@ final class _ResidentPresentationImageProvider
 ///
 /// This is not a second cache or scheduler. All residency/LRU/keepAlive state
 /// continues to live in [PipelinePresentationRasterCache].
-final class _PipelinePresentationRasterAdapter {
-  const _PipelinePresentationRasterAdapter(this._cache);
+final class PipelineStaticPresentation {
+  const PipelineStaticPresentation(this._cache);
 
   final PipelinePresentationRasterCache _cache;
+
+  @override
+  bool operator ==(Object other) => other is PipelineStaticPresentation &&
+      identical(_cache, other._cache);
+
+  @override
+  int get hashCode => identityHashCode(_cache);
+
+  PipelinePresentationCacheAuthority get cacheAuthority => _cache;
+
+  Future<void> prewarm(PipelineExternalPresentationWarmRequest request) =>
+      _prewarmPipelineExternalStaticPresentation(request, this);
 
   ImageProvider<Object>? residentProvider(Object presentationIdentity) =>
       _cache.residentProviderForIdentity(presentationIdentity);
@@ -633,24 +645,14 @@ final class _PipelinePresentationRasterAdapter {
       return image;
     }
 
-    var provider = image;
-    if (sourceWidth != null &&
-        sourceHeight != null &&
-        maxPhysicalWidth != null &&
-        maxPhysicalHeight != null &&
-        sourceWidth > 0 &&
-        sourceHeight > 0 &&
-        maxPhysicalWidth > 0 &&
-        maxPhysicalHeight > 0) {
-      provider = _mediaRasterProviderForPresentation(
-        image: provider,
-        sourceWidth: sourceWidth,
-        sourceHeight: sourceHeight,
-        maxPhysicalWidth: maxPhysicalWidth,
-        maxPhysicalHeight: maxPhysicalHeight,
-        fit: fit,
-      );
-    }
+    var provider = _mediaRasterProviderForViewport(
+      image: image,
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxPhysicalWidth: maxPhysicalWidth,
+      maxPhysicalHeight: maxPhysicalHeight,
+      fit: fit,
+    );
 
     if (presentationIdentity != null) {
       provider = _cache.providerFor(
@@ -662,9 +664,28 @@ final class _PipelinePresentationRasterAdapter {
   }
 }
 
+ImageProvider<Object> _mediaRasterProviderForViewport({
+  required ImageProvider<Object> image,
+  required int? sourceWidth,
+  required int? sourceHeight,
+  required int? maxPhysicalWidth,
+  required int? maxPhysicalHeight,
+  required PipelineExternalPresentationFit fit,
+}) {
+  if (sourceWidth == null || sourceHeight == null ||
+      maxPhysicalWidth == null || maxPhysicalHeight == null ||
+      sourceWidth <= 0 || sourceHeight <= 0 ||
+      maxPhysicalWidth <= 0 || maxPhysicalHeight <= 0) return image;
+  return _mediaRasterProviderForPresentation(
+    image: image,
+    sourceWidth: sourceWidth,
+    sourceHeight: sourceHeight,
+    maxPhysicalWidth: maxPhysicalWidth,
+    maxPhysicalHeight: maxPhysicalHeight,
+    fit: fit,
+  );
+}
+
 /// One process-wide cache authority shared by mounted Reader pages, detached
 /// Pipeline prewarm, settings maintenance and memory-pressure handling.
 final pipelinePresentationRasterCache = PipelinePresentationRasterCache();
-
-final _pipelinePresentationRasterAdapter =
-    _PipelinePresentationRasterAdapter(pipelinePresentationRasterCache);

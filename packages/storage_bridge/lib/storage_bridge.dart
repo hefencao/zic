@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
 import 'package:flutter/painting.dart';
@@ -44,7 +46,12 @@ export 'package:storage/storage.dart'
 /// as an absolute storage-to-texture zero-copy guarantee.
 ImageProvider<Object> encodedResourceImageProvider(
   EncodedResourceSource source,
-) =>
+) => _encodedResourceImageProvider(source);
+
+ImageProvider<Object> _encodedResourceImageProvider(
+  EncodedResourceSource source, [
+  EncodedFileImageLease? lease,
+]) =>
     switch (source) {
       MemoryEncodedResourceSource(
         :final bytes,
@@ -58,9 +65,104 @@ ImageProvider<Object> encodedResourceImageProvider(
         :final cacheIdentity,
       ) =>
         cacheIdentity == null
-            ? FileImage(File(path))
-            : _IdentityFileImage(File(path), cacheIdentity),
+            ? lease == null
+                ? FileImage(File(path))
+                : _LeasedFileImage(File(path), lease: lease)
+            : _IdentityFileImage(File(path), cacheIdentity, lease: lease),
     };
+
+/// Pins an encoded file until every already-started engine read has exited.
+///
+/// Listener cancellation and cache eviction do not cancel FileImage's pending
+/// file/buffer/codec Future. Release withdraws this capability immediately, but
+/// closes its descriptor only after those physical operations finish. Cache
+/// keys and raster residency remain owned by the existing image/cache owners.
+final class EncodedFileImageLease {
+  EncodedFileImageLease({
+    required this.source,
+    required Future<void> Function() releaseFile,
+  }) : _releaseFile = releaseFile;
+
+  final FileEncodedResourceSource source;
+  final Future<void> Function() _releaseFile;
+  final Completer<void> _released = Completer<void>();
+  int _activeReads = 0;
+  bool _releaseRequested = false;
+  bool _closeStarted = false;
+
+  late final ImageProvider<Object> imageProvider =
+      _encodedResourceImageProvider(source, this);
+
+  Future<void> release() {
+    _releaseRequested = true;
+    if (_activeReads == 0) unawaited(_close());
+    return _released.future;
+  }
+
+  Future<void> _close() async {
+    if (_closeStarted) return;
+    _closeStarted = true;
+    try {
+      await _releaseFile();
+      _released.complete();
+    } on Object catch (error, stack) {
+      _released.completeError(error, stack);
+    }
+  }
+
+  Future<ui.Codec> _loadCodec(
+    FileImage key,
+    Future<ui.Codec> Function(ui.ImmutableBuffer) decode,
+  ) async {
+    if (_releaseRequested) {
+      throw StateError('encoded file image lease has been released');
+    }
+    _activeReads++;
+    try {
+      final file = key.file;
+      if (await file.length() == 0) {
+        PaintingBinding.instance.imageCache.evict(key);
+        throw StateError('$file is empty and cannot be loaded as an image.');
+      }
+      final buffer = file.runtimeType == File
+          ? await ui.ImmutableBuffer.fromFilePath(file.path)
+          : await ui.ImmutableBuffer.fromUint8List(await file.readAsBytes());
+      return await decode(buffer);
+    } finally {
+      _activeReads--;
+      if (_releaseRequested && _activeReads == 0) await _close();
+    }
+  }
+}
+
+class _LeasedFileImage extends FileImage {
+  const _LeasedFileImage(super.file, {this.lease});
+
+  final EncodedFileImageLease? lease;
+
+  @override
+  ImageStreamCompleter loadImage(FileImage key, ImageDecoderCallback decode) {
+    final current = lease;
+    if (current == null) return super.loadImage(key, decode);
+    return MultiFrameImageStreamCompleter(
+      codec: current._loadCodec(key, (buffer) => decode(buffer)),
+      scale: key.scale,
+      debugLabel: key.file.path,
+    );
+  }
+
+  @override
+  ImageStreamCompleter loadBuffer(FileImage key, DecoderBufferCallback decode) {
+    final current = lease;
+    // ignore: deprecated_member_use
+    if (current == null) return super.loadBuffer(key, decode);
+    return MultiFrameImageStreamCompleter(
+      codec: current._loadCodec(key, (buffer) => decode(buffer)),
+      scale: key.scale,
+      debugLabel: key.file.path,
+    );
+  }
+}
 
 abstract interface class _IdentityEncodedImageProvider {
   Object get cacheIdentity;
@@ -96,9 +198,9 @@ final class _IdentityMemoryImage extends MemoryImage
   int get hashCode => _encodedImageIdentityHash(this);
 }
 
-final class _IdentityFileImage extends FileImage
+final class _IdentityFileImage extends _LeasedFileImage
     implements _IdentityEncodedImageProvider {
-  const _IdentityFileImage(super.file, this.cacheIdentity);
+  const _IdentityFileImage(super.file, this.cacheIdentity, {super.lease});
 
   @override
   final Object cacheIdentity;

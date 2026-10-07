@@ -294,6 +294,65 @@ void main() {
     expect(runtime.closed, isTrue);
   });
 
+  test('Reader retention waits for an admitted decode before retiring media',
+      () async {
+    final sources = _RetainedDecodeSourceFactory();
+    final cursors = _RetainedDecodeCursorFactory();
+    final runtime = _Runtime(sources: sources, cursors: cursors);
+    final trace = MemoryTraceSink();
+    final uri = Uri.parse('asset:///retained-active-decode.webp');
+    final chapter = _chapter(uri: uri);
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
+    ).withLoaderSources(<Uri, LoaderTransportSource>{
+      uri: LoaderTransportSource(
+        revision: 'retained-active-r1',
+        loadBytes: () async =>
+            Uint8List.fromList('RIFF....WEBPpayload'.codeUnits),
+      ),
+    });
+    addTearDown(() async {
+      if (!cursors.cursor.finish.isCompleted) cursors.cursor.finish.complete();
+      await factory.disposeRetainedSessions();
+      await factory.disposeTransferRuntimes();
+    });
+    final session = factory.acquire(
+      chapter: chapter,
+      sessionId: 'retained-active-decode',
+      traceSink: trace,
+    );
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(ReaderObs(
+      sessionId: 'retained-active-decode',
+      currentIndex: 0,
+      stableIndex: 0,
+      interaction: Interaction.idle,
+      logicalPosition: 0,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 0,
+        assetKey: chapter.pages.single.assetKey,
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026),
+      monotonicMicros: 1,
+    ));
+    await cursors.cursor.started.future;
+
+    factory.release(session);
+    expect(cursors.cursor.disposed, isFalse,
+        reason: 'cancel does not retire a cursor still executing native work');
+    expect(sources.created.last.disposed, isFalse);
+    cursors.cursor.finish.complete();
+    await cursors.cursor.retired.future.timeout(const Duration(seconds: 2));
+    expect(cursors.cursor.disposed, isTrue);
+    expect(sources.created.last.disposed, isTrue);
+    expect(trace.events.where((event) =>
+        event.kind == TraceEventKind.taskFailed), isEmpty);
+  });
+
   test(
     'retained-session drain releases idle consumers but not active Readers',
       () async {
@@ -1201,6 +1260,90 @@ void main() {
   });
 
   test(
+    'slider release presents downloaded static neighbor without another observation',
+    () async {
+    final currentBytes = Completer<Uint8List>();
+    final nextBytes = Completer<Uint8List>();
+    final pages = List<PageAsset>.generate(
+      2,
+      (index) => PageAsset(
+        pageId: 'static-$index',
+        chapterId: 'chapter',
+        index: index,
+        uri: Uri.parse('https://example.test/opaque-static-$index'),
+        width: 1080,
+        height: 3600,
+        contentKindHint: ContentKindHint.jpeg,
+      ),
+    );
+    final trace = MemoryTraceSink();
+    final warmed = <PageAsset>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      loaderSources: <Uri, LoaderTransportSource>{
+        for (final page in pages)
+          page.uri: LoaderTransportSource(
+            revision: 'r1',
+            loadBytes: () => page.index == 0 ? currentBytes.future : nextBytes.future,
+          ),
+      },
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request.asset);
+      },
+    ).create(
+      chapter: ChapterManifest(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapter: Chapter(
+          chapterId: 'chapter',
+          comicId: 'comic',
+          title: 'chapter',
+          sequence: 1,
+          pageCount: 2,
+          sourceRevision: 'r1',
+        ),
+        pages: pages,
+        readingDirection: ReadingDirection.vertical,
+      ),
+      sessionId: 'slider-static-source-wait-test',
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    ReaderObs observation(Interaction interaction) => ReaderObs(
+          sessionId: 'reader',
+          currentIndex: 0,
+          stableIndex: 0,
+          interaction: interaction,
+          logicalPosition: 0.5,
+          velocity: 0,
+          currentCoverage: Coverage(pageIndex: 0, assetKey: pages[0].assetKey, fraction: 1),
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026),
+          monotonicMicros: interaction == Interaction.scrubbing ? 1 : 2,
+        );
+    session.accept(observation(Interaction.scrubbing));
+    session.accept(observation(Interaction.idle));
+    final jpeg = Uint8List.fromList(
+      const <int>[0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1],
+    );
+    nextBytes.complete(jpeg);
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.isEmpty) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('downloaded static page never received its existing first-frame grant after slider release');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(warmed.single.pageId, 'static-1');
+    expect(session.pageOutput(pages[1]).externalPresentationReady, isTrue);
+    expect(currentBytes.isCompleted, isFalse);
+    currentBytes.complete(jpeg);
+  });
+
+  test(
     'external static prewarmer satisfies first frame without a page host',
       () async {
     final trace = MemoryTraceSink();
@@ -1525,8 +1668,23 @@ void main() {
         reason: 'the outer far warm must be reclaimable cache slack',
       );
 
+      final mountedFar = session.pageOutput(pages[7]);
+      final otherMountedFar = session.pageOutput(pages[6]);
+      void farListener(PipelinePageOutputSnapshot _) {}
+      mountedFar.addListener(farListener);
+      otherMountedFar.addListener(farListener);
+      addTearDown(() {
+        mountedFar.removeListener(farListener);
+        otherMountedFar.removeListener(farListener);
+      });
       cacheAuthority.evictForBudget(first.cacheIdentity);
+      cacheAuthority.evictForBudget(
+        warmed.firstWhere((request) => request.asset.index == 6).cacheIdentity,
+      );
       await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(mountedFar.externalPresentationRequested, isFalse,
+          reason: 'a mounted offscreen host cannot bypass cache admission denial');
+      expect(otherMountedFar.externalPresentationRequested, isFalse);
       expect(
         warmed.where((request) => request.asset.index == 7),
         hasLength(1),
@@ -2480,20 +2638,26 @@ final class _Runtime implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   _Runtime({
     RendererKind renderer = RendererKind.flutterImage,
     PipelineFrameScheduler? scheduler,
+    SourceFactory? sources,
+    CursorFactory? cursors,
   })  : _renderer = renderer,
-        _scheduler = scheduler ?? const _TestFrameScheduler();
+        _scheduler = scheduler ?? const _TestFrameScheduler(),
+        _sources = sources ?? _SourceFactory(),
+        _cursors = cursors ?? const _CursorFactory();
 
   final RendererKind _renderer;
   final PipelineFrameScheduler _scheduler;
+  final SourceFactory _sources;
+  final CursorFactory _cursors;
   bool closed = false;
   int prewarmCalls = 0;
   final Completer<List<int>> firstPrewarm = Completer<List<int>>();
 
   @override
-  SourceFactory get sources => _SourceFactory();
+  SourceFactory get sources => _sources;
 
   @override
-  CursorFactory get cursors => const _CursorFactory();
+  CursorFactory get cursors => _cursors;
 
   @override
   FrameUploader get uploader => const _Uploader();
@@ -2538,6 +2702,7 @@ final class _Source implements EncodedSource {
   bool sealed = false;
   @override
   SourceKind kind = SourceKind.unknown;
+  bool disposed = false;
 
   @override
   SourceStatus append({
@@ -2564,7 +2729,55 @@ final class _Source implements EncodedSource {
   }
 
   @override
-  void dispose() {}
+  void dispose() => disposed = true;
+}
+
+final class _RetainedDecodeSourceFactory implements SourceFactory {
+  final List<_Source> created = <_Source>[];
+
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) {
+    final source = _Source(epoch)..kind = SourceKind.webp;
+    created.add(source);
+    return source;
+  }
+}
+
+final class _RetainedDecodeCursorFactory implements CursorFactory {
+  final cursor = _RetainedDecodeCursor();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    cursor.epoch = epoch;
+    return CursorBinding(frames: cursor);
+  }
+}
+
+final class _RetainedDecodeCursor implements FrameCursor {
+  final started = Completer<void>();
+  final finish = Completer<void>();
+  final retired = Completer<void>();
+  bool disposed = false;
+  @override
+  int epoch = 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (!started.isCompleted) started.complete();
+    await finish.future;
+    if (disposed) throw StateError('cursor disposed before native return');
+    return const CursorStep.end();
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+    if (!retired.isCompleted) retired.complete();
+  }
 }
 
 final class _CursorFactory implements CursorFactory {

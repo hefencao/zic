@@ -15,7 +15,7 @@ def require(text: str, token: str, owner: str) -> None:
 
 refill = read("packages/sessions/lib/src/decode_refill_policy.dart")
 decode = read("packages/sessions/lib/src/decode_session.dart")
-local = read("packages/local_media_ui/lib/src/local_image_player.dart")
+local = read("packages/local_media_ui/lib/src/catalog_and_codec.dart")
 refill_test = read("packages/sessions/test/decode_refill_policy_test.dart")
 decode_test = read("packages/sessions/test/decode_session_test.dart")
 local_test = read("packages/local_media_ui/test/image_folder_manifest_test.dart")

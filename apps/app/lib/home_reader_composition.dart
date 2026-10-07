@@ -22,6 +22,54 @@ typedef HomeReaderVersionAuthorityPreparer = Future<int> Function(
   ImportedLibraryEntry entry,
 );
 
+enum HomeReaderChapterEntry { firstPage, lastPage }
+
+/// Projects the current comic family without materializing unrelated catalogs.
+/// Canonical authority is read afresh per query; its memo lives only here.
+LibraryComic? homeReaderComicForChapter({
+  required ImportedLibraryEntry current,
+  required Iterable<ImportedLibraryEntry> entries,
+  required Iterable<SavedComicRecord> savedComics,
+  required String Function(String sourceId, String comicId) canonicalIdentity,
+}) {
+  final sourceId = current.chapter.sourceId;
+  final comicId = current.chapter.comicId;
+  final sourceEntries = entries
+      .where((entry) => entry.chapter.sourceId == sourceId)
+      .toList(growable: false);
+  final sourceComics = savedComics
+      .where((comic) => comic.sourceId == sourceId)
+      .toList(growable: false);
+  if (!sourceEntries.any((entry) => entry.chapter.comicId == comicId) &&
+      !sourceComics.any((comic) => comic.comicId == comicId)) {
+    return null;
+  }
+  final canonicalByRawId = <String, String>{};
+  String canonical(String id) => canonicalByRawId.putIfAbsent(
+        id,
+        () => canonicalIdentity(sourceId, id),
+      );
+  final target = canonical(comicId);
+  final comics = collapseCanonicalLibraryComics(
+    aggregateImportedLibrary(
+      sourceEntries.where(
+        (entry) => canonical(entry.chapter.comicId) == target,
+      ),
+      savedComics: sourceComics.where(
+        (comic) => canonical(comic.comicId) == target,
+      ),
+    ),
+    canonicalIdentity: (_, id) => canonical(id),
+  );
+  for (final comic in comics) {
+    if (comic.sourceId == current.chapter.sourceId &&
+        comic.comicId == current.chapter.comicId) {
+      return comic;
+    }
+  }
+  return null;
+}
+
 Future<T?> homeReaderCoalesceSuccessfulAdjacentPreparation<T>({
   required Map<String, Future<T?>> cache,
   required String key,
@@ -49,18 +97,40 @@ Future<T?> homeReaderCoalesceSuccessfulAdjacentPreparation<T>({
   return preparation;
 }
 
+int homeReaderChapterIndex<T>(
+  List<T> chapters, {
+  required String chapterId,
+  required String Function(T chapter) chapterIdOf,
+  required String? Function(String chapterId) comparisonKeyOf,
+}) {
+  final exact = chapters.indexWhere((chapter) => chapterIdOf(chapter) == chapterId);
+  if (exact >= 0) return exact;
+  final key = comparisonKeyOf(chapterId);
+  if (key == null) return -1;
+  var match = -1;
+  for (var index = 0; index < chapters.length; index++) {
+    if (comparisonKeyOf(chapterIdOf(chapters[index])) != key) continue;
+    if (match >= 0) return -1;
+    match = index;
+  }
+  return match;
+}
+
 List<T> homeReaderLogicalChapterOrder<T>(
   Iterable<T> chapters, {
   required int Function(T chapter) sequenceOf,
 }) {
-  final indexed = <({T chapter, int sourceOrder})>[];
+  final indexed = <({T chapter, int sequence, int sourceOrder})>[];
   var sourceOrder = 0;
   for (final chapter in chapters) {
-    indexed.add((chapter: chapter, sourceOrder: sourceOrder++));
+    indexed.add((
+      chapter: chapter,
+      sequence: sequenceOf(chapter),
+      sourceOrder: sourceOrder++,
+    ));
   }
   indexed.sort((left, right) {
-    final bySequence =
-        sequenceOf(left.chapter).compareTo(sequenceOf(right.chapter));
+    final bySequence = left.sequence.compareTo(right.sequence);
     if (bySequence != 0) return bySequence;
     return left.sourceOrder.compareTo(right.sourceOrder);
   });
@@ -216,6 +286,7 @@ final class HomeReaderChapterComposition {
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required bool refreshRemote,
     int? initialPageIndex,
+    HomeReaderChapterEntry? initialChapterEntry,
   }) {
     if (_closed) {
       return Future<HomeReaderPreparedChapter>.error(
@@ -227,6 +298,7 @@ final class HomeReaderChapterComposition {
         loadChapter,
         refreshRemote: refreshRemote,
         initialPageIndex: initialPageIndex,
+        initialChapterEntry: initialChapterEntry,
       ),
     );
   }
@@ -235,6 +307,7 @@ final class HomeReaderChapterComposition {
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required bool refreshRemote,
     int? initialPageIndex,
+    HomeReaderChapterEntry? initialChapterEntry,
   }) async {
     final totalWatch = Stopwatch()..start();
     // The route may paint immediately, but its capabilities must not capture
@@ -265,6 +338,16 @@ final class HomeReaderChapterComposition {
       );
     }
 
+    // A boundary command names an edge, not an index in a compact/old entry.
+    // Resolve it only after hydration and any required source refresh.
+    final resolvedInitialPageIndex = switch (initialChapterEntry) {
+      HomeReaderChapterEntry.firstPage => 0,
+      HomeReaderChapterEntry.lastPage => current.chapter.pages.isEmpty
+          ? 0
+          : current.chapter.pages.length - 1,
+      null => initialPageIndex,
+    };
+
     final authorityWatch = Stopwatch()..start();
     final authorityMappingCount = await _prepareVersionAuthority(current);
     final authorityMs = authorityWatch.elapsedMilliseconds;
@@ -278,7 +361,7 @@ final class HomeReaderChapterComposition {
     final localAuthorityPrewarm = _downloadComposition()?.transferRuntime;
     var localAuthorityPrewarmStarted = false;
     if (localAuthorityPrewarm != null && readerManifest.pages.isNotEmpty) {
-      final rawInitialPageIndex = (initialPageIndex ??
+      final rawInitialPageIndex = (resolvedInitialPageIndex ??
               current.progress?.pageIndex ??
               0)
           .clamp(0, readerManifest.pages.length - 1)
@@ -324,7 +407,7 @@ final class HomeReaderChapterComposition {
       entry: current,
       byteLoaders: byteLoaders,
       responseSources: responseSources,
-      initialPageIndex: initialPageIndex,
+      initialPageIndex: resolvedInitialPageIndex,
     );
   }
 }
