@@ -17,8 +17,8 @@
     "7/3 encoded、2/1 deadline与现有cache/presentation budgets"
   ],
   "requirement_summary": {
-    "partial": 41,
-    "verified_device": 17,
+    "partial": 40,
+    "verified_device": 18,
     "superseded": 2,
     "pending": 46,
     "verified_toolchain": 6
@@ -1433,25 +1433,43 @@
       "group": "P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环",
       "requirement": "直接从详情进入 Reader并翻页后退出：Home阅读历史必须在 route返回后立即更新，不等待 SQLite durable barrier、不重新进入详情、不触发整库 reload；连续打开两个 Reader route时各自 final progress不得串位。",
       "historical_status": "partial",
-      "status": "partial",
-      "current_contract": "ADR0303: ordinary checkpoints batch8s idle/30s active; normal route pop awaits final checkpoint/drain/durable flush. Home/Details update the exact final progress without whole-library reload.",
+      "status": "verified_device",
+      "current_contract": "ADR0303: normal route pop drains the final checkpoint and awaits durable flush. Each route owns its final progress; Home/Details publish that progress after return through targeted chapter lookup, without whole-library reload.",
       "verified_subcontracts": [
         {
           "kind": "Source-inspected",
           "result": "Corrected conflicting stable docs, Plan and obsolete documentation guard; no production progress behavior change."
+        },
+        {
+          "kind": "Device-observed",
+          "date": "2026-10-07",
+          "scope": "Ordinary Release on72b08a1c; normal details-to-Reader routes, no settings/cache/refresh or download commands.",
+          "result": "Mihon 要成為男子漢20 advances1→5 and21 advances71→75; both details histories remain separate and reentry20 restores5. Venera 全開放群聊17 advances1→2, moves from second to first history card on the first Home return, preserves 要成為男子漢 and restores2 on reentry. Static content remains visible at stationary checks.",
+          "boundary": "Home cards expose titles rather than chapter/page. The distinct-comic history reorder verifies first-return publication; retained PID log has no reload-start and inspected route/lookup has no full-library reload. This does not verify checkpoint frame cost, SQLite transaction counts, original intermittent loading or final display.",
+          "evidence_directory": "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07",
+          "evidence_files": [
+            "route20-return-details.png",
+            "route21-return-details.png",
+            "route20-recheck.png",
+            "other-home-before.png",
+            "other-home-after-first.png",
+            "other-recheck-reader.png",
+            "route-progress-logcat.txt"
+          ]
         }
       ],
       "current_evidence_references": [
         "apps/app/test/reader_controls_test.dart",
         "docs/ARCHITECTURE.md",
         "docs/SPEC.md",
-        "docs/adr/0303-reader-progress-durable-exit-barrier.md"
+        "docs/adr/0303-reader-progress-durable-exit-barrier.md",
+        "apps/app/lib/home_shell_reader_route.dart",
+        "apps/app/lib/home_library_session.dart",
+        "apps/app/test/home_library_session_test.dart"
       ],
-      "remaining_acceptance": [
-        "Two ordinary Reader routes final-progress separation and targeted Home update, under ADR0303 final durable flush before normal pop."
-      ],
+      "remaining_acceptance": [],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "retain_scoped_acceptance; evidence_revalidation_only_if_missing"
     },
     {
       "id": "SWG-PLAN-051",
@@ -1662,11 +1680,16 @@
       "requirement": "对比 dev.155 与当前版本的翻页/退出 Reader frame timing：确认每页 checkpoint只发送 isolate消息，不在 UI isolate执行 sqlite3/章节JSON解码，不逐页触发 Home rebuild；route返回后再完成 barrier/reload。",
       "historical_status": "partial",
       "status": "partial",
-      "current_contract": "ADR0303: ordinary checkpoints batch8s idle/30s active; normal route pop awaits final checkpoint/drain/durable flush. Home/Details update the exact final progress without whole-library reload.",
+      "current_contract": "Ordinary page callbacks only enqueue the storage-owned latest checkpoint; no UI-isolate SQLite/chapter JSON work or per-page Home publication. Normal pop retains ADR0303 final durable flush and targeted final progress publication. Current checkpoint/exit frame cost needs independent measurement.",
       "verified_subcontracts": [
         {
           "kind": "Source-inspected",
           "result": "Corrected conflicting stable docs, Plan and obsolete documentation guard; no production progress behavior change."
+        },
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-050",
+          "scope": "Ordinary route-local progress separation, reentry and first-return Home history publication. Frame cost and SQLite transaction cadence are not inferred from UI or Home snapshot writes."
         }
       ],
       "current_evidence_references": [
@@ -1676,7 +1699,7 @@
         "docs/adr/0303-reader-progress-durable-exit-barrier.md"
       ],
       "remaining_acceptance": [
-        "Current checkpoint/exit frame cost and multi-route targeted update under ADR0303; never restore post-pop reload or no-durable-wait."
+        "Current checkpoint/exit frame cost and absence of UI-isolate SQLite/chapter JSON work or per-page Home rebuild; retain verified050 product behavior and ADR0303 final durable flush."
       ],
       "evidence_reproducibility": "available_references",
       "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
@@ -2231,11 +2254,16 @@
       "requirement": "用长阅读会话记录 progress writer事务次数：连续翻页期间不得每页写 SQLite；停止约 8 秒后提交一次，持续活跃最多约 30 秒提交一次。Reader pop动画不得等待该 durable提交；返回后 Home/详情只更新当前 progress投影，不扫描整库。",
       "historical_status": "partial",
       "status": "partial",
-      "current_contract": "ADR0303: ordinary checkpoints batch8s idle/30s active; normal route pop awaits final checkpoint/drain/durable flush. Home/Details update the exact final progress without whole-library reload.",
+      "current_contract": "Storage-owned progress writer batches latest-wins checkpoints at about8s idle/30s active. Ordinary page turns do not await SQLite; normal pop retains ADR0303 final durable flush.050 verifies targeted final progress publication, not transaction cadence.",
       "verified_subcontracts": [
         {
           "kind": "Source-inspected",
           "result": "Corrected conflicting stable docs, Plan and obsolete documentation guard; no production progress behavior change."
+        },
+        {
+          "kind": "Device-observed-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-050",
+          "scope": "Ordinary route-local progress separation, reentry and first-return Home history publication. Frame cost and SQLite transaction cadence are not inferred from UI or Home snapshot writes."
         }
       ],
       "current_evidence_references": [
@@ -2245,7 +2273,7 @@
         "docs/adr/0303-reader-progress-durable-exit-barrier.md"
       ],
       "remaining_acceptance": [
-        "Long-session8s idle/30s active SQLite transaction count and targeted progress publication; normal pop retains final durable flush."
+        "Long-session8s idle/30s active SQLite transaction count; targeted final publication is verified in050 and normal pop retains final durable flush."
       ],
       "evidence_reproducibility": "available_references",
       "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"

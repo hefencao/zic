@@ -64,7 +64,6 @@
 
 ## P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
-- 直接从详情进入Reader并翻页后退出：按ADR0303在pop前完成final checkpoint/drain/durable flush，route返回后Home历史立即targeted更新，不再等待额外barrier、不重进详情、不整库reload；连续两个Reader route的final progress不得串位。
 - 同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。
 - 冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。
 - 继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。
