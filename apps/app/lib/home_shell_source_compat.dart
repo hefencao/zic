@@ -49,6 +49,8 @@ bool chapterRequiresSourceLocatorRefresh(
   }
   final currentAuthority = currentMihonResourceAuthorityRevision?.trim();
   return chapter.sourceId.startsWith('mihon:') &&
+      RegExp(r'(?:^|:)mihon-runtime-transform-v3:[0-9a-fA-F]{64}$')
+          .hasMatch(chapter.sourceRevision) &&
       currentAuthority != null &&
       currentAuthority.isNotEmpty &&
       !chapter.sourceRevision.endsWith(':$currentAuthority');

@@ -24,6 +24,52 @@ String _versionAuthorityEntryKey(ImportedLibraryEntry entry) =>
     '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'
     '\u0000${entry.chapter.chapterId}';
 
+bool _samePersistedChapterPayload(
+  ImportedChapterRecord left,
+  ImportedChapterRecord right,
+) {
+  if (identical(left, right)) return true;
+  // Compare all persisted values without encoding opaque request carriers or
+  // constructing a fresh manifest. Mutable progress is read back separately.
+  if (left.directoryId != right.directoryId ||
+      left.displayName != right.displayName ||
+      left.sourceId != right.sourceId ||
+      left.comicId != right.comicId ||
+      left.chapterId != right.chapterId ||
+      left.sourceRevision != right.sourceRevision ||
+      left.comicTitle != right.comicTitle ||
+      !listEquals(left.comicAuthors, right.comicAuthors) ||
+      !listEquals(left.comicTags, right.comicTags) ||
+      left.comicDescription != right.comicDescription ||
+      left.coverSourceId != right.coverSourceId ||
+      left.coverMediaFormat != right.coverMediaFormat ||
+      left.coverAnimatedHint != right.coverAnimatedHint ||
+      left.sequence != right.sequence ||
+      left.readingDirection != right.readingDirection ||
+      left.sourceUpdatedAt?.toUtc() != right.sourceUpdatedAt?.toUtc() ||
+      left.importedAt != right.importedAt ||
+      left.pages.length != right.pages.length) {
+    return false;
+  }
+  for (var index = 0; index < left.pages.length; index++) {
+    final a = left.pages[index];
+    final b = right.pages[index];
+    if (identical(a, b)) continue;
+    if (a.displayName != b.displayName ||
+        a.sourceId != b.sourceId ||
+        a.contentKindHint != b.contentKindHint ||
+        a.pageId != b.pageId ||
+        a.mediaFormat != b.mediaFormat ||
+        a.byteLength != b.byteLength ||
+        a.checksum != b.checksum ||
+        a.checksumAlgorithm != b.checksumAlgorithm ||
+        a.animatedHint != b.animatedHint) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool _sameSourceInstances(
   List<BrowsableComicSource> left,
   List<BrowsableComicSource> right,
@@ -742,15 +788,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     _scheduleCanonicalPhysicalBackfill(provider, canonicalAuthorities);
     final completedAtMs = _homeStartupClock.elapsedMilliseconds;
     final totalMs = completedAtMs - refreshStartedAtMs;
-    if (totalMs > 0) {
-      _homeLog(
-        'canonical-media-authority-refresh-complete totalMs=$totalMs '
-        'buildMs=${builtAtMs - refreshStartedAtMs} '
-        'publishMs=${publishedAtMs - builtAtMs} '
-        'backfillScheduleMs=${completedAtMs - publishedAtMs} '
-        'entries=${entriesByKey.length} authorities=${canonicalAuthorities.length}',
-      );
-    }
+    _homeLog(
+      'canonical-media-authority-refresh-complete totalMs=$totalMs '
+      'buildMs=${builtAtMs - refreshStartedAtMs} '
+      'publishMs=${publishedAtMs - builtAtMs} '
+      'backfillScheduleMs=${completedAtMs - publishedAtMs} '
+      'entries=${entriesByKey.length} authorities=${canonicalAuthorities.length}',
+    );
   }
 
   void _refreshVersionReuseAuthority() {
@@ -957,7 +1001,11 @@ final class HomeLibrarySession extends ChangeNotifier {
           _versionAuthorityHydratedEntries[key] = latestProgress == null
               ? entry
               : entry.copyWith(progress: latestProgress);
-          changed = true;
+          // The same persisted chapter may be reloaded at every boundary.
+          // Compare its full payload, not just revision/count: a changed
+          // request carrier still has to replace media authority.
+          changed = changed ||
+              !_samePersistedChapterPayload(previous!.chapter, entry.chapter);
           continue;
         }
         // Ordinary Home/snapshot projection updates may be compact. Preserve
@@ -2594,13 +2642,18 @@ final class HomeLibrarySession extends ChangeNotifier {
       if (!identical(library, result.store)) {
         continue;
       }
-      final entry = result.value;
-      if (entry == null) {
+      final persistedEntry = result.value;
+      if (persistedEntry == null) {
         throw StateError('chapter write completed without a readable entry');
       }
+      // Exact durable reads may decode a fresh, equivalent record. Keep the
+      // prepared immutable projection only when every persisted value matches,
+      // while retaining the store's current progress and changed payloads.
+      final entry = _samePersistedChapterPayload(chapter, persistedEntry.chapter)
+          ? persistedEntry.copyWith(chapter: chapter)
+          : persistedEntry;
       _replaceEntry(entry, replaceVersionAuthorityChapterPayload: true);
       await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
-      _refreshVersionPageAuthority();
       return entry;
     }
   }

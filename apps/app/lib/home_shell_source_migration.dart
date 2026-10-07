@@ -101,6 +101,11 @@ extension _HomeShellSourceMigration on _HomeShellState {
         family.latestKnownComicId == family.shelfHeadComicId) {
       return null;
     }
+    final preference =
+        _preferences[comicLibraryIdentity(sourceId, comicId)];
+    if (preference?.acknowledgedVersionComicId == family.latestKnownComicId) {
+      return null;
+    }
     return family.latestKnownDiscoveredAt ??
         DateTime.fromMicrosecondsSinceEpoch(1, isUtc: true);
   }

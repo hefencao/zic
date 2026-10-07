@@ -57,6 +57,39 @@ void main() {
     expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
   });
 
+  test('immutable manifest reuse does not hide same-revision locator updates', () {
+    final record = ImportedChapterRecord.folder(
+      directoryId: '/chapter',
+      displayName: 'chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          pageId: 'page-1',
+          displayName: '1.png',
+          sourceId: 'mihon:resource:old-carrier',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final manifest = record.toManifest();
+    expect(record.toManifest(), same(manifest));
+    expect(() => manifest.pages.clear(), throwsUnsupportedError);
+    final updated = record.copyWith(
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          pageId: 'page-1',
+          displayName: '1.png',
+          sourceId: 'mihon:resource:new-carrier',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final replacement = updated.toManifest();
+    expect(replacement.chapter.sourceRevision, manifest.chapter.sourceRevision);
+    expect(replacement.pages.single.uri.toString(), 'mihon:resource:new-carrier');
+    expect(manifest.pages.single.uri.toString(), 'mihon:resource:old-carrier');
+    expect(updated.toManifest(), same(replacement));
+  });
+
   test('separate folder cover changes revision without changing work identity', () {
     const pages = <ImportedPageRecord>[
       ImportedPageRecord(

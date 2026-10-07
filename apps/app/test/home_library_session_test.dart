@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
 import 'package:storage/storage.dart';
@@ -95,6 +96,51 @@ void main() {
 
     expect(session.preferences[preference.identity]?.liked, isTrue);
     expect(notifications, 1);
+  });
+
+  test('persisted reading progress preserves source update evidence', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library, chapterDownloads: downloads, wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[], ownsLibrary: true,
+      ownsChapterDownloads: true, ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final signal = DateTime.utc(2026, 8, 8);
+    final chapter = ImportedChapterRecord(
+      directoryId: 'progress-signal', displayName: 'Chapter',
+      sourceId: 'fixture', comicId: 'comic', chapterId: 'chapter',
+      sourceRevision: 'r1', pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page', sourceId: 'memory:page.png', pageId: 'page',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await session.upsertChapter(chapter);
+    await session.upsertSavedComic(SavedComicRecord(
+      sourceId: 'fixture', comicId: 'comic', title: 'Comic',
+      sourceUpdateAt: signal, unseenChapterIds: const <String>['chapter'],
+    ));
+    await session.persistProgress(ReadingProgress(
+      sourceId: 'fixture', comicId: 'comic', chapterId: 'chapter',
+      pageIndex: 0, subPageOffset: .5, readerMode: ReaderMode.continuous,
+      updatedAt: DateTime.utc(2026, 10, 3),
+    ));
+    expect(session.entries.single.progress!.subPageOffset, .5);
+    expect((await library.get('fixture', 'chapter'))!.progress!.subPageOffset, .5);
+    expect(session.savedComics.single.sourceUpdateAt, signal);
+    final stored = (await library.getSavedComic('fixture', 'comic'))!;
+    expect(stored.sourceUpdateAt, signal);
+    expect(stored.unseenChapterIds, <String>{'chapter'});
   });
 
   test('service adoption does not wait for unrelated Home list reconciliation',
@@ -1850,6 +1896,153 @@ void main() {
 
     expect(session.preferences[comic.identity], isNotNull);
     expect(library.comicPreferenceWrites, 0);
+  });
+
+  test('SQLite chapter upsert retains the prepared manifest and durable progress',
+      () async {
+    final library = SqliteImportedLibraryStore.memory();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final chapter = _preparedBoundaryChapter();
+    final manifest = chapter.toManifest();
+    await library.upsertChapter(chapter);
+    final progress = ReadingProgress(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      pageIndex: 1,
+      subPageOffset: 0.35,
+      readerMode: ReaderMode.continuous,
+      updatedAt: DateTime.utc(2026, 10, 1, 1),
+    );
+    await library.saveProgress(progress);
+
+    final entry = await session.upsertChapter(chapter);
+    expect(entry.chapter.toManifest(), same(manifest),
+        reason: 'exact SQLite readback must not discard the prepared projection');
+    expect(entry.progress?.toJson(), progress.toJson());
+    expect(session.entries.single, same(entry));
+    expect(session.versionAuthorityEntry(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+    )?.chapter.toManifest(), same(manifest));
+    final durable = await library.get(chapter.sourceId, chapter.chapterId);
+    expect(durable?.chapter.toJson(), chapter.toJson());
+    expect(durable?.progress?.toJson(), progress.toJson());
+  });
+
+  test('chapter upsert adopts actual changed SQLite payload after preparation',
+      () async {
+    final delegate = SqliteImportedLibraryStore.memory();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final chapter = _preparedBoundaryChapter();
+    chapter.toManifest();
+    final chapterChanges = <String, Object?>{
+      'directoryId': 'changed-directory',
+      'displayName': 'Changed chapter',
+      'comicId': 'changed-comic',
+      'sourceRevision': 'changed-revision',
+      'comicTitle': 'Changed comic',
+      'comicAuthors': <String>['Changed author'],
+      'comicTags': <String>['Changed tag'],
+      'comicDescription': null,
+      'coverSourceId': null,
+      'coverMediaFormat': null,
+      'coverAnimatedHint': false,
+      'sequence': 99,
+      'readingDirection': ReadingDirection.rtl.name,
+      'sourceUpdatedAt': null,
+      'importedAt': DateTime.utc(2026, 10, 1).toIso8601String(),
+      'pages': chapter.pages.reversed
+          .map((page) => page.toJson()).toList(growable: false),
+    };
+    final pageChanges = <String, Object?>{
+      'displayName': 'changed.jpg',
+      'sourceId': 'mihon-page:changed-carrier',
+      'pageId': 'changed-page-id',
+      'contentKindHint': ContentKindHint.png.name,
+      'mediaFormat': null,
+      'byteLength': null,
+      'checksum': null,
+      'checksumAlgorithm': null,
+      'animatedHint': false,
+    };
+    final changedPayloads = <String, Map<String, Object?>>{
+      for (final change in chapterChanges.entries)
+        change.key: <String, Object?>{...chapter.toJson(), change.key: change.value},
+      for (final change in pageChanges.entries)
+        'page.${change.key}': <String, Object?>{
+          ...chapter.toJson(),
+          'pages': <Map<String, Object?>>[
+            <String, Object?>{...chapter.pages.first.toJson(), change.key: change.value},
+            chapter.pages.last.toJson(),
+          ],
+        },
+    };
+    for (final change in changedPayloads.entries) {
+      final started = Completer<void>();
+      final release = Completer<void>();
+      library.chapterWriteStarted = started;
+      library.chapterWriteReturnGate = release.future;
+      final write = session.upsertChapter(chapter);
+      await started.future;
+      final actual = ImportedChapterRecord.fromJson(change.value);
+      await delegate.upsertChapter(actual);
+      final progress = ReadingProgress(
+        sourceId: actual.sourceId,
+        comicId: actual.comicId,
+        chapterId: actual.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.6,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 10, 1, 2),
+      );
+      await delegate.saveProgress(progress);
+      release.complete();
+      final entry = await write;
+      expect(entry.chapter.toJson(), actual.toJson(), reason: change.key);
+      expect(entry.chapter, isNot(same(chapter)), reason: change.key);
+      expect(entry.progress?.toJson(), progress.toJson(), reason: change.key);
+      expect(session.entries.single, same(entry), reason: change.key);
+    }
   });
 
   test('chapter writes and final progress update the mounted Home projection',
@@ -4330,6 +4523,89 @@ void main() {
     expect(authority.progress?.updatedAt, progress.updatedAt);
   });
 
+  test('unchanged chapter upsert preserves media authority without rebuilding',
+      () async {
+    final messages = <String>[];
+    final previousDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) messages.add(message);
+    };
+    addTearDown(() => debugPrint = previousDebugPrint);
+    final root = await Directory.systemTemp.createTemp('unchanged-upsert-');
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      downloadComposition: composition,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+    final manifest = _versionManifest(
+      comicId: 'unchanged-comic',
+      chapterId: 'unchanged-chapter',
+      revision: 'unchanged-revision',
+      pageCount: 1,
+    );
+    final chapter = ImportedChapterRecord.remote(
+      comic: _versionComic(manifest.comicId),
+      manifest: manifest,
+    );
+    await session.upsertChapter(chapter);
+    messages.clear();
+    final reloaded = ImportedChapterRecord.fromJson(chapter.toJson());
+    expect(reloaded, isNot(same(chapter)));
+    await session.upsertChapter(reloaded);
+    expect(
+      messages.where((value) =>
+          value.contains('canonical-media-authority-refresh-complete')),
+      isEmpty,
+      reason: 'a cached boundary must not rebuild all hydrated chapters',
+    );
+    final updated = chapter.copyWith(
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          pageId: chapter.pages.single.pageId,
+          displayName: chapter.pages.single.displayName,
+          sourceId: 'venera-resource:changed-provider',
+          contentKindHint: chapter.pages.single.contentKindHint,
+        ),
+      ],
+    );
+    messages.clear();
+    await session.upsertChapter(updated);
+    expect(
+      messages.where((value) =>
+          value.contains('canonical-media-authority-refresh-complete')),
+      hasLength(1),
+      reason: 'a real same-revision provider change publishes once',
+    );
+    final authority = session.versionAuthorityEntry(
+      sourceId: updated.sourceId,
+      comicId: updated.comicId,
+      chapterId: updated.chapterId,
+    );
+    expect(authority!.chapter.pages.single.sourceId,
+        'venera-resource:changed-provider');
+  });
+
   test('hydrated chapter cache follows newer Reader progress projection',
       () async {
     final delegate = MemoryImportedLibraryStore();
@@ -4757,6 +5033,44 @@ void main() {
   );
 }
 
+
+ImportedChapterRecord _preparedBoundaryChapter() => ImportedChapterRecord(
+      directoryId: 'remote:prepared',
+      displayName: 'Prepared chapter',
+      sourceId: 'fixture-source',
+      comicId: 'prepared-comic',
+      chapterId: 'prepared-chapter',
+      sourceRevision: 'prepared-revision',
+      comicTitle: 'Prepared comic',
+      comicAuthors: const <String>['Author'],
+      comicTags: const <String>['Tag'],
+      comicDescription: 'Description',
+      coverSourceId: 'https://example.test/cover.webp',
+      coverMediaFormat: 'webp',
+      coverAnimatedHint: true,
+      sequence: 6,
+      sourceUpdatedAt: DateTime.utc(2026, 9, 30),
+      importedAt: DateTime.utc(2026, 9, 30),
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'first.webp',
+          sourceId: 'mihon-page:opaque-carrier',
+          pageId: 'first',
+          contentKindHint: ContentKindHint.webp,
+          mediaFormat: 'webp',
+          byteLength: 100,
+          checksum: 'aabb',
+          checksumAlgorithm: 'sha256',
+          animatedHint: true,
+        ),
+        ImportedPageRecord(
+          displayName: 'last.jpg',
+          sourceId: 'https://example.test/last.jpg?signature=a%2Fb',
+          pageId: 'last',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
 
 final class _ProjectionRaceChapterDownloads
     implements

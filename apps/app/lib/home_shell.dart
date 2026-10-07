@@ -966,6 +966,27 @@ final class _HomeShellState extends State<HomeShell> {
     Chapter chapter,
   ) async {
     await _ensureLibraryReady();
+    for (final existing in _libraryEntries) {
+      if (existing.chapter.sourceId != source.sourceId ||
+          existing.chapter.comicId != comic.comicId ||
+          existing.chapter.chapterId != chapter.chapterId) {
+        continue;
+      }
+      final hydrated = await _librarySession.hydrateEntry(existing);
+      if (hydrated.chapter.sourceId == source.sourceId &&
+          hydrated.chapter.comicId == comic.comicId &&
+          hydrated.chapter.chapterId == chapter.chapterId &&
+          details.comicDetailsCanReuseChapterEntry(hydrated, chapter) &&
+          !chapterRequiresSourceLocatorRefresh(
+            hydrated.chapter,
+            currentMihonResourceAuthorityRevision: _externalSources
+                .activeController
+                ?.resourceAuthorityRevisionForSource(source.sourceId),
+          )) {
+        return hydrated;
+      }
+      break;
+    }
     final manifest = await _loadCompatibleSourceChapter(
       source,
       chapter.chapterId,
@@ -1055,11 +1076,17 @@ final class _HomeShellState extends State<HomeShell> {
     var customOrder = values.first.customOrder;
     var updatedAt = values.first.updatedAt;
     var sourceKind = values.first.sourceKind;
+    ComicPreference? acknowledgedPreference;
     for (final value in values) {
       inShelf = inShelf || value.inShelf;
       liked = liked || value.liked;
       collected = collected || value.collected;
       categories.addAll(value.categoryIds);
+      if (value.acknowledgedVersionComicId != null &&
+          (acknowledgedPreference == null ||
+              value.updatedAt.isAfter(acknowledgedPreference.updatedAt))) {
+        acknowledgedPreference = value;
+      }
       if (value.customOrder < customOrder) customOrder = value.customOrder;
       if (value.updatedAt.isAfter(updatedAt)) {
         updatedAt = value.updatedAt;
@@ -1076,6 +1103,8 @@ final class _HomeShellState extends State<HomeShell> {
       categoryIds: categories,
       customOrder: customOrder,
       updatedAt: updatedAt,
+      acknowledgedVersionComicId:
+          acknowledgedPreference?.acknowledgedVersionComicId,
     );
   }
 
@@ -1087,8 +1116,19 @@ final class _HomeShellState extends State<HomeShell> {
       fallbackInShelf: false,
     );
     final now = DateTime.now().toUtc();
-    final updated = preference.copyWith(updatedAt: now);
+    var updated = preference.copyWith(
+      updatedAt: now,
+      acknowledgedVersionComicId: previous.acknowledgedVersionComicId,
+      clearAcknowledgedVersionComicId:
+          previous.acknowledgedVersionComicId == null,
+    );
     if (!previous.inShelf && updated.inShelf) {
+      updated = updated.copyWith(
+        acknowledgedVersionComicId: _librarySession.versionBaselines
+                .familyFor(preference.sourceId, preference.comicId)
+                ?.latestKnownComicId ??
+            preference.comicId,
+      );
       final aliases = _canonicalComicAliases(
         preference.sourceId,
         preference.comicId,

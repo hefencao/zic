@@ -9,6 +9,27 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
+  test('version update acknowledgement survives SQLite reopen and backup snapshot',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('shelf-version-ack-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/library.sqlite';
+    final first = SqliteImportedLibraryStore(path);
+    await first.open();
+    await first.saveComicPreference(ComicPreference.defaults(
+      sourceId: 'source', comicId: 'comic',
+    ).copyWith(acknowledgedVersionComicId: 'known-successor'));
+    await first.close();
+    final reopened = SqliteImportedLibraryStore(path);
+    addTearDown(reopened.close);
+    await reopened.open();
+    expect((await reopened.getComicPreference('source', 'comic'))!
+        .acknowledgedVersionComicId, 'known-successor');
+    final snapshot = await reopened.readLibraryBackupSnapshot();
+    expect(snapshot.comicPreferences.single.acknowledgedVersionComicId,
+        'known-successor');
+  });
+
   test('persistent bulk list leaves one large row off the caller isolate while closing',
       () async {
     final dir = await Directory.systemTemp.createTemp('bulk-library-reader-');
@@ -37,11 +58,59 @@ void main() {
     });
     final read = store.list().then((entries) {
       expect(entries.single.chapter.pages, hasLength(3000));
+      final manifest = entries.single.chapter.toManifest();
+      expect(manifest.pages, hasLength(3000));
+      expect(manifest.pages.last.uri, Uri.file('/large/2999.png'));
+      expect(identical(manifest, entries.single.chapter.toManifest()), isTrue);
       completed = true;
     });
     final closing = store.close();
     await Future.wait<void>([read, event.future, closing]);
     expect(completed, isTrue);
+  });
+
+  test('persistent bulk projection transfers opaque and signed URI identities',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('bulk-library-manifest-');
+    addTearDown(() => dir.delete(recursive: true));
+    final store = SqliteImportedLibraryStore('${dir.path}/library.sqlite');
+    await store.open();
+    final locators = <String>[
+      'mihon:resource:${base64Url.encode(utf8.encode('opaque-' * 300))}',
+      'https://example.invalid/page%2F1?signature=a%2Bb&expires=42#page',
+      '/folder with spaces/page.png',
+    ];
+    final original = ImportedChapterRecord.folder(
+      directoryId: '/projection',
+      displayName: 'projection',
+      pages: <ImportedPageRecord>[
+        for (var index = 0; index < locators.length; index++)
+          ImportedPageRecord(
+            displayName: '$index.png', sourceId: locators[index],
+            pageId: 'page-$index', byteLength: index + 1,
+            checksum: 'checksum-$index', checksumAlgorithm: 'sha256',
+            contentKindHint: ContentKindHint.png,
+          ),
+      ],
+    );
+    await store.upsertChapter(original);
+    final reading = store.list();
+    final closing = store.close();
+    final entries = await reading;
+    await closing;
+    final manifest = entries.single.chapter.toManifest();
+    expect(identical(manifest, entries.single.chapter.toManifest()), isTrue);
+    expect(manifest.chapter.sourceRevision, original.sourceRevision);
+    for (var index = 0; index < locators.length; index++) {
+      final page = manifest.pages[index];
+      expect(page.uri, original.pages[index].uri);
+      expect(page.pageId, 'page-$index');
+      expect(page.index, index);
+      expect(page.byteLength, index + 1);
+      expect(page.checksum, 'checksum-$index');
+      expect(page.checksumAlgorithm, 'sha256');
+    }
+    expect(() => manifest.pages.clear(), throwsUnsupportedError);
   });
 
   test('persistent bulk decode failure reaches caller without blocking close',

@@ -27,8 +27,14 @@ Future<List<ImportedLibraryEntry>> _readLibraryEntriesOffIsolate(String path) =>
         // A concurrent writer/open or final WAL checkpoint can briefly hold
         // the schema lock. Wait off-isolate, never on the foreground connection.
         db.execute('PRAGMA busy_timeout = 5000');
-        return db.select(_libraryEntriesQuery)
+        final entries = db.select(_libraryEntriesQuery)
             .map(SqliteImportedLibraryStore._readEntry).toList(growable: false);
+        // Transfer the record-local immutable projection too: first URI
+        // parsing must not fall back onto Home's foreground authority build.
+        for (final entry in entries) {
+          entry.chapter.toManifest();
+        }
+        return entries;
       } finally {
         db.dispose();
       }

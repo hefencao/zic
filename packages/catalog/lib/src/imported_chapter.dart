@@ -298,6 +298,10 @@ final class ImportedChapterRecord {
   final DateTime? sourceUpdatedAt;
   final DateTime importedAt;
 
+  // Both the record and its manifest are immutable. Reuse the metadata
+  // projection while this record lives; copyWith creates a fresh projection.
+  late final ChapterManifest _manifest = _buildManifest();
+
   ImportedChapterRecord copyWith({
     String? directoryId,
     String? displayName,
@@ -351,7 +355,9 @@ final class ImportedChapterRecord {
     );
   }
 
-  ChapterManifest toManifest() {
+  ChapterManifest toManifest() => _manifest;
+
+  ChapterManifest _buildManifest() {
     final assets = <PageAsset>[];
     for (var index = 0; index < pages.length; index++) {
       final page = pages[index];

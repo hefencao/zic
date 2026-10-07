@@ -42,7 +42,8 @@
   A non-exact physical owner therefore requires an already-qualified version-family projection or independent strong media proof;
   historical exact READY/partial MUST NOT be merged solely because the logical page coordinate matches.
   A fresh full source upsert MUST replace stale provider locators in hydrated Home/version authority even when revision/pageCount are unchanged,
-  while preserving newer progress.Hydrated/version-authority cache MAY retain the full chapter/page payload,
+  while preserving newer progress. An identical full persisted chapter upsert MUST preserve its published media authority without rebuilding unrelated chapters; revision/count equality alone MUST NOT suppress provider changes.
+  Hydrated/version-authority cache MAY retain the full chapter/page payload,
   but MUST NOT become mutable `ReadingProgress` authority:
   Reader re-entry and post-pop projection MUST merge the latest progress through a targeted store-owned lookup that includes already-admitted checkpoints.
   Details MAY project a historical complete page list as a known page-count hint,
@@ -120,6 +121,13 @@
   写入跨 library adoption 时 MUST 等 current service adoption 收口并重试 current store；
   persistence helper 返回的 concrete library identity MUST 在 projection publish 前同步重验。
   批量 comic preference MUST 支持该批 durable writes 全部完成后单次 projection publication。
+  同来源漫画别名查询 MUST 按当前 raw comic identity 判定等价，不得因同漫画章节数增长而重复解析同一候选；
+  去重 MUST 限于单次查询，下一查询 MUST 读取当前来源 authority，仍保留离线 saved canonical identity 兜底及全部别名偏好合并。
+  首页更新筛选 MUST 先检查更新证据，未更新漫画不得触发该筛选的别名偏好查询；更新与入架条件、历史展示语义保持。
+  首页同次同步构建的更新与历史列表 MUST 共用一份当前只读漫画库聚合；下一构建 MUST 重读当前 library/source authority，不得跨构建缓存该结果。
+  Home snapshot 编码 worker MUST 只接收持久字段投影，不得复制普通章节的完整 pages/prepared manifest 或投影容器的非持久 owner 状态。
+  JSON 编码/压缩 MUST 保持异步 worker；compact 普通章节与完整 orphan download metadata、写入串行及完成屏障 MUST 保持。
+  durable catalog/preference/read-state DTO 的 JSON 字段转换 MUST 留在该 worker，不得为缩小输入图把整份大目录的转换移回 caller。
   `HomeLibrarySession` 的 chapter、SavedComic 与非 Reader progress write-through MUST 使用同一 generation-stable mutation owner；
   chapter/SavedComic 的 write 与 readback MUST 固定同一 concrete store，
   跨 adoption MUST 整轮重试 current store，并在 publish 前同步重验 persisted store identity。
@@ -331,6 +339,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT进入VersionPageAuthority/canonical media authority、
   Reader/download manifest、DownloadId或source resolver；
   hydrate后仍为placeholder的remote chapter MUST source-refresh，无法获得真实locator时 MUST在媒体demand建立前fail closed；
+  同源版本准备 MUST先hydrate已有章节再判断locator是否需来源刷新；有效完整manifest MUST原样复用，hydrate后的取消 MUST阻止后续source load/upsert，旧locator的兼容刷新 MUST保留。
   只读下载状态批量投影若底层显式支持compact placeholder/pageCount，则 SHOULD 直接消费compact entry，MUST NOT仅为状态检查逐章hydrate完整locator。
   快照缺失、损坏、版本不兼容或读取失败 MUST 静默回退SQLite，不能阻塞Home或覆盖SQLite数据。
 - 漫画源迁移跨 artifact cache、target library metadata 与旧 source cleanup 时 MUST 使用 App-private library DB 中的 durable source-migration journal，
@@ -420,6 +429,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   外部 source availability lifecycle 与 resolver-visible source projection MUST 是独立 composition owner：
   Widget State MUST NOT 自己持有 plugin source subscription/refresh queue、
   cached source list 或 canonical-id persistence；source projection MUST 显式接收/追踪当前 external source identities，
+  decoration MAY 仅在底层 producer、response cache 和创建时 producer transport generation 均相同的情况下复用；真实 generation mutation、source replacement 或 cache handoff MUST使用新绑定，实时 transport identity MUST继续委托producer。
   MUST NOT 通过 Mihon/Venera 等 sourceId 前缀反推 external ownership；
   library、chapter download、download composition 与 whole-comic queue 的当前 authority MUST 只由 `HomeLibrarySession` 持有，
   Widget State 不得保存平行 mutable service fields。
@@ -569,7 +579,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   升级前持久化且缺 stable replay coordinate 的 `mihon:resource:` locator MUST 在既有 source-locator compatibility gate 判为 legacy，
   并在 Reader/下载消费前强制 source refresh；MUST NOT 仅为 locator schema 升级改写 `sourceRevision`、制造版本或缓存 identity churn。
   旧 v1/v2 locator MUST 在 Reader/下载消费前强制 source refresh 到 v3；v3 transport revision MUST 绑定已验证 extension payload SHA-256。
-  App MUST 以 durable installed-plugin payload authority 对比 persisted Mihon revision；payload 更新后旧 v3 carrier MUST refresh，Reader/Pipeline MUST NOT持有 Mihon replay state。
+  App MUST 仅对末尾携带完整 v3 SHA-256 authority 的 runtime-transform revision 比较 durable installed-plugin payload；payload 更新后旧 v3 carrier MUST refresh，普通 HTTP/replay-capable 章节 MUST NOT因此刷新，Reader/Pipeline MUST NOT持有 Mihon replay state。
 - 新Reader消费已有committed/promoted physical `DownloadSession`时，
   Reader-local native ingress MUST 以异步 synchronized projection join恢复；
   bounded replay queue MUST按已有numeric priority保护尚未取得source的更高rank demanded entry：
@@ -620,6 +630,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   PipelineReaderSession MUST run page-stream/output/artifact/control synchronization only after a real plan revision or current/decode-target identity change.
   High-frequency readerObservation/pageTransition/layout diagnostics MUST be sampled at semantic edges/bounded heartbeat and MUST NOT become a per-frame control-plane owner.
 - 非file且无authority的opaque资源URI MUST NOT通过payload中的hash或路径片段推断standalone physical identity；已验证canonical projection的解析不受该形状过滤影响。
+- 不可变章节记录 SHOULD 复用其只读 manifest 元数据投影；真实 locator/page payload 更新 MUST 使用新记录，MUST NOT 因投影复用吞掉同 revision 的变更。
 - Source-confirmed version-family reuse MUST use a stable opaque `VersionFamilyId` and direct exact-page→canonical-physical projection.
   `DownloadId` MUST remain the exact provider/logical identity for URI/revision/validator/manual pin/export semantics;
   a verified cross-version page MAY resolve to `PhysicalMediaId.canonical`,
@@ -972,6 +983,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   confirmed同源 successor/version MUST 由 `ComicVersionRelationStore` 的持久 relation及其首次 `discoveredAt` 表示，
   并由 `HomeLibrarySession` 投影供 Home/source browser 同步消费。版本 relation MUST NOT 通过写 `sourceUpdateAt` 来伪装成章节更新。
   presentation MUST 合并两个事实源排序；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它们。
+  首次入架 MUST确认当时已知的章节与版本提醒；该版本确认 MUST持久保存且不得改写relation、family heads或复用证明。普通偏好编辑 MUST保留确认，后续新章节/版本 MUST仍可提醒；跨来源迁移 MUST NOT搬运foreign版本确认。
   漫画源卡片 MAY 将 confirmed successor 投影为右上更新感叹号，点击时 MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。
   远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
@@ -1777,6 +1789,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 ## 9. Identity 与缓存
 - 持久化 imported-library 的 bulk list 查询及 JSON/model 解码 MUST 由 storage-owned 短生命周期只读 worker 执行；
   UI-owned SQLite connection/handle 不得跨 isolate，关闭 MUST 等待已接纳的 bulk read。
+  bulk list的worker MUST在传回记录前完成record-local不可变manifest投影，首次页面URI解析 MUST NOT遗留到Home的foreground authority构建；authority发布 MUST仍由原runtime owner执行。
+  Home章节upsert MUST保留持久化回读及最新progress；仅在完整持久化payload一致时 MAY复用传入不可变记录的已准备manifest。实际metadata、页序或locator变化 MUST采用回读结果；不得新增scope级缓存或延迟authority提交。
+  详情的来源章节准备在source fallback前 MUST先通过session hydrate已有exact source/comic/chapter的持久完整记录，再检查revision、已知pageCount与locator有效性；有效记录 MUST保留importedAt及最新进度，MUST NOT仅因紧凑Home占位投影重载来源。缺失、版本/页数变化或旧locator MUST继续来源加载。
   内存 store 仍按有限工作量让出 event turn，且不得跨让步持有 SQLite 事务；精确章节读取和显式原子备份保持原有窄路径与事务语义；
   cache schema 20 MUST 为 `artifact_replica(access_locator)` 提供非唯一查询索引；
   v19→20 只安装该索引，不重放历史 identity backfill、不改变 authority、不跳过 crash recovery。
@@ -2224,6 +2239,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     异步CookieManager镜像 MUST NOT恢复请求domain/path范围内已知的过期/删除Cookie或扩大已知Secure范围；另一path的同名响应Cookie MUST NOT屏蔽请求URL上的未知镜像Cookie。既有浏览器快照revision/UA交接保持在原network bridge适配器；镜像header没有属性，同名且范围重叠的未知身份仍无法完整还原。
     canonical default-client的三类精确拦截器 MUST被host capability判定视为可重放；source-loader所属/未知拦截器 MUST继续使用runtime兼容路径。
     该判定 MUST NOT扩大到整个interceptor包或关闭redirect、Set-Cookie、非媒体prefix的source recovery边界。
+    installed payload authority 比较 MUST只作用于携带完整v3 SHA-256后缀的runtime-transform章节。
+    有效的普通HTTP/replay-capable章节 MUST NOT因没有该后缀而被强制刷新或拒绝；legacy locator与快照占位页 MUST继续刷新。
 - 同源版本媒体复用 MUST 将强identity/offset验证收敛为当前chapter的bounded preparation并持久化chapter mapping。
   详情/version-state发现relation后 SHOULD异步warm实际有缓存状态的当前chapter；
   普通Reader route只消费本地mapping并立即进入Pipeline，MUST NOT为generic历史relation同步做source proof。

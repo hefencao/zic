@@ -121,6 +121,7 @@ final class ComicPreference {
     required Iterable<String> categoryIds,
     required this.customOrder,
     required this.updatedAt,
+    this.acknowledgedVersionComicId,
   }) : categoryIds = Set<String>.unmodifiable(categoryIds) {
     if (sourceId.trim().isEmpty || comicId.trim().isEmpty) {
       throw ArgumentError('comic preference identity must be non-empty');
@@ -155,6 +156,8 @@ final class ComicPreference {
   final Set<String> categoryIds;
   final int customOrder;
   final DateTime updatedAt;
+  /// Notification baseline only; does not change shelf/version/reuse heads.
+  final String? acknowledgedVersionComicId;
 
   String get identity => '$sourceId\u0000$comicId';
 
@@ -166,6 +169,8 @@ final class ComicPreference {
     Iterable<String>? categoryIds,
     int? customOrder,
     DateTime? updatedAt,
+    String? acknowledgedVersionComicId,
+    bool clearAcknowledgedVersionComicId = false,
   }) {
     return ComicPreference(
       sourceId: sourceId,
@@ -177,6 +182,9 @@ final class ComicPreference {
       categoryIds: categoryIds ?? this.categoryIds,
       customOrder: customOrder ?? this.customOrder,
       updatedAt: (updatedAt ?? this.updatedAt).toUtc(),
+      acknowledgedVersionComicId: clearAcknowledgedVersionComicId
+          ? null
+          : acknowledgedVersionComicId ?? this.acknowledgedVersionComicId,
     );
   }
 
@@ -190,6 +198,8 @@ final class ComicPreference {
         'categoryIds': categoryIds.toList(growable: false)..sort(),
         'customOrder': customOrder,
         'updatedAt': updatedAt.toUtc().toIso8601String(),
+        if (acknowledgedVersionComicId != null)
+          'acknowledgedVersionComicId': acknowledgedVersionComicId!,
       };
 
   factory ComicPreference.fromJson(
@@ -217,6 +227,7 @@ final class ComicPreference {
       categoryIds: rawCategoryIds.cast<String>(),
       customOrder: _requiredInt(json, 'customOrder'),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
+      acknowledgedVersionComicId: json['acknowledgedVersionComicId'] as String?,
     );
   }
 }

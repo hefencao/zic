@@ -94,6 +94,9 @@ final class ComicSourceMigrationPlan {
         categoryIds: preference.categoryIds,
         customOrder: targetCustomOrder,
         updatedAt: DateTime.now().toUtc(),
+        acknowledgedVersionComicId: preference.sourceId == target.comic.sourceId
+            ? preference.acknowledgedVersionComicId
+            : null,
       );
 
   /// Copy source preferences without erasing state that already belongs to
@@ -122,6 +125,8 @@ final class ComicSourceMigrationPlan {
       },
       customOrder: existingTarget?.customOrder ?? migrated.customOrder,
       updatedAt: (updatedAt ?? DateTime.now()).toUtc(),
+      acknowledgedVersionComicId: existingTarget?.acknowledgedVersionComicId ??
+          migrated.acknowledgedVersionComicId,
     );
   }
 }

@@ -66,7 +66,7 @@ for marker, label in (
     ("VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(", "bounded version-page proof"),
     ("session.upsertVersionRelationDerivedState(updatedRelation)", "derived relation persistence"),
     ("scheduleMetadataTask(", "shared NetLane scheduling capability"),
-    ("!requiresSourceLocatorRefresh(existing.chapter)", "shared locator-validity rule"),
+    ("!requiresSourceLocatorRefresh(hydrated.chapter)", "shared hydrated locator-validity rule"),
     ("Future<int> ensureAuthority(", "Reader version authority"),
     ("Future<HomeVersionState> loadVersionState(", "version-state load"),
     ("_storedVersionRelationsStable({", "stable relation-generation read"),
@@ -74,6 +74,17 @@ for marker, label in (
     ("final provider = session.downloadComposition;", "session-normalized transfer capability"),
 ):
     require(owner, marker, label)
+
+chapter_load = owner[
+    owner.index("Future<ImportedLibraryEntry> _loadVersionChapterEntry("):
+    owner.index("Future<bool> _chapterHasReusableSourceState(")
+]
+hydrate = chapter_load.index("await session.hydrateEntry(existing)")
+cancel = chapter_load.index("control?.throwIfCancelled();", hydrate)
+validity = chapter_load.index("!requiresSourceLocatorRefresh(hydrated.chapter)")
+source_load = chapter_load.index("await source.loadChapter(chapter.chapterId)")
+if not hydrate < cancel < validity < source_load:
+    raise SystemExit("version chapter preparation must hydrate and recheck cancellation before locator refresh")
 
 close_body = home[home.index("Future<void> _closeHomeComposition() async {"):]
 for earlier, later, label in (

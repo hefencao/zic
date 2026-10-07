@@ -83,6 +83,7 @@ generic open watchdog真正超时时，DownloadJob必须只abort当前controlled
 
 ### `storage`
 持久化 imported-library 的 bulk SQL/JSON 解码由 storage-owned 短生命周期只读 worker 执行，SQLite handle 不跨 isolate；
+同一worker在返回前初始化每个不可变record的manifest投影，页面URI解析不延迟到Home首次authority构建；连接和发布authority仍由原owner持有。
 内存 store 以有限 event-turn 预算让步。
 schema 20 的 `artifact_replica(access_locator)` 索引和 `CacheScanner.phaseMicros` 服务于恢复扫描诊断，
 sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
@@ -271,6 +272,7 @@ comic/source preference 与 chapter read-state 的 durable write-through 也由 
 helper 返回稳定写入的 library identity，caller 在无 await 的同步 continuation 再确认仍是 current 后才发布 projection。
 批量 comic preference（例如书架 reorder/alias neutralization）必须先完成同一 current store 的该批 durable writes，
 再一次性发布 Home projection，不能退回 UI `save* + replace*` 或逐项 rebuild。
+Home 的 canonical alias 查询只在单次调用内按同来源 raw comic ID 去重；共享漫画 ID 的章节不重复解析 source identity。首页同次同步构建只聚合一份当前漫画库，更新与历史列表分别过滤排序；更新先检查只读更新证据，再对候选合并别名偏好。查询继续采用当前 source authority 优先、已保存 canonical ID 离线兜底，下一构建重新读取，偏好合并顺序不变，不持久缓存别名。
 同一 stable mutation owner 也覆盖 session-owned chapter、SavedComic 与非 Reader progress write-through；
 chapter/SavedComic 的 write+readback 必须在同一个 concrete store 内完成，
 跨 adoption 时整轮重试 current store，caller 同步确认 persisted store 仍是 current 后才发布 Home projection。
@@ -319,6 +321,7 @@ Home 的书架“管理/批量选择”模式由纯 Dart `HomeShelfManagement` �
 它只维护 managing、batch-selection 与 source-aware comic identity selection 的 UI 不变量，
 不读取 `LibraryComic`、library/download/source owner，也不拥有 Navigator/BuildContext/dialog；
 Widget State 继续负责渲染、确认框和实际 library mutation。
+HomeLibrarySession 的完整章节 upsert 保留持久化回读与最新 progress；逐字段比较完整持久化 payload，只有真实变化才刷新媒体 authority。回读值与传入不可变记录完全一致时复用其已准备 manifest；实际变化仍采用回读记录，canonical assimilation 保持原提交路径。
 Reader 章节进入前的 preparation 由独立 `HomeReaderChapterComposition` 持有；
 `DeferredReaderRoute` 先显示加载页，composition 在 load/hydrate、
 版本 authority、response 能力与 Pipeline 构造前 await core services + Home adoption，
@@ -350,6 +353,7 @@ Reader 首帧后的低优先级 metadata/version refresh 与 Reader version auth
 UI 只在版本 route push 前请求 preparation、在 route finally 释放 token，Reader 通过 lifecycle 查询目标 chapter 对应 preparation；
 `HomeShell` 不再保存 selected version 的 `originComicId + Future` 镜像状态。
 该 lifecycle 每次通过 `HomeLibrarySession` 读取当前 library/chapter-download/relation generation。
+版本准备先由同一 session hydrate 已有章节，再对完整结果应用来源 locator 检查；hydrate 后重验取消，有效 manifest 直接复用，缺页或旧 locator 仍走原来源刷新和 upsert。
 stored successor/predecessor 必须在同一个 concrete `session.library` identity 上成组读取；
 任一 await 后 library identity 改变或旧 store 因 adoption 被关闭时整体重试，
 只有 current identity 自身 I/O 失败才向上抛出，禁止一次 Version State 混合两代 relation projection；
@@ -390,6 +394,9 @@ Reader route/version-reuse consumer 只读该 composition capability，
 `apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。入口直接挂载 memory-backed Home；
 首个Flutter surface可见后异步打开durable/native/plugin capability。
 `HomeProjectionSnapshot`同时保存Home primary、SQLite projection revision和需要持久展示的manual/auto-cache chapter-download summary。
+存储 owner 在 worker handoff 前只投影快照的持久字段；既有 isolate 执行 JSON 编码与压缩，普通章节的完整 pages/prepared manifest 不进入 worker 输入图。
+durable catalog/preference/read-state DTO 的 JSON 字段转换也留在该 worker；caller 只准备 compact entry metadata 与不携带 prepared manifest 的 orphan 页字段。
+orphan download entries 仍保存完整页元数据；写入串行、完成屏障及临时文件替换由原 snapshot store 拥有。
 revision匹配的durable handoff只切换authority并targeted revalidate这些已持久download identities，
 禁止为了Home启动扫描全部library entries或执行orphan discovery；后者属于Download Manager/用户显式刷新。
 Download Manager 首次打开 Canonical/自动缓存页若缺 physical cache projection，
@@ -473,6 +480,7 @@ raw Mihon locator继续只用于插件 request/chapter identity，不参与 dura
 Home 的“更新漫画”投影只取已在书架且具有 source-confirmed update 的漫画。章节/目录更新由 `SavedComicRecord.sourceUpdateAt` 表示；
 同源版本更新由 `HomeLibrarySession.versionRelations` 中 source-confirmed predecessor→successor relation 的首次 `discoveredAt` 表示。
 两者是并列事实源，presentation 只读合并后的有效更新时间；版本关系不得再镜像写回 `sourceUpdateAt`，阅读进度也不得推进任一更新事实。
+首次入架把当前已知版本记入ComicPreference的可选acknowledgedVersionComicId；相同successor不再产生首页提醒，后续successor仍可提醒。普通偏好编辑保留该值，同源迁移保留、跨源不搬foreign identity；family heads与relation/reuse独立。
 普通 metadata刷新、阅读进度与仅浏览记录都不产生更新。漫画源卡片从同一 Home/library 投影读取书架与更新事实：
 左上书架标志+变暗只表示当前 raw/canonical comic已入书架；右上感叹号只提示该书架 comic有 source-confirmed update。阅读历史
 单独按 `ReadingProgress.updatedAt` 投影。
@@ -497,6 +505,8 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 该浏览链接与 JS 更新地址和 canonical identity resolver 分离，不更换 source website、comic/chapter identity、locator或 artifact authority。
 
 同源版本关系只来自来源 `ComicVersionSource` 或已持久化的 `ComicVersionRelationStore`；Venera/E-Hentai按来源关系生成版本，
+`HomeVersionReuseLifecycle` 将来源声明的新版保存为 current→successor、旧版保存为 predecessor→current，均经同一 `HomeLibrarySession` 提交；不按标题、日期或展示序号推断版本顺序。
+关系发现保留已有首次发现时间与 page-mapping proof；唯一最新版仍由已确认的有向关系决定，未确认分叉保持无唯一 head，不放宽正文复用。
 版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
 不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
@@ -689,12 +699,14 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   也不得因 URI churn 零网络别名到历史 READY。`DownloadId` 必须继续包含当前 hydrated manifest 的 exact URI；
   只有已有 version-family projection 或 strong locator/content proof 才能共享 physical owner。
   无authority的非file opaque URI不参与路径/内容hash推断；producer payload中的偶然hash或`/s/`片段不构成physical proof。
+  不可变 `ImportedChapterRecord` 在自身生命周期内复用同一个只读 manifest 投影；新 record 独立生成投影，避免 authority refresh 重复解析未变化的整库 URI。
   Home 的完整 source `upsertChapter()` 即使 revision/pageCount 未变也必须替换 hydrated authority 的 fresh provider locator，
   同时保留更新的 Reader progress；compact snapshot/progress projection 仍不得覆盖完整 manifest。
   Details composition 可以用同 source/comic 下按 chapterId 或唯一 sourceRevision 找到的历史完整 page list 作为页数 presentation candidate，
   但 candidate 不等于 hydrated command authority：
   只有 sourceRevision 相同、已知正数 pageCount 与 pages.length 一致且不是 Home placeholder 的 entry 才可直接进入 Reader/单章下载/读状态等正文命令；
   否则命令必须经 source chapter hydrate。
+  Details的Home章节准备先定位exact source/comic/chapter并由既有session hydrate完整持久记录，再应用相同revision/pageCount和source-locator检查；有效记录复用且保留导入时间及最新进度，缺失或无效记录仍由来源加载并upsert。
   `zic-home-snapshot-page:*` 这类 compact placeholder 只属于 Home/bootstrap projection：
   不得成为 VersionPageAuthority/canonical media authority，
   也不得进入 Reader/download `ChapterManifest`、`DownloadId` 或 source resolver；
@@ -1066,6 +1078,9 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   source setting mutation 推进 transport generation 时，driver 必须同步失效该 source 的 retained fresh/replay state。
   旧 v1/v2 locator 在 Reader/下载入口必须先强制 source refresh 到 v3；v3 transport revision 绑定已验证 extension payload SHA-256，
   当前安装 payload 与 persisted revision 不一致时同样必须 refresh，不能让插件升级前的 opaque request plan 继续冒充 durable current authority。
+  payload 比较只适用于 revision 末尾携带完整 v3 SHA-256 authority 的 runtime-transform carrier；
+  普通 HTTP/replay-capable Mihon 章节不因已安装插件具有 payload authority 而强制刷新。
+  Reader、下载与 version preparation 共用同一 compatibility gate，legacy locator 和 snapshot placeholder 检查保持独立。
   Download Manager 自动缓存消费 durable management projection，而非把 exact `CacheRec` 当唯一存在性 authority。
   compact Home projection 只提供 chapter identity/pageCount，
   management cache/snapshot 不得把 `zic-home-snapshot-page:*` placeholder 展开成 `DownloadId`；

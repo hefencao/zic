@@ -3,6 +3,23 @@ import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('version notification acknowledgement survives JSON and preference edits',
+      () {
+    final legacy = ComicPreference.defaults(sourceId: 'source', comicId: 'comic');
+    expect(legacy.toJson(), isNot(contains('acknowledgedVersionComicId')));
+    expect(ComicPreference.fromJson(legacy.toJson()).acknowledgedVersionComicId,
+        isNull);
+    final acknowledged = legacy.copyWith(
+      acknowledgedVersionComicId: 'known-successor',
+    );
+    final edited = acknowledged.copyWith(liked: true, categoryIds: <String>['x']);
+    expect(edited.acknowledgedVersionComicId, 'known-successor');
+    expect(ComicPreference.fromJson(edited.toJson()).acknowledgedVersionComicId,
+        'known-successor');
+    expect(acknowledged.copyWith(clearAcknowledgedVersionComicId: true)
+        .acknowledgedVersionComicId, isNull);
+  });
+
   test('comic version page mapping parses verified time strictly', () {
     final mapping = ComicVersionPageMapping.fromJson(<String, Object?>{
       'predecessorChapterId': 'old-chapter',

@@ -178,7 +178,6 @@ final class HomeVersionReuseLifecycle {
                 ? fallbackTitle
                 : relations[index].predecessorTitle.trim(),
             generation: relations.length - index,
-            date: _relationDate(relations[index].discoveredAt),
           ),
     ];
   }
@@ -204,32 +203,33 @@ final class HomeVersionReuseLifecycle {
                 ? fallbackTitle
                 : relations[index].predecessorTitle.trim(),
             generation: index + 1,
-            date: _relationDate(relations[index].discoveredAt),
             isPredecessor: true,
           ),
     ];
   }
 
-  Future<void> _rememberSuccessors({
+  Future<void> _rememberSourceVersions({
     required BrowsableComicSource source,
-    required String predecessorComicId,
-    required String predecessorTitle,
-    required Iterable<SourceComicVersion> successors,
+    required String currentComicId,
+    required String currentTitle,
+    required Iterable<SourceComicVersion> versions,
   }) async {
-    if (_relationStore() == null) return;
-    for (final successor in successors) {
-      if (successor.isPredecessor ||
-          successor.sourceId != source.sourceId ||
-          successor.comicId.isEmpty ||
-          successor.comicId == predecessorComicId) {
+    if (_relationStore() == null || currentComicId.isEmpty) return;
+    for (final version in versions) {
+      if (version.sourceId != source.sourceId ||
+          version.comicId.isEmpty ||
+          version.comicId == currentComicId) {
         continue;
       }
       await session.upsertVersionRelation(
         ComicVersionRelation(
           sourceId: source.sourceId,
-          predecessorComicId: predecessorComicId,
-          successorComicId: successor.comicId,
-          predecessorTitle: predecessorTitle,
+          predecessorComicId:
+              version.isPredecessor ? version.comicId : currentComicId,
+          successorComicId:
+              version.isPredecessor ? currentComicId : version.comicId,
+          predecessorTitle:
+              version.isPredecessor ? version.title : currentTitle,
           discoveredAt: DateTime.now().toUtc(),
         ),
       );
@@ -288,10 +288,13 @@ final class HomeVersionReuseLifecycle {
   }) async {
     control?.throwIfCancelled();
     final existing = _exactChapterEntry(source.sourceId, chapter.chapterId);
-    if (existing != null &&
-        existing.chapter.pages.isNotEmpty &&
-        !requiresSourceLocatorRefresh(existing.chapter)) {
-      return session.hydrateEntry(existing);
+    if (existing != null) {
+      final hydrated = await session.hydrateEntry(existing);
+      control?.throwIfCancelled();
+      if (hydrated.chapter.pages.isNotEmpty &&
+          !requiresSourceLocatorRefresh(hydrated.chapter)) {
+        return hydrated;
+      }
     }
     final controlled = source is ControlledComicSource
         ? source as ControlledComicSource
@@ -1115,11 +1118,11 @@ final class HomeVersionReuseLifecycle {
             )
           : await versionSource.findComicVersions(currentComicId);
       control?.throwIfCancelled();
-      await _rememberSuccessors(
+      await _rememberSourceVersions(
         source: source,
-        predecessorComicId: currentComicId,
-        predecessorTitle: title,
-        successors: discovered.where((item) => !item.isPredecessor),
+        currentComicId: currentComicId,
+        currentTitle: title,
+        versions: discovered,
       );
       final current = _exactLibraryComicForSourceIdentity(
         source.sourceId,
@@ -1195,10 +1198,4 @@ final class HomeVersionReuseLifecycle {
     return '${source.sourceId}\u0000${canonical ?? comicId}';
   }
 
-  static String? _relationDate(DateTime? value) {
-    if (value == null) return null;
-    final local = value.toLocal();
-    String twoDigits(int part) => part.toString().padLeft(2, '0');
-    return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)}';
-  }
 }

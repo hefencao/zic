@@ -5,11 +5,222 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/home_library_session.dart';
+import 'package:zic/home_shell.dart';
 import 'package:zic/home_version_reuse_lifecycle.dart';
 
 void main() {
+  test('source-declared predecessors complete version history without media changes',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final lifecycle = _lifecycle(session);
+    addTearDown(() async {
+      await lifecycle.close();
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final existing = ComicVersionRelation(
+      sourceId: 'fixture',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic',
+      predecessorTitle: 'Old comic',
+      discoveredAt: DateTime.utc(2026, 1, 1),
+      pageMappings: <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: 'old-chapter',
+          successorChapterId: 'new-chapter',
+          predecessorPageCount: 1,
+          successorPageCount: 1,
+          successorOffset: 0,
+          predecessorSourceRevision: 'old-r1',
+          successorSourceRevision: 'new-r1',
+          verifiedPredecessorPageIndexes: const <int>[0],
+          verifiedAt: DateTime.utc(2026, 1, 1),
+        ),
+      ],
+    );
+    await session.upsertVersionRelation(existing);
+    await session.upsertVersionRelation(ComicVersionRelation(
+      sourceId: 'fixture',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'middle-comic',
+      predecessorTitle: 'Old comic',
+      discoveredAt: DateTime.utc(2026, 1, 1),
+    ));
+    expect(session.versionBaselines.latestKnownHeadFor('fixture', 'old-comic'),
+        isNull, reason: 'An incomplete fork must not guess a latest head');
+    final source = _DeclaredVersionSource(const <SourceComicVersion>[
+      SourceComicVersion(sourceId: 'fixture', comicId: 'old-comic',
+          title: 'Old comic', generation: 1, isPredecessor: true),
+      SourceComicVersion(sourceId: 'fixture', comicId: 'middle-comic',
+          title: 'Middle comic', generation: 2, isPredecessor: true),
+      SourceComicVersion(sourceId: 'foreign', comicId: 'foreign-comic',
+          title: 'Foreign comic', generation: 3, isPredecessor: true),
+      SourceComicVersion(sourceId: 'fixture', comicId: 'new-comic',
+          title: 'Self', generation: 4, isPredecessor: true),
+      SourceComicVersion(sourceId: 'fixture', comicId: '',
+          title: 'Empty identity', generation: 5, isPredecessor: true),
+    ]);
+
+    final state = await lifecycle.loadVersionState(source, 'Newest', 'new-comic');
+    await state.backgroundRefresh;
+    final predecessors =
+        await library.listComicVersionPredecessors('fixture', 'new-comic');
+    expect(predecessors.map((item) => item.predecessorComicId),
+        unorderedEquals(<String>['old-comic', 'middle-comic']));
+    expect(session.versionBaselines.latestKnownHeadFor('fixture', 'old-comic'),
+        'new-comic');
+    final preserved = predecessors.singleWhere((item) =>
+        item.predecessorComicId == 'old-comic');
+    expect(preserved.discoveredAt, existing.discoveredAt);
+    expect(preserved.predecessorTitle, existing.predecessorTitle);
+    expect(preserved.pageMappings.map((item) => item.toJson()).toList(),
+        existing.pageMappings.map((item) => item.toJson()).toList(),
+        reason: 'Discovery preserves the original media proof');
+    expect((await library.listAllComicVersionRelations()).length, 3,
+        reason: 'Foreign, self and empty identities cannot establish edges');
+    expect(session.entries, isEmpty,
+        reason: 'Version history is independent of chapter/page authority');
+
+    source.offline = true;
+    final offline = await lifecycle.loadVersionState(source, 'Newest', 'new-comic');
+    expect(offline.predecessors.map((item) => item.comicId),
+        unorderedEquals(<String>['old-comic', 'middle-comic']));
+    final fallback = await offline.backgroundRefresh!;
+    expect(fallback.predecessors.map((item) => item.comicId),
+        unorderedEquals(<String>['old-comic', 'middle-comic']));
+  });
+
+  for (final scenario in <({bool needsRefresh, bool cancelOnHydrate})>[
+    (needsRefresh: false, cancelOnHydrate: false),
+    (needsRefresh: true, cancelOnHydrate: false),
+    (needsRefresh: true, cancelOnHydrate: true),
+  ]) {
+    final needsRefresh = scenario.needsRefresh;
+    test(
+        'version warmup hydrates compact chapter before locator check '
+        '(legacy locator: $needsRefresh, '
+        'cancel on hydrate: ${scenario.cancelOnHydrate})', () async {
+      final library = _BlockingVersionRelationStore(compactEntries: true);
+      await library.open();
+      final focus = _entry();
+      final target = _entry(
+        comicId: 'new-comic',
+        chapterId: 'new-chapter',
+        pageId: 'new-page',
+        pageUri: needsRefresh
+            ? 'venera-resource://expired-runtime/page'
+            : 'https://example.invalid/page.webp',
+      );
+      final freshTarget = _entry(
+        comicId: 'new-comic',
+        chapterId: 'new-chapter',
+        pageId: 'new-page',
+      );
+      final progress = ReadingProgress(
+        sourceId: 'fixture',
+        comicId: 'new-comic',
+        chapterId: 'new-chapter',
+        pageIndex: 0,
+        subPageOffset: 0.4,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 1, 2),
+      );
+      await library._inner.upsertChapter(focus.chapter);
+      await library._inner.upsertChapter(target.chapter);
+      await library._inner.saveProgress(progress);
+      await library.saveComicVersionRelation(
+        ComicVersionRelation(
+          sourceId: 'fixture',
+          predecessorComicId: 'old-comic',
+          successorComicId: 'new-comic',
+          predecessorTitle: 'Old comic',
+        ),
+      );
+      final downloads = MemoryChapterDownloadService(
+        pageLoader: (_, _) async => Uint8List(1),
+      );
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: library,
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true,
+      );
+      final lifecycle = _lifecycle(
+        session,
+        requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      );
+      addTearDown(() async {
+        await lifecycle.close();
+        await session.close();
+        session.dispose();
+      });
+      await session.ready;
+      expect(session.error, isNull);
+      expect(
+        session.entries.every((entry) =>
+            chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter)),
+        isTrue,
+      );
+      final source = _ChapterVersionSource(freshTarget);
+      final control = _TestTaskControl();
+      if (scenario.cancelOnHydrate) {
+        library.onGet = (_, chapterId) {
+          if (chapterId == 'new-chapter') control.cancel();
+        };
+      }
+
+      final warming = lifecycle.prepareWarmup(
+        source,
+        focus,
+        targetComicId: 'new-comic',
+        control: scenario.cancelOnHydrate ? control : null,
+      );
+      if (scenario.cancelOnHydrate) {
+        await expectLater(
+          warming,
+          throwsA(isA<Failure>().having(
+            (error) => error.code, 'code', ErrorCode.cancelled)),
+        );
+      } else {
+        await warming;
+      }
+
+      expect(source.comicLoads, 1);
+      expect(source.chapterLoads,
+          needsRefresh && !scenario.cancelOnHydrate ? 1 : 0);
+      final persisted = await library._inner.get('fixture', 'new-chapter');
+      expect(persisted!.progress!.toJson(), progress.toJson());
+      if (needsRefresh && !scenario.cancelOnHydrate) {
+        expect(persisted.chapter.pages.single.sourceId,
+            freshTarget.chapter.pages.single.sourceId);
+        expect(persisted.chapter.importedAt, isNot(target.chapter.importedAt));
+      } else {
+        expect(persisted.chapter.toJson(), target.chapter.toJson());
+      }
+    });
+  }
+
   test('in-flight relation read retries after library generation adoption',
       () async {
     final firstLibrary = _BlockingVersionRelationStore();
@@ -321,6 +532,15 @@ void main() {
         discoveredAt: DateTime.utc(2026, 1, 1),
       ),
     );
+    await session.upsertVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'fixture',
+        predecessorComicId: 'stored-predecessor',
+        successorComicId: 'old-comic',
+        predecessorTitle: 'Earlier comic',
+        discoveredAt: DateTime.utc(2025, 12, 1),
+      ),
+    );
     final source = _BlockingVersionSource();
     addTearDown(() async {
       if (!source.releaseFind.isCompleted) {
@@ -337,6 +557,10 @@ void main() {
       'old-comic',
     );
     expect(state.backgroundRefresh, isNotNull);
+    expect(state.successors.single.date, isNull,
+        reason: 'relation discovery time is not a source version update date');
+    expect(state.predecessors.single.date, isNull,
+        reason: 'predecessor discovery time is not a source version update date');
     await source.findStarted.future;
 
     var closeCompleted = false;
@@ -350,7 +574,10 @@ void main() {
   });
 }
 
-HomeVersionReuseLifecycle _lifecycle(HomeLibrarySession session) =>
+HomeVersionReuseLifecycle _lifecycle(
+  HomeLibrarySession session, {
+  bool Function(ImportedChapterRecord)? requiresSourceLocatorRefresh,
+}) =>
     HomeVersionReuseLifecycle(
       session: session,
       loadRemoteEntrySnapshot: (entry, {control}) async => entry,
@@ -360,7 +587,8 @@ HomeVersionReuseLifecycle _lifecycle(HomeLibrarySession session) =>
         control,
       }) async =>
           null,
-      requiresSourceLocatorRefresh: (_) => false,
+      requiresSourceLocatorRefresh:
+          requiresSourceLocatorRefresh ?? (_) => false,
       scheduleMetadataTask: ({
         required key,
         required priority,
@@ -377,6 +605,7 @@ ImportedLibraryEntry _entry({
   String comicId = 'old-comic',
   String chapterId = 'fixture-chapter',
   String pageId = 'fixture-page',
+  String pageUri = 'https://example.invalid/page.webp',
 }) {
   const sourceId = 'fixture';
   final comic = Comic(
@@ -407,7 +636,7 @@ ImportedLibraryEntry _entry({
             pageId: pageId,
             chapterId: chapterId,
             index: 0,
-            uri: Uri.parse('https://example.invalid/page.webp'),
+            uri: Uri.parse(pageUri),
             contentKindHint: ContentKindHint.webp,
           ),
         ],
@@ -418,6 +647,10 @@ ImportedLibraryEntry _entry({
 
 final class _BlockingVersionRelationStore
     implements ImportedLibraryStore, ComicVersionRelationStore {
+  _BlockingVersionRelationStore({this.compactEntries = false});
+
+  final bool compactEntries;
+  void Function(String sourceId, String chapterId)? onGet;
   final MemoryImportedLibraryStore _inner = MemoryImportedLibraryStore();
   final Completer<void> successorReadStarted = Completer<void>();
   final Completer<void> releaseSuccessorRead = Completer<void>();
@@ -426,7 +659,31 @@ final class _BlockingVersionRelationStore
   Future<void> open() => _inner.open();
 
   @override
-  Future<List<ImportedLibraryEntry>> list() => _inner.list();
+  Future<List<ImportedLibraryEntry>> list() async {
+    final entries = await _inner.list();
+    if (!compactEntries) return entries;
+    return HomeProjectionSnapshot.fromJson(
+      HomeProjectionSnapshot(
+        entries: entries,
+        savedComics: const <SavedComicRecord>[],
+        categories: const <LibraryCategory>[],
+        preferences: const <ComicPreference>[],
+        readStates: const <ChapterReadState>[],
+        sourcePreferences: const <ComicSourcePreference>[],
+        versionRelations: const <ComicVersionRelation>[],
+      ).toJson(),
+    ).entries;
+  }
+
+  @override
+  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) {
+    onGet?.call(sourceId, chapterId);
+    return _inner.get(sourceId, chapterId);
+  }
+
+  @override
+  Future<void> upsertChapter(ImportedChapterRecord chapter) =>
+      _inner.upsertChapter(chapter);
 
   @override
   Future<List<SavedComicRecord>> listSavedComics() => _inner.listSavedComics();
@@ -437,6 +694,10 @@ final class _BlockingVersionRelationStore
   @override
   Future<List<ComicPreference>> listComicPreferences() =>
       _inner.listComicPreferences();
+
+  @override
+  Future<void> saveComicPreference(ComicPreference preference) =>
+      _inner.saveComicPreference(preference);
 
   @override
   Future<List<ComicSourcePreference>> listSourcePreferences() =>
@@ -526,6 +787,66 @@ class _VersionSource implements BrowsableComicSource, ComicVersionSource {
   @override
   Future<Uint8List> loadResource(Uri uri) =>
       throw StateError('not used by this fixture');
+}
+
+final class _DeclaredVersionSource extends _VersionSource {
+  _DeclaredVersionSource(this.versions);
+
+  final List<SourceComicVersion> versions;
+  bool offline = false;
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    expect(comicId, 'new-comic');
+    if (offline) throw StateError('source is offline');
+    return versions;
+  }
+}
+
+final class _TestTaskControl implements TaskControl {
+  final Completer<void> _cancellation = Completer<void>();
+
+  void cancel() => _cancellation.complete();
+
+  @override
+  bool get cancelled => _cancellation.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancellation.future;
+
+  @override
+  int get priority => 1;
+}
+
+final class _ChapterVersionSource extends _VersionSource {
+  _ChapterVersionSource(this.target);
+
+  final ImportedLibraryEntry target;
+  int comicLoads = 0;
+  int chapterLoads = 0;
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) async {
+    comicLoads++;
+    expect(comicId, target.chapter.comicId);
+    return ComicManifest(
+      comic: Comic(
+        comicId: target.chapter.comicId,
+        sourceId: target.chapter.sourceId,
+        title: target.chapter.comicTitle,
+        authors: target.chapter.comicAuthors,
+        readingDirection: target.chapter.readingDirection,
+      ),
+      chapters: <Chapter>[target.chapter.toManifest().chapter],
+    );
+  }
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) async {
+    chapterLoads++;
+    expect(chapterId, target.chapter.chapterId);
+    return target.chapter.toManifest();
+  }
 }
 
 final class _BlockingVersionSource extends _VersionSource {

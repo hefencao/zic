@@ -1,5 +1,7 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
@@ -7,6 +9,59 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('snapshot worker excludes nonpersistent projection owner state',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-snapshot-worker-input-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/comic',
+      displayName: 'Prepared chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: 'https://example.invalid/001.jpg?token=signed',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final manifest = chapter.toManifest();
+    final entry = ImportedLibraryEntry(chapter: chapter);
+    final entries = _OwnerBoundEntries(<ImportedLibraryEntry>[entry]);
+    addTearDown(entries.ownerPort.close);
+    final snapshot = HomeProjectionSnapshot(
+      entries: entries,
+      savedComics: const <SavedComicRecord>[],
+      categories: const <LibraryCategory>[],
+      preferences: const <ComicPreference>[],
+      readStates: const <ChapterReadState>[],
+      sourcePreferences: const <ComicSourcePreference>[],
+      versionRelations: const <ComicVersionRelation>[],
+      orphanedDownloadEntries: <ImportedLibraryEntry>[entry],
+      libraryRevision: 7,
+    );
+    final store = HomeProjectionSnapshotStore.atPath(storePath(directory));
+
+    await store.write(snapshot);
+    final restored = (await store.read())!;
+
+    expect(restored.libraryRevision, 7);
+    expect(restored.entries.single.chapter.chapterId, chapter.chapterId);
+    expect(restored.entries.single.chapter.pages, hasLength(1));
+    expect(
+      chapterHasHomeProjectionSnapshotPagePlaceholders(
+        restored.entries.single.chapter,
+      ),
+      isTrue,
+    );
+    expect(
+      restored.orphanedDownloadEntries.single.chapter.pages.single.sourceId,
+      chapter.pages.single.sourceId,
+    );
+    expect(identical(chapter.toManifest(), manifest), isTrue);
+  });
+
   test('Home projection snapshot round-trips every durable projection', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-home-snapshot-',
@@ -80,7 +135,7 @@ void main() {
           sourceId: 'fixture-source',
           comicId: 'fixture-comic',
           sourceKind: ComicSourceKind.remote,
-        ).copyWith(liked: true),
+        ).copyWith(liked: true, acknowledgedVersionComicId: 'known-successor'),
       ],
       readStates: <ChapterReadState>[
         ChapterReadState(
@@ -151,6 +206,8 @@ void main() {
       const <String>{'fixture-new-chapter'},
     );
     expect(restored.preferences.single.liked, isTrue);
+    expect(restored.preferences.single.acknowledgedVersionComicId,
+        'known-successor');
     expect(restored.readStates.single.isRead, isTrue);
     expect(restored.readStates.single.manualOverride, isTrue);
     expect(restored.sourcePreferences.single.enabled, isFalse);
@@ -167,6 +224,7 @@ void main() {
 
     final encoded = jsonDecode(await File(storePath(directory)).readAsString())
         as Map<Object?, Object?>;
+    expect(encoded, snapshot.toJson());
     expect(encoded['version'], 4);
     final firstEntry = (encoded['entries']! as List<Object?>).single
         as Map<Object?, Object?>;
@@ -407,3 +465,10 @@ void main() {
 }
 
 String storePath(Directory directory) => '${directory.path}/snapshot.json';
+
+final class _OwnerBoundEntries
+    extends UnmodifiableListView<ImportedLibraryEntry> {
+  _OwnerBoundEntries(super.source);
+
+  final ReceivePort ownerPort = ReceivePort();
+}

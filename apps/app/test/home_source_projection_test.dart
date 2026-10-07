@@ -58,6 +58,70 @@ void main() {
     expect(projection.externalSourceIds, <String>{'plugin:replacement'});
   });
 
+  test('external decoration reuse preserves source and cache generation boundaries',
+      () async {
+    final cache = ResourceCacheCoordinator();
+    final replacementCache = ResourceCacheCoordinator();
+    addTearDown(cache.close);
+    addTearDown(replacementCache.close);
+    var producerGeneration = Object();
+    final active = _Source(
+      sourceId: 'plugin:active',
+      readTransportGeneration: () => producerGeneration,
+    );
+    final other = _Source(sourceId: 'plugin:other');
+    final projection = HomeSourceProjection(
+      suppliedSources: null,
+      defaultSources: () => const <BrowsableComicSource>[],
+      cache: cache,
+      externalSources: <BrowsableComicSource>[active],
+      publishSources: (_) async {},
+      ensureLibraryReady: () async {},
+      savedComics: () => const <SavedComicRecord>[],
+      upsertSavedComic: (_) async {},
+      reloadLibrary: () async {},
+      requestPresentationRefresh: () {},
+    );
+    final original = projection.sourceForId(active.sourceId);
+    await projection.refreshExternalSources(<BrowsableComicSource>[active, other]);
+    expect(projection.sourceForId(active.sourceId), same(original));
+    await projection.refreshExternalSources(<BrowsableComicSource>[active]);
+    expect(projection.sourceForId(active.sourceId), same(original));
+
+    producerGeneration = Object();
+    expect(
+      (original as ComicResourceTransportGenerationSource)
+          .resourceTransportGenerationIdentity,
+      same(producerGeneration),
+    );
+    await projection.refreshExternalSources(<BrowsableComicSource>[active]);
+    final mutated = projection.sourceForId(active.sourceId);
+    expect(mutated, isNot(same(original)));
+    await projection.refreshExternalSources(<BrowsableComicSource>[active, other]);
+    expect(projection.sourceForId(active.sourceId), same(mutated));
+
+    final replacement = _Source(sourceId: active.sourceId);
+    await projection.refreshExternalSources(<BrowsableComicSource>[replacement]);
+    final replaced = projection.sourceForId(active.sourceId);
+    expect(replaced, isNot(same(mutated)));
+    final candidate = projection.composeForServices(
+      replacementCache,
+      externalSources: <BrowsableComicSource>[replacement],
+    );
+    expect(candidate.single, isNot(same(replaced)));
+    expect(
+      (candidate.single as CachedBrowsableComicSource).cache,
+      same(replacementCache.responses),
+    );
+    projection.adoptServiceProjection(
+      candidate,
+      cache: replacementCache,
+      externalSources: <BrowsableComicSource>[replacement],
+    );
+    await projection.refreshExternalSources(<BrowsableComicSource>[replacement]);
+    expect(projection.sourceForId(active.sourceId), same(candidate.single));
+  });
+
   test('external projection persists canonical ids before conditional reload',
       () async {
     final cache = ResourceCacheCoordinator();
@@ -133,12 +197,24 @@ void main() {
 }
 
 final class _Source
-    implements BrowsableComicSource, CanonicalComicIdentitySource {
-  const _Source({required this.sourceId, this.canonicalPrefix = ''});
+    implements
+        BrowsableComicSource,
+        CanonicalComicIdentitySource,
+        ComicResourceTransportGenerationSource {
+  const _Source({
+    required this.sourceId,
+    this.canonicalPrefix = '',
+    this.readTransportGeneration,
+  });
 
   @override
   final String sourceId;
   final String canonicalPrefix;
+  final Object Function()? readTransportGeneration;
+
+  @override
+  Object get resourceTransportGenerationIdentity =>
+      readTransportGeneration?.call() ?? this;
 
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(

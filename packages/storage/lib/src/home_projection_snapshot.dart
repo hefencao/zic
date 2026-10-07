@@ -30,18 +30,18 @@ typedef _EncodedHomeProjectionSnapshot = ({
 });
 
 final class _HomeProjectionSnapshotEncoder {
-  const _HomeProjectionSnapshotEncoder(this.snapshot);
+  const _HomeProjectionSnapshotEncoder(this.projection);
 
-  final HomeProjectionSnapshot snapshot;
+  final Map<String, Object?> projection;
 
   _EncodedHomeProjectionSnapshot call() =>
-      _encodeHomeProjectionSnapshot(snapshot);
+      _encodeHomeProjectionSnapshot(projection);
 }
 
 _EncodedHomeProjectionSnapshot _encodeHomeProjectionSnapshot(
-  HomeProjectionSnapshot snapshot,
+  Map<String, Object?> projection,
 ) {
-  final jsonBytes = utf8.encode(jsonEncode(snapshot.toJson()));
+  final jsonBytes = utf8.encode(jsonEncode(projection));
   final storedBytes = jsonBytes.length >= _snapshotCompressionThreshold
       ? gzip.encode(jsonBytes)
       : jsonBytes;
@@ -187,25 +187,41 @@ final class HomeProjectionSnapshot {
   bool get requiresRewrite =>
       !entriesAreCompact || !storedCompressed || !includesDownloadProjection;
 
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toJson() => _projectPersistentFields();
+
+  Map<String, Object?> _projectPersistentFields({bool forWorker = false}) =>
+      <String, Object?>{
         'format': _homeProjectionSnapshotFormat,
         'version': _homeProjectionSnapshotVersion,
         'entries':
             entries.map(_compactEntryToJson).toList(growable: false),
-        'savedComics': savedComics.map((comic) => comic.toJson()).toList(),
-        'categories': categories.map((category) => category.toJson()).toList(),
-        'preferences': preferences.map((preference) => preference.toJson()).toList(),
-        'readStates': readStates.map((state) => state.toJson()).toList(),
-        'sourcePreferences': sourcePreferences
-            .map((preference) => preference.toJson())
-            .toList(),
-        'versionRelations':
-            versionRelations.map(_versionRelationToJson).toList(),
-        'orphanedDownloadEntries': orphanedDownloadEntries
-            .map(_entryToJson)
-            .toList(growable: false),
-        'chapterDownloads':
-            chapterDownloads.map((summary) => summary.toJson()).toList(),
+        'savedComics': forWorker
+            ? savedComics.toList(growable: false)
+            : savedComics.map((comic) => comic.toJson()).toList(),
+        'categories': forWorker
+            ? categories.toList(growable: false)
+            : categories.map((category) => category.toJson()).toList(),
+        'preferences': forWorker
+            ? preferences.toList(growable: false)
+            : preferences.map((preference) => preference.toJson()).toList(),
+        'readStates': forWorker
+            ? readStates.toList(growable: false)
+            : readStates.map((state) => state.toJson()).toList(),
+        'sourcePreferences': forWorker
+            ? sourcePreferences.toList(growable: false)
+            : sourcePreferences.map((preference) => preference.toJson()).toList(),
+        'versionRelations': forWorker
+            ? versionRelations.map(_SnapshotVersionRelation.new)
+                .toList(growable: false)
+            : versionRelations.map(_versionRelationToJson).toList(),
+        'orphanedDownloadEntries': forWorker
+            ? orphanedDownloadEntries.map(_entryToWorkerProjection)
+                .toList(growable: false)
+            : orphanedDownloadEntries.map(_entryToJson)
+                .toList(growable: false),
+        'chapterDownloads': forWorker
+            ? chapterDownloads.toList(growable: false)
+            : chapterDownloads.map((summary) => summary.toJson()).toList(),
         if (libraryRevision != null) 'libraryRevision': libraryRevision,
       };
 
@@ -464,7 +480,12 @@ final class HomeProjectionSnapshotStore {
         final file = File(fixedPath ?? await _path);
         await file.parent.create(recursive: true);
         final temporary = File('${file.path}.tmp');
-        final encoder = _HomeProjectionSnapshotEncoder(snapshot);
+        // Send only durable fields. The full model also retains prepared page
+        // manifests that compact entries never encode, but spawn would copy.
+        // Durable metadata DTOs convert to JSON only on the encoding worker.
+        final encoder = _HomeProjectionSnapshotEncoder(
+          snapshot._projectPersistentFields(forWorker: true),
+        );
         final encoded = await Isolate.run<_EncodedHomeProjectionSnapshot>(
           encoder.call,
         );
@@ -517,6 +538,29 @@ Map<String, Object?> _entryToJson(ImportedLibraryEntry entry) =>
       'chapter': entry.chapter.toJson(),
       if (entry.progress != null) 'progress': entry.progress!.toJson(),
     };
+
+Map<String, Object?> _entryToWorkerProjection(ImportedLibraryEntry entry) {
+  final chapter = entry.chapter;
+  final fields = _compactChapterToJson(chapter)
+    ..remove('pageCount')
+    ..['pages'] = chapter.pages;
+  if (chapter.sourceUpdatedAt != null) {
+    fields['sourceUpdatedAt'] =
+        chapter.sourceUpdatedAt!.toUtc().toIso8601String();
+  }
+  return <String, Object?>{
+    'chapter': fields,
+    if (entry.progress != null) 'progress': entry.progress,
+  };
+}
+
+final class _SnapshotVersionRelation {
+  const _SnapshotVersionRelation(this.relation);
+
+  final ComicVersionRelation relation;
+
+  Map<String, Object?> toJson() => _versionRelationToJson(relation);
+}
 
 Map<String, Object?> _compactEntryToJson(ImportedLibraryEntry entry) =>
     <String, Object?>{

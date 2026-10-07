@@ -47,14 +47,19 @@ extension _HomeShellCatalogIdentity on _HomeShellState {
   Set<String> _canonicalComicAliases(String sourceId, String comicId) {
     final canonical = _canonicalComicKey(sourceId, comicId);
     final aliases = <String>{comicId};
+    // Chapters share raw comic identities. Resolve each candidate only once
+    // in this query; the next query still reads the current source authority.
+    final examined = <String>{comicId};
     for (final saved in _savedComics) {
       if (saved.sourceId == sourceId &&
+          examined.add(saved.comicId) &&
           _canonicalComicKey(sourceId, saved.comicId) == canonical) {
         aliases.add(saved.comicId);
       }
     }
     for (final entry in _libraryEntries) {
       if (entry.chapter.sourceId == sourceId &&
+          examined.add(entry.chapter.comicId) &&
           _canonicalComicKey(sourceId, entry.chapter.comicId) == canonical) {
         aliases.add(entry.chapter.comicId);
       }

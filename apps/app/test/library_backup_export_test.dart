@@ -20,7 +20,8 @@ final class _Store extends Fake
       savedComics: <SavedComicRecord>[],
       categories: <LibraryCategory>[],
       comicPreferences: <ComicPreference>[
-        ComicPreference.defaults(sourceId: 'source', comicId: 'comic'),
+        ComicPreference.defaults(sourceId: 'source', comicId: 'comic')
+            .copyWith(acknowledgedVersionComicId: 'known-successor'),
       ],
       chapterReadStates: <ChapterReadState>[],
       sourcePreferences: <ComicSourcePreference>[],
@@ -61,6 +62,9 @@ void main() {
         expect(payload['format'], 'zic-library-backup-v1');
         expect(payload['chapters'], isEmpty);
         expect(payload['chapterReadStates'], isEmpty);
+        final prefs = payload['comicPreferences'] as List<Object?>;
+        expect((prefs.single as Map<String, Object?>)['acknowledgedVersionComicId'],
+            'known-successor');
         expect(payload.keys, containsAll(<String>[
           'savedComics', 'categories', 'comicPreferences',
           'sourcePreferences', 'migrationIssues',

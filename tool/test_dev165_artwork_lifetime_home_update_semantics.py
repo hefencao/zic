@@ -69,8 +69,8 @@ forbid(migration, 'Future<void> _reconcileConfirmedSourceUpdateSignal(',
 forbid(migration, 'if (!discoveredNewVersion) return;',
        'one-shot version update detection')
 for token in (
-    '_preferenceForComic(comic).inShelf &&',
-    '_sourceUpdateAtForComic(comic) != null',
+    '_sourceUpdateAtForComic(comic) != null &&\n'
+    '              _preferenceForComic(comic).inShelf',
     '_sourceUpdateAtForComic(right)!',
     '加入书架的漫画有新章节或新版本时显示',
 ):

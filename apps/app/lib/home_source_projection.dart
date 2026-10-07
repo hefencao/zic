@@ -74,7 +74,7 @@ final class HomeSourceProjection {
   final HomeSourceSavedComicUpsert _upsertSavedComic;
   final Future<void> Function() _reloadLibrary;
   final void Function() _requestPresentationRefresh;
-  late List<BrowsableComicSource> _sources;
+  List<BrowsableComicSource> _sources = const <BrowsableComicSource>[];
   Set<String> _externalSourceIds = <String>{};
 
   List<BrowsableComicSource> get sources => _sources;
@@ -151,17 +151,33 @@ final class HomeSourceProjection {
   List<BrowsableComicSource> _wrapSources(
     Iterable<BrowsableComicSource> sources,
     ResourceCacheCoordinator cache,
-  ) =>
-      List<BrowsableComicSource>.unmodifiable(
-        sources.map(
-          (source) => source is CachedBrowsableComicSource
-              ? source
-              : CachedBrowsableComicSource(
-                  source: source,
-                  cache: cache.responses,
-                ),
-        ),
-      );
+  ) {
+    final previous = <String, BrowsableComicSource>{
+      for (final source in _sources) source.sourceId: source,
+    };
+    return List<BrowsableComicSource>.unmodifiable(
+      sources.map((source) {
+        if (source is CachedBrowsableComicSource) return source;
+        final existing = previous[source.sourceId];
+        final generationSource = source is ComicResourceTransportGenerationSource
+            ? source as ComicResourceTransportGenerationSource
+            : null;
+        if (existing is CachedBrowsableComicSource &&
+            identical(existing.source, source) &&
+            identical(existing.cache, cache.responses) &&
+            identical(
+              existing.sourceTransportGenerationAtBinding,
+              generationSource?.resourceTransportGenerationIdentity ?? source,
+            )) {
+          return existing;
+        }
+        return CachedBrowsableComicSource(
+          source: source,
+          cache: cache.responses,
+        );
+      }),
+    );
+  }
 
   String? _sourceCanonicalComicId(String sourceId, String comicId) {
     final source = sourceForId(sourceId);

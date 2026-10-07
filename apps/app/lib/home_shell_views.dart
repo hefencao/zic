@@ -186,11 +186,12 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   Widget _buildHomePage() {
-    final updates = _libraryComics
+    final comics = _libraryComics;
+    final updates = comics
         .where(
           (comic) =>
-              _preferenceForComic(comic).inShelf &&
-              _sourceUpdateAtForComic(comic) != null,
+              _sourceUpdateAtForComic(comic) != null &&
+              _preferenceForComic(comic).inShelf,
         )
         .toList(growable: true)
       ..sort(
@@ -199,7 +200,7 @@ extension _HomeShellViews on _HomeShellState {
       );
     final visibleUpdates = updates.take(10).toList(growable: false);
     final telemetryOwners = <String>{};
-    final history = _libraryComics
+    final history = comics
         .where((comic) => comic.lastReadChapter != null)
         .toList(growable: true)
       ..sort(
