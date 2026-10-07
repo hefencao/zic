@@ -142,5 +142,3 @@
 ## P1：漫画源、过滤与详情预览设备闭环
 - 真机验证 Mihon Popular/Latest 与 Venera 多 explore/category section 的顺序、分页和 section identity。
 - 制造 source Future失败、decoder错误和离屏未绘制三种状态，确认 presentation都稳定失败而不自动重启；随后显式刷新来源，确认由统一 gateway重新加载且不会清空其它封面缓存。
-## P1：首页与缓存身份
-- 跨实际进程退出/重启，验证已持久化canonical alias在插件激活前只显示一张书架卡片，未访问书架页不创建额外cover loader；保留已验的同进程SQLite/cache owner重开分量。

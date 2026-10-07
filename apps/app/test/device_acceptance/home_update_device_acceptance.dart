@@ -39,6 +39,8 @@ late MemoryChapterDownloadService _downloads;
 late WholeComicDownloadQueue _queue;
 late ResourceCacheCoordinator _cache;
 final _startup = HomeStartupTelemetry(clock: const SystemClock(), sink: _trace);
+// The explicit device build needs two launches, separated by force-stop.
+const _processCold = bool.fromEnvironment('ZIC_HOME_ARTWORK_PROCESS_COLD');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +48,10 @@ Future<void> main() async {
     body: Center(child: Text('准备隔离首页更新验收')),
   )));
   await _frames(2);
+  if (_processCold) {
+    await _processColdArtwork();
+    return;
+  }
   var completed = false;
   var resourcesReady = false;
   Directory? root;
@@ -198,27 +204,133 @@ Future<void> main() async {
       await _store.close();
     }
     if (root != null && await root.exists()) await root.delete(recursive: true);
-    final result = <String, Object?>{
-      'completed': completed,
-      'boundary': 'Production Home/details callbacks and SQLite reopen/backup; '
-          'controlled source/file-store holds verify independent cover display. '
-          'No real-origin or final-display performance claim.',
-      'userStoresOpened': false,
-      'checks': _checks,
-      'comicLoads': _source.comicLoads,
-      'trace': _trace.exportEvents.map((event) => event.toJson()).toList(),
-      'temporaryRootRemoved': root != null && !await root.exists(),
-    };
-    await exportDebugTraceFile(
-      suggestedName: 'zic-home-update-acceptance-'
-          '${DateTime.now().millisecondsSinceEpoch}.json',
-      bytes: Uint8List.fromList(utf8.encode(jsonEncode(result))),
-      relativeDirectory: 'Debug',
+    await _exportResult(completed: completed, root: root);
+  }
+}
+
+Future<void> _exportResult({required bool completed, required Directory? root,
+    String phase = 'complete', int? preparedProcessId}) async {
+  final result = <String, Object?>{
+    'completed': completed, 'phase': phase, 'processId': pid,
+    'preparedProcessId': preparedProcessId,
+    'boundary': 'Production Home/details/storage owners with a controlled source. '
+        'No real-origin or final-display performance claim.',
+    'userStoresOpened': false,
+    'checks': _checks,
+    'comicLoads': _source.comicLoads,
+    'trace': _trace.exportEvents.map((event) => event.toJson()).toList(),
+    'temporaryRootRemoved': root != null && !await root.exists(),
+  };
+  await exportDebugTraceFile(
+    suggestedName: 'zic-home-update-acceptance-'
+        '${DateTime.now().millisecondsSinceEpoch}.json',
+    bytes: Uint8List.fromList(utf8.encode(jsonEncode(result))),
+    relativeDirectory: 'Debug',
+  );
+  runApp(MaterialApp(home: Scaffold(body: Center(child: Text(
+    phase == 'prepared' ? '隔离缓存已准备，请结束进程后重新启动' :
+        completed ? '首页更新隔离验收完成：${_checks.length} 项' : '首页更新隔离验收失败',
+  )))));
+  await _frames(2);
+}
+
+Future<void> _processColdArtwork() async {
+  // Only this fixture's directory survives the first launch; the second launch
+  // always removes it. No user-library or plugin capability is opened.
+  final root = Directory('${Directory.systemTemp.path}/zic-home-artwork-process-cold');
+  final marker = File('${root.path}/prepared.json');
+  Map<String, Object?>? prepared;
+  var resourcesReady = false;
+  var completed = false;
+  var keepForRestart = false;
+  try {
+    if (await marker.exists()) {
+      prepared = (jsonDecode(await marker.readAsString()) as Map).cast<String, Object?>();
+      if (prepared['schema'] != 1) throw StateError('Unknown fixture preparation');
+      _checks.addAll((prepared['checks'] as List).map(
+        (check) => (check as Map).cast<String, Object?>()));
+    } else {
+      if (await root.exists()) await root.delete(recursive: true);
+      await root.create(recursive: true);
+    }
+    _store = await openImportedLibraryStore(
+      prepared == null ? root.path : '${root.path}/artwork-library',
     );
-    runApp(MaterialApp(home: Scaffold(body: Center(child: Text(
-      completed ? '首页更新隔离验收完成：${_checks.length} 项' : '首页更新隔离验收失败',
-    )))));
-    await _frames(2);
+    _downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => throw StateError('No page transport in fixture'),
+    );
+    _queue = WholeComicDownloadQueue(downloads: _downloads);
+    _cache = prepared == null ? ResourceCacheCoordinator() : ResourceCacheCoordinator(
+      responses: ResourceCacheManager(byteStore:
+        FileResourceCacheByteStore('${root.path}/artwork-cache')),
+    );
+    resourcesReady = true;
+    if (prepared == null) {
+      await _artworkChecks(root);
+      keepForRestart = true;
+    } else {
+      _check('artwork-reopens-in-another-process',
+        prepared['processId'] is int && prepared['processId'] != pid);
+      _source.artworkMode = true;
+      final first = await _store.getSavedComic(_sourceId, 'alias-one');
+      final second = await _store.getSavedComic(_sourceId, 'alias-two');
+      _check('canonical-aliases-survive-process-exit',
+        first?.canonicalComicId == 'alias' && second?.canonicalComicId == 'alias');
+      await _mount(sources: const <BrowsableComicSource>[]);
+      bool frame(String id) => _trace.exportEvents.any((event) =>
+        event.kind == TraceEventKind.homeCoverFirstFrame &&
+        event.identityHash == 'home-update:$_sourceId\u0000$id');
+      await _wait(() => frame('fast-cover') && frame('slow-cover'));
+      _check('process-cold-covers-hit-durable-bytes-before-source-activation',
+        _cache.responses.stats.persistentHits >= 2 &&
+        _source.resourceLoads.isEmpty && _source.comicLoads == 0);
+      _check('process-cold-unopened-shelf-starts-no-hidden-loaders',
+        _element((element) => element.widget.key == bookshelfPageKey) == null &&
+        !_trace.exportEvents.any((event) => event.kind == TraceEventKind.homeCoverRequested &&
+          <String>['$_sourceId\u0000alias', '$_sourceId\u0000shelf-only']
+            .contains(event.identityHash)));
+      _selectNavigation(1);
+      await _frames(30);
+      _check('process-cold-persisted-aliases-show-one-shelf-card',
+        _elements((element) => element.widget is ComicCoverCard &&
+          (element.widget as ComicCoverCard).coverIdentity == '$_sourceId\u0000alias')
+          .length == 1);
+      _check('process-cold-shelf-keeps-source-unactivated',
+        _source.resourceLoads.isEmpty && _source.comicLoads == 0);
+    }
+    completed = true;
+  } on Object catch (error, stack) {
+    _checks.add(<String, Object?>{
+      'step': 'process-cold-fixture', 'status': 'failed', 'error': error.toString(),
+      'stack': stack.toString(),
+    });
+  } finally {
+    try {
+      if (resourcesReady) {
+        await _unmount();
+        await _queue.close();
+        await _downloads.close();
+        await _cache.close();
+        await _store.close();
+      }
+    } on Object catch (error, stack) {
+      completed = false;
+      _checks.add(<String, Object?>{
+        'step': 'process-cold-close', 'status': 'failed', 'error': error.toString(),
+        'stack': stack.toString(),
+      });
+    } finally {
+      if (completed && keepForRestart) {
+        await marker.writeAsString(jsonEncode(<String, Object?>{
+          'schema': 1, 'processId': pid, 'checks': _checks,
+        }), flush: true);
+      } else if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    }
+    await _exportResult(completed: completed && !keepForRestart, root: root,
+      phase: completed && keepForRestart ? 'prepared' : 'complete',
+      preparedProcessId: prepared?['processId'] as int?);
   }
 }
 

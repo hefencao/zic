@@ -22,8 +22,8 @@
     "repair_precondition": "Confirm a fresh failing production contract and its owner before changing code; missing historical raw files do not authorize a repair."
   },
   "requirement_summary": {
-    "partial": 36,
-    "verified_device": 25,
+    "partial": 35,
+    "verified_device": 26,
     "superseded": 2,
     "pending": 43,
     "verified_toolchain": 6
@@ -140,14 +140,14 @@
     {"id": "SWG-PLAN-109", "status": "verified_device", "current_contract": "设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。", "evidence_reproducibility": "current_available; historical_raw_files_missing"},
     {"id": "SWG-PLAN-110", "status": "verified_device", "current_contract": "On Android Profile with a controlled source and real file store, fast and slow covers independently reach homeCoverFirstFrame while durable writes are held. Both persist after release. This verifies ordering, not real-origin latency or final physical display.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
-    {"id": "SWG-PLAN-112", "status": "partial", "current_contract": "Source-independent canonical artwork cache hits display without plugin resource requests. Source-free App remount after SQLite/cache-owner reopen shows one persisted same-source canonical-alias shelf card; unopened shelf mounts no cover loaders. This is same-process owner reopen, not process-cold acceptance. No raw-key-first compatibility path is restored.", "remaining_acceptance": ["Repeat persisted canonical-alias shelf deduplication before plugin activation and unopened-shelf loader absence across an actual process exit/restart; retain verified source-independent durable hits and same-process owner-reopen checks."], "evidence_reproducibility": "current_available; historical_raw_files_missing"}
+    {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
   "current_device_installation": {
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
     "sha256": "295d51591d94e5bfc3b09a4d2415890b65a8853184f6929aacb3d4989ab009b3",
-    "app_pid": 6064,
+    "app_pid": 21462,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
@@ -163,8 +163,8 @@
     "missing_toolchains": [],
     "ordinary_package_acceptance": "Current shared-details layout: all3 Profile and3 minified Release ABIs built; same Android runtime/native-core inputs. Prior runtime/Cookie baseline remains docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json.",
     "Android_native_tests_scope": "Reused prior110 tests for unchanged production Kotlin/native inputs. All3 ABI native packaging results remain from the detail-layout closure.",
-    "scope": "Fresh full repository/documentation/ownership/platform/toolchain gate after extending the existing Android artwork fixture; 27 suites/27 analyzers/2322 Dart-Flutter tests/Rust22/three-ABI Debug pass. Ordinary Profile/Release and native packaging results reuse unchanged production inputs from the detail-layout closure.",
-    "device_fixture": "apps/app/test/device_acceptance/home_update_device_acceptance.dart: Android Profile30/30 passed; userStoresOpened=false; temporaryRootRemoved=true. Controlled source/file-store holds and same-process owner reopen; not real-origin or process-cold/final-display acceptance. Latest result overwrites the existing private current-device-result.json."
+    "scope": "Fresh full repository/documentation/ownership/platform/toolchain gate after extending the existing Android artwork fixture with optional process-cold acceptance; 27 suites/27 analyzers/2322 Dart-Flutter tests/Rust22/three-ABI Debug pass. Ordinary Profile/Release and native packaging results reuse unchanged production inputs from the detail-layout closure.",
+    "device_fixture": "apps/app/test/device_acceptance/home_update_device_acceptance.dart with ZIC_HOME_ARTWORK_PROCESS_COLD=true:16/16 passed across actual PIDs19298/20905 after force-stop; userStoresOpened=false; temporaryRootRemoved=true. Controlled artwork/proof inputs, not real-origin or final-display acceptance. Latest result overwrites the existing private current-device-result.json."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
