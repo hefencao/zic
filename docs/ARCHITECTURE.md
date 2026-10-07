@@ -1168,6 +1168,9 @@ API24+由独立`zic-reader-window-metrics` HandlerThread采集total/unknown dela
 API26+另采intended/actual vsync；
 同一vsync callback必须去重，summary记录first/last vsync以显化覆盖范围，`droppedReports`仅表示metrics report loss。
 它不得被假定为Flutter `SurfaceView`内容帧的连续代理。
+离线Perfetto验收必须分别核对本次buffer/parser完整性与ZIC内容层覆盖；`traced_buf_chunks_discarded`表示本次buffer丢弃，
+service lifetime的`traced_chunks_discarded`不能单独判定本次trace失效。缺少SurfaceView FrameTimeline时，
+同次输入/Reader motion关联的精确内容层`SurfaceFlinger --latency`只能证明该采样窗口的呈现cadence，不能替代composition/触摸延迟或视觉验收。
 仅显式`ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`的诊断构建允许vertical active scroll在每个实际Flutter post-frame读取live `ScrollPosition.pixels`与current page RenderBox globalTop，
 并用`globalTop + pixels - expectedStart`形成跨页不变量；
 只聚合`verticalSceneMotionSummary`与有界outlier，不调用scheduleFrame/setState/position mutation；普通构建不得注册该scene-motion矩阵采样probe。
@@ -1368,6 +1371,7 @@ Native Animated WebP decode 可沿 `FrameNativeDecodeObservation` 投影 prepare
 实际OS thread id/CPU start-end/allowed mask及bounded frame-structure统计；
 这些字段只用于区分codec成本、线程调度与canvas依赖，绝不得成为waterline、worker placement、DecodeTarget、transport或presentation策略输入。
 `TraceEvent`构造边界同时承担payload JSON-safe归一化（Enum/Uri/Duration/DateTime/未知diagnostic对象均不得原样进入export ring）；
+`scopeId/physicalMediaKey/providerExactId/candidatePhysicalKeys`中的长或opaque组合键按完整原值生成稳定hash/原长度摘要，候选列表与嵌套map共用此边界，重复归一化幂等；Telemetry不解析领域framing/provider payload，也不改变独立comicId脱敏或任何运行时identity/cache authority（ADR0384）。
 导出UI只负责snapshot/编码/文件选择，不应成为类型修复owner。用户可见的Reader原始技术错误至少由Trace或复制操作保留完整诊断，章节route终局错误同时记录`taskFailed`并提供复制。
 
 纵向 page shell 的 steady-state composition cache 固定为 2 个 viewport，首次布局的有界 6 屏 pass 只用于初始相邻 host 准备；

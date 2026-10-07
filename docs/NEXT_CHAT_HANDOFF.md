@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前已核对的源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；标题分源/标签原路由/设备扩展元数据；独立性能/真实来源验收仍开放。
+- 当前已核对的源码分界：Android备份共用OS文档操作；来源正文/物理退出归原runtime与transport；durable缓存/下载标签保持exact身份；hydrate/manifest/版本元数据归原library；Reader几何与呈现claim保持原owner；标题分源/标签原路由/设备扩展元数据；Trace原始关联/Perfetto有效性分离；独立性能/真实来源验收仍开放。
 - 功耗审计基准：`docs/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`：文档职责与证据等级；

@@ -48,7 +48,7 @@ for token in (
     'return SizedBox.expand(child: builder(fit));',
     '_streamingPrefixRequestedLength',
     'authoritative: false',
-    '_pipelinePresentationRasterAdapter.providerForViewport(',
+    'staticPresentation!.providerForViewport(',
 ):
     assert token in local_player
 for token in (

@@ -2194,6 +2194,10 @@ vertical Reader MAY另以约1秒有界`scrollCadenceSummary`聚合所有非零�
 `platformWindowFrameMetricsOutlier/Summary`不得请求frame或驱动Reader/Pipeline。
 listener第三参数 MUST命名/解释为`droppedReports`（metrics report loss），不得冒充display dropped frames；
 Window metrics不得无证据视为Flutter SurfaceView内容帧的连续代理。
+离线Perfetto验收 MUST核对当前buffer/parser完整性与ZIC SurfaceView内容层覆盖；
+`traced_buf_chunks_discarded`表示本次buffer丢弃，service lifetime的`traced_chunks_discarded` MUST NOT单独使本次trace失效。
+缺少内容层FrameTimeline时，同次输入/Reader motion关联的精确`SurfaceFlinger --latency` MAY作为限定窗口的呈现cadence证据，
+MUST NOT据此声称composition、触摸延迟或固定位置视觉顿挫验收通过。
 仅显式`ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`的诊断构建中，vertical Reader MAY在active scroll期间递归注册不调度新frame的post-frame callback，
 读取同一frame完成后的live scroll pixels与current page RenderBox，
 聚合`globalTop + pixels - expectedStart`残差连续性为`verticalSceneMotionSummary/Outlier`；
@@ -2205,6 +2209,7 @@ encoded-only new desired membership每个新committed current最多迁入1个，
 previous speculative DownloadDemand MAY在guard总数上限内暂时保留；bridge MUST NOT减少mandatory source、增加download count、
 改变decode2/1/upload role/current semantics或使用时间debounce，idle/scrub/jump MUST完全收敛canonical desired 7/3。
 `TraceEvent` payload MUST在进入bounded ring时归一化为JSON-safe值，单条producer对象不得毒死整份导出。
+`scopeId/physicalMediaKey/providerExactId/candidatePhysicalKeys`中的长或opaque组合键 MUST按完整原值生成稳定hash与原长度摘要，MUST NOT让provider子串正则吞入相邻字段长度；候选列表、嵌套map及重复归一化 MUST保持关联与隐私。此诊断token MUST NOT参与缓存身份、URI、信任或调度决策（ADR0384）。
 任何把原始异常/Failure技术细节呈现给用户的错误面 MUST至少满足“写入可归因Trace”或“可直接复制完整错误”之一；Reader章节加载和图片终局错误 SHOULD同时满足两者。
 
 所有需要跨组件比较/排序的 `TraceEvent.monotonicMicros` MUST使用同一 process-monotonic clock epoch；

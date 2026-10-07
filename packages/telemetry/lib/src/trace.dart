@@ -219,13 +219,29 @@ String _sanitizeTraceIdentity(String value) {
   return _sanitizeTraceString(value);
 }
 
-Map<String, Object?> _sanitizeTraceMap(Map<String, Object?> value) =>
-    <String, Object?>{
-      for (final entry in value.entries)
-        entry.key: _sanitizeTraceValue(entry.value),
-    };
+// These diagnostic fields contain complete keys, including nested length
+// frames. Provider-token regexes cannot distinguish the next frame's length
+// from the end of an opaque token; summarize the original key as one value.
+const _opaqueIdentityTraceFields = <String>{
+  'scopeId',
+  'physicalMediaKey',
+  'providerExactId',
+  'candidatePhysicalKeys',
+};
 
-Object? _sanitizeTraceValue(Object? value) {
+Map<String, Object?> _sanitizeTraceMap(Map<Object?, Object?> value) {
+  final sanitized = <String, Object?>{};
+  for (final entry in value.entries) {
+    final key = entry.key.toString();
+    sanitized[key] = _sanitizeTraceValue(
+      entry.value,
+      opaqueIdentity: _opaqueIdentityTraceFields.contains(key),
+    );
+  }
+  return sanitized;
+}
+
+Object? _sanitizeTraceValue(Object? value, {bool opaqueIdentity = false}) {
   if (value == null || value is bool) return value;
   if (value is double && !value.isFinite) {
     if (value.isNaN) return 'non-finite:NaN';
@@ -234,26 +250,40 @@ Object? _sanitizeTraceValue(Object? value) {
         : 'non-finite:+Infinity';
   }
   if (value is num) return value;
-  if (value is String) return _sanitizeTraceString(value);
+  if (value is String) {
+    return _sanitizeTraceString(value, opaqueIdentity: opaqueIdentity);
+  }
   if (value is Enum) return value.name;
-  if (value is Uri) return _sanitizeTraceString(value.toString());
+  if (value is Uri) {
+    return _sanitizeTraceString(value.toString(), opaqueIdentity: opaqueIdentity);
+  }
   if (value is Duration) return value.toString();
   if (value is DateTime) return value.toIso8601String();
   if (value is Map<Object?, Object?>) {
-    return <String, Object?>{
-      for (final entry in value.entries)
-        entry.key.toString(): _sanitizeTraceValue(entry.value),
-    };
+    return _sanitizeTraceMap(value);
   }
   if (value is Iterable<Object?>) {
+    if (opaqueIdentity) {
+      return value.map<Object?>((item) =>
+          _sanitizeTraceValue(item, opaqueIdentity: true)).toList(growable: false);
+    }
     return value.map<Object?>(_sanitizeTraceValue).toList(growable: false);
   }
   // Diagnostic payloads must never poison the bounded trace ring. Keep an
   // identity-sanitized representation for unsupported producer values.
-  return _sanitizeTraceString(value.toString());
+  return _sanitizeTraceString(value.toString(), opaqueIdentity: opaqueIdentity);
 }
 
-String _sanitizeTraceString(String value) {
+String _sanitizeTraceString(String value, {bool opaqueIdentity = false}) {
+  if (opaqueIdentity &&
+      (value.length > 160 ||
+          (value.contains('venera') &&
+              (_veneraResourceTracePattern.hasMatch(value) ||
+                  _veneraEntityTracePattern.hasMatch(value))) ||
+          (value.contains('mihon:') &&
+              _mihonEntityTracePattern.hasMatch(value)))) {
+    return _traceOpaqueSummary('identity', value);
+  }
   var sanitized = value;
   if (sanitized.contains('venera')) {
     sanitized = sanitized.replaceAllMapped(

@@ -139,6 +139,71 @@ void main() {
     );
   });
 
+  test('trace composite payload keys retain raw identity correlation', () {
+    final manga = 'mihon:manga:${List<String>.filled(495, 'a').join()}';
+    final chapter = 'mihon:chapter:${List<String>.filled(998, 'b').join()}';
+    final scope = 'content:v2${manga.length}:$manga'
+        '${chapter.length}:$chapter';
+    final exact = 'download:v2${scope.length}:$scope';
+    final physical = 'physical-media:v1${exact.length}:$exact';
+    final event = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.artifactSource,
+      payload: <String, Object?>{
+        'scopeId': scope,
+        'providerExactId': exact,
+        'physicalMediaKey': physical,
+        'candidatePhysicalKeys': <String>[physical],
+        'comicId': manga,
+      },
+    );
+
+    expect(event.payload['scopeId'], traceIdentityToken(scope));
+    expect(event.payload['providerExactId'], traceIdentityToken(exact));
+    expect(event.payload['physicalMediaKey'], traceIdentityToken(physical));
+    expect(event.payload['candidatePhysicalKeys'],
+        <String>[traceIdentityToken(physical)]);
+    expect(event.payload['comicId'], endsWith(',507>'));
+    expect(event.toJsonLine(), isNot(contains(manga)));
+    expect(event.toJsonLine(), isNot(contains(chapter)));
+  });
+
+  test('nested short opaque composite keys sanitize once', () {
+    final manga = 'mihon:manga:${List<String>.filled(24, 'a').join()}';
+    final chapter = 'mihon:chapter:${List<String>.filled(24, 'b').join()}';
+    final scope = '${manga.length}:$manga${chapter.length}:$chapter';
+    expect(scope.length, lessThan(160));
+    final first = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.artifactSource,
+      payload: <String, Object?>{
+        'nested': <Object?, Object?>{
+          Uri.parse('scopeId'): scope,
+          'candidatePhysicalKeys': <String>[scope],
+        },
+        'scopeId': 'legacy',
+        'count': 1,
+      },
+    );
+    final nested = first.payload['nested']! as Map<String, Object?>;
+    final token = nested['scopeId']! as String;
+    expect(token, startsWith('identity:<'));
+    expect(token, endsWith(',${scope.length}>'));
+    expect(nested['candidatePhysicalKeys'], <String>[token]);
+    expect(first.payload['scopeId'], 'legacy');
+    expect(first.payload['count'], 1);
+    expect(first.toJsonLine(), isNot(contains(manga)));
+    final second = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.artifactSource,
+      payload: first.payload,
+    );
+    expect(second.payload, first.payload);
+  });
+
   test('long provider identities skip nested sanitizer expansion', () {
     const resource =
         'venera-resource:eyJ2IjoxLCJpbWFnZSI6IjE2MSIsImNvbWljSWQiOiJsb25nLWNvbWljLWlkIn0';

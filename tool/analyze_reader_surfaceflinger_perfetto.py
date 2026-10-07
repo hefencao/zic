@@ -24,7 +24,9 @@ SELECT
   SUM(CASE WHEN LOWER(COALESCE(jank_type, 'none')) != 'none' THEN 1 ELSE 0 END) AS app_janky_frames,
   SUM(CASE WHEN LOWER(COALESCE(present_type, '')) LIKE '%late%' THEN 1 ELSE 0 END) AS app_late_frames,
   SUM(CASE WHEN COALESCE(on_time_finish, 1) = 0 THEN 1 ELSE 0 END) AS app_late_finish_frames,
-  COUNT(DISTINCT layer_name) AS app_layer_count
+  COUNT(DISTINCT layer_name) AS app_layer_count,
+  SUM(CASE WHEN LOWER(COALESCE(layer_name, '')) LIKE '%surfaceview%'
+           THEN 1 ELSE 0 END) AS app_content_frames
 FROM actual_frame_timeline_slice a
 JOIN process p USING (upid)
 WHERE p.name = 'dev.zic.zic' AND a.surface_frame_token != 0;
@@ -92,7 +94,17 @@ SELECT
   SUM(CASE WHEN LOWER(COALESCE(present_type, '')) LIKE '%late%' THEN 1 ELSE 0 END) AS sf_late_frames
 FROM actual_frame_timeline_slice a
 JOIN process p USING (upid)
-WHERE p.name = '/system/bin/surfaceflinger' AND a.surface_frame_token = 0;
+WHERE p.name = '/system/bin/surfaceflinger'
+  AND COALESCE(a.surface_frame_token, 0) = 0;
+
+SELECT name, severity, source, idx, value AS count
+FROM stats
+WHERE value > 0 AND (
+  severity IN ('error', 'data_loss')
+  OR name IN ('interned_data_tokenizer_errors',
+              'frame_timeline_event_parser_errors', 'traced_buf_chunks_discarded')
+)
+ORDER BY name, idx;
 '''
 
 
@@ -136,6 +148,22 @@ def as_int(row, key):
         return 0
 
 
+def evidence_verdict(app, layers, anomalies, integrity):
+    if integrity:
+        return 'invalid-evidence-trace-loss-or-parser-errors'
+    if as_int(app, 'app_actual_frames') == 0:
+        return 'no-app-frametimeline-evidence'
+    # ZIC's Flutter content is hosted by SurfaceView. Activity/TX window frames
+    # alone cannot establish cadence or jank for that independently updated layer.
+    if as_int(app, 'app_content_frames') == 0:
+        return 'no-app-content-layer-frametimeline-evidence'
+    if anomalies:
+        return 'actual-presentation-jank-observed'
+    if any(as_int(row, 'gap_ge_20ms') for row in layers):
+        return 'actual-presentation-gap-observed-without-frametimeline-jank-tag'
+    return 'no-final-presentation-jank-in-captured-window'
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('trace', type=Path)
@@ -159,9 +187,9 @@ def main() -> int:
     except RuntimeError as error:
         print(f'trace_processor failed: {error}', file=sys.stderr)
         return 2
-    if len(result_sets) < 4:
+    if len(result_sets) < 5:
         print(
-            f'unexpected trace_processor output: expected 4 result sets, got {len(result_sets)}',
+            f'unexpected trace_processor output: expected 5 result sets, got {len(result_sets)}',
             file=sys.stderr,
         )
         return 2
@@ -170,10 +198,12 @@ def main() -> int:
     layers = result_sets[1]
     anomalies = result_sets[2]
     sf = result_sets[3][0] if result_sets[3] else {}
+    integrity = result_sets[4]
 
     app_frames = as_int(app, 'app_actual_frames')
     print(
         f'app_frames={app_frames} app_layers={as_int(app, "app_layer_count")} '
+        f'app_content_frames={as_int(app, "app_content_frames")} '
         f'app_janky={as_int(app, "app_janky_frames")} '
         f'app_late_present={as_int(app, "app_late_frames")} '
         f'app_late_finish={as_int(app, "app_late_finish_frames")}'
@@ -184,6 +214,10 @@ def main() -> int:
         f'surfaceflinger_late_present={as_int(sf, "sf_late_frames")}'
     )
     print(f'layer_rows={len(layers)} anomaly_rows={len(anomalies)}')
+    print(f'integrity_issue_rows={len(integrity)}')
+    for row in integrity:
+        print(f'trace_issue={row.get("name")} severity={row.get("severity")} '
+              f'count={as_int(row, "count")} index={row.get("idx")}')
     for row in layers[:20]:
         max_gap_us = as_int(row, 'max_present_gap_ns') // 1000
         print(
@@ -197,14 +231,7 @@ def main() -> int:
             f'gpu_composed={as_int(row, "gpu_composed")}'
         )
 
-    if app_frames == 0:
-        print('verdict=no-app-frametimeline-evidence')
-    elif anomalies:
-        print('verdict=actual-presentation-jank-observed')
-    elif any(as_int(row, 'gap_ge_20ms') for row in layers):
-        print('verdict=actual-presentation-gap-observed-without-frametimeline-jank-tag')
-    else:
-        print('verdict=no-final-presentation-jank-in-captured-window')
+    print(f'verdict={evidence_verdict(app, layers, anomalies, integrity)}')
     return 0
 
 
