@@ -81,7 +81,7 @@
 
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
-- 对比翻页/退出Reader frame timing：每页checkpoint只发isolate消息，不在UI isolate执行sqlite3/章节JSON解码，不逐页触发Home rebuild；按ADR0303在pop前完成durable barrier，返回后仅targeted progress更新，不整库reload。
+- 归因已观察的Reader退出62ms build：用普通Profile分离final progress flush、targeted hydrate与详情/Home rebuild成本；保留已验warm翻页只enqueue、无逐页Home发布及ADR0303 durable barrier，不整库reload。
 - 用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。
 - 在source暂不可用时补真机`mihon:resource:` durable封面命中和durable miss等待来源，不能回退local file loader。
 
@@ -116,7 +116,6 @@
 
 本文件覆盖用户要求的全部产品、性能与来源验收；112项当前合同及剩余验收见`docs/audits/state-governance-closure-2026-10-01.json`，`status`为有效结论，`historical_status`仅留历史。只验证剩余合同，修改生产前须确认新的失败及根因；使用已有文件记录简短结论，不复制完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
 
-- 用长阅读会话记录progress writer事务次数：连续翻页不得每页写SQLite，idle约8秒/持续活跃约30秒批量提交；按ADR0303正常pop前等待final durable flush，失败可记录后退出。返回后Home/详情只targeted更新当前progress，不扫描整库。
 ## P0：Transition 首帧与切页设备闭环
 
 - 验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。

@@ -17,8 +17,8 @@
     "7/3 encoded、2/1 deadline与现有cache/presentation budgets"
   ],
   "requirement_summary": {
-    "partial": 38,
-    "verified_device": 21,
+    "partial": 37,
+    "verified_device": 22,
     "superseded": 2,
     "pending": 45,
     "verified_toolchain": 6
@@ -1696,19 +1696,25 @@
           "kind": "Device-observed-subcontract",
           "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-050",
           "scope": "Ordinary route-local progress separation, reentry and first-return Home history publication. Frame cost and SQLite transaction cadence are not inferred from UI or Home snapshot writes."
+        },
+        {
+          "kind": "Device-observed-current-subcontract",
+          "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-084",
+          "result": "Warm13 page changes represent199 Flutter frames: max build4015us/raster3489us/total8377us, zero download starts and no progress dispatch>=5ms.703 UI CPU samples include message enqueue and separate Artifact SqliteIndex reads;40 progress-writer samples remain on zic-library-progress. Existing source boundary excludes progress SQL/chapter JSON from page enqueue; one Home snapshot is scheduled on final return. The exit has a61999us build frame, not attributed by this CPU capture; no production repair is inferred."
         }
       ],
       "current_evidence_references": [
         "apps/app/test/reader_controls_test.dart",
         "docs/ARCHITECTURE.md",
         "docs/SPEC.md",
-        "docs/adr/0303-reader-progress-durable-exit-barrier.md"
+        "docs/adr/0303-reader-progress-durable-exit-barrier.md",
+        "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/checkpoint-progress.jsonl"
       ],
       "remaining_acceptance": [
-        "Current checkpoint/exit frame cost and absence of UI-isolate SQLite/chapter JSON work or per-page Home rebuild; retain verified050 product behavior and ADR0303 final durable flush."
+        "Attribute current Profile Reader-exit61999us build cost with a scoped CPU capture that covers pop; separate final progress flush, targeted hydration and details/Home rebuild without changing verified warm enqueue/batching or artifact-read policy. Retain050/065 final progress and ADR0303 durable barrier."
       ],
       "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "next_action": "profile_exit_cost_before_any_production_repair; preserve_verified_warm_checkpoint_and084_cadence"
     },
     {
       "id": "SWG-PLAN-062",
@@ -2280,7 +2286,7 @@
       "group": "P0：来源投影、Cloudflare 与封面身份设备闭环",
       "requirement": "用长阅读会话记录 progress writer事务次数：连续翻页期间不得每页写 SQLite；停止约 8 秒后提交一次，持续活跃最多约 30 秒提交一次。Reader pop动画不得等待该 durable提交；返回后 Home/详情只更新当前 progress投影，不扫描整库。",
       "historical_status": "partial",
-      "status": "partial",
+      "status": "verified_device",
       "current_contract": "Storage-owned progress writer batches latest-wins checkpoints at about8s idle/30s active. Ordinary page turns do not await SQLite; normal pop retains ADR0303 final durable flush.050 verifies targeted final progress publication, not transaction cadence.",
       "verified_subcontracts": [
         {
@@ -2291,19 +2297,24 @@
           "kind": "Device-observed-subcontract",
           "audit": "docs/audits/state-governance-closure-2026-10-01.json#requirements/SWG-PLAN-050",
           "scope": "Ordinary route-local progress separation, reentry and first-return Home history publication. Frame cost and SQLite transaction cadence are not inferred from UI or Home snapshot writes."
+        },
+        {
+          "kind": "Device-verified-current",
+          "file": "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/checkpoint-observation.jsonl",
+          "result": "Ordinary Profile read-only checksummed WAL replay separates progress from other transactions. A progress commit is first observed8.04..8.69s after the single gesture; continuous3s changes produce one progress commit first observed30.14..30.83s after the first gesture, with no per-page commits or WAL reset. Trace confirms all13 requested page changes. The observer ends before final idle/pop, so those transactions and pop CPU are not claimed;050/065 and current UI verify final targeted publication/durable barrier separately."
         }
       ],
       "current_evidence_references": [
         "apps/app/test/reader_controls_test.dart",
         "docs/ARCHITECTURE.md",
         "docs/SPEC.md",
-        "docs/adr/0303-reader-progress-durable-exit-barrier.md"
+        "docs/adr/0303-reader-progress-durable-exit-barrier.md",
+        "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/checkpoint-observation.jsonl",
+        "/home/unkloser/.cache/zic-device-evidence/current-acceptance-projection-2026-10-07/checkpoint-progress.jsonl"
       ],
-      "remaining_acceptance": [
-        "Long-session8s idle/30s active SQLite transaction count; targeted final publication is verified in050 and normal pop retains final durable flush."
-      ],
-      "evidence_reproducibility": "available_references",
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair"
+      "remaining_acceptance": [],
+      "evidence_reproducibility": "current_available",
+      "next_action": "closed_current8s_idle30s_active_progress_batching; preserve061_exit_cost_and_original_performance_acceptance"
     },
     {
       "id": "SWG-PLAN-085",
@@ -4092,7 +4103,7 @@
     "model": "M2007J1SC",
     "sdk": 36,
     "sha256": "1b0404014d3eae75fd28116b072e657d74e3a6ca96223ce47cf70bc39ad1ec3f",
-    "app_pid": 8239,
+    "app_pid": 18559,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
