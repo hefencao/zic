@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- 58项Home与23项source-card保持，031/083/108关闭。系统100ms导航通过而Home失败；Profile未锁/无重采样/无忙状态，实际队列空，不能把字段数或旧WaitQueue当本次事件。手动触摸/Reader仍未验；先查原生接收，未改生产。预检helper统一source-first；.log留5个必要原件，私有缓存同规则及时清理。
+- 58项Home与23项source-card保持，031/083/108关闭。系统100ms导航通过而Home失败；Profile实际队列空，手动触摸/Reader仍未验。legacy UiAutomator缺RepetitiveTest，未执行测试；临时包已清。预检helper统一source-first；.log留5个必要原件，私有缓存165文件。已完成050/061/084及撤回方案文件删除，结论保持。
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。
