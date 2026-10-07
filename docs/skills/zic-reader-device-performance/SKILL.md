@@ -2,7 +2,7 @@
 name: zic-reader-device-performance
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 metadata:
-  version: "1.2.2"
+  version: "1.2.3"
 ---
 
 # ZIC Reader device performance
@@ -40,7 +40,9 @@ Cold-handoff correctness is a distinct regression scenario, not an invalid user 
 
 ADB input must also target the real app display explicitly. scrcpy or other tooling may create a virtual display; an unqualified `adb shell input tap/swipe` can therefore inject into the wrong display while screenshots still show display 0. On the current MIUI device, the source-first form is the verified working syntax: use `adb shell input touchscreen -d 0 tap ...` / `swipe ...` for touch and `adb shell input keyboard -d 0 keyevent ...` for Back or other keys, unless `dumpsys activity` proves the ZIC task is on a different display. Do not use the superficially similar `adb shell input -d 0 tap ...` form as test evidence unless a harmless control round-trip has first proved that it is actually delivered on that device. Never use an unqualified tap/swipe in a Reader performance run.
 
-Before the first destructive or Reader-targeted input in a new device session, prove injection with a harmless Home navigation round-trip: resolve the current Home/Bookshelf tab bounds, tap Bookshelf with the source-first command and require `selected=true`, then tap Home and require `selected=true`. A coordinate command that does not change this control state is invalid input; discard any subsequent trace/performance conclusions from that attempt instead of treating the missing navigation as a product bug.
+Before the first destructive or Reader-targeted input in a new device session, prove injection with a harmless Home navigation round-trip: resolve the current Home/Bookshelf tab bounds, tap Bookshelf with the source-first command and require `selected=true`, then tap Home and require `selected=true`. A zero exit code does not prove delivery. If the control state does not change, stop the performance run and mark input unverified; confirm the actual page, awake/focus state and fresh target before attributing a product defect. A harmless system-menu navigation can compare input methods. A different result from a same-point short press is an input-method observation, not authorization to tune Reader behavior.
+
+For read-only VM input diagnosis, require `getVM.pid` to match the current app PID. Read actual collection contents: a `ListQueue` uses head/tail/table, while a map exposes its length/associations. The number of object fields is not a queued-event count. Old ANR/WaitQueue flags cannot describe a new input stream; a missing DOWN must remain missing evidence.
 
 ## Device hygiene
 

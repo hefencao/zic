@@ -50,11 +50,15 @@ assert preflight.input_command(0, "tap", "100", "200") == [
     "adb",
     "shell",
     "input",
+    "touchscreen",
     "-d",
     "0",
     "tap",
     "100",
     "200",
+]
+assert preflight.input_command(0, "keyevent", "KEYCODE_BACK") == [
+    "adb", "shell", "input", "keyboard", "-d", "0", "keyevent", "KEYCODE_BACK",
 ]
 
 try:

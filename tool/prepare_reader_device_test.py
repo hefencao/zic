@@ -77,7 +77,12 @@ def readiness_markers_present(log_text: str) -> bool:
 
 
 def input_command(display: int, *input_args: str) -> list[str]:
-    return ["adb", "shell", "input", "-d", str(display), *input_args]
+    source = (
+        "keyboard"
+        if input_args and input_args[0] in ("keyevent", "text", "keycombination")
+        else "touchscreen"
+    )
+    return ["adb", "shell", "input", source, "-d", str(display), *input_args]
 
 
 def activity_display(dumpsys: str) -> int | None:
@@ -205,11 +210,11 @@ def main(argv: list[str]) -> int:
     )
     print(
         "subsequent-touch-prefix="
-        f"adb shell input touchscreen -d {actual_display} <tap|swipe> ..."
+        + " ".join(input_command(actual_display, "<tap|swipe>", "..."))
     )
     print(
         "subsequent-key-prefix="
-        f"adb shell input keyboard -d {actual_display} keyevent ..."
+        + " ".join(input_command(actual_display, "keyevent", "..."))
     )
     return 0
 
