@@ -10,7 +10,7 @@ import okhttp3.HttpUrl
 /**
  * Shared Android cookie adapter for native and Mihon HTTP clients.
  *
- * Runtime HTTP cookies are mirrored synchronously as name/value pairs. The
+ * Runtime HTTP cookies retain their identity and scope synchronously. The
  * Android CookieManager remains a compatibility mirror, but the first request
  * after visible-browser verification does not wait for its asynchronous
  * setCookie() persistence before emitting cf_clearance through OkHttp.
@@ -29,15 +29,16 @@ class AndroidCookieJar(
     private val application = context.applicationContext
     private val manager: CookieManager
         get() = CookieManager.getInstance()
-    private val memoryByHost = mutableMapOf<String, LinkedHashMap<String, String>>()
+    private data class CookieIdentity(val name: String, val path: String)
+
+    private val memoryByHost = mutableMapOf<String, LinkedHashMap<CookieIdentity, Cookie>>()
     private val importedSnapshotRevisions = mutableMapOf<String, Long>()
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-        val host = hostOf(url)
         synchronized(this) {
-            val memory = memoryByHost.getOrPut(host) { linkedMapOf() }
             cookies.forEach { cookie ->
-                rememberCookieString(memory, cookie.toString())
+                val memory = memoryByHost.getOrPut(cookie.domain) { linkedMapOf() }
+                memory[CookieIdentity(cookie.name, cookie.path)] = cookie
             }
         }
         cookies.forEach { cookie -> manager.setCookie(url.toString(), cookie.toString()) }
@@ -61,21 +62,34 @@ class AndroidCookieJar(
 
     fun get(url: HttpUrl): List<Cookie> {
         importBrowserSnapshot(url)
-        val merged = linkedMapOf<String, String>()
+        val merged = mutableListOf<Cookie>()
         val host = hostOf(url)
-        synchronized(this) {
-            memoryByHost[host]?.forEach { (name, value) -> merged[name] = value }
+        val known = synchronized(this) {
+            memoryByHost.values.flatMap { it.values }.filter { cookie ->
+                host == cookie.domain ||
+                    (!cookie.hostOnly && host.endsWith(".${cookie.domain}"))
+            }
         }
+        val requestPath = url.encodedPath
+        val coveredNames = known.filter { cookie ->
+            requestPath == cookie.path ||
+                (requestPath.startsWith(cookie.path) &&
+                    (cookie.path.endsWith("/") ||
+                        requestPath.getOrNull(cookie.path.length) == '/'))
+        }.mapTo(mutableSetOf()) { it.name }
+        val now = System.currentTimeMillis()
+        known.filterTo(merged) { it.expiresAt > now && it.matches(url) }
         manager.getCookie(url.toString())
             .orEmpty()
             .split(';')
             .forEach { raw ->
                 val pair = cookiePair(raw) ?: return@forEach
-                merged.putIfAbsent(pair.first, pair.second)
+                // Cover only known domain/path scope, including expiry/deletion.
+                if (pair.first !in coveredNames) {
+                    Cookie.parse(url, raw.trim())?.let(merged::add)
+                }
             }
-        return merged.mapNotNull { (name, value) ->
-            Cookie.parse(url, "$name=$value")
-        }
+        return merged.sortedByDescending { it.path.length }
     }
 
     private fun importBrowserSnapshot(url: HttpUrl) {
@@ -92,26 +106,16 @@ class AndroidCookieJar(
             val memory = memoryByHost.getOrPut(host) { linkedMapOf() }
             snapshot.cookies.forEach { (name, value) ->
                 if (name.isNotBlank()) {
-                    memory[name] = value
+                    // Browser snapshots contain host-scoped name/value pairs.
+                    Cookie.parse(url, "$name=$value; Path=/")?.let { cookie ->
+                        memory[CookieIdentity(cookie.name, cookie.path)] = cookie
+                    }
                     // Best-effort WebView/extension compatibility mirror only.
                     manager.setCookie(url.toString(), "$name=$value; Path=/")
                 }
             }
             if (snapshot.cookies.isNotEmpty()) manager.flush()
             importedSnapshotRevisions[revisionKey] = snapshot.revision
-        }
-    }
-
-    private fun rememberCookieString(
-        memory: LinkedHashMap<String, String>,
-        rawCookie: String,
-    ) {
-        val pair = cookiePair(rawCookie.substringBefore(';')) ?: return
-        val lower = rawCookie.lowercase()
-        if (pair.second.isEmpty() || lower.contains("max-age=0")) {
-            memory.remove(pair.first)
-        } else {
-            memory[pair.first] = pair.second
         }
     }
 

@@ -1,15 +1,46 @@
 package dev.zic.pluginhost
 
 import java.io.File
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.json.JSONObject
 import org.junit.Test
 
 class VeneraNetworkPolicyTest {
+    @Test
+    fun textResponseConsumesOnlyTheLeadingUtf8ByteOrderMark() {
+        val text = "{\"title\":\"禁漫\uFEFF正文\"}"
+        val body = ("\uFEFF" + text).encodeToByteArray()
+        val response = VeneraHttpResponse(200, JSONObject(), body)
+        val wire = response.toWire(bytes = false)
+
+        assertEquals(text, wire.getString("body"))
+        assertEquals(200, wire.getInt("status"))
+        assertSame(body, response.body)
+        assertArrayEquals(("\uFEFF" + text).encodeToByteArray(), body)
+    }
+
+    @Test
+    fun textResponseKeepsOrdinaryPrefixesAndASecondByteOrderMark() {
+        val cases = mapOf(
+            "" to "",
+            "中文" to "中文",
+            " \uFEFF正文" to " \uFEFF正文",
+            "\uFEFF\uFEFF正文" to "\uFEFF正文",
+        )
+        for ((encoded, expected) in cases) {
+            val response = VeneraHttpResponse(
+                200, JSONObject(), encoded.encodeToByteArray(),
+            )
+            assertEquals(expected, response.toWire(bytes = false).getString("body"))
+        }
+    }
+
     @Test
     fun advertisesOnlyEncodingsTheRuntimeActuallyDecodes() {
         assertEquals("gzip, deflate", normalizeVeneraAcceptEncoding(null))

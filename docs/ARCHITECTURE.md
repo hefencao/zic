@@ -61,6 +61,8 @@ transport可中止自身请求但不拥有priority policy，也不得在请求�
 它不拥有artifact、Reader demand或播放状态。
 `SelfBoundedOpenTransport`只允许lower transport在指定URI的完整open生命周期已经由自身有限deadline覆盖时声明；
 此时DownloadJob可省略generic 6s open watchdog，但仍保持同一TaskControl cancellation与6s body-read inactivity watchdog。
+已证明self-bounded的open或已报告该phase handoff的同一open在scheduler取消后仍等待原pending Future与迟到response的discard退出，之后才让NetLane归还容量。
+ArtifactCacheTransport转发self-bounded fallback时保持相同退出边界；取消信号不得通过Future.any提前完成外层open。无有限deadline证明的legacy open仍由原generic watchdog与迟到discard收敛。
 external source只有runtime source明确暴露resource-operation deadline且最终direct media transport也自有open deadline时才可形成该proof；
 当前production Mihon/Venera runtime分别由executor的45s/55s invocation limit约束，
 `RhttpSourceResourceDirectTransport`另以15s约束client/header open并在header timeout时取消native request。
@@ -490,7 +492,12 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 详情优先显示 source timestamp，否则回退本地 imported/catalog sync 时间，compact Home snapshot 必须保留这些字段；
 无命名来源标签组直接渲染 chip Wrap，不建立仅用于显示“标签”标题的父层。
 
+JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `https://18comic.ink/album/<id>`，合法绝对 HTTP(S) ID 保留。
+该浏览链接与 JS 更新地址和 canonical identity resolver 分离，不更换 source website、comic/chapter identity、locator或 artifact authority。
+
 同源版本关系只来自来源 `ComicVersionSource` 或已持久化的 `ComicVersionRelationStore`；Venera/E-Hentai按来源关系生成版本，
+版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
+它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
 不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
 同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
 迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，
@@ -592,7 +599,12 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 ### 插件与平台桥
 
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
+  runtime adapter 独立校验实际响应的 `maxResponseBytes`，字符串键和值直接计算 UTF-8 长度，不为计数物化 encoded bytes；合法 surrogate pair计4字节，孤立 surrogate按U+FFFD计3字节。depth/type、binary/scalar与body-file清理合同不变。
 - `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。
+  Mihon目录保留source返回的完整对象与newest-first顺序；opaque章节ID仍编码source ordinal，向外sequence投影为oldest-first逻辑序号。
+  plugin-host的只读顺序适配兼容旧持久目录，Home composition消费该投影，Reader不解析来源identity。Venera既有sequence合同保持不变。
+  同一source+canonical漫画URL的getMangaUpdate在runtime内互斥，等待可被取消；不同漫画仍可并发，NetLane继续拥有网络admission与rank。
+  active Mihon invocation取消后等待实际Callable退出；无可取消context的suspend调用先drain continuation，再释放目录互斥与runtime completion。
   Mihon 设备发现只覆盖作为系统共享 APK安装的扩展，合并 `getInstalledPackages`、
   `getInstalledApplications` 与已知仓库 package name的精确 `getPackageInfo`；
   每个候选的 manifest、metadata、签名、ABI与 entry失败必须返回诊断，不得静默丢弃。Mihon App私有 `filesDir` 中的扩展不能跨 App读取，必须从 ZIC 仓库独立安装。
@@ -603,6 +615,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   canonical `UncaughtExceptionInterceptor` 置于 application interceptor 链首位，随后安装 canonical `UserAgentInterceptor`；
   Cloudflare 位置必须暴露 canonical `CloudflareInterceptor` 类型，但其挑战识别/verification handoff 仍委托 `network_bridge` 的唯一 owner。
   已有 `IOException`（包括 typed verification failure）原样传播，只有后续链抛出的非 IO `Exception` 才转成 `IOException`；不得额外注入 Brotli default interceptor。
+  host request-plan能力判断将这三个精确的canonical拦截器类型视为可重放；source-loader所属或未知client能力继续保留runtime路径。
+  Cookie/UA仍由source plan同步补入；redirect/Set-Cookie/协议不匹配继续沿同一TaskControl进入既有source-client兼容路径，普通媒体正文保持host streaming。
   Mihon Injekt host service 由 runtime driver 统一注册；当前至少包含 `Application`、`NetworkHelper` 与与 Mihon `AppBindings` 一致的
   `Json { ignoreUnknownKeys = true; explicitNulls = false }`，扩展不得在 Reader/Pipeline 侧补造 host singleton。
   动态 ABI按原始类名加载 `dev.zic.network.*` common 类型；
@@ -623,6 +637,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   排序写入既有 `sortOrder` 偏好并决定漫画源页底部控件顺序——底部 chip 按偏好序遍历已启用源、每个插件族在其首个代表源位置只发射一枚 chip。
   Venera 保持单 WebView、单 invocation 生命周期；
   可能等待 origin 的 `Network.*` 通过 `ZicNative.requestAsync` 回调执行，不阻塞 JavascriptInterface 线程。
+  HTTP文本输出与`Convert.decodeUtf8`共用UTF-8解码边界，消费一个开头的BOM；正文中的U+FEFF与原始二进制body保持，GBK路径独立。
   激活只等待源代码显式 `await` 的请求，激活期间遗留的后台请求由下一次 invocation 的 activation-work gate追平；
   `requestId` 取消与 runtime close 均先取消 resolver transport，且只有 JavaScript `finished(requestId)` 后才结束调用边界。
   Venera `Image` bridge MUST保持参考实现语义：`fillImageRangeAt` 的零宽/零高range是合法no-op，真实source/target越界仍拒绝；
@@ -1035,6 +1050,8 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   这不创建第二个网络 retry owner。runtime-transform locator 仍绑定 `mihon-runtime-transform-v3:<payload-sha256>`，且 runtime-owned `loadResource`
   发生**非网络、非 verification** source failure 时，driver 才发布 `sourceResourcePlanReplayEligible`，并允许一次 `retryResource`
   重新读取 chapter/page list。普通 SSL/EOF 不获得该资格，继续由 DownloadJob 的既有 network retry owner处理。
+  宿主沿实际异常链识别连接、socket/DNS、TLS与正文I/O失败；最深层native syscall/certificate原因不得掩盖外层具体transport异常。
+  default-client把source/parser错误包装成普通`IOException`时仍按真正来源原因分类；`UnknownServiceException`保持非网络语义，不扩大replay或retry owner。
   若一次 replay 无 replacement plan、replay 本身发生 source failure，或 replacement 再次出现同类 replay-eligible failure，
   transport 不再递归 replay，而发布 `sourceResourcePlanReplayUnavailable`，再交给既有 terminal source-generation refresh handoff：
   Reader 当前页、章节下载命令、whole-comic queue 只在各自 owner 内各做一次整章刷新；不得在 Reader/Pipeline 增加 Mihon-specific retry loop。
@@ -2142,7 +2159,10 @@ Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情�
   取消只请求下层尽快退出，唯一 permit 必须等旧 invocation 的 physical Future/`finished(requestId)` 真正结束后才能转交，不得为抢占增加第二 context。
   `Network.*` async bridge waiter 必须记录所属 `requestId`；`__zicCancel(requestId)` 除取消resolver I/O与delay waiter外，
   还必须同步移除并reject该request的JS bridge waiter，使正在`await Network.*`的source hook立即unwind。
-  迟到native bridge回包在waiter已移除后只能丢弃；这项unwind不得提前释放唯一invocation permit，permit边界仍是`finished(requestId)`。
+  迟到native bridge回包在waiter已移除后只能丢弃；唯一invocation permit必须等JS `finished(requestId)`与已接纳native work退出齐备后归还。
+  Native driver关闭先封admission，再以`closeWhenDrained`等待同步bridge、原executor work和isolated图片primitive物理退出；之后才回收图片/输入、销毁WebView并返回pending关闭结果。
+  `NativeExternalPluginDriverHost`保留原driver登记到关闭回执，重复关闭join同一Future；已接纳activation的晚到driver也必须退休。无新增executor、FIFO、并发槽、retry或网络资格。
+  isolated Service保留FlutterEngine/resolver回调到native关闭完成；Main不阻塞等待。原IPC executor依次drain读取、回包及回调提交的cleanup后再清packet store并shutdown。
   Reader 首帧后的 metadata/version refresh 属于可被这种 foreground pressure 让行的后台调用。
   `sourcePlanGateBlockedBy*` 只记录 waiter 首次入队时看到的 blocker，用于归因，不代表整个 gate-wait 区间始终由该 operation 占用。
   Source metadata 瞬时 JSON parse 恢复也属于该 external-runtime 边界：
@@ -2159,6 +2179,7 @@ Presentation 不得自行构造 HTTP client。
 
 网络执行只有三类合法 owner：
 - **source-owned client**：Mihon/Venera 等来源的 CookieJar/interceptor/auth/DNS/TLS/session 语义；
+  Android隔离runtime service在engine/driver启动前以宿主applicationContext初始化canonical OkHttp，保证域名/Cookie资源可用；主进程AndroidX Startup不能替代该进程初始化，扩展payload Context不承担此平台职责。
   未知 client wrapper、重定向、`Set-Cookie` 或无法无状态平铺的响应必须留在这里执行；
   Mihon/network bridge 的 `FallbackDns` 先完整尊重系统 DNS 的非空返回顺序（包括合法 split-DNS/private 地址），不得再强制 IPv4 前置；
   仅当系统 DNS 失败或为空时才进入 public fallback，并同时查询 A/AAAA，以交错双栈结果返回，不得把 public-address 过滤反向施加到系统 DNS authority。
@@ -2173,12 +2194,29 @@ Presentation 不得自行构造 HTTP client。
   不做source namespace级清空，也不把fresh resolver行为变成新的retry owner。
   HTTP execution 不再由 Kotlin `HttpURLConnection`/DoH/reflective OkHttp拥有；
   isolated plugin Dart process 持有 reusable rhttp/reqwest resolver client 与 requestId→CancelToken 映射。
+  该client未配置自定义DNS，解析使用rhttp默认系统DNS；requestId cancel经原MethodChannel取消对应HTTP及正文读取，原call结果返回并完成native finally后才退休。
+  默认reqwest GaiResolver使用Tokio blocking getaddrinfo；HTTP Future取消不证明该系统解析已退出，不能据此关闭DNS物理退出验收或增加独立DNS owner。
   resolver rhttp 的 transport failure 必须以typed retryability跨 Dart MethodChannel→Kotlin bridge→WebView JS runtime 保留，
   不能退化成字符串后靠错误文案正则重新猜测；
   `venera-resolver-http-failed` 属于network failure并继续交给既有physical `DownloadTransferOwner`/provider `RetryPolicy`，
   bridge/runtime自身不得因此新增第二retry loop。最终 media replay继续由主流程的 rhttp direct transport执行。
+  canonical bridge在原executor提交前登记request-scoped native call，物理finally退出后退休；JS `finished`与native call退出分别记录，两者齐备才转发原result/完成。
+  取消标记保持到该边界，迟到result不发布，native-byte token只按被取消request清理；bridge完成登记不持executor、FIFO、retry或priority policy。
   由于两者位于不同进程，不能共享同一物理client/连接池，但必须统一到同一 rhttp client family；Kotlin/WebView不得重新建立第二HTTP connection pool。
+  协商过body delivery的Mihon自定义client由原source invocation把response stream写成有界raw body；`RuntimeServicePacketFiles`继续拥有临时文件，`.packet`仍是codec envelope。
+  同一body交易也接纳同步编码器写入借用的有界OutputStream；InputStream入口委托它。owner在producer返回后关闭stream，再封存并发布相同length/SHA/FNV/prefix；被producer捕获的写入失败仍阻止发布。该入口没有额外队列或文件owner。
+  body reference绑定driver/request/source/runtime/payload及原locator，携带length/SHA-256/旧FNV validator/最多64B prefix，不能接受调用方文件路径。
+  host packet owner先原子claim为`.lease`保护物理读取，再在原response executor做可取消校验，成功后才发布；`ExternalPluginRuntimeFileBody`持一个handle，异步有界读取，dispose先等已接纳read退出再close/release。
+  source descriptor与connection必须同时声明能力；`SourceResourceTransport`才把它投影为原staged/source `ByteResponse`，保留image admission、validator与Range语义。
+  unclaimed正文归原packet/driver清理；claimed正文在source进程退出后仍由consumer释放，新host进程清掉上一host进程遗留lease，同进程client共用清理identity。
+  runtime close封新admission并排空晚到response/claim/read/release，正文登记直到release回执后才退休；NetLane task仍持有完整消费生命周期。临时路径不进入locator、DownloadId、artifact、信任或Reader，聚合与promotion仍归DownloadJob/DownloadSession。
+  Android caller仅在API29+系统Trace启用时观测原client执行、正文read/seal及host claim；固定label不含请求身份，关闭时直接使用原InputStream。纯文件owner不依赖Android tracing，重叠seal/read不得重复归因。
+  Venera的transform output能力独立于loadResource，仍需source descriptor与connection共同声明；输入保持完整，onResponse和canonical JavaScript语义不变。
+  isolated-qualified modifyImage由原2-worker在physical encode内直接写入同一body交易；canonical结果仍经原JavaScript完整字节后封存。输出reference绑定venera-runtime-transform-v1与payload，host只接受已协商transformResource。
+  SourceResourceTransport对两类sealed body共用原image/Range/validator与dispose合同；file输出只替代跨进程正文载体，不改变locator/cache/trust。取消、关闭及替换completion均清理未交付body。
+  sealed交付等待来源正文完成；host输入聚合、canonical完整字节和未协商来源保留原契约，实时网络stream/pipe不由该能力证明。
 - **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。
+
   生产 Flutter composition由 `downloads_bridge` 注入可取消的 Rust/rhttp streaming transport并复用client/keep-alive；
   rangeStart=0 的完整/首段response通过媒体前缀校验后保持raw streaming cadence，
   合法206且`Content-Range.start > 0`的中段不得再次要求完整图片magic header，应直接保持raw stream/cancellation/diagnostics；
@@ -2206,6 +2244,9 @@ Venera 的 canonical source WebView 继续是唯一 stateful JavaScript invocati
 source/browser/network 可变状态，则可进入独立 image-only transform context；
 该 context 不加载 source script，只暴露 `Image` bitmap primitive，不拥有 `Network`、Cookie、settings 或 source data。
 image-only plane MAY 使用最多 2 个 bounded worker 以重叠独立页面的 decode/bitmap transform/encode；
+isolated输出编码借用native host既有executor，避免占用WebViews共享的JavascriptInterface线程；不新增池或排队/admission owner。
+JS只在编码物理退出回执后disposeAll并finished；原worker capacity、pending completion与body discard owner保持到该边界。
+原NativeRuntimeWorkDrain在executor提交前登记编码，退出后退休；close等待编码再回收Bitmap，transform不关闭借用的host executor。
 每个 worker MUST 独占自己的 WebView 与 Bitmap namespace，request-local `disposeAll` 不得作用于其它 worker。
 Dart transform gate 与 native worker capacity MUST 一致，不能靠第二 scheduler 或无界 native queue 扩吞吐。
 静态资格不成立或运行时发现缺失 source global 时返回 incompatible 并重新经过 canonical source gate；
@@ -2232,6 +2273,8 @@ Mihon 页面资源必须从 `HttpSource.imageRequest(page)`（或等价 source r
 共享 transport不得注入 Venera专用默认 UA。
 Android宿主必须提供可执行 source实际返回 HTTP(S)媒体 URL 的统一网络能力，不能按具体插件/域名维护 cleartext白名单或擅自 HTTPS改写；
 URL选择仍属于 source/request plan。宿主直连前同步投影当前 source OkHttp CookieJar Cookie与同站点 browser-session UA。
+`AndroidCookieJar`在原适配器内按domain/name/path保存完整HTTP响应Cookie，按有效期与URL匹配读取；同名不同path保持独立，长path优先。
+请求domain/path范围内已知Cookie的Secure、有效期与删除不能被异步CookieManager镜像覆盖；另一path的同名Cookie不屏蔽请求URL上的未知镜像Cookie。镜像header不带属性，同名且范围重叠的未知身份不能完整还原。浏览器name/value快照沿既有host与revision导入，不另建Cookie或会话owner。
 若宿主 HTTP成功但响应前缀不是支持的编码图片，字节不得进入 Pipeline/decoder；
 这属于source image semantic rejection，应由同一个source-recovery owner按当前config的`retryResource/onLoadFailed`有界推进replacement chain，
 而不是把同一原URL转入runtime重放或让provider retry重复消费semantic recovery。

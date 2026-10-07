@@ -54,6 +54,39 @@ async function checkLoadNextExplore(){
  if(JSON.stringify(calls)!==JSON.stringify([null,'page-2']))throw new Error('loadNext tokens '+JSON.stringify(calls));
 }
 
+async function checkMultiPartCollectionPagination(){
+ const calls=[],comics=Array.from({length:53},(_,i)=>Object.freeze({id:'group-'+i,title:'Comic '+i}));
+ const groups=Object.freeze([
+   Object.freeze({title:'First group',comics:Object.freeze(comics.slice(0,17)),viewMore:{next:'not-a-page'}}),
+   Object.freeze({title:'Second group',comics:Object.freeze(comics.slice(17)),maxPage:999}),
+ ]);
+ globalThis.__zicSource={explore:[
+   {title:'Other',type:'multiPageComicList',load:async()=>({comics:[{id:'other',title:'Other'}],maxPage:1})},
+   {title:'Groups',type:'multiPartPage',load:async page=>{calls.push(page);return groups}},
+ ]};
+ const sections=await __zicOperation({operation:'loadBrowseSections',arguments:{}});
+ const browse=offset=>__zicOperation({operation:'browse',arguments:{query:'',offset,limit:24,sectionId:sections[1].sectionId}});
+ const first=await browse(0),second=await browse(24),last=await browse(48),empty=await browse(53);
+ if(first.items.length!==24||first.items[0].title!=='Comic 0'||!first.hasMore)throw new Error('multiPart first slice '+JSON.stringify(first));
+ if(second.items.length!==24||second.items[0].title!=='Comic 24'||!second.hasMore)throw new Error('multiPart repeated first slice '+JSON.stringify(second));
+ if(last.items.length!==5||last.items[0].title!=='Comic 48'||last.hasMore||empty.items.length||empty.hasMore)throw new Error('multiPart collection did not terminate '+JSON.stringify({last,empty}));
+ if(calls.some(page=>page!==null)||calls.length!==4)throw new Error('multiPart load requires null page '+JSON.stringify(calls));
+ globalThis.__zicSource={explore:[globalThis.__zicSource.explore[1]]};
+ const fallback=await __zicOperation({operation:'browse',arguments:{query:'',offset:24,limit:24}});
+ if(fallback.items[0].title!=='Comic 24')throw new Error('multiPart default section repeated first slice');
+}
+
+async function checkNativePagePagination(){
+ const calls=[];
+ globalThis.__zicSource={explore:[{type:'multiPageComicList',load:async page=>{
+   calls.push(page);return {comics:Array.from({length:24},(_,i)=>({id:'native-'+page+'-'+i,title:'Page '+page+' comic '+i})),maxPage:3};
+ }}]};
+ const first=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:24}});
+ const second=await __zicOperation({operation:'browse',arguments:{query:'',offset:24,limit:24}});
+ const last=await __zicOperation({operation:'browse',arguments:{query:'',offset:48,limit:24}});
+ if(first.items.length!==24||second.items.length!==24||second.items[0].title!=='Page 2 comic 0'||!second.hasMore||last.items.length!==24||last.hasMore||JSON.stringify(calls)!=='[1,2,3]')throw new Error('native page contract changed '+JSON.stringify({first,second,last,calls}));
+}
+
 async function checkSearchOptionDefaults(){
  let seen=null;
  globalThis.__zicSource={
@@ -176,6 +209,32 @@ async function checkPreviewCropIdentity(){
  const uri=detail.preview.items[1].uri;
  const request=await __zicOperation({operation:'resolveResource',arguments:{uri}});
  if(uri!=='https://source.invalid/source.jpg@x=10-20&y=0-10'||thumbnailKey!=='https://source.invalid/source.jpg'||request.url!=='https://cdn.invalid/source.jpg')throw new Error('preview crop identity was lost '+JSON.stringify({uri,thumbnailKey,request}));
+}
+
+async function checkSourceVersionDocumentResource(){
+ const uri='https://gallery.invalid/g/1/token/';
+ let imageHooks=0,completed=null,finished=null,seen=null;
+ globalThis.__zicSource={comic:{
+   onThumbnailLoad:()=>{imageHooks++;throw new Error('document used thumbnail hook')},
+   onImageLoad:()=>{imageHooks++;throw new Error('document used image hook')},
+ }};
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));seen=message;
+   if(message.method!=='http_binary')throw new Error('version document used image bridge '+message.method);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'text/html'},nativeBytesToken:'version-document-token'})});
+ };
+ ZicNative.complete=(requestId,envelope)=>{completed={requestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=requestId=>{finished=requestId};
+ await __zicInvoke({requestId:'version-document',operation:'loadResource',arguments:{uri,sourceDocument:true}});
+ const value=completed?.envelope;
+ if(value?.ok!==true||__zicDecode(value.value)?.__zicNativeBytesToken!=='version-document-token'||seen?.url!==uri||seen?.http_method!=='GET'||seen?.requestId!=='version-document'||finished!=='version-document'||imageHooks)throw new Error('version document did not retain binary/request ownership '+JSON.stringify({value,seen,finished,imageHooks}));
+ let invalid=false;
+ try{await __zicOperation({operation:'loadResource',arguments:{uri:'venera-resource:invalid',sourceDocument:true}})}catch(error){invalid=String(error).includes('HTTP(S)')}
+ if(!invalid)throw new Error('source document accepted an opaque image locator');
+ ZicNative.request=raw=>JSON.stringify({ok:true,value:__zicEncode({status:503,headers:{}})});
+ let failed=false;
+ try{await __zicOperation({operation:'loadResource',arguments:{uri,sourceDocument:true}})}catch(error){failed=String(error).includes('HTTP 503')}
+ if(!failed||imageHooks)throw new Error('document error entered image recovery');
 }
 
 async function checkChapterResourceCanBeReadAgain(){
@@ -633,7 +692,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkFreshResourceGenerationRestartsInitialConfig();await checkFreshResourceGenerationBypassesResolverCache();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkResolverNetworkFailureRetryability();await checkSourceReadParseFailureRequestsOneFreshReplay();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkMultiPartCollectionPagination();await checkNativePagePagination();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkSourceVersionDocumentResource();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkFreshResourceGenerationRestartsInitialConfig();await checkFreshResourceGenerationBypassesResolverCache();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkResolverNetworkFailureRetryability();await checkSourceReadParseFailureRequestsOneFreshReplay();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

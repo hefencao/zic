@@ -85,6 +85,10 @@ final class VeneraResolverHttpService {
     if (_closed) throw StateError('Venera resolver HTTP service is closed');
     final callId = _requiredString(message, 'callId');
     final requestId = (message['requestId'] as String?)?.trim();
+    // Activation's asynchronous native bridge supplies a synthetic requestId
+    // so cancellation still reaches the physical HTTP call.
+    final observeActivation = requestId == null ||
+        requestId.startsWith('venera-bridge-');
     final method = _requiredString(message, 'method');
     final url = _requiredString(message, 'url');
     final maxBytes = (message['maxResponseBytes'] as num?)?.toInt() ?? 0;
@@ -111,9 +115,16 @@ final class VeneraResolverHttpService {
     );
     final stopwatch = Stopwatch()..start();
     var clientWaitMs = 0;
+    var headersMs = -1;
+    var receivedBytes = 0;
+    var stage = 'client';
+    if (observeActivation) {
+      _veneraResolverLog('request-start call=$callId');
+    }
     try {
       final client = await _client();
       clientWaitMs = stopwatch.elapsedMilliseconds;
+      stage = 'headers';
       final response = await client.requestStream(
         method: rhttp.HttpMethod(method),
         url: url,
@@ -123,6 +134,14 @@ final class VeneraResolverHttpService {
             : rhttp.HttpBody.bytes(bodyBytes),
         cancelToken: cancelToken,
       );
+      headersMs = stopwatch.elapsedMilliseconds;
+      stage = 'body';
+      if (observeActivation) {
+        _veneraResolverLog(
+          'response-headers call=$callId totalMs=$headersMs '
+          'clientWaitMs=$clientWaitMs status=${response.statusCode}',
+        );
+      }
       final builder = BytesBuilder(copy: false);
       await for (final chunk in response.body) {
         if (chunk.isEmpty) continue;
@@ -131,7 +150,9 @@ final class VeneraResolverHttpService {
           throw StateError('Venera resolver response exceeds $maxBytes bytes');
         }
         builder.add(chunk);
+        receivedBytes += chunk.lengthInBytes;
       }
+      stage = 'complete';
       return <String, Object?>{
         'status': response.statusCode,
         'version': response.version.name,
@@ -142,9 +163,10 @@ final class VeneraResolverHttpService {
         'body': builder.takeBytes(),
       };
     } on rhttp.RhttpCancelException {
-      if (requestId == null) {
+      if (observeActivation) {
         _veneraResolverLog(
-          'request-cancelled totalMs=${stopwatch.elapsedMilliseconds} '
+          'request-cancelled call=$callId stage=$stage '
+          'totalMs=${stopwatch.elapsedMilliseconds} '
           'clientWaitMs=$clientWaitMs',
         );
       }
@@ -153,9 +175,10 @@ final class VeneraResolverHttpService {
         message: 'Venera resolver HTTP request was cancelled',
       );
     } on rhttp.RhttpException catch (error) {
-      if (requestId == null) {
+      if (observeActivation) {
         _veneraResolverLog(
-          'request-failed totalMs=${stopwatch.elapsedMilliseconds} '
+          'request-failed call=$callId stage=$stage '
+          'totalMs=${stopwatch.elapsedMilliseconds} '
           'clientWaitMs=$clientWaitMs error=${error.runtimeType}',
         );
       }
@@ -164,10 +187,11 @@ final class VeneraResolverHttpService {
         message: error.toString(),
       );
     } finally {
-      if (requestId == null && !_closed) {
+      if (observeActivation && !_closed) {
         _veneraResolverLog(
-          'request-finished totalMs=${stopwatch.elapsedMilliseconds} '
-          'clientWaitMs=$clientWaitMs',
+          'request-finished call=$callId stage=$stage '
+          'totalMs=${stopwatch.elapsedMilliseconds} '
+          'clientWaitMs=$clientWaitMs headersMs=$headersMs bytes=$receivedBytes',
         );
       }
       _active.remove(callId);

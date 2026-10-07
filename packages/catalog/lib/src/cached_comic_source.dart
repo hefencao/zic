@@ -105,16 +105,23 @@ final class CachedBrowsableComicSource
         RefreshableComicResourceSource,
         ControlledRefreshableComicResourceSource,
         ControlledComicResourceSource,
+        BodyDeliveringComicResourceSource,
+        BodyTransformingComicResourceSource,
         TransformingComicResourceSource,
         ControlledTransformingComicResourceSource,
         ComicResourceTransportGenerationSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
-  });
+  }) : sourceTransportGenerationAtBinding =
+           source is ComicResourceTransportGenerationSource
+               ? (source as ComicResourceTransportGenerationSource)
+                   .resourceTransportGenerationIdentity
+               : source;
 
   final BrowsableComicSource source;
   final ResourceCacheManager cache;
+  final Object sourceTransportGenerationAtBinding;
   static const String _chapterMetadataSchemaRevision =
       'chapter-metadata-v3-source-contract-refresh';
   static const int _maxChapterIdentityIndex = 512;
@@ -803,12 +810,38 @@ final class CachedBrowsableComicSource
   }
 
   @override
+  bool get supportsResourceBodyDelivery =>
+      source is BodyDeliveringComicResourceSource &&
+      (source as BodyDeliveringComicResourceSource).supportsResourceBodyDelivery;
+
+  @override
+  Future<ComicResourceBody> openResourceBody(
+    Uri uri, {
+    TaskControl? control,
+  }) => (source as BodyDeliveringComicResourceSource)
+      .openResourceBody(uri, control: control);
+
+  @override
   bool get supportsResourceTransformation {
     final transforming = source is TransformingComicResourceSource
         ? source as TransformingComicResourceSource
         : null;
     return transforming?.supportsResourceTransformation ?? false;
   }
+
+  @override
+  bool get supportsResourceTransformBodyDelivery =>
+      source is BodyTransformingComicResourceSource &&
+      (source as BodyTransformingComicResourceSource)
+          .supportsResourceTransformBodyDelivery;
+
+  @override
+  Future<ComicResourceBody> transformResourceBody(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  }) => (source as BodyTransformingComicResourceSource)
+      .transformResourceBody(uri, bytes, control: control);
 
   @override
   Future<Uint8List> transformResource(Uri uri, Uint8List bytes) =>

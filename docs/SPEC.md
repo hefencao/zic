@@ -229,7 +229,11 @@
   - **Venera request-scoped async cancellation**：每个 `ZicNative.requestAsync` JS waiter MUST 绑定当前 `requestId`。
   取消该 request 时 MUST 同时取消 native resolver I/O / delay waiter 并移除、
   reject其JS async bridge waiter，使正在等待 `Network.*` 的 source invocation 能立即 unwind；迟到bridge response MUST被忽略。
-  唯一 stateful invocation permit MUST继续等 `finished(requestId)` 后才可交给下一调用，MUST NOT以提前释放permit实现抢占。
+  JS `finished(requestId)`与已接纳native bridge work退出 MUST分别等待，两者齐备才可转发result并交出唯一stateful invocation permit。
+  native call MUST在原executor提交前登记、物理finally退出后退休；取消标记 MUST保留到双退出边界，迟到result/token不得复活。MUST NOT以提前释放permit实现抢占。
+  Native runtime关闭 MUST先封新调用，等待已接纳同步bridge、executor work与isolated图片primitive物理退出，再回收输入/图片并发送pending关闭结果。
+  重复driver关闭 MUST join同一`closeWhenDrained`完成边界；host MUST保留driver登记及已接纳activation到真实退出，晚到driver MUST退休后才完成host关闭。
+  Service MUST保留resolver所需FlutterEngine/Main回调到native退出，并drain原IPC读取、回包与cleanup后才清packet store；MUST NOT在Main阻塞等待或以超时/请求取消代替物理完成。
   Exclusive download-storage root switch MUST first dispose only idle retained Reader sessions,
   then inspect transfer consumers;an active mounted Reader MUST remain a blocking consumer.
   - **Android cached-presentation open boundary**：
@@ -531,7 +535,17 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   不得在 Reader、Pipeline 或 Download 层模拟上述契约。
 - Mihon runtime MUST 在同一 host Injekt scope 注册 `Application`、`NetworkHelper` 与 `Json` singleton；`Json` MUST 与 Mihon app binding 对齐：
   `ignoreUnknownKeys=true`、`explicitNulls=false`。缺失 host singleton MUST 在 plugin-host/runtime 边界修复，MUST NOT 由页面或媒体层兜底。
+- source-owned encoded body交付 MAY采用显式协商的sealed file，但source与connection MUST同时声明支持，MUST保留原client/interceptor及完整request语义。
+  raw body MUST与IPC envelope独立framing，绑定invocation/source/runtime/payload/locator并校验length/digest；MUST NOT接受调用方任意path或作为durable READY。
+  host校验 MUST服从同invocation取消并先保护已接纳文件；校验成功前 MUST NOT发布consumer path。consumer只允许一个正文stream；取消/dispose/close MUST等已接纳物理read退出再释放file，晚到response、source进程换代与host进程遗留文件 MUST有原owner清理路径。
+  交付载体 MUST NOT改变持久locator、DownloadId、cache/trust authority或既有正文validator；image admission/Range仍 MUST经过统一source transport，聚合、partial与promotion仍归DownloadJob/DownloadSession。
+  body登记 MUST持续到release完成，使并发close加入同一dispose Future；body metadata发布 MUST NOT提前释放尚未退出work的NetLane/invocation容量；sealed output MUST NOT冒充实时network streaming能力或新增retry/eligibility owner。
+  原body file owner MAY接纳同步编码器OutputStream；stream MUST有界并在producer返回后关闭再封存。写入/flush/limit/cancel失败即使被producer捕获也 MUST阻止发布，返回时仍 MUST检查取消；调用方 MUST保留原physical work生命周期，MUST NOT在callback返回后继续写入或新增pipe/队列owner。
+- Venera变换输出file能力 MUST独立协商，不得因声明transformResource而扩大到loadResource。完整输入、onResponse、canonical1/isolated2及source semantic retry MUST保持原契约。
+  变换输出 MUST由原body owner封存并绑定request/source/runtime/payload/locator；worker取消、关闭与completion替换 MUST释放未交付body，physical encode退出前 MUST NOT归还原invocation容量。
+  host MUST校验协商的operation及对应payload authority，image/Range/validator/dispose MUST消费原source transport合同；MUST NOT以载体变化更换cache/trust或durable identity。
 - Reader页面物理下载 MUST 只有composition `DownloadTransferOwner`一个retry/terminal owner；
+
   `LiveCoordinator`只协调本Reader demand与decode/upload。
   runtime标记transient/retryable的失败 MUST投影为`ErrorCode.network`并受provider的有界RetryPolicy控制；
   Venera resolver 的rhttp transport failure MUST在Dart→Kotlin→JavaScript bridge上保留typed retryability，
@@ -543,6 +557,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   但 MUST NOT 因此新建 Reader/Pipeline/network retry owner。runtime-owned `loadResource` 只有在发生非网络、非 verification source failure 时，
   MAY 标记 `sourceResourcePlanReplayEligible`。`SourceResourceTransport` MAY 在同一 logical open 内调用 `retryResource` **一次**，
   重新读取 chapter/page list 并生成 replacement request；普通 SSL/EOF MUST NOT触发该昂贵 replay，而继续归 DownloadJob network retry。
+  连接、socket/DNS、TLS或正文I/O失败的具体transport异常即使嵌套native/certificate非IO原因，MUST保持network分类，不得发布source replay资格。
+  普通`IOException`包装source/parser错误 MUST继续按来源原因裁决；`UnknownServiceException` MUST保持非网络语义。
   若 source 无 replacement、replay RPC 发生 source failure，或 replacement 再次产生同类 replay-eligible failure，MUST NOT递归 replay，
   MUST 发布 terminal `sourceResourcePlanReplayUnavailable`，由已有 source-generation refresh handoff处理；网络/verification/cancel failure MUST 原样保留。
   Reader 当前页、章节下载命令与 whole-comic queue MAY 在各自既有 owner 内各做一次整章 refresh，但 MUST NOT建立新的 Mihon retry loop。
@@ -864,16 +880,19 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `loadEp`的page identity与按需`onImageLoad` request-plan MUST和最终图片body transport区分；
   最终无状态图片HTTP由`SourceResourceTransport`/host transport执行，
   `__zicCancel(requestId)`只取消JavaScript plan invocation及其bridge-scoped工作，MUST NOT成为最终图片HTTP的第二cancel owner。
-  Venera native cancellation MUST中止该requestId所属HTTP connection/call以及正在阻塞读取的 response `InputStream`；
+  Venera requestId cancellation MUST沿原resolver transport取消该request所属已接纳HTTP请求与响应正文读取；
+  isolated Dart的rhttp `CancelToken`只负责HTTP执行，Kotlin/JS保留requestId grouping、Cookie/manual redirect与source cache authority；
+  默认系统DNS的物理退出 MUST有独立证据；HTTP Future取消、native finally或loopback成功均不得替代该验收，也不得为此新建DNS/transport owner。
   Venera bridge 的 `delay` MUST为异步、按requestId可取消的 JavaScript timer/Promise，
   MUST NOT以 native `Thread.sleep` 阻塞 WebView bridge线程。
-  单上下文 invocation permit MUST等JavaScript真正 `finished(requestId)` 后才释放；
+  单上下文 invocation permit MUST等JavaScript真正 `finished(requestId)`且该request所有已接纳native bridge call物理退出后才释放；
   仅向Dart返回“cancelled”不得提前制造第二个并发JS invocation。不得用独立FIFO覆盖NetLane决定，也不得增加Venera并发来模拟抢占。
   source response/request MAY携带只读stage diagnostics用于trace，
   包括gate wait、runtime invocation、JS hook、hook内bridge network与host-open；
   scheduler/retry/cache MUST NOT依据该观测元数据决策。
   通用 external-runtime invoke function type MUST NOT因为该观测需求增加 timing callback；
   gate/runtime timing MUST限制在 resolve-resource 专用私有 invocation seam，普通 browse/details/account不得依赖该内部诊断。
+  Venera HTTP文本与`Convert.decodeUtf8` MUST按参考UTF-8解码消费一个开头的BOM，MUST保留正文中的U+FEFF及原始二进制响应；GBK解码MUST保持独立。
   Venera source传给`Network.*`的`cache-time`与`prevent-parallel` MUST作为runtime network控制字段消费并在origin HTTP前移除，
   MUST NOT直接转发给服务器；
   Venera source-requested resolver cache MUST由native plugin-driver host/runtime-network owner持有，
@@ -886,8 +905,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT清整个source namespace、MUST NOT改变普通browse/details请求的cache语义，
   也 MUST NOT因此新增或重置同一logical open的semantic retry预算。
   当前单invocation runtime已提供比same-path prevent-parallel更强的物理串行保证，不得因此新增第二scheduler或JS并发。
-  Venera bridge正常完整消费Network HTTP response后 SHOULD关闭response stream并保留平台持久连接复用机会，MUST NOT无条件disconnect；
-  异常或request-scoped cancel MUST仍物理中止connection/stream。
+  Venera bridge正常完整消费Network HTTP response后 SHOULD保留原resolver client与持久连接复用机会；
+  异常或request-scoped cancel MUST终止该请求与正文读取，不得为单个请求关闭共享client或重建native HTTP/DNS owner。
   Venera `onLoadFailed`属于source-owned image semantic recovery而非generic transport retry：
   public `Network.fetchBinary/http_binary` MUST继续保持通用binary API，不得因图片恢复语义被收窄；
   只有host-private image binary seam及JS image transform的完整/首段2xx body MUST先以bounded magic-prefix验证为受支持编码图片；
@@ -908,6 +927,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - Native incremental decoder MUST NOT 在完整 WebP decode、scale、composite或 frame copy期间持有 encoded byte source读锁。
   source lock临界区 MAY 刷新 demux并复制下一帧所需压缩 fragment；耗时像素工作 MUST 在锁外完成，使前台 `reserve/commit` 不被后台整帧 decode阻塞。
 - App presentation MUST NOT 直接创建 `HttpClient`/`HttpURLConnection`或直接消费 source transport。
+  Android隔离插件进程 MUST 在engine/driver启动前以宿主applicationContext初始化OkHttp平台资源；MUST NOT依赖主进程Startup或以扩展payload Context替代宿主资源Context。
   Venera `Network.*` 的 source runtime仍拥有Cookie、manual redirect、
   `cache-time`、`prevent-parallel`、requestId grouping与single-JS-invocation语义，
   但实际HTTP MUST由isolated plugin Dart process的reusable rhttp/reqwest resolver client执行；
@@ -970,6 +990,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
 - 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；
   来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；
+  gallery HTML MUST使用显式HTTP(S) source-document请求，保持来源Cookie/session与调度取消；MUST NOT作为图片进入thumbnail/transform/signature/recovery链。普通图片请求的校验与有界来源恢复 MUST保留。
+  来源明确声明的 predecessor 与 successor MUST 经同一版本关系 authority 持久化为 predecessor→current 与 current→successor；MUST拒绝外源、空及自身身份，MUST保留已有发现时间和页面复用证明。MUST NOT按标题、日期或展示序号补造关系；未确认分叉 MUST仍保持 exact。
   没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
   旧版和新版都可作为同源迁移目标。
 - 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；
@@ -993,6 +1015,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。
   原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。
   固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
+  Mihon MUST 完整保留来源原生页，MUST NOT按 host limit 截断或用返回项数推算 native page；来源声明的 nextOffset MUST严格前进且仅在 hasMore=true 时合法。
+  Presentation MUST使用声明的下一请求坐标，未声明时继续按 global offset + 返回项数推进；空页但有下一坐标时 MUST保留下一页入口。
+  Venera `multiPartPage` MUST 以 null 页码加载完整分组集合，并按全局 offset 投影；集合耗尽 MUST 返回 hasMore=false，不得重复首片。普通页码与 loadNext 游标 MUST 保留来源合同。
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner切换为目标 source；
   MUST只使用**当前 Presentation request identity**的目标精确缓存直接投影，没有精确缓存时显示目标 loading/error并按当前 section/query/filter请求加载。
   Catalog可保留目标最近 projection作为诊断/内部 cache事实，但 MUST NOT用它反向改写 UI默认 section/query/filter。
@@ -1050,6 +1075,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   收起状态搜索按钮的点击与长按 MUST 由同一外层手势 owner 分发，长按 MUST 能进入聚合结果视图。
 - 最近一次聚合结果在来源列表未变化时 MUST 保留为内存投影；切换当前来源 MUST 只退出结果页并关闭搜索框聚合模式，不得清除该投影；
   再次长按搜索按钮 MUST 直接显示该结果及其查询标题，不得显示空结果提示或重复请求。
+- Venera JM 的普通浏览链接 MUST使用漫画 album 地址；JS 更新文件地址 MUST NOT作为漫画网页基址。浏览地址修正 MUST NOT改变 canonical identity、章节缓存或资源 authority。
 - Mihon APK 识别 MUST 接受 manifest 中直接字符串或字符串资源形式的 extensionLib/entry class metadata；
   多个 entry class MUST 支持逗号、分号或换行分隔。
   候选识别 MAY 使用标准 extension feature/package prefix，但加载前仍 MUST 完成 package、signer、version、ABI 与 entry class 校验。
@@ -1625,6 +1651,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   该capability MUST证明完整lower open由有限deadline覆盖，MUST NOT因为source类型、历史耗时或最终diagnostics推测。
   external source的proof MUST同时要求source resource plan/load有正的runtime-owned operation timeout与direct media transport有独立有限open deadline；
   正文读取仍 MUST逐次受6s inactivity watchdog约束。
+  self-bounded open或报告该phase handoff的open在scheduler取消后 MUST等待原pending Future和迟到response的discard退出，再完成原lane task。
+  cache/read-through wrapper转发已证明self-bounded的fallback时 MUST保持同一退出边界，不得以取消Future赢得竞速而提前归还容量。
   该 proof MUST 与 per-page controlled response loader 原子跨 App/LocalMedia composition 传入 `LoaderTransportSource.selfBoundedOpen`；
   不得只保留 loader closure 而丢失 capability。transparent wrapper若自身在fallback之前还执行未独立有界的cache/storage lookup，
   MUST NOT把整个wrapper仅因fallback self-bounded就声明为该capability；
@@ -1996,6 +2024,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 ## 10. 插件与来源
 
 - 插件 MUST 在隔离、信任和权限门禁内执行，只返回 catalog 数据、request plan 或显式有界 transform 结果。
+- runtime adapter MUST独立校验实际响应的 `maxResponseBytes`，不得仅信任backend声明。字符串键和值的预算按UTF-8计数，合法surrogate pair为4字节、孤立surrogate按U+FFFD为3字节；计数 MUST NOT物化完整encoded bytes，depth/type与binary/scalar合同保持。
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；
   首播块 SHOULD 小于持续传输块，聚合不得改变字节顺序、取消、Range/validator、artifact或重试所有权。
   `IoTransport`/平台 transport MUST保持通用 byte transport，不得拥有 image classifier、`ContentKind` 或 semantic retry。production composition 的 image physical transfer MUST在 `DownloadJob` admission 消费当前 `DownloadSession` generation-local bounded metadata prefix，并用共享 supported encoded-image signature classifier 验证新 source/local-transfer generation；prefix 达到 sniff 上限仍不匹配，或短 final body 结束仍不匹配时 MUST产生 `ErrorCode.source + sourceMediaSemanticRejected`，且新正文 MUST在 seal/promotion/READY authority 之前失败。`DownloadTransferOwner` MUST让 local-prepare completion、NetLane 前 local completion 与 source/network resident completion 共享该 gate，并在 terminal semantic rejection 后删除被拒 generation 的 partial/final authority再发布 failure。已经由 durable `artifactCache` 持有的 resident generation MUST继续交给既有 storageId+generation-aware presentation recovery；sessions 不得在缺少 cache-generation proof 时把普通 response rejection升级成 durable cache invalidation。合法 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF正文 MAY继续按既有 `fallback/webp/gif` 分类；opaque URI、扩展名和 Content-Type MUST NOT单独决定准入。
@@ -2022,6 +2051,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   image-only plane MAY 有界并行最多 2 个 transform；每个并行 worker MUST 独占 WebView 与 Bitmap namespace，
   MUST NOT共享 request-local image handle 或 `disposeAll`。Dart transform admission 与 native worker capacity MUST保持同一上限，
   MUST NOT再建立独立 FIFO queue/scheduler。
+  isolated输出编码 MUST NOT阻塞共享JavascriptInterface线程，MAY借用既有native host executor；MUST NOT新增池或扩大已接纳transform容量。
+  JS MUST等待编码物理退出回执才disposeAll/finished；取消 MUST保持worker容量到该退出边界，close MUST先drain编码再回收Bitmap。
+  编码失败或executor拒绝 MUST经原completion/finished链一次性收敛；迟到正文token MUST交回原body owner清理，transform MUST NOT关闭借用的executor。
   资格失败或运行时发现缺失 source global MUST返回 incompatible 并重新经过 canonical source gate；
   `onResponse` MUST始终只在 canonical context 执行。
   image-only plane 不得在其 transform gate 内调用 canonical WebView，也不得成为第二 source-state owner。
@@ -2121,6 +2153,7 @@ locator脱敏pattern MUST复用且普通非locator字符串 SHOULD在进入正�
 并保留 first/last、coalesced count 以及关键 timing/source length/revision 的 min/max；
 错误和生命周期边缘、retry/resume、`sourceRead` 与网络任务边缘 MUST 保留。没有Trace UI listener时记录事件 MUST NOT请求Flutter frame。
 Trace 不得成为业务状态权威来源，导出压缩 MUST NOT 驱动调度、重试或缓存，overlapping total 不得与子阶段重复参与 dominant 归因。
+Android来源正文阶段系统采集 MUST仅观测原client、stream与claim，不含URI/Cookie/header/raw requestId；关闭采集 MUST直接使用原stream，不改变取消、调度、缓存或源请求语义。
 
 正常 platform present 的逐帧 Trace MAY 省略重复投影，但 startup/stall 与 20ms 以上 platform 异常仍 MUST 可归因。
 
@@ -2154,6 +2187,11 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    缓存首显后的 source refresh MUST 更新当前 route/面板。“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。
    同源替换对已验证等价的 durable source artifact MUST 物化为目标 exact DownloadId，确保移除旧记录或重启后仍不重新下载；未验证页面 MUST NOT 复用。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。
+   source对象和newest-first列表 MUST原样保存；opaque章节ID内source ordinal MUST保持identity兼容，向外sequence MUST投影为oldest-first逻辑序号，旧持久目录MUST通过同一source合同适配而不得重写下载ID。
+   Reader当前章定位 MUST优先exact ID；同source/comic内 MAY以唯一完整source model一致性处理host ordinal/parent locator变化。URL单独或歧义匹配 MUST NOT作为定位proof，逻辑定位 MUST NOT授权page复用或改写ID。
+   只读详情 MAY将同source/comic的既存metadata投影到唯一完整source model对应的当前章节行，MUST以快照实际章节作用域保留历史进度/手动已读且不重复计数，不以route别名过滤；歧义、模型变化及跨scope MUST NOT归并。
+   显示投影 MAY消费紧凑Home快照中的已存页数，MUST NOT据此授权占位正文复用或改变预览跳章的页数裁决。MUST NOT改变source catalog、持久ID或下载/删除/已读写入身份；继续阅读 MUST保持真实历史记录入口。
+   同source+canonical漫画URL的getMangaUpdate MUST在runtime owner内互斥且等待可取消；不同漫画不得受全局FIFO阻塞。active取消回执MUST等待真实调用退出；无可取消context的suspend调用MUST先drain continuation再释放互斥与runtime completion。
    TachiyomiX 1.6/current Mihon MUST 先调用 `getMangaUpdate(manga, existingChapters, ..., fetchChapters=true)`；
    只有 combined能力明确不存在时 MAY回退 legacy `fetchMangaDetails/fetchChapterList`。
    正文 MUST先调用 `getPageList(SChapter)`，只有能力不存在时 MAY回退 `fetchPageList`。成功空列表是合法结果；真实调用错误保持失败。
@@ -2178,6 +2216,10 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
 12. Mihon `imageRequest(page)`（或等价 source request）的 URL、
     method、headers与必要 request body MUST 原样进入 `ComicResourceRequest`；GET/HEAD body MUST 为 null。
     宿主直连 MAY补 source OkHttp CookieJar的当前 Cookie与 browser-session UA，但不得把普通图片完整 body路由回插件 JSON/Base64 RPC。
+    HTTP响应Cookie MUST保留domain/name/path身份及Secure、host-only和有效期，只发送未过期且匹配请求URL的Cookie；同名不同path MUST独立保留并优先发送长path。
+    异步CookieManager镜像 MUST NOT恢复请求domain/path范围内已知的过期/删除Cookie或扩大已知Secure范围；另一path的同名响应Cookie MUST NOT屏蔽请求URL上的未知镜像Cookie。既有浏览器快照revision/UA交接保持在原network bridge适配器；镜像header没有属性，同名且范围重叠的未知身份仍无法完整还原。
+    canonical default-client的三类精确拦截器 MUST被host capability判定视为可重放；source-loader所属/未知拦截器 MUST继续使用runtime兼容路径。
+    该判定 MUST NOT扩大到整个interceptor包或关闭redirect、Set-Cookie、非媒体prefix的source recovery边界。
 - 同源版本媒体复用 MUST 将强identity/offset验证收敛为当前chapter的bounded preparation并持久化chapter mapping。
   详情/version-state发现relation后 SHOULD异步warm实际有缓存状态的当前chapter；
   普通Reader route只消费本地mapping并立即进入Pipeline，MUST NOT为generic历史relation同步做source proof。

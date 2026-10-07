@@ -62,10 +62,52 @@ String? canonicalMihonComicIdentity({
   return uri == null ? null : _canonicalWebIdentity(uri);
 }
 
+/// Logical ordering for current and persisted source chapter metadata.
+/// Mihon opaque IDs retain their newest-first source ordinal for identity
+/// compatibility. Old stored metadata can still report that ordinal as sequence.
+/// Compare through the source contract without rewriting chapter/download IDs.
+int sourceLogicalChapterOrderKey({
+  required String chapterId,
+  required int sequence,
+}) {
+  final decoded = _decodeOpaqueIdentity(chapterId, 'mihon:chapter:', 'chapter');
+  final sourceOrdinal = decoded?['sequence'];
+  return sourceOrdinal is int && sourceOrdinal >= 0 ? -sourceOrdinal : sequence;
+}
+
+/// Compares the complete source-owned SChapter model within one source/comic.
+/// Host catalog ordinal and parent locator may change across refreshes. This
+/// key only locates a logical catalog position; it never proves page reuse or
+/// replaces the original runtime chapter ID. URL/name/memo all remain inputs.
+String? mihonChapterModelComparisonKey(String chapterId) {
+  final decoded = _decodeOpaqueIdentity(chapterId, 'mihon:chapter:', 'chapter');
+  final url = decoded?['url'];
+  if (decoded == null || url is! String || url.trim().isEmpty) return null;
+  Object? ordered(Object? value) {
+    if (value is Map<String, dynamic>) {
+      final keys = value.keys.toList(growable: false)..sort();
+      return <String, Object?>{for (final key in keys) key: ordered(value[key])};
+    }
+    if (value is List) return value.map(ordered).toList(growable: false);
+    return value;
+  }
+  final model = <String, dynamic>{
+    for (final entry in decoded.entries)
+      if (entry.key != 'kind' && entry.key != 'comicId' &&
+          entry.key != 'sequence') entry.key: entry.value,
+  };
+  return jsonEncode(ordered(model));
+}
+
 Uri? _resolveVeneraComicWebUri({
   required String comicId,
   required Uri sourceWebsite,
 }) {
+  final raw = _veneraRawComicId(comicId);
+  return raw == null ? null : sourceWebsite.resolve(raw);
+}
+
+String? _veneraRawComicId(String comicId) {
   const prefix = 'venera:comic:';
   if (!comicId.startsWith(prefix)) return null;
   try {
@@ -76,10 +118,35 @@ Uri? _resolveVeneraComicWebUri({
     if (decoded is! Map<String, dynamic>) return null;
     final raw = decoded['id'];
     if (raw is! String || raw.trim().isEmpty) return null;
-    return sourceWebsite.resolve(raw.trim());
+    return raw.trim();
   } on Object {
     return null;
   }
+}
+
+Uri? _resolveVeneraBrowserComicWebUri({
+  required String comicId,
+  required String sourceKey,
+  required Uri sourceWebsite,
+}) {
+  if (sourceKey != 'jm') {
+    return _resolveVeneraComicWebUri(
+      comicId: comicId, sourceWebsite: sourceWebsite,
+    );
+  }
+  final raw = _veneraRawComicId(comicId);
+  if (raw == null) return null;
+  final absolute = Uri.tryParse(raw);
+  if (absolute != null && absolute.host.isNotEmpty &&
+      (absolute.scheme == 'https' || absolute.scheme == 'http')) {
+    return absolute;
+  }
+  final album = RegExp(r'^(?:jm)?([0-9]+)$').firstMatch(raw);
+  if (album == null) return null;
+  // JM's source.url is its update script, not a browser website. This
+  // compatibility link is presentation-only; canonical identity stays on
+  // the existing source projection and never consumes this browser URL.
+  return Uri.parse('https://18comic.ink/album/${album.group(1)}');
 }
 
 String _canonicalWebIdentity(Uri uri) {
@@ -168,6 +235,9 @@ final class ExternalPluginRuntimeSession
           format: plugin.format,
           descriptor: descriptor,
           resourceOperationTimeout: _limits.invocationTimeout,
+          bodyConnection: connection is BodyExternalPluginRuntimeConnection
+              ? connection as BodyExternalPluginRuntimeConnection
+              : null,
           invoke: _invoke,
           resolveResourceInvoke: _resolveResourceInvocation,
         ),
@@ -284,60 +354,79 @@ final class ExternalPluginRuntimeSession
         cause: error,
       );
     }
-    _throwIfTaskCancelled(control);
-    if (response.requestId != request.requestId) {
-      throw Failure(
-        code: ErrorCode.source,
-        message: 'external plugin response request identity mismatch',
+    try {
+      _throwIfTaskCancelled(control);
+      if (response.requestId != request.requestId) {
+        throw Failure(
+          code: ErrorCode.source,
+          message: 'external plugin response request identity mismatch',
+        );
+      }
+      final runtimeError = response.error;
+      if (runtimeError != null) {
+        final verificationRequired =
+            runtimeError.code == 'source-verification-required';
+        final runtimeCancelled =
+            runtimeError.code == 'runtime-request-cancelled' ||
+            runtimeError.code == 'cancelled';
+        throw Failure(
+          code: verificationRequired
+              ? ErrorCode.sourceVerificationRequired
+              : runtimeCancelled
+                  ? ErrorCode.cancelled
+                  : runtimeError.retryable
+                      ? ErrorCode.network
+                      : ErrorCode.source,
+          message: '${runtimeError.code}: ${runtimeError.message}',
+          cause: runtimeError,
+          details: <String, Object?>{
+            ...runtimeError.details,
+            'runtimeErrorCode': runtimeError.code,
+            'runtimeRetryable': runtimeError.retryable,
+          },
+        );
+      }
+      final payload = response.payload;
+      if (payload == null) {
+        throw const Failure(
+          code: ErrorCode.source,
+          message: 'external plugin response payload is missing',
+        );
+      }
+      if (ExternalPluginRuntimeBodyFile.isBodyFile(payload) &&
+          ExternalPluginRuntimeBodyFile.fromMessage(payload).byteLength >
+              _limits.maxResponseBytes) {
+        throw const Failure(
+          code: ErrorCode.source,
+          message: 'external plugin body exceeds response limit',
+        );
+      }
+      final size = _wireSize(payload);
+      if (size > _limits.maxResponseBytes) {
+        throw Failure(
+          code: ErrorCode.source,
+          message: 'external plugin response exceeds limit: '
+              '$size > ${_limits.maxResponseBytes}',
+        );
+      }
+      return _RuntimeInvocationResult(
+        payload: payload,
+        gateWaitMicros: gateWaitMicros,
+        runtimeInvocationMicros: runtimeInvocationMicros,
+        gateBlockedByOperation: gateBlockedByOperation,
+        gateBlockedByPriority: gateBlockedByPriority,
+        gateBlockedByControlled: gateBlockedByControlled,
       );
+    } on Object {
+      final connection = _connection;
+      if (connection is BodyExternalPluginRuntimeConnection &&
+          ExternalPluginRuntimeBodyFile.isBodyFile(response.payload)) {
+        await (connection as BodyExternalPluginRuntimeConnection).discardResourceBody(
+          ExternalPluginRuntimeBodyFile.fromMessage(response.payload),
+        );
+      }
+      rethrow;
     }
-    final runtimeError = response.error;
-    if (runtimeError != null) {
-      final verificationRequired =
-          runtimeError.code == 'source-verification-required';
-      final runtimeCancelled =
-          runtimeError.code == 'runtime-request-cancelled' ||
-          runtimeError.code == 'cancelled';
-      throw Failure(
-        code: verificationRequired
-            ? ErrorCode.sourceVerificationRequired
-            : runtimeCancelled
-                ? ErrorCode.cancelled
-                : runtimeError.retryable
-                    ? ErrorCode.network
-                    : ErrorCode.source,
-        message: '${runtimeError.code}: ${runtimeError.message}',
-        cause: runtimeError,
-        details: <String, Object?>{
-          ...runtimeError.details,
-          'runtimeErrorCode': runtimeError.code,
-          'runtimeRetryable': runtimeError.retryable,
-        },
-      );
-    }
-    final payload = response.payload;
-    if (payload == null) {
-      throw const Failure(
-        code: ErrorCode.source,
-        message: 'external plugin response payload is missing',
-      );
-    }
-    final size = _wireSize(payload);
-    if (size > _limits.maxResponseBytes) {
-      throw Failure(
-        code: ErrorCode.source,
-        message: 'external plugin response exceeds limit: '
-            '$size > ${_limits.maxResponseBytes}',
-      );
-    }
-    return _RuntimeInvocationResult(
-      payload: payload,
-      gateWaitMicros: gateWaitMicros,
-      runtimeInvocationMicros: runtimeInvocationMicros,
-      gateBlockedByOperation: gateBlockedByOperation,
-      gateBlockedByPriority: gateBlockedByPriority,
-      gateBlockedByControlled: gateBlockedByControlled,
-    );
   }
 
   Future<_RuntimeInvocationResult> _resolveResourceInvocation(
@@ -425,18 +514,25 @@ final class _RuntimeBrowsableComicSource
         RetryableComicResourceSource, ControlledRetryableComicResourceSource,
         RefreshableComicResourceSource, ControlledRefreshableComicResourceSource,
         ControlledComicResourceSource,
+        BodyDeliveringComicResourceSource,
+        BodyTransformingComicResourceSource,
         TransformingComicResourceSource, ControlledTransformingComicResourceSource,
         ComicResourceTransportGenerationSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
     required Duration resourceOperationTimeout,
+    required BodyExternalPluginRuntimeConnection? bodyConnection,
     required _RuntimeInvoke invoke,
     required _RuntimeResolveResourceInvoke resolveResourceInvoke,
   })  : _format = format,
         _browserUserAgent = descriptor.browserUserAgent,
         _supportsComicPreview = descriptor.supportsComicPreview,
         _supportsComicComments = descriptor.supportsComicComments,
+        _bodyConnection = bodyConnection,
+        _supportsResourceBodyDelivery = descriptor.supportsResourceBodyDelivery,
+        _supportsResourceTransformBodyDelivery =
+            descriptor.supportsResourceTransformBodyDelivery,
         _externalId = descriptor.externalId,
         _resourceOperationTimeout = resourceOperationTimeout,
         _invoke = invoke,
@@ -460,11 +556,14 @@ final class _RuntimeBrowsableComicSource
   final String? _browserUserAgent;
   final bool _supportsComicPreview;
   final bool _supportsComicComments;
+  final BodyExternalPluginRuntimeConnection? _bodyConnection;
+  final bool _supportsResourceBodyDelivery;
+  final bool _supportsResourceTransformBodyDelivery;
   final String _externalId;
   final _RuntimeInvoke _invoke;
   final _RuntimeResolveResourceInvoke _resolveResourceInvoke;
-  final Map<Uri, Future<Uint8List>> _resourceLoads =
-      <Uri, Future<Uint8List>>{};
+  final Map<(Uri, bool), Future<Uint8List>> _resourceLoads =
+      <(Uri, bool), Future<Uint8List>>{};
   final Map<Uri, String> _isolatedModifyImages = <Uri, String>{};
   Object _resourceTransportGenerationIdentity = Object();
 
@@ -485,8 +584,9 @@ final class _RuntimeBrowsableComicSource
             sourceWebsite: descriptor.website,
           ),
         ExternalComicPluginFormat.veneraJavaScript =>
-          _resolveVeneraComicWebUri(
+          _resolveVeneraBrowserComicWebUri(
             comicId: comicId,
+            sourceKey: _externalId,
             sourceWebsite: descriptor.website,
           ),
       };
@@ -620,10 +720,18 @@ final class _RuntimeBrowsableComicSource
     if (resultOffset != offset) {
       throw const FormatException('runtime browse offset mismatch');
     }
+    final hasMore = _bool(message, 'hasMore');
+    final nextOffset = message['nextOffset'] == null
+        ? null
+        : _nonNegativeInt(message, 'nextOffset');
+    if (nextOffset != null && (!hasMore || nextOffset <= resultOffset)) {
+      throw const FormatException('runtime browse next offset must advance');
+    }
     return SourceBrowsePage(
       items: items,
       offset: resultOffset,
-      hasMore: _bool(message, 'hasMore'),
+      hasMore: hasMore,
+      nextOffset: nextOffset,
     );
   }
 
@@ -694,9 +802,12 @@ final class _RuntimeBrowsableComicSource
     // VibeVenera discovers E-Hentai successors from the current page's
     // #gnd relation instead of issuing a title search. Reuse the existing
     // Venera resource channel so its WebView cookie/session context remains
-    // available, while keeping opaque comic IDs inside this adapter.
+    // available. This is a document, not an artwork/image request: thumbnail
+    // hooks and encoded-image validation must not consume the gallery HTML.
     final html = utf8.decode(
-      await loadResourceControlled(uri, control: control),
+      await _loadResourceControlled(
+        uri, control: control, sourceDocument: true,
+      ),
       allowMalformed: true,
     );
     return _parseVeneraComicVersions(
@@ -896,9 +1007,66 @@ final class _RuntimeBrowsableComicSource
       loadResourceControlled(uri);
 
   @override
+  bool get supportsResourceBodyDelivery =>
+      _supportsResourceBodyDelivery &&
+      (_bodyConnection?.supportsResourceBodyDelivery ?? false);
+
+  @override
+  Future<ComicResourceBody> openResourceBody(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
+    if (!supportsResourceBodyDelivery || !uri.hasScheme) {
+      throw StateError('runtime source cannot deliver this body');
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadResource,
+      _externalId,
+      <String, Object?>{
+        'uri': uri.toString(),
+        'bodyDelivery': ExternalPluginRuntimeBodyFile.delivery,
+      },
+      control: control,
+    );
+    final reference = ExternalPluginRuntimeBodyFile.fromMessage(payload);
+    return _takeResourceBody(reference, control: control);
+  }
+
+  Future<ComicResourceBody> _takeResourceBody(
+    ExternalPluginRuntimeBodyFile reference, {
+    TaskControl? control,
+  }) async {
+    final connection = _bodyConnection!;
+    try {
+      _throwIfTaskCancelled(control);
+      final body = await connection.takeResourceBody(reference);
+      if (control != null) {
+        unawaited(control.whenCancelled.then((_) async {
+          try {
+            await body.dispose();
+          } on Object {
+            // The original response discard/close observes disposal failure.
+          }
+        }));
+      }
+      _throwIfTaskCancelled(control);
+      return body;
+    } on Object {
+      await connection.discardResourceBody(reference);
+      rethrow;
+    }
+  }
+
+  @override
   Future<Uint8List> loadResourceControlled(
     Uri uri, {
     TaskControl? control,
+  }) => _loadResourceControlled(uri, control: control);
+
+  Future<Uint8List> _loadResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+    bool sourceDocument = false,
   }) {
     if (!uri.hasScheme) {
       throw ArgumentError.value(uri, 'uri', 'must be absolute');
@@ -914,30 +1082,37 @@ final class _RuntimeBrowsableComicSource
     // runtime Future. A current page must not inherit a prefetch task's
     // cancellation or its place in the single Venera invocation queue.
     if (control != null) {
-      return _loadResource(uri, control: control);
+      return _loadResource(
+        uri, control: control, sourceDocument: sourceDocument,
+      );
     }
-    final existing = _resourceLoads[uri];
+    final key = (uri, sourceDocument);
+    final existing = _resourceLoads[key];
     if (existing != null) {
       return existing;
     }
     late final Future<Uint8List> load;
-    load = _loadResource(uri).whenComplete(() {
-      if (identical(_resourceLoads[uri], load)) {
-        _resourceLoads.remove(uri);
+    load = _loadResource(uri, sourceDocument: sourceDocument).whenComplete(() {
+      if (identical(_resourceLoads[key], load)) {
+        _resourceLoads.remove(key);
       }
     });
-    _resourceLoads[uri] = load;
+    _resourceLoads[key] = load;
     return load;
   }
 
   Future<Uint8List> _loadResource(
     Uri uri, {
     TaskControl? control,
+    bool sourceDocument = false,
   }) async {
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.loadResource,
       _externalId,
-      <String, Object?>{'uri': uri.toString()},
+      <String, Object?>{
+        'uri': uri.toString(),
+        if (sourceDocument) 'sourceDocument': true,
+      },
       control: control,
     );
     if (payload is! Uint8List) {
@@ -962,6 +1137,44 @@ final class _RuntimeBrowsableComicSource
     Uint8List bytes, {
     TaskControl? control,
   }) async {
+    final payload = await _transformResource(uri, bytes, control: control);
+    if (payload is! Uint8List) {
+      throw const FormatException(
+        'runtime transformed resource result must be a binary payload',
+      );
+    }
+    return payload;
+  }
+
+  @override
+  bool get supportsResourceTransformBodyDelivery =>
+      supportsResourceTransformation &&
+      _supportsResourceTransformBodyDelivery &&
+      (_bodyConnection?.supportsResourceBodyDelivery ?? false);
+
+  @override
+  Future<ComicResourceBody> transformResourceBody(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  }) async {
+    if (!supportsResourceTransformBodyDelivery || !uri.hasScheme) {
+      throw StateError('runtime source cannot deliver this transform body');
+    }
+    final payload = await _transformResource(
+      uri, bytes, control: control, bodyDelivery: true,
+    );
+    return _takeResourceBody(
+      ExternalPluginRuntimeBodyFile.fromMessage(payload), control: control,
+    );
+  }
+
+  Future<Object> _transformResource(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+    bool bodyDelivery = false,
+  }) async {
     final isolatedModifyImage = _isolatedModifyImages[uri];
     if (isolatedModifyImage != null) {
       try {
@@ -971,15 +1184,11 @@ final class _RuntimeBrowsableComicSource
           <String, Object?>{
             'uri': uri.toString(),
             'bytes': bytes,
+            if (bodyDelivery) 'bodyDelivery': ExternalPluginRuntimeBodyFile.delivery,
             _isolatedModifyImageArgument: isolatedModifyImage,
           },
           control: control,
         );
-        if (isolatedPayload is! Uint8List) {
-          throw const FormatException(
-            'runtime isolated transformed resource result must be a binary payload',
-          );
-        }
         return isolatedPayload;
       } on Failure catch (error) {
         final runtimeErrorCode = error.details['runtimeErrorCode'];
@@ -990,21 +1199,16 @@ final class _RuntimeBrowsableComicSource
         _isolatedModifyImages.remove(uri);
       }
     }
-    final payload = await _invoke(
+    return _invoke(
       ExternalPluginRuntimeOperation.transformResource,
       _externalId,
       <String, Object?>{
         'uri': uri.toString(),
         'bytes': bytes,
+        if (bodyDelivery) 'bodyDelivery': ExternalPluginRuntimeBodyFile.delivery,
       },
       control: control,
     );
-    if (payload is! Uint8List) {
-      throw const FormatException(
-        'runtime transformed resource result must be a binary payload',
-      );
-    }
-    return payload;
   }
 
   @override
@@ -1735,7 +1939,7 @@ int _wireSize(Object? value, [int depth = 0]) {
     return value.lengthInBytes;
   }
   if (value is String) {
-    return utf8.encode(value).length;
+    return _utf8ByteLength(value);
   }
   if (value is bool || value is int || value is double) {
     return 8;
@@ -1752,7 +1956,7 @@ int _wireSize(Object? value, [int depth = 0]) {
       if (entry.key is! String) {
         throw const FormatException('runtime response map key is not a string');
       }
-      size += utf8.encode(entry.key as String).length;
+      size += _utf8ByteLength(entry.key as String);
       size += _wireSize(entry.value, depth + 1);
     }
     return size;
@@ -1760,6 +1964,31 @@ int _wireSize(Object? value, [int depth = 0]) {
   throw FormatException(
     'runtime response contains unsupported ${value.runtimeType}',
   );
+}
+
+int _utf8ByteLength(String value) {
+  var size = 0;
+  for (var index = 0; index < value.length; index++) {
+    final unit = value.codeUnitAt(index);
+    if (unit < 0x80) {
+      size++;
+    } else if (unit < 0x800) {
+      size += 2;
+    } else if (unit >= 0xd800 && unit <= 0xdbff &&
+        index + 1 < value.length) {
+      final next = value.codeUnitAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        size += 4;
+        index++;
+      } else {
+        size += 3;
+      }
+    } else {
+      // Unpaired surrogates use the encoder's U+FFFD replacement (three bytes).
+      size += 3;
+    }
+  }
+  return size;
 }
 
 Chapter _chapter(Map<String, Object?> value, String comicId) {

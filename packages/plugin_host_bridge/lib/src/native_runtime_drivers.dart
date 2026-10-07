@@ -96,7 +96,7 @@ final class AndroidNativeExternalPluginRuntimeDriverFactory
 }
 
 final class _AndroidNativeExternalPluginRuntimeDriver
-    implements ExternalPluginRuntimeDriver {
+    implements ExternalPluginRuntimeDriver, BodyExternalPluginRuntimeDriver {
   _AndroidNativeExternalPluginRuntimeDriver({
     required MethodChannel channel,
     required this.driverId,
@@ -132,6 +132,7 @@ final class _AndroidNativeExternalPluginRuntimeDriver
     }
     cancellation.throwIfCancelled();
     var completed = false;
+    Object? receivedPayload;
     unawaited(
       cancellation.whenCancelled.then((_) async {
         if (completed || _closing) {
@@ -159,6 +160,7 @@ final class _AndroidNativeExternalPluginRuntimeDriver
           'request': request.toMessage(),
         },
       );
+      receivedPayload = value;
       cancellation.throwIfCancelled();
       if (value == null) {
         throw ExternalPluginRuntimeDriverException(
@@ -185,8 +187,20 @@ final class _AndroidNativeExternalPluginRuntimeDriver
       );
     } finally {
       completed = true;
+      if (cancellation.isCancelled &&
+          ExternalPluginRuntimeBodyFile.isBodyFile(receivedPayload)) {
+        await discardResourceBody(
+          ExternalPluginRuntimeBodyFile.fromMessage(receivedPayload),
+        );
+      }
     }
   }
+
+  @override
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference) =>
+      _channel.invokeMethod<void>(
+        'discardExternalRuntimeResourceBody', reference.toMessage(),
+      );
 
   @override
   Future<void> close() => _closeFuture ??= _close();

@@ -13,7 +13,9 @@ import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodChannel
+import okhttp3.OkHttp
 import java.util.ArrayDeque
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -39,6 +41,7 @@ class ExternalPluginRuntimeService : Service() {
     private var runtimeChannel: MethodChannel? = null
     private var dartReady = false
     private var closing = false
+    private var packetAdmissionClosed = false
     private var bootstrapFailure: String? = null
     private lateinit var nativeDrivers: NativeExternalPluginDriverHost
 
@@ -66,19 +69,43 @@ class ExternalPluginRuntimeService : Service() {
             "runtime-process-terminated",
             "isolated plugin runtime service terminated",
         )
-        runtimeChannel?.setMethodCallHandler(null)
-        if (::nativeDrivers.isInitialized) nativeDrivers.close()
-        runtimeChannel = null
-        engine?.destroy()
-        engine = null
-        requestExecutor.shutdownNow()
-        responseExecutor.shutdownNow()
-        packetStore.clear()
+        val drained = if (::nativeDrivers.isInitialized) {
+            nativeDrivers.closeWhenDrained()
+        } else {
+            CompletableFuture.completedFuture(Unit)
+        }
+        drained.whenComplete { _, _ -> mainHandler.post {
+            // Native resolver callbacks still need this engine and Main until
+            // admitted work exits. Never wait for those callbacks on Main.
+            runtimeChannel?.setMethodCallHandler(null)
+            runtimeChannel = null
+            engine?.destroy()
+            engine = null
+            drainPacketExecutors()
+        } }
         super.onDestroy()
+    }
+
+    private fun drainPacketExecutors() {
+        packetAdmissionClosed = true
+        // Each fence posts after the preceding executor work. Its Main callback
+        // runs after those reads/replies, including their cleanup submissions.
+        requestExecutor.execute { mainHandler.post {
+            requestExecutor.shutdown()
+            responseExecutor.execute { mainHandler.post {
+                responseExecutor.execute {
+                    packetStore.clear()
+                    responseExecutor.shutdown()
+                }
+            } }
+        } }
     }
 
     private fun bootstrapEngine() {
         runCatching {
+            // AndroidX Startup does not run in this service process. Use the
+            // host Context for OkHttp's domain resources before loading plugins.
+            OkHttp.initialize(applicationContext)
             val loader = FlutterInjector.instance().flutterLoader()
             loader.startInitialization(applicationContext)
             loader.ensureInitializationComplete(applicationContext, null)
@@ -109,6 +136,19 @@ class ExternalPluginRuntimeService : Service() {
                         }
                     }
                     nativeDrivers.handles(call.method) -> nativeDrivers.handle(call, result)
+                    call.method == RuntimeServiceIpc.DISCARD_BODY_METHOD -> {
+                        responseExecutor.execute {
+                            val discarded = runCatching { packetStore.discardBody(call.arguments) }
+                            mainHandler.post {
+                                discarded.fold(
+                                    onSuccess = { result.success(null) },
+                                    onFailure = { error ->
+                                        result.error("runtime-body-invalid", error.message, null)
+                                    },
+                                )
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -133,6 +173,16 @@ class ExternalPluginRuntimeService : Service() {
         val replyTo = message.replyTo ?: return
         val requestId = message.data.getLong(RuntimeServiceIpc.KEY_REQUEST_ID, -1L)
         if (requestId < 0) {
+            return
+        }
+        if (closing) {
+            if (!packetAdmissionClosed) replyError(
+                requestId,
+                replyTo,
+                "runtime-process-closing",
+                "isolated plugin runtime service is closing",
+                null,
+            )
             return
         }
         val requestBundle = Bundle(message.data)
@@ -344,7 +394,25 @@ class ExternalPluginRuntimeService : Service() {
                             request.requestId,
                         )
                         response.data = bundle
-                        runCatching { request.replyTo.send(response) }
+                        val body = packetStore.bodyFromEnvelope(envelope)
+                        runCatching { request.replyTo.send(response) }.onFailure {
+                            packetStore.delete(bundle)
+                            if (body != null) {
+                                responseExecutor.execute { packetStore.discardBody(body.toMessage()) }
+                            }
+                        }
+                        if (body != null) {
+                            mainHandler.postDelayed(
+                                {
+                                    if (!closing) {
+                                        responseExecutor.execute {
+                                            packetStore.discardBody(body.toMessage())
+                                        }
+                                    }
+                                },
+                                PACKET_RETENTION_MILLIS,
+                            )
+                        }
                         if (bundle.getString(RuntimeServiceIpc.KEY_PAYLOAD_PATH) != null) {
                             val retainedPacket = Bundle(bundle)
                             mainHandler.postDelayed(
@@ -354,6 +422,7 @@ class ExternalPluginRuntimeService : Service() {
                         }
                     },
                     onFailure = {
+                        packetStore.deleteEnvelopeBody(envelope)
                         val fallback = RuntimeServiceWireCodec.encode(
                             mapOf(
                                 "ok" to false,

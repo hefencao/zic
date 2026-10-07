@@ -58,7 +58,9 @@ require(
     'private val memoryByHost',
     'AndroidBrowserCookieSession.readCookies(',
     'snapshot.cookies.forEach',
-    'merged.putIfAbsent',
+    'CookieIdentity(cookie.name, cookie.path)',
+    'it.expiresAt > now && it.matches(url)',
+    'pair.first !in coveredNames',
 )
 require(
     'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserActivity.kt',
@@ -103,6 +105,7 @@ require(
     'tool/check.sh',
     'test_dev152_mihon_cloudflare_verification_handoff.py',
     'test_dev152_mihon_cloudflare_cookie_handoff.py',
+    'test_android_cookie_jar.py',
 )
 for path in (
     'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt',

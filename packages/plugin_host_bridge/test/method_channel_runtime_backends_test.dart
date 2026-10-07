@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -14,6 +16,333 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
   });
+
+  for (final action in <String>['consume', 'discard', 'close']) {
+    test('platform body lease $action releases its verified file once', () async {
+      final root = await Directory.systemTemp.createTemp('zic-body-channel-');
+      addTearDown(() => root.delete(recursive: true));
+      final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]);
+      final file = await File('${root.path}/verified.lease').writeAsBytes(bytes);
+      final reference = _bodyReference(bytes);
+      var releases = 0;
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return switch (call.method) {
+          ExternalPluginRuntimeServiceMethods.activateMihon => <String, Object?>{
+            'processId': 'process-1', 'sessionId': 'session-1',
+            'handshake': _handshake('body-runtime'),
+          },
+          ExternalPluginRuntimeServiceMethods.invoke =>
+            ExternalPluginRuntimeResponse.success(
+              requestId: 'body-request', payload: reference.toMessage(),
+            ).toMessage(),
+          'claimExternalRuntimeResourceBody' => (() {
+            expect(call.arguments, <String, Object?>{
+              'processId': 'process-1', 'sessionId': 'session-1',
+              'requestId': 'body-request', 'reference': reference.toMessage(),
+            });
+            return file.path;
+          })(),
+          'releaseExternalRuntimeResourceBody' => await (() async {
+            releases++;
+            await file.delete();
+          })(),
+          ExternalPluginRuntimeServiceMethods.closeSession => null,
+          _ => throw MissingPluginException(call.method),
+        };
+      });
+      final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
+          .activate(_mihonRequest());
+      final bodyConnection = connection as BodyExternalPluginRuntimeConnection;
+      final response = await connection.invoke(_bodyRequest());
+      expect(response.payload, reference.toMessage());
+      if (action == 'close') {
+        await connection.close();
+      } else if (action == 'discard') {
+        await bodyConnection.discardResourceBody(reference);
+        await connection.close();
+      } else {
+        final body = await bodyConnection.takeResourceBody(reference);
+        await expectLater(bodyConnection.takeResourceBody(reference), throwsStateError);
+        expect((await body.open().toList()).expand((c) => c), bytes);
+        await body.dispose();
+        await connection.close();
+      }
+      expect(releases, 1);
+      expect(await file.exists(), isFalse);
+      expect(calls.where((m) => m == 'claimExternalRuntimeResourceBody'), hasLength(1));
+    });
+  }
+
+  for (final binding in <String>[
+    'valid', 'authority', 'operation', 'uri', 'runtime', 'source', 'no negotiation',
+  ]) {
+    test('Venera transform body $binding binding is checked before claim', () async {
+      final root = await Directory.systemTemp.createTemp('zic-transform-channel-');
+      addTearDown(() => root.delete(recursive: true));
+      final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]);
+      final file = await File('${root.path}/verified.lease').writeAsBytes(bytes);
+      final message = _veneraBodyReference(bytes).toMessage();
+      if (binding == 'authority') message['authorityRevision'] = 'venera-runtime-transform-v1:old';
+      if (binding == 'uri') message['resourceUri'] = 'venera-resource:other';
+      if (binding == 'runtime') message['runtimeId'] = 'other-runtime';
+      if (binding == 'source') message['externalSourceId'] = 'other-source';
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return switch (call.method) {
+          ExternalPluginRuntimeServiceMethods.activateVenera => <String, Object?>{
+            'processId': 'process-1', 'sessionId': 'session-1',
+            'handshake': _handshake('body-runtime'),
+          },
+          ExternalPluginRuntimeServiceMethods.invoke => ExternalPluginRuntimeResponse.success(
+            requestId: 'body-request', payload: message,
+          ).toMessage(),
+          'claimExternalRuntimeResourceBody' => file.path,
+          'releaseExternalRuntimeResourceBody' => await (() async {
+            await file.delete();
+          })(),
+          'discardExternalRuntimeResourceBody' => null,
+          ExternalPluginRuntimeServiceMethods.closeSession => null,
+          _ => throw MissingPluginException(call.method),
+        };
+      });
+      final connection = await AndroidVeneraSandboxRuntimeBackend(channel: channel)
+          .activate(_veneraRequest());
+      final request = binding == 'operation' ? ExternalPluginRuntimeRequest(
+        requestId: 'body-request', operation: ExternalPluginRuntimeOperation.loadResource,
+        externalSourceId: 'fixture', arguments: <String, Object?>{
+          'uri': 'venera-resource:unchanged', 'bodyDelivery': 'sealed-file-v1',
+        },
+      ) : _veneraBodyRequest(delivery: binding != 'no negotiation');
+      if (binding == 'valid') {
+        final response = await connection.invoke(request);
+        final body = await (connection as BodyExternalPluginRuntimeConnection)
+            .takeResourceBody(ExternalPluginRuntimeBodyFile.fromMessage(response.payload));
+        expect((await body.open().toList()).expand((c) => c), bytes);
+        await body.dispose();
+        expect(calls.where((c) => c == 'releaseExternalRuntimeResourceBody'), hasLength(1));
+      } else {
+        await expectLater(connection.invoke(request), throwsFormatException);
+        expect(calls, contains('discardExternalRuntimeResourceBody'));
+        expect(calls, isNot(contains('claimExternalRuntimeResourceBody')));
+      }
+      await connection.close();
+    });
+  }
+
+  test('runtime close joins a body release already in progress', () async {
+    final root = await Directory.systemTemp.createTemp('zic-body-release-');
+    addTearDown(() => root.delete(recursive: true));
+    final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]);
+    final file = await File('${root.path}/verified.lease').writeAsBytes(bytes);
+    final reference = _bodyReference(bytes);
+    final releasing = Completer<void>();
+    final finishRelease = Completer<void>();
+    var closed = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case ExternalPluginRuntimeServiceMethods.activateMihon:
+          return <String, Object?>{
+            'processId': 'process-1', 'sessionId': 'session-1',
+            'handshake': _handshake('body-runtime'),
+          };
+        case ExternalPluginRuntimeServiceMethods.invoke:
+          return ExternalPluginRuntimeResponse.success(
+            requestId: 'body-request', payload: reference.toMessage(),
+          ).toMessage();
+        case 'claimExternalRuntimeResourceBody':
+          return file.path;
+        case 'releaseExternalRuntimeResourceBody':
+          releasing.complete();
+          await finishRelease.future;
+          await file.delete();
+          return null;
+        case ExternalPluginRuntimeServiceMethods.closeSession:
+          return null;
+        default:
+          throw MissingPluginException(call.method);
+      }
+    });
+    final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
+        .activate(_mihonRequest());
+    await connection.invoke(_bodyRequest());
+    final body = await (connection as BodyExternalPluginRuntimeConnection)
+        .takeResourceBody(reference);
+    final disposal = body.dispose();
+    await releasing.future;
+    final closing = connection.close().then((_) { closed = true; });
+    try {
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, isFalse);
+      expect(await file.exists(), isTrue);
+    } finally {
+      finishRelease.complete();
+      await disposal;
+      await closing;
+    }
+    expect(closed, isTrue);
+    expect(await file.exists(), isFalse);
+  });
+
+  test('late body response after close is discarded while close joins invocation',
+      () async {
+    final responseGate = Completer<Object?>();
+    final invoked = Completer<void>();
+    var discarded = false;
+    var closed = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case ExternalPluginRuntimeServiceMethods.activateMihon:
+          return <String, Object?>{
+            'processId': 'process-1', 'sessionId': 'session-1',
+            'handshake': _handshake('body-runtime'),
+          };
+        case ExternalPluginRuntimeServiceMethods.invoke:
+          invoked.complete();
+          return responseGate.future;
+        case ExternalPluginRuntimeServiceMethods.closeSession:
+          return null;
+        case 'discardExternalRuntimeResourceBody':
+          discarded = true;
+          return null;
+        default:
+          throw MissingPluginException(call.method);
+      }
+    });
+    final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
+        .activate(_mihonRequest());
+    final pending = expectLater(connection.invoke(_bodyRequest()), throwsFormatException);
+    await invoked.future;
+    final close = connection.close().then((_) { closed = true; });
+    await Future<void>.value();
+    expect(closed, isFalse);
+    responseGate.complete(ExternalPluginRuntimeResponse.success(
+      requestId: 'body-request',
+      payload: _bodyReference(Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1])).toMessage(),
+    ).toMessage());
+    await pending;
+    await close;
+    expect(discarded, isTrue);
+    expect(closed, isTrue);
+  });
+
+  test('body binding mismatch is discarded before any physical claim', () async {
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      return switch (call.method) {
+        ExternalPluginRuntimeServiceMethods.activateMihon => <String, Object?>{
+          'processId': 'process-1', 'sessionId': 'session-1',
+          'handshake': _handshake('body-runtime'),
+        },
+        ExternalPluginRuntimeServiceMethods.invoke =>
+          ExternalPluginRuntimeResponse.success(requestId: 'body-request', payload: <String, Object?>{
+            ..._bodyReference(Uint8List(4)).toMessage(), 'resourceUri': 'mihon:resource:other',
+          }).toMessage(),
+        'discardExternalRuntimeResourceBody' => null,
+        ExternalPluginRuntimeServiceMethods.closeSession => null,
+        _ => throw MissingPluginException(call.method),
+      };
+    });
+    final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
+        .activate(_mihonRequest());
+    await expectLater(connection.invoke(_bodyRequest()), throwsFormatException);
+    await connection.close();
+    expect(calls, contains('discardExternalRuntimeResourceBody'));
+    expect(calls, isNot(contains('claimExternalRuntimeResourceBody')));
+  });
+
+  for (final venera in <bool>[false, true]) {
+  for (final phase in <String>['before claim', 'during claim', 'after claim']) {
+    test('${venera ? 'Venera transform' : 'Mihon'} body cancellation $phase waits for physical cleanup without replay', () async {
+      final root = await Directory.systemTemp.createTemp('zic-body-cancel-');
+      addTearDown(() => root.delete(recursive: true));
+      final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]);
+      final file = await File('${root.path}/verified.lease').writeAsBytes(bytes);
+      final reference = venera ? _veneraBodyReference(bytes) : _bodyReference(bytes);
+      final responseGate = Completer<Object?>();
+      final claimGate = Completer<String>();
+      final cleanupGate = Completer<void>();
+      final invoked = Completer<void>();
+      final claimed = Completer<void>();
+      final discarded = Completer<void>();
+      var activations = 0;
+      var settled = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case ExternalPluginRuntimeServiceMethods.activateVenera:
+          case ExternalPluginRuntimeServiceMethods.activateMihon:
+            activations++;
+            return <String, Object?>{
+              'processId': 'process-1', 'sessionId': 'session-1',
+              'handshake': _handshake('body-runtime'),
+            };
+          case ExternalPluginRuntimeServiceMethods.invoke:
+            invoked.complete();
+            return responseGate.future;
+          case 'claimExternalRuntimeResourceBody':
+            claimed.complete();
+            return claimGate.future;
+          case 'discardExternalRuntimeResourceBody':
+          case 'releaseExternalRuntimeResourceBody':
+            discarded.complete();
+            await cleanupGate.future;
+            return null;
+          case ExternalPluginRuntimeServiceMethods.cancel:
+          case ExternalPluginRuntimeServiceMethods.closeSession:
+            return null;
+          default:
+            throw MissingPluginException(call.method);
+        }
+      });
+      final connection = venera
+          ? await AndroidVeneraSandboxRuntimeBackend(channel: channel).activate(_veneraRequest())
+          : await AndroidMihonIsolatedRuntimeBackend(channel: channel).activate(_mihonRequest());
+      final pending = connection.invoke(venera ? _veneraBodyRequest() : _bodyRequest()).then((response) {
+        settled = true;
+        return response;
+      });
+      await invoked.future;
+      if (phase != 'before claim') {
+        responseGate.complete(ExternalPluginRuntimeResponse.success(
+          requestId: 'body-request', payload: reference.toMessage(),
+        ).toMessage());
+        await claimed.future;
+      }
+      await (connection as CancellableExternalPluginRuntimeConnection).cancel('body-request');
+      expect(settled, isFalse);
+      if (phase == 'before claim') {
+        responseGate.complete(ExternalPluginRuntimeResponse.success(
+          requestId: 'body-request', payload: reference.toMessage(),
+        ).toMessage());
+        await discarded.future;
+        expect(claimed.isCompleted, isFalse);
+        expect(settled, isFalse);
+        cleanupGate.complete();
+      } else if (phase == 'during claim') {
+        claimGate.completeError(PlatformException(code: 'runtime-body-cancelled'));
+      } else {
+        claimGate.complete(file.path);
+        await discarded.future;
+        expect(settled, isFalse);
+        cleanupGate.complete();
+      }
+      final response = await pending;
+      expect(response.error?.code, 'runtime-request-cancelled');
+      expect(response.error?.retryable, isFalse);
+      expect(activations, 1);
+      await connection.close();
+    });
+  }
+  }
 
   test('Mihon backend serializes activation and owns invoke/cancel/close',
       () async {
@@ -240,6 +569,41 @@ void main() {
     );
   });
 }
+
+ExternalPluginRuntimeRequest _veneraBodyRequest({bool delivery = true}) =>
+    ExternalPluginRuntimeRequest(
+      requestId: 'body-request', operation: ExternalPluginRuntimeOperation.transformResource,
+      externalSourceId: 'fixture', arguments: <String, Object?>{
+        'uri': 'venera-resource:unchanged', 'bytes': Uint8List.fromList(<int>[1, 2, 3]),
+        if (delivery) 'bodyDelivery': 'sealed-file-v1',
+      },
+    );
+
+ExternalPluginRuntimeBodyFile _veneraBodyReference(Uint8List bytes) =>
+    ExternalPluginRuntimeBodyFile.fromMessage(<String, Object?>{
+      ..._bodyReference(bytes).toMessage(),
+      'authorityRevision': 'venera-runtime-transform-v1:${_veneraRequest().payloadSha256}',
+      'resourceUri': 'venera-resource:unchanged',
+    });
+
+ExternalPluginRuntimeRequest _bodyRequest() => ExternalPluginRuntimeRequest(
+      requestId: 'body-request', operation: ExternalPluginRuntimeOperation.loadResource,
+      externalSourceId: 'fixture', arguments: <String, Object?>{
+        'uri': 'mihon:resource:unchanged', 'bodyDelivery': 'sealed-file-v1',
+      },
+    );
+
+ExternalPluginRuntimeBodyFile _bodyReference(Uint8List bytes) =>
+    ExternalPluginRuntimeBodyFile.fromMessage(<String, Object?>{
+      'bodyDelivery': 'sealed-file-v1',
+      'ownerId': 'native-11111111-1111-1111-1111-111111111111',
+      'bodyId': '22222222-2222-2222-2222-222222222222',
+      'requestId': 'body-request', 'externalSourceId': 'fixture',
+      'runtimeId': 'body-runtime',
+      'authorityRevision': 'mihon-runtime-transform-v3:${_mihonRequest().payloadSha256}',
+      'resourceUri': 'mihon:resource:unchanged', 'byteLength': bytes.length,
+      'sha256': 'a' * 64, 'fnv64': '0123456789abcdef', 'metadataPrefix': bytes,
+    });
 
 Map<String, Object?> _handshake(String runtimeId) =>
     ExternalPluginRuntimeHandshake(

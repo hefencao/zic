@@ -45,7 +45,8 @@ for token in (
     require(adapter, token, 'runtime retryability propagation')
 
 mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt')
-require(mihon, 'this !is java.net.UnknownServiceException', 'deterministic network-policy classification')
+require(mihon, 'val networkFailure = error.isNetworkFailure()', 'original-chain network classification')
+require(mihon, 'if (current is java.net.UnknownServiceException) return false', 'deterministic network-policy classification')
 
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'

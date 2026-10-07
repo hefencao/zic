@@ -12,6 +12,7 @@ import android.view.LayoutInflater
 import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
+import android.os.Trace
 import android.util.Base64
 import android.util.Log
 import androidx.preference.EditTextPreference
@@ -29,6 +30,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -40,6 +42,7 @@ import java.util.Properties
 import java.util.Locale
 import java.util.ArrayDeque
 import java.util.concurrent.Callable
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -47,6 +50,7 @@ import java.util.concurrent.Future
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipFile
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
@@ -70,6 +74,7 @@ internal class MihonRuntimeDriver private constructor(
     private val runtimeRoot: File,
     private val maxResponseBytes: Int,
     private val resourceAuthorityRevision: String,
+    private val bodyFiles: RuntimeServicePacketFiles,
     override val sources: List<Map<String, Any?>>,
 ) : NativeExternalPluginDriver {
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
@@ -84,28 +89,51 @@ internal class MihonRuntimeDriver private constructor(
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
+    private val catalogOperations = MihonCatalogOperations()
+    private val nativeWork = NativeRuntimeWorkDrain()
+    private val closeCompletion = CompletableFuture<Unit>()
 
     override fun invoke(request: Map<String, Any?>, result: NativeDriverResult) {
-        if (closed.get()) {
+        val work = nativeWork.begin()
+        if (work == null) {
             result.error("runtime-closing", "Mihon runtime is closing")
             return
+        }
+        var submitted = false
+        try {
+            submitted = invokeAccepted(request, result, work)
+        } finally {
+            if (!submitted) work.finish()
+        }
+    }
+
+    private fun invokeAccepted(
+        request: Map<String, Any?>,
+        result: NativeDriverResult,
+        work: NativeRuntimeWorkDrain.Work,
+    ): Boolean {
+        if (closed.get()) {
+            result.error("runtime-closing", "Mihon runtime is closing")
+            return false
         }
         val requestId = request.requireString("requestId")
         val sourceId = request.requireString("externalSourceId")
         val source = sourceById[sourceId]
         if (source == null) {
             result.error("source-missing", "Mihon source is not active")
-            return
+            return false
         }
         val completion = CountDownLatch(1)
         if (completions.putIfAbsent(requestId, completion) != null) {
             result.error("runtime-request-duplicate", "Mihon request id is already active")
-            return
+            return false
         }
         val responded = AtomicBoolean(false)
-        val task = object : FutureTask<Unit>(Callable {
+        lateinit var task: MihonInvocationTask
+        task = MihonInvocationTask(Callable {
             var operation: String? = null
             var resourceUri: String? = null
+            var producedBody: RuntimeServiceBodyReference? = null
             try {
                 ensureNotCancelled(requestId)
                 val arguments = request["arguments"].stringMap("runtime request arguments")
@@ -130,6 +158,8 @@ internal class MihonRuntimeDriver private constructor(
                         source,
                         arguments.requireString("uri"),
                         requestId,
+                        sealedBody = arguments["bodyDelivery"] == RuntimeServiceBodyReference.DELIVERY,
+                        bodyReady = { producedBody = it },
                     )
                     "resolveResource" -> resolveResource(
                         sourceId,
@@ -152,9 +182,18 @@ internal class MihonRuntimeDriver private constructor(
                     )
                     else -> error("unsupported Mihon runtime operation")
                 }
+                if (payload is Map<*, *> &&
+                    payload["bodyDelivery"] == RuntimeServiceBodyReference.DELIVERY) {
+                    producedBody = RuntimeServiceBodyReference.fromMessage(payload)
+                }
                 ensureNotCancelled(requestId)
-                if (responded.compareAndSet(false, true)) result.success(payload)
+                if (responded.compareAndSet(false, true)) {
+                    result.success(payload)
+                } else {
+                    producedBody?.let { bodyFiles.deleteBody(it) }
+                }
             } catch (error: Throwable) {
+                producedBody?.let { runCatching { bodyFiles.deleteBody(it) } }
                 val cause = error.rootCause()
                 val cancelledRequest = cancelled.contains(requestId) || cause is InterruptedException
                 if (responded.compareAndSet(false, true)) {
@@ -164,7 +203,7 @@ internal class MihonRuntimeDriver private constructor(
                         error.sourceVerificationFailure()
                     }
                     val verificationRequired = verification != null
-                    val networkFailure = cause.isNetworkFailure()
+                    val networkFailure = error.isNetworkFailure()
                     val replayUri = resourceUri
                     val resourcePlanReplayEligible =
                         !cancelledRequest &&
@@ -209,22 +248,20 @@ internal class MihonRuntimeDriver private constructor(
                 }
             }
         }) {
-            override fun done() {
-                if (isCancelled && responded.compareAndSet(false, true)) {
-                    result.error("runtime-request-cancelled", "Mihon request was cancelled")
-                }
-                calls.remove(requestId)
-                tasks.remove(requestId, this)
-                cancelled.remove(requestId)
-                completions.remove(requestId, completion)
-                completion.countDown()
-                finalizeCloseIfIdle()
+            if (task.isCancelled && responded.compareAndSet(false, true)) {
+                result.error("runtime-request-cancelled", "Mihon request was cancelled")
             }
+            calls.remove(requestId)
+            tasks.remove(requestId, task)
+            cancelled.remove(requestId)
+            completions.remove(requestId, completion)
+            completion.countDown()
+            work.finish()
         }
         tasks[requestId] = task
         if (closed.get()) {
             task.cancel(false)
-            return
+            return true
         }
         try {
             executor.execute(task)
@@ -236,8 +273,9 @@ internal class MihonRuntimeDriver private constructor(
             if (responded.compareAndSet(false, true)) {
                 result.error("runtime-closing", error.sanitizedMessage())
             }
-            finalizeCloseIfIdle()
+            work.finish()
         }
+        return true
     }
 
     override fun cancel(requestId: String) {
@@ -248,36 +286,43 @@ internal class MihonRuntimeDriver private constructor(
             null -> Unit
             else -> call.invokeOptional("cancel")
         }
-        tasks.remove(requestId)?.cancel(true)
+        tasks[requestId]?.cancel(true)
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        closeWhenDrained()
+    }
+
+    override fun closeWhenDrained(): CompletableFuture<Unit> {
+        if (!closed.compareAndSet(false, true)) return closeCompletion
+        val drained = nativeWork.close()
         tasks.keys.toList().forEach(::cancel)
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            completions.values.toList().forEach { completion ->
-                val remaining = deadline - System.nanoTime()
-                if (remaining <= 0) return@forEach
-                runCatching { completion.await(remaining, TimeUnit.NANOSECONDS) }
+        drained.whenComplete { _, _ ->
+            try {
+                executor.execute { finalizeCloseIfIdle() }
+            } catch (failure: Throwable) {
+                closeCompletion.completeExceptionally(failure)
             }
         }
-        finalizeCloseIfIdle()
+        return closeCompletion
     }
 
     private fun finalizeCloseIfIdle() {
         if (!closed.get() || completions.isNotEmpty()) return
-        if (sourcesClosed.compareAndSet(false, true)) {
+        if (!sourcesClosed.compareAndSet(false, true)) return
+        runCatching {
+            bodyFiles.deleteBodyOwner(driverId)
             sourceById.values.distinctBy { System.identityHashCode(it) }.forEach { source ->
                 runCatching { source.invokeOptional("close") }
             }
             sourceById.clear()
             chapterById.clear()
             chapterIdsByComic.clear()
-        }
-        if (runtimeDeleted.compareAndSet(false, true)) {
-            runtimeRoot.deleteRecursively()
-        }
+            if (runtimeDeleted.compareAndSet(false, true)) runtimeRoot.deleteRecursively()
+        }.fold(
+            onSuccess = { closeCompletion.complete(Unit) },
+            onFailure = { closeCompletion.completeExceptionally(it) },
+        )
     }
 
     private fun loadBrowseSections(source: Any): List<Map<String, Any?>> {
@@ -311,6 +356,7 @@ internal class MihonRuntimeDriver private constructor(
         val sectionId = arguments["sectionId"] as? String
         val offset = arguments.nonNegativeInt("offset")
         val limit = arguments.positiveInt("limit")
+        require(offset % limit == 0) { "Mihon browse offset must identify a native page" }
         val page = (offset / limit) + 1
         val filterState = arguments["filterState"].asStringAnyMap("filterState")
         val useFilters = arguments["useFilters"] as? Boolean ?: false
@@ -356,11 +402,11 @@ internal class MihonRuntimeDriver private constructor(
         ensureNotCancelled(requestId)
         val mangas = pageResult.readList("mangas", "getMangas")
         val hasNext = pageResult.readBoolean("hasNextPage", "getHasNextPage") ?: (mangas.size >= limit)
-        val sliced = mangas.drop(offset % limit).take(limit)
         return mapOf(
-            "items" to sliced.map { manga -> mangaSummary(source, manga) },
+            "items" to mangas.map { manga -> mangaSummary(source, manga) },
             "offset" to offset,
-            "hasMore" to (hasNext || mangas.size > (offset % limit) + sliced.size),
+            "hasMore" to hasNext,
+            "nextOffset" to if (hasNext) offset + limit else null,
         )
     }
 
@@ -375,6 +421,7 @@ internal class MihonRuntimeDriver private constructor(
                 chapter = chapter,
                 comicId = comicId,
                 sequence = index,
+                logicalSequence = catalog.chapters.lastIndex - index,
                 transportRevision = transportRevision,
             )
         }
@@ -386,6 +433,17 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     private fun loadMihonComicCatalog(
+        source: Any,
+        comicId: String,
+        requestId: String,
+    ): MihonComicCatalog = catalogOperations.exclusive(
+        mihonComicCatalogKey(source, comicId),
+    ) {
+        ensureNotCancelled(requestId)
+        fetchMihonComicCatalog(source, comicId, requestId)
+    }
+
+    private fun fetchMihonComicCatalog(
         source: Any,
         comicId: String,
         requestId: String,
@@ -547,10 +605,19 @@ internal class MihonRuntimeDriver private constructor(
         chapterId: String,
         encoded: JSONObject,
         requestId: String,
-    ): Any {
-        chapterById[mihonChapterCacheKey(source, chapterId)]?.let { return it }
+    ): MihonResolvedChapter {
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
+        synchronized(chapterById) {
+            val cacheKey = mihonChapterCacheKey(source, chapterId)
+            val ids = chapterIdsByComic[mihonComicCatalogKey(source, comicId)]
+            val index = ids?.indexOf(cacheKey) ?: -1
+            chapterById[mihonChapterCacheKey(source, chapterId)]?.let { chapter ->
+                if (index >= 0) {
+                    return MihonResolvedChapter(chapter, ids!!.lastIndex - index)
+                }
+            }
+        }
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
         catalog.chapterFailure?.let { throw it }
         val messages = catalog.chapters.mapIndexed { index, chapter ->
@@ -558,12 +625,12 @@ internal class MihonRuntimeDriver private constructor(
                 chapter = chapter,
                 comicId = comicId,
                 sequence = index,
+                logicalSequence = catalog.chapters.lastIndex - index,
             )
         }
         rememberMihonChapters(source, comicId, catalog.chapters, messages)
-        chapterById[mihonChapterCacheKey(source, chapterId)]?.let { return it }
-        val matches = catalog.chapters.filter { chapter ->
-            mihonChapterMatches(chapter, encoded)
+        val matches = catalog.chapters.withIndex().filter { entry ->
+            mihonChapterMatches(entry.value, encoded)
         }
         require(matches.size == 1) {
             if (matches.isEmpty()) {
@@ -572,7 +639,8 @@ internal class MihonRuntimeDriver private constructor(
                 "Mihon chapter identity is ambiguous after catalog refresh"
             }
         }
-        return matches.single()
+        val match = matches.single()
+        return MihonResolvedChapter(match.value, catalog.chapters.lastIndex - match.index)
     }
 
     private fun loadMihonPageModels(
@@ -624,7 +692,8 @@ internal class MihonRuntimeDriver private constructor(
         val encoded = decodeOpaque(chapterId, "chapter")
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
-        val chapter = resolveMihonChapter(source, chapterId, encoded, requestId)
+        val resolved = resolveMihonChapter(source, chapterId, encoded, requestId)
+        val chapter = resolved.chapter
         val pages = loadMihonPageModels(source, chapter, requestId)
         require(pages.isNotEmpty()) { "Mihon chapter contains no readable pages" }
         val sourceId = source.readValue("id", "getId")?.toString()
@@ -658,6 +727,7 @@ internal class MihonRuntimeDriver private constructor(
             chapter = chapter,
             comicId = comicId,
             sequence = encoded.optInt("sequence", 0),
+            logicalSequence = resolved.logicalSequence,
             transportRevision = transportRevision,
         ).toMutableMap().apply {
             put("chapterId", chapterId)
@@ -778,7 +848,7 @@ internal class MihonRuntimeDriver private constructor(
             return mapOf("available" to false)
         }
         val encodedChapter = decodeOpaque(chapterId, "chapter")
-        val chapter = resolveMihonChapter(source, chapterId, encodedChapter, requestId)
+        val chapter = resolveMihonChapter(source, chapterId, encodedChapter, requestId).chapter
         val pages = loadMihonPageModels(source, chapter, requestId)
         if (pageIndex >= pages.size) {
             return mapOf("available" to false)
@@ -837,7 +907,9 @@ internal class MihonRuntimeDriver private constructor(
         source: Any,
         uri: String,
         requestId: String,
-    ): ByteArray {
+        sealedBody: Boolean = false,
+        bodyReady: (RuntimeServiceBodyReference) -> Unit = {},
+    ): Any {
         val replayKey = mihonResourceReplayKey(sourceId, uri)
         val resource = selectMihonResourceForLoad(
             replayKey,
@@ -883,6 +955,10 @@ internal class MihonRuntimeDriver private constructor(
                 headers,
                 body,
                 requestId,
+                sourceId,
+                uri,
+                sealedBody,
+                bodyReady,
             )
         }
         val call = client.invokeCompatible("newCall", listOf(request))
@@ -890,14 +966,29 @@ internal class MihonRuntimeDriver private constructor(
         calls[requestId] = call
         var response: Any? = null
         try {
-            response = call.invokeCompatible("execute", emptyList())
-                ?: error("Mihon resource response is empty")
+            val tracing = Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()
+            if (tracing) Trace.beginSection("zic.mihon.execute")
+            try {
+                response = call.invokeCompatible("execute", emptyList())
+                    ?: error("Mihon resource response is empty")
+            } finally {
+                if (tracing) Trace.endSection()
+            }
             ensureNotCancelled(requestId)
             val successful = response.readBoolean("isSuccessful", "getIsSuccessful") ?: false
             val code = response.readLong("code", "getCode") ?: 0
             if (!successful) error("Mihon resource HTTP $code")
             val responseBody = response.readValue("body", "getBody")
                 ?: error("Mihon resource response body is empty")
+            if (sealedBody) {
+                val input = responseBody.invokeCompatible("byteStream", emptyList()) as? InputStream
+                    ?: error("Mihon resource body did not expose a stream")
+                val expectedLength = responseBody.readLong("contentLength", "getContentLength")
+                    ?.takeIf { it >= 0 }
+                return input.use {
+                    writeResourceBody(it, sourceId, uri, requestId, bodyReady, expectedLength)
+                }
+            }
             val bytes = responseBody.invokeCompatible("bytes", emptyList()) as? ByteArray
                 ?: error("Mihon resource body did not return bytes")
             require(bytes.size <= maxResponseBytes) {
@@ -1242,7 +1333,11 @@ internal class MihonRuntimeDriver private constructor(
         headers: Map<String, String>,
         body: ByteArray?,
         requestId: String,
-    ): ByteArray {
+        sourceId: String,
+        resourceUri: String,
+        sealedBody: Boolean,
+        bodyReady: (RuntimeServiceBodyReference) -> Unit,
+    ): Any {
         val connection = URL(uri).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
         connection.connectTimeout = 5_000
@@ -1262,6 +1357,11 @@ internal class MihonRuntimeDriver private constructor(
         try {
             val code = connection.responseCode
             if (code !in 200..299) error("Mihon resource HTTP $code")
+            if (sealedBody) {
+                return connection.inputStream.use {
+                    writeResourceBody(it, sourceId, resourceUri, requestId, bodyReady)
+                }
+            }
             val bytes = connection.inputStream.use { stream ->
                 stream.readBytesBounded(maxResponseBytes)
             }
@@ -1270,6 +1370,47 @@ internal class MihonRuntimeDriver private constructor(
         } finally {
             calls.remove(requestId)
             connection.disconnect()
+        }
+    }
+
+    private fun writeResourceBody(
+        input: InputStream,
+        sourceId: String,
+        resourceUri: String,
+        requestId: String,
+        bodyReady: (RuntimeServiceBodyReference) -> Unit,
+        expectedByteLength: Long? = null,
+    ): Map<String, Any?> {
+        val tracing = Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()
+        val bodyInput = if (tracing) object : FilterInputStream(input) {
+            override fun read(buffer: ByteArray): Int {
+                Trace.beginSection("zic.mihon.bodyRead")
+                try {
+                    return input.read(buffer)
+                } finally {
+                    Trace.endSection()
+                }
+            }
+        } else input
+        if (tracing) Trace.beginSection("zic.mihon.bodySeal")
+        try {
+            return bodyFiles.writeBody(
+                input = bodyInput,
+                ownerId = driverId,
+                requestId = requestId,
+                externalSourceId = sourceId,
+                runtimeId = runtimeId,
+                authorityRevision = resourceAuthorityRevision,
+                resourceUri = resourceUri,
+                maxBytes = maxResponseBytes,
+                checkCancelled = { ensureNotCancelled(requestId) },
+            ).also(bodyReady).also {
+                if (expectedByteLength != null && it.byteLength != expectedByteLength) {
+                    throw java.io.IOException("Mihon response body length mismatch")
+                }
+            }.toMessage()
+        } finally {
+            if (tracing) Trace.endSection()
         }
     }
 
@@ -1345,6 +1486,7 @@ internal class MihonRuntimeDriver private constructor(
         comicId: String,
         sequence: Int,
         transportRevision: String? = null,
+        logicalSequence: Int = sequence,
     ): Map<String, Any?> {
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
@@ -1352,12 +1494,12 @@ internal class MihonRuntimeDriver private constructor(
         }
         val id = encodeOpaque("chapter", json)
         val title = chapter.readString("name", "getName")?.ifBlank { null }
-            ?: "第 ${sequence + 1} 话"
+            ?: "第 ${logicalSequence + 1} 话"
         return mutableMapOf<String, Any?>(
             "comicId" to comicId,
             "chapterId" to id,
             "title" to title,
-            "sequence" to sequence,
+            "sequence" to logicalSequence,
             "pageCount" to 0,
             "sourceRevision" to listOfNotNull(
                 chapter.readString("url", "getUrl")?.takeIf { it.isNotBlank() },
@@ -1570,6 +1712,7 @@ internal class MihonRuntimeDriver private constructor(
                         "language" to (source.readString("lang", "getLang") ?: "und"),
                         "website" to normalizeWebsite(baseUrl),
                         "supportsSearch" to true,
+                        "supportsResourceBodyDelivery" to true,
                         "browserUserAgent" to MIHON_BROWSER_USER_AGENT,
                         "contentRatings" to listOf("safe", "suggestive"),
                     )
@@ -1585,6 +1728,9 @@ internal class MihonRuntimeDriver private constructor(
                     runtimeRoot = runtimeRoot,
                     maxResponseBytes = maxResponseBytes,
                     resourceAuthorityRevision = resourceAuthorityRevision,
+                    bodyFiles = RuntimeServicePacketFiles(
+                        File(context.cacheDir, "zic-plugin-runtime-ipc"),
+                    ),
                     sources = descriptors,
                 )
             } catch (error: Throwable) {
@@ -1602,6 +1748,60 @@ internal class MihonRuntimeDriver private constructor(
                 throw error
             }
         }
+    }
+}
+
+private data class MihonResolvedChapter(val chapter: Any, val logicalSequence: Int)
+
+// Source.getMangaUpdate forbids overlap for one manga. This is source-object
+// exclusion inside already-admitted invocations, not a network admission queue.
+internal class MihonCatalogOperations {
+    private class Entry(val lock: ReentrantLock = ReentrantLock(), var users: Int = 0)
+    private val entries = HashMap<String, Entry>()
+
+    fun <T> exclusive(key: String, operation: () -> T): T {
+        val entry = synchronized(entries) {
+            entries.getOrPut(key) { Entry() }.also { it.users++ }
+        }
+        var acquired = false
+        try {
+            entry.lock.lockInterruptibly()
+            acquired = true
+            return operation()
+        } finally {
+            if (acquired) entry.lock.unlock()
+            synchronized(entries) {
+                entry.users--
+                if (entry.users == 0) entries.remove(key, entry)
+            }
+        }
+    }
+}
+
+// FutureTask.done runs at cancel(), before an active Callable has unwound.
+// Runtime close/cancellation receipts must follow actual invocation retirement.
+internal class MihonInvocationTask(
+    operation: Callable<Unit>,
+    private val onRetired: () -> Unit,
+) : FutureTask<Unit>(operation) {
+    private val started = AtomicBoolean(false)
+    private val retired = AtomicBoolean(false)
+
+    override fun run() {
+        if (!started.compareAndSet(false, true)) return
+        try {
+            super.run()
+        } finally {
+            retire()
+        }
+    }
+
+    override fun done() {
+        if (!started.get()) retire()
+    }
+
+    private fun retire() {
+        if (retired.compareAndSet(false, true)) onRetired()
     }
 }
 
@@ -2196,10 +2396,22 @@ private fun invokeSuspend(receiver: Any, method: Method, args: List<Any?>): Any?
     }
     val immediate = method.invoke(receiver, *(args + continuation).toTypedArray())
     if (immediate !== kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED) return immediate
-    while (!latch.await(250, TimeUnit.MILLISECONDS)) {
-        if (Thread.currentThread().isInterrupted) throw InterruptedException("suspend call cancelled")
+    var interrupted = false
+    try {
+        while (true) {
+            try {
+                if (latch.await(250, TimeUnit.MILLISECONDS)) break
+            } catch (_: InterruptedException) {
+                // EmptyCoroutineContext cannot cancel the source coroutine.
+                // Drain its real completion before releasing catalog exclusion
+                // or returning the scheduler's invocation receipt.
+                interrupted = true
+            }
+        }
+        return completed!!.getOrThrow()
+    } finally {
+        if (interrupted) Thread.currentThread().interrupt()
     }
-    return completed!!.getOrThrow()
 }
 
 private fun Any?.unwrapAsync(): Any {
@@ -2391,6 +2603,9 @@ private fun mihonHostReplaySafeClientCapability(kind: String, capability: Any): 
     return when (kind) {
         "interceptor" ->
             name == "dev.zic.network.AndroidCloudflareInterceptor" ||
+                name == "eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor" ||
+                name == "eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor" ||
+                name == "eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor" ||
                 name.startsWith("eu.kanade.tachiyomi.network.NetworkHelper")
         "cookieJar" -> name == "dev.zic.network.AndroidCookieJar"
         "dns" ->
@@ -2948,9 +3163,30 @@ private fun Throwable.sourceVerificationFailure(): SourceVerificationRequiredExc
 private fun Throwable.isSourceVerificationFailure(): Boolean =
     sourceVerificationFailure() != null
 
-private fun Throwable.isNetworkFailure(): Boolean =
-    this !is java.net.UnknownServiceException &&
-        (this is java.io.IOException || javaClass.name.contains("Http", ignoreCase = true))
+private fun Throwable.isNetworkFailure(): Boolean {
+    var current: Throwable? = this
+    var deepest: Throwable = this
+    var transportFailure = false
+    val visited = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && visited.add(current)) {
+        if (current is java.net.UnknownServiceException) return false
+        transportFailure = transportFailure ||
+            current is java.net.SocketException ||
+            current is java.net.UnknownHostException ||
+            current is java.net.ProtocolException ||
+            current is java.io.InterruptedIOException ||
+            current is java.io.EOFException ||
+            current is javax.net.ssl.SSLException
+        deepest = current
+        current = current.cause
+    }
+    // The default-client interceptor also wraps source/parser errors in IO.
+    // Only a concrete transport cause may override the deepest-cause policy.
+    return transportFailure || deepest is java.io.IOException ||
+        deepest.javaClass.name.contains("Http", ignoreCase = true)
+}
 
 private fun formatInstant(epochMillis: Long): String {
     val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)

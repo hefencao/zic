@@ -35,6 +35,11 @@ if build_now >= 206:
         "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId);__zicCancelBridgeWaiters(requestId)}",
         "bridge.cancel(requestId)",
         "finishedSink?.invoke(requestId)",
+        "invocationDrain.beginCall(transportRequestId, callId, activation = requestId == null)",
+        "invocationDrain.endCall(transportRequestId, callId)",
+        "invocationDrain.finish(requestId)",
+        "invocationDrain.complete(requestId, it)",
+        "if (closed || cancelled.contains(requestId)) return@withNativeWork",
     )
     resolver = read("packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart")
     for token in ("final cancelToken = rhttp.CancelToken()", "active.cancelToken.cancel()", "requestStream("):

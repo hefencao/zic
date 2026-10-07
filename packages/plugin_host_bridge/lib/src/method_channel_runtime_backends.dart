@@ -81,6 +81,10 @@ final class AndroidMihonIsolatedRuntimeBackend
         channel: _channel,
         processId: activated.processId,
         sessionId: activated.sessionId,
+        runtimeId: ExternalPluginRuntimeHandshake.fromMessage(activated.handshake).runtimeId,
+        bodyOperation: ExternalPluginRuntimeOperation.loadResource,
+        bodyAuthorityRevision:
+            'mihon-runtime-transform-v3:${activationMessage['payloadSha256']}',
         reactivate: () => _activatePlatformRuntime(
           _channel,
           method,
@@ -127,6 +131,10 @@ final class AndroidVeneraSandboxRuntimeBackend
         channel: _channel,
         processId: activated.processId,
         sessionId: activated.sessionId,
+        runtimeId: ExternalPluginRuntimeHandshake.fromMessage(activated.handshake).runtimeId,
+        bodyOperation: ExternalPluginRuntimeOperation.transformResource,
+        bodyAuthorityRevision:
+            'venera-runtime-transform-v1:${activationMessage['payloadSha256']}',
         reactivate: () => _activatePlatformRuntime(
           _channel,
           ExternalPluginRuntimeServiceMethods.activateVenera,
@@ -179,43 +187,82 @@ Future<_PlatformRuntimeActivation> _activatePlatformRuntime(
 }
 
 final class _PlatformExternalPluginRuntimeMessageChannel
-    implements CancellableExternalPluginRuntimeMessageChannel {
+    implements CancellableExternalPluginRuntimeMessageChannel,
+        BodyExternalPluginRuntimeMessageChannel {
   _PlatformExternalPluginRuntimeMessageChannel({
     required MethodChannel channel,
     required String processId,
     required String sessionId,
+    required String runtimeId,
+    required ExternalPluginRuntimeOperation bodyOperation,
+    required String bodyAuthorityRevision,
     required Future<_PlatformRuntimeActivation> Function() reactivate,
   })  : _channel = channel,
         _processId = processId,
         _sessionId = sessionId,
+        _runtimeId = runtimeId,
+        _bodyOperation = bodyOperation,
+        _bodyAuthorityRevision = bodyAuthorityRevision,
         _reactivate = reactivate;
 
   final MethodChannel _channel;
   final Future<_PlatformRuntimeActivation> Function() _reactivate;
   String _processId;
   String _sessionId;
+  String _runtimeId;
+  final ExternalPluginRuntimeOperation _bodyOperation;
+  final String _bodyAuthorityRevision;
+  final Map<String, (ExternalPluginRuntimeFileBody, bool)> _bodyFiles = {};
+  final Set<Future<Object?>> _sending = {};
+  final Map<String, _PlatformRuntimeInvocation> _invocations = {};
   bool _closing = false;
   Future<void>? _closeFuture;
   Future<void>? _recoveryFuture;
 
   @override
-  Future<Object?> send(Object? requestMessage) async {
+  Future<Object?> send(Object? requestMessage) {
+    if (_closing) {
+      throw StateError('platform external runtime channel is closing');
+    }
+    final invocation = _PlatformRuntimeInvocation(
+      ExternalPluginRuntimeRequest.fromMessage(requestMessage),
+    );
+    final requestId = invocation.request.requestId;
+    if (_invocations.containsKey(requestId)) {
+      throw StateError('platform runtime request is already active');
+    }
+    _invocations[requestId] = invocation;
+    late final Future<Object?> sending;
+    sending = _send(requestMessage, invocation).whenComplete(() {
+      _sending.remove(sending);
+      _invocations.remove(requestId);
+    });
+    _sending.add(sending);
+    return sending;
+  }
+
+  Future<Object?> _send(
+    Object? requestMessage,
+    _PlatformRuntimeInvocation invocation,
+  ) async {
     if (_closing) {
       throw StateError('platform external runtime channel is closing');
     }
     final attemptedProcessId = _processId;
     final attemptedSessionId = _sessionId;
     try {
-      final response = await _invoke(requestMessage);
+      final response = await _invoke(requestMessage, invocation);
+      if (invocation.cancelled) return invocation.cancelledMessage;
       if (!_closing && _recoverableRuntimeEnvelope(response)) {
         await _recover(attemptedProcessId, attemptedSessionId);
         if (_closing) {
           throw StateError('platform external runtime channel is closing');
         }
-        return _invoke(requestMessage);
+        return _invoke(requestMessage, invocation);
       }
       return response;
     } on PlatformException catch (error) {
+      if (invocation.cancelled) return invocation.cancelledMessage;
       if (_closing || !_recoverableRuntimeCodes.contains(error.code)) {
         rethrow;
       }
@@ -223,19 +270,112 @@ final class _PlatformExternalPluginRuntimeMessageChannel
       if (_closing) {
         throw StateError('platform external runtime channel is closing');
       }
-      return _invoke(requestMessage);
+      return _invoke(requestMessage, invocation);
     }
   }
 
-  Future<Object?> _invoke(Object? requestMessage) =>
-      _channel.invokeMethod<Object?>(
+  Future<Object?> _invoke(
+    Object? requestMessage,
+    _PlatformRuntimeInvocation invocation,
+  ) async {
+    if (invocation.cancelled) return invocation.cancelledMessage;
+    final processId = _processId;
+    final sessionId = _sessionId;
+    final runtimeId = _runtimeId;
+    invocation.processId = processId;
+    invocation.sessionId = sessionId;
+    final response = await _channel.invokeMethod<Object?>(
         ExternalPluginRuntimeServiceMethods.invoke,
         <String, Object?>{
-          'processId': _processId,
-          'sessionId': _sessionId,
+          'processId': processId,
+          'sessionId': sessionId,
           'request': requestMessage,
         },
       );
+    final payload = response is Map ? response['payload'] : null;
+    if (!ExternalPluginRuntimeBodyFile.isBodyFile(payload)) return response;
+    final reference = ExternalPluginRuntimeBodyFile.fromMessage(payload);
+    final request = invocation.request;
+    if (_closing || _processId != processId || _sessionId != sessionId ||
+        response is! Map || response['requestId'] != request.requestId ||
+        reference.runtimeId != runtimeId || reference.requestId != request.requestId ||
+        reference.externalSourceId != request.externalSourceId ||
+        reference.resourceUri != request.arguments['uri'] ||
+        reference.authorityRevision != _bodyAuthorityRevision ||
+        request.operation != _bodyOperation ||
+        request.arguments['bodyDelivery'] != ExternalPluginRuntimeBodyFile.delivery) {
+      await _channel.invokeMethod<void>(
+        'discardExternalRuntimeResourceBody', reference.toMessage(),
+      );
+      throw const FormatException('runtime body binding or generation mismatch');
+    }
+    if (invocation.cancelled) {
+      await _channel.invokeMethod<void>(
+        'discardExternalRuntimeResourceBody', reference.toMessage(),
+      );
+      return invocation.cancelledMessage;
+    }
+    String? path;
+    try {
+      path = await _channel.invokeMethod<String>(
+        'claimExternalRuntimeResourceBody', <String, Object?>{
+          'processId': processId, 'sessionId': sessionId,
+          'requestId': request.requestId, 'reference': reference.toMessage(),
+        },
+      );
+    } on PlatformException catch (error) {
+      if (error.code == 'runtime-body-cancelled') return invocation.cancelledMessage;
+      rethrow;
+    }
+    if (path == null) throw const FormatException('runtime body claim has no path');
+    final body = await ExternalPluginRuntimeFileBody.openVerified(
+      reference: reference,
+      path: path,
+      release: () async {
+        try {
+          await _channel.invokeMethod<void>(
+            'releaseExternalRuntimeResourceBody', reference.toMessage(),
+          );
+        } finally {
+          _bodyFiles.remove(reference.key);
+        }
+      },
+    );
+    if (_closing || _processId != processId || _sessionId != sessionId) {
+      await body.dispose();
+      throw StateError('runtime body arrived after its generation retired');
+    }
+    if (invocation.cancelled) {
+      await body.dispose();
+      return invocation.cancelledMessage;
+    }
+    _bodyFiles[reference.key] = (body, false);
+    return response;
+  }
+
+  @override
+  Future<ExternalPluginRuntimeFileBody> takeResourceBody(
+    ExternalPluginRuntimeBodyFile reference,
+  ) async {
+    final entry = _bodyFiles[reference.key];
+    if (_closing || entry == null || entry.$2) {
+      throw StateError('runtime body is unavailable or already consumed');
+    }
+    _bodyFiles[reference.key] = (entry.$1, true);
+    return entry.$1;
+  }
+
+  @override
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference) async {
+    final entry = _bodyFiles[reference.key];
+    if (entry != null) {
+      await entry.$1.dispose();
+    } else {
+      await _channel.invokeMethod<void>(
+        'discardExternalRuntimeResourceBody', reference.toMessage(),
+      );
+    }
+  }
 
   Future<void> _recover(
     String attemptedProcessId,
@@ -273,6 +413,7 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     }
     _processId = activated.processId;
     _sessionId = activated.sessionId;
+    _runtimeId = ExternalPluginRuntimeHandshake.fromMessage(activated.handshake).runtimeId;
   }
 
   @override
@@ -280,14 +421,16 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     if (requestId.trim().isEmpty) {
       throw ArgumentError.value(requestId, 'requestId');
     }
+    final invocation = _invocations[requestId];
+    if (invocation != null) invocation.cancelled = true;
     if (_closing) {
       return Future<void>.value();
     }
     return _channel.invokeMethod<void>(
       ExternalPluginRuntimeServiceMethods.cancel,
       <String, Object?>{
-        'processId': _processId,
-        'sessionId': _sessionId,
+        'processId': invocation?.processId ?? _processId,
+        'sessionId': invocation?.sessionId ?? _sessionId,
         'requestId': requestId,
       },
     );
@@ -300,18 +443,50 @@ final class _PlatformExternalPluginRuntimeMessageChannel
       return existing;
     }
     _closing = true;
-    final closing = _channel.invokeMethod<void>(
+    final closing = _close();
+    _closeFuture = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
+    try {
+      await _channel.invokeMethod<void>(
       ExternalPluginRuntimeServiceMethods.closeSession,
       <String, Object?>{
         'processId': _processId,
         'sessionId': _sessionId,
       },
-    );
-    _closeFuture = closing;
-    return closing;
+      );
+    } finally {
+      await Future.wait(_sending.toList().map((sending) async {
+        try {
+          await sending;
+        } on Object {
+          // The caller receives its invocation failure.
+        }
+      }));
+      await Future.wait(_bodyFiles.values.toList().map((entry) => entry.$1.dispose()));
+    }
   }
 }
 
+
+final class _PlatformRuntimeInvocation {
+  _PlatformRuntimeInvocation(this.request);
+
+  final ExternalPluginRuntimeRequest request;
+  String? processId;
+  String? sessionId;
+  bool cancelled = false;
+
+  Map<String, Object?> get cancelledMessage => ExternalPluginRuntimeResponse.failure(
+    requestId: request.requestId,
+    error: ExternalPluginRuntimeError(
+      code: 'runtime-request-cancelled',
+      message: 'runtime body invocation was cancelled',
+    ),
+  ).toMessage();
+}
 
 bool _recoverableRuntimeEnvelope(Object? raw) {
   try {

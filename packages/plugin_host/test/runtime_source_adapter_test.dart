@@ -8,6 +8,149 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('transform body capability is independent and requires source and channel',
+      () async {
+    for (final flags in <(bool, bool)>[(false, true), (true, false), (true, true)]) {
+      final connection = _BodyConnection(
+        declared: false, transformDeclared: flags.$1, channelSupported: flags.$2,
+      );
+      final session = ExternalPluginRuntimeSession(
+        plugin: _plugin(format: ExternalComicPluginFormat.veneraJavaScript),
+        connection: connection, limits: const ExternalPluginRuntimeLimits(),
+      );
+      final source = session.sources.single;
+      expect((source as BodyDeliveringComicResourceSource).supportsResourceBodyDelivery, isFalse);
+      final bodyTransform = source as BodyTransformingComicResourceSource;
+      expect(bodyTransform.supportsResourceTransformBodyDelivery, flags.$1 && flags.$2);
+      final uri = Uri.parse('venera-resource:unchanged');
+      final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5]);
+      if (flags.$1 && flags.$2) {
+        final control = _MutableTaskControl(priority: 1000);
+        final body = await bodyTransform.transformResourceBody(uri, bytes, control: control);
+        expect(connection.takeCalls, 1);
+        expect(connection.lastRequest!.arguments['bodyDelivery'], 'sealed-file-v1');
+        control.cancel();
+        await Future<void>.delayed(Duration.zero);
+        expect(connection.body.disposed, isTrue);
+        await body.dispose();
+      } else {
+        expect(await (source as ControlledTransformingComicResourceSource)
+            .transformResourceControlled(uri, bytes), connection.body.bytes);
+        expect(connection.takeCalls, 0);
+        expect(connection.lastRequest!.arguments.containsKey('bodyDelivery'), isFalse);
+      }
+      expect(connection.lastRequest!.operation, ExternalPluginRuntimeOperation.transformResource);
+      expect(connection.lastRequest!.arguments['uri'], uri.toString());
+      expect(connection.lastRequest!.arguments['bytes'], bytes);
+      await session.close();
+    }
+  });
+
+  test('isolated transform body fallback preserves delivery input and control', () async {
+    final connection = _BodyConnection(
+      declared: false, transformDeclared: true, rejectIsolated: true,
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.veneraJavaScript),
+      connection: connection, limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final uri = Uri.parse('venera-resource:unchanged');
+    final control = _MutableTaskControl(priority: 1000);
+    await (source as ControlledResolvableComicResourceSource)
+        .resolveResourceControlled(uri, control: control);
+    final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5]);
+    final body = await (source as BodyTransformingComicResourceSource)
+        .transformResourceBody(uri, bytes, control: control);
+    expect(connection.transforms, hasLength(2));
+    expect(connection.transforms.first.arguments['__zicIsolatedModifyImage'], isA<String>());
+    expect(connection.transforms.last.arguments.containsKey('__zicIsolatedModifyImage'), isFalse);
+    for (final request in connection.transforms) {
+      expect(request.arguments['bodyDelivery'], 'sealed-file-v1');
+      expect(request.arguments['bytes'], bytes);
+      expect(request.arguments['uri'], uri.toString());
+    }
+    expect(connection.takeCalls, 1);
+    await body.dispose();
+  });
+
+  test('body delivery requires both source and channel capability declarations',
+      () async {
+    for (final flags in <(bool, bool)>[(false, true), (true, false), (true, true)]) {
+      final connection = _BodyConnection(declared: flags.$1, channelSupported: flags.$2);
+      final session = ExternalPluginRuntimeSession(
+        plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+        connection: connection, limits: const ExternalPluginRuntimeLimits(),
+      );
+      final source = session.sources.single;
+      final bodySource = source as BodyDeliveringComicResourceSource;
+      expect(bodySource.supportsResourceBodyDelivery, flags.$1 && flags.$2);
+      final uri = Uri.parse('mihon:resource:unchanged');
+      if (flags.$1 && flags.$2) {
+        final control = _MutableTaskControl(priority: 1000);
+        final body = await bodySource.openResourceBody(uri, control: control);
+        expect(connection.lastRequest!.arguments['uri'], uri.toString());
+        expect(connection.lastRequest!.arguments['bodyDelivery'], 'sealed-file-v1');
+        expect(connection.takeCalls, 1);
+        control.cancel();
+        await Future<void>.delayed(Duration.zero);
+        expect(connection.body.disposed, isTrue);
+        await body.dispose();
+      } else {
+        expect(await source.loadResource(uri), connection.body.bytes);
+        expect(connection.lastRequest!.arguments, <String, Object?>{'uri': uri.toString()});
+        expect(connection.takeCalls, 0);
+      }
+      await session.close();
+    }
+  });
+
+  test('cancelled body production retains invocation until physical reply exits',
+      () async {
+    final gate = Completer<void>();
+    final connection = _BodyConnection(responseGate: gate.future);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection, limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final control = _MutableTaskControl(priority: 1000);
+    var completed = false;
+    final pending = expectLater((session.sources.single as BodyDeliveringComicResourceSource)
+      .openResourceBody(Uri.parse('mihon:resource:unchanged'), control: control),
+      throwsA(isA<Failure>().having((e) => e.code, 'code', ErrorCode.cancelled)))
+      .then((_) { completed = true; });
+    await connection.started.future;
+    control.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(connection.cancelCalls, 1);
+    expect(completed, isFalse);
+    expect(connection.discardCalls, 0);
+    gate.complete();
+    await pending;
+    expect(connection.takeCalls, 0);
+    expect(connection.discardCalls, 1);
+    expect(connection.body.disposed, isTrue);
+  });
+
+  test('small body metadata cannot bypass the configured encoded byte limit',
+      () async {
+    final connection = _BodyConnection(bytes: Uint8List(2048));
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxResponseBytes: 1024),
+    );
+    addTearDown(session.close);
+    await expectLater((session.sources.single as BodyDeliveringComicResourceSource)
+      .openResourceBody(Uri.parse('mihon:resource:unchanged')),
+      throwsA(isA<Failure>().having((e) => e.message, 'message',
+        contains('body exceeds response limit'))));
+    expect(connection.takeCalls, 0);
+    expect(connection.discardCalls, 1);
+  });
+
   test('resolves a Mihon manga detail URL without leaking opaque parsing', () {
     final payload = base64Url
         .encode(utf8.encode(jsonEncode(<String, Object?>{
@@ -300,6 +443,41 @@ void main() {
     );
   });
 
+  test('Venera JM browser link never uses its update URL or changes identity',
+      () async {
+    final website = Uri.parse(
+      'https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/jm.js',
+    );
+    final connection = _FixtureConnection(externalId: 'jm', website: website);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(), connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    String id(String raw, {bool legacy = false}) => 'venera:comic:${base64Url
+        .encode(utf8.encode(jsonEncode(<String, Object?>{
+          if (!legacy) 'v': 2,
+          'id': raw,
+          if (legacy) 'title': 'Previously saved title',
+        }))).replaceAll('=', '')}';
+    for (final raw in <String>['1441640', 'jm1441640']) {
+      for (final legacy in <bool>[false, true]) {
+        expect((source as ComicWebUriSource).resolveComicWebUri(
+          id(raw, legacy: legacy)), Uri.parse('https://18comic.ink/album/1441640'));
+        expect((source as CanonicalComicIdentitySource).canonicalComicIdentity(
+          id(raw, legacy: legacy)), website.resolve(raw).replace(fragment: '').toString());
+      }
+    }
+    final absolute = 'https://custom.invalid/album/1441640';
+    expect((source as ComicWebUriSource).resolveComicWebUri(id(absolute)),
+      Uri.parse(absolute));
+    for (final raw in <String>['unknown', 'javascript:alert(1)', 'file:/1441640']) {
+      expect((source as ComicWebUriSource).resolveComicWebUri(id(raw)), isNull);
+    }
+    expect(connection.operations, isEmpty);
+  });
+
   test('Venera version capability reads the current page gnd relation',
       () async {
     final connection = _FixtureConnection(
@@ -346,6 +524,36 @@ void main() {
         ExternalPluginRuntimeOperation.loadResource,
       ],
     );
+    expect(connection.lastRequest?.arguments['sourceDocument'], isTrue);
+  });
+
+  test('version document coalescing never joins an image resource', () async {
+    final connection = _FixtureConnection(
+      resource: Uint8List.fromList(utf8.encode('<div id="gnd"></div>')),
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final uri = Uri.parse('https://example.invalid/g/1/token/');
+    final payload = base64Url.encode(utf8.encode(jsonEncode(
+      <String, Object?>{'v': 2, 'id': uri.toString()},
+    ))).replaceAll('=', '');
+    final versions = source as ComicVersionSource;
+    final first = versions.findComicVersions('venera:comic:$payload');
+    final second = versions.findComicVersions('venera:comic:$payload');
+    final image = source.loadResource(uri);
+    await first;
+    await second;
+    await image;
+    expect(connection.operations, <ExternalPluginRuntimeOperation>[
+      ExternalPluginRuntimeOperation.loadResource,
+      ExternalPluginRuntimeOperation.loadResource,
+    ]);
+    expect(connection.lastRequest?.arguments['sourceDocument'], isNull);
   });
 
   test('Venera version capability skips non-gnd comic web routes', () async {
@@ -373,6 +581,52 @@ void main() {
     expect(versionSource.supportsComicVersions, isTrue);
     expect(versions, isEmpty);
     expect(connection.operations, isEmpty);
+  });
+
+  test('runtime browse preserves source-owned next coordinates', () async {
+    final connection = _FixtureConnection(
+      browsePayload: <String, Object?>{
+        'items': <Object?>[],
+        'offset': 0,
+        'hasMore': true,
+        'nextOffset': 24,
+      },
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final page = await session.sources.single.browse();
+    expect(page.items, isEmpty);
+    expect(page.hasMore, isTrue);
+    expect(page.nextOffset, 24);
+  });
+
+  test('runtime browse rejects invalid next coordinates', () async {
+    for (final payload in <Map<String, Object?>>[
+      <String, Object?>{'offset': 0, 'hasMore': true, 'nextOffset': 0},
+      <String, Object?>{'offset': 24, 'hasMore': true, 'nextOffset': 12},
+      <String, Object?>{'offset': 0, 'hasMore': false, 'nextOffset': 24},
+      <String, Object?>{'offset': 0, 'hasMore': true, 'nextOffset': '24'},
+    ]) {
+      final session = ExternalPluginRuntimeSession(
+        plugin: _plugin(),
+        connection: _FixtureConnection(
+          browsePayload: <String, Object?>{'items': <Object?>[], ...payload},
+        ),
+        limits: const ExternalPluginRuntimeLimits(),
+      );
+      try {
+        await expectLater(
+          session.sources.single.browse(offset: payload['offset']! as int),
+          throwsA(isA<FormatException>()),
+        );
+      } finally {
+        await session.close();
+      }
+    }
   });
 
   test('Mihon search filters preserve typed source-owned state', () async {
@@ -655,6 +909,45 @@ void main() {
       throwsA(isA<Failure>()),
     );
   });
+
+  for (final sample in <(String, String)>[
+    ('ASCII', 'A\u0000z'),
+    ('two-byte boundaries', '\u0080\u07ff'),
+    ('three-byte boundaries', '\u0800漢\uffff'),
+    ('supplementary scalar', '😀\u{10ffff}'),
+    ('unpaired high surrogate', String.fromCharCodes(<int>[0xd800])),
+    ('unpaired low surrogate', String.fromCharCodes(<int>[0xdc00])),
+    ('high-high-low', String.fromCharCodes(<int>[0xd800, 0xd800, 0xdc00])),
+    ('pair followed by low', String.fromCharCodes(<int>[0xdbff, 0xdfff, 0xdc00])),
+    ('high followed by ASCII', String.fromCharCodes(<int>[0xdbff, 0x41])),
+  ]) {
+    test('runtime response limit counts UTF-8 keys and values: ${sample.$1}',
+        () async {
+      final text = sample.$2;
+      final payload = <String, Object?>{
+        'items': <Object?>[], 'offset': 0, 'hasMore': false,
+        text: <Object?>[<String, Object?>{'value': text}, Uint8List(7)],
+      };
+      final expectedBytes = 34 + utf8.encode(text).length * 2 + 5 + 7;
+      for (final limit in <int>[expectedBytes, expectedBytes - 1]) {
+        final session = ExternalPluginRuntimeSession(
+          plugin: _plugin(), connection: _FixtureConnection(browsePayload: payload),
+          limits: ExternalPluginRuntimeLimits(maxResponseBytes: limit),
+        );
+        try {
+          final result = session.sources.single.browse();
+          if (limit == expectedBytes) {
+            expect((await result).items, isEmpty);
+          } else {
+            await expectLater(result, throwsA(isA<Failure>().having(
+              (failure) => failure.message, 'message',
+              'external plugin response exceeds limit: $expectedBytes > $limit',
+            )));
+          }
+        } finally { await session.close(); }
+      }
+    });
+  }
 
   test('timed-out work keeps its concurrency permit until backend exit',
       () async {
@@ -1601,6 +1894,110 @@ final class _ReplayableSourceReadConnection
   Future<void> close() async {}
 }
 
+final class _BodyConnection implements CancellableExternalPluginRuntimeConnection,
+    BodyExternalPluginRuntimeConnection {
+  _BodyConnection({this.declared = true, this.channelSupported = true,
+    this.transformDeclared = false, this.rejectIsolated = false,
+    this.responseGate, Uint8List? bytes})
+      : body = _RuntimeTestBody(bytes ?? Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]));
+
+  final bool declared;
+  final bool transformDeclared;
+  final bool rejectIsolated;
+  final transforms = <ExternalPluginRuntimeRequest>[];
+  final bool channelSupported;
+  final Future<void>? responseGate;
+  final _RuntimeTestBody body;
+  final started = Completer<void>();
+  ExternalPluginRuntimeRequest? lastRequest;
+  int takeCalls = 0;
+  int discardCalls = 0;
+  int cancelCalls = 0;
+
+  @override
+  bool get supportsResourceBodyDelivery => channelSupported;
+
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources => [
+    ExternalPluginRuntimeSourceDescriptor(
+      externalId: 'fixture', name: 'Fixture', language: 'en',
+      website: Uri.parse('https://example.invalid'), supportsResourceBodyDelivery: declared,
+      supportsResourceTransformBodyDelivery: transformDeclared,
+    ),
+  ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(ExternalPluginRuntimeRequest request) async {
+    lastRequest = request;
+    if (request.operation == ExternalPluginRuntimeOperation.resolveResource) {
+      return ExternalPluginRuntimeResponse.success(requestId: request.requestId,
+        payload: <String, Object?>{
+          'url': 'https://cdn.invalid/input', 'method': 'GET',
+          'headers': const <String, Object?>{}, 'body': null,
+          'requiresRuntimeTransform': true,
+          '__zicIsolatedModifyImage': 'function modifyImage(image){return image}',
+        });
+    }
+    if (request.operation == ExternalPluginRuntimeOperation.transformResource) {
+      transforms.add(request);
+      if (rejectIsolated && request.arguments['__zicIsolatedModifyImage'] is String) {
+        return ExternalPluginRuntimeResponse.failure(requestId: request.requestId,
+          error: ExternalPluginRuntimeError(code: 'venera-isolated-transform-incompatible',
+            message: 'fixture requires source context'));
+      }
+    }
+    if (!started.isCompleted) started.complete();
+    await (responseGate ?? Future<void>.value());
+    return ExternalPluginRuntimeResponse.success(
+      requestId: request.requestId,
+      payload: request.arguments['bodyDelivery'] == 'sealed-file-v1'
+          ? <String, Object?>{
+              'bodyDelivery': 'sealed-file-v1',
+              'ownerId': 'native-11111111-1111-1111-1111-111111111111',
+              'bodyId': '22222222-2222-2222-2222-222222222222',
+              'requestId': request.requestId, 'externalSourceId': 'fixture',
+              'runtimeId': 'fixture-runtime', 'authorityRevision': 'payload-v3',
+              'resourceUri': request.arguments['uri'], 'byteLength': body.byteLength,
+              'sha256': 'a' * 64, 'fnv64': '0123456789abcdef',
+              'metadataPrefix': body.metadataPrefix,
+            }
+          : body.bytes,
+    );
+  }
+  @override
+  Future<ComicResourceBody> takeResourceBody(ExternalPluginRuntimeBodyFile reference) async {
+    takeCalls++;
+    return body;
+  }
+  @override
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference) async {
+    discardCalls++;
+    await body.dispose();
+  }
+  @override
+  Future<void> cancel(String requestId) async { cancelCalls++; }
+  @override
+  Future<void> close() async {}
+}
+
+final class _RuntimeTestBody implements ComicResourceBody {
+  _RuntimeTestBody(this.bytes);
+  final Uint8List bytes;
+  bool disposed = false;
+  @override
+  int get byteLength => bytes.length;
+  @override
+  Uint8List get metadataPrefix =>
+      Uint8List.sublistView(bytes, 0, bytes.length < 64 ? bytes.length : 64);
+  @override
+  String get validator => '"body"';
+  @override
+  Stream<List<int>> open({int start = 0, int? end}) =>
+      Stream<List<int>>.value(Uint8List.sublistView(bytes, start, end ?? bytes.length));
+  @override
+  Future<void> dispose() async { disposed = true; }
+}
+
 final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   _FixtureConnection({
     this.mismatchRequestId = false,
@@ -1611,6 +2008,9 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
     this.includeChapterPage = true,
     this.supportsComicPreview = false,
     this.supportsComicComments = false,
+    this.browsePayload,
+    this.externalId = 'fixture',
+    this.website,
   }) : resource = resource ?? Uint8List.fromList(<int>[82, 73, 70, 70]);
 
   final bool mismatchRequestId;
@@ -1621,6 +2021,9 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   final bool includeChapterPage;
   final bool supportsComicPreview;
   final bool supportsComicComments;
+  final Map<String, Object?>? browsePayload;
+  final String externalId;
+  final Uri? website;
   final List<ExternalPluginRuntimeOperation> operations =
       <ExternalPluginRuntimeOperation>[];
   bool closed = false;
@@ -1631,10 +2034,10 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   List<ExternalPluginRuntimeSourceDescriptor> get sources =>
       <ExternalPluginRuntimeSourceDescriptor>[
         ExternalPluginRuntimeSourceDescriptor(
-          externalId: 'fixture',
+          externalId: externalId,
           name: 'Fixture',
           language: 'en',
-          website: Uri.parse('https://example.invalid'),
+          website: website ?? Uri.parse('https://example.invalid'),
           supportsComicPreview: supportsComicPreview,
           supportsComicComments: supportsComicComments,
           adaptiveReaderType: SourceAdaptiveReaderType.vertical,
@@ -1663,7 +2066,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
             'value': false,
           },
         ],
-        ExternalPluginRuntimeOperation.browse => <String, Object?>{
+        ExternalPluginRuntimeOperation.browse => browsePayload ?? <String, Object?>{
             'items': <Object?>[
               <String, Object?>{
                 'comicId': 'comic-1',

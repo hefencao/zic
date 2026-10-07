@@ -54,6 +54,9 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "activateVeneraRuntime",
             "invokeExternalRuntime",
             "cancelExternalRuntime",
+            RuntimeServiceIpc.CLAIM_BODY_METHOD,
+            RuntimeServiceIpc.RELEASE_BODY_METHOD,
+            RuntimeServiceIpc.DISCARD_BODY_METHOD,
             "closeExternalRuntime",
             "closeExternalRuntimeProcess" -> {
                 val client = runtimeServiceClient

@@ -10,7 +10,7 @@ required = (
     '"http_binary" -> httpBinary(message, requireImage = false)',
     '"http_image_binary" -> httpBinary(message, requireImage = true)',
     'fun takeNativeBytes(token: String): ByteArray?',
-    'private fun retainNativeBytes(bytes: ByteArray): String',
+    'private fun retainNativeBytes(bytes: ByteArray, message: JSONObject): String',
     'VENERA_MAX_NATIVE_BYTE_PAYLOADS',
     'hasVeneraEncodedImageSignature(response.body)',
     '.put("encodedImage", encodedImage)',

@@ -11,6 +11,52 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  for (final lateResponse in <bool>[false, true]) {
+    test('cancelled bounded Reader fallback waits for '
+        '${lateResponse ? 'late response discard' : 'source exit'}', () async {
+      final fallback = _RetiringBoundedOpenTransport(lateResponse);
+      final transport = ArtifactCacheTransport(
+        cache: ArtifactCacheManager(
+          backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+        ),
+        identities: const <MapEntry<Uri, DownloadId>>[],
+        fallbackFor: (_) => fallback,
+      );
+      final control = CancelToken();
+      final errors = <Object>[];
+      var completed = false;
+      final result = transport.openControlled(Uri.parse('runtime://page'),
+        control: control).then<void>((_) {
+          completed = true;
+        }, onError: (Object error, StackTrace _) {
+          errors.add(error);
+          completed = true;
+        });
+      try {
+        await fallback.entered.future.timeout(const Duration(seconds: 1));
+        control.cancel();
+        await fallback.cancelled.future.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(completed, isFalse,
+          reason: 'Reader forwarding must join the bounded source open');
+        fallback.exit.complete();
+        if (lateResponse) {
+          await fallback.discardStarted.future.timeout(const Duration(seconds: 1));
+          expect(completed, isFalse);
+          fallback.discardExit.complete();
+        }
+        await result.timeout(const Duration(seconds: 1));
+        expect(errors, hasLength(1));
+        expect(errors.single, isA<Failure>().having(
+          (error) => error.code, 'code', ErrorCode.cancelled));
+      } finally {
+        if (!fallback.exit.isCompleted) fallback.exit.complete();
+        if (!fallback.discardExit.isCompleted) fallback.discardExit.complete();
+        await result.timeout(const Duration(seconds: 2));
+      }
+    });
+  }
+
   test('Reader cache lookup hang keeps the generic open watchdog',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -1585,6 +1631,39 @@ final class _BlockingControlledTransport implements ControlledTransport {
   }) {
     opens++;
     return pending.future;
+  }
+}
+
+final class _RetiringBoundedOpenTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
+  _RetiringBoundedOpenTransport(this.lateResponse);
+  final bool lateResponse;
+  final entered = Completer<void>();
+  final cancelled = Completer<void>();
+  final exit = Completer<void>();
+  final discardStarted = Completer<void>();
+  final discardExit = Completer<void>();
+
+  @override
+  bool selfBoundsOpen(Uri uri) => true;
+
+  @override
+  Future<ByteResponse> open(Uri uri, {ByteRange? range, Validators? validators}) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(Uri uri, {ByteRange? range,
+      Validators? validators, TaskControl? control}) async {
+    unawaited(control!.whenCancelled.then((_) => cancelled.complete()));
+    entered.complete();
+    await exit.future;
+    if (!lateResponse) control.throwIfCancelled();
+    return ByteResponse(bytes: const Stream<List<int>>.empty(),
+      statusCode: HttpStatus.ok, rangeStart: 0, totalLength: 0,
+      onDiscard: () async {
+        discardStarted.complete();
+        await discardExit.future;
+      });
   }
 }
 

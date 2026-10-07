@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:catalog/catalog.dart';
+
 import 'runtime_protocol.dart';
 
 /// Raw request/response channel owned by one isolated plugin runtime.
@@ -21,6 +23,13 @@ abstract interface class ExternalPluginRuntimeMessageChannel {
 abstract interface class CancellableExternalPluginRuntimeMessageChannel
     implements ExternalPluginRuntimeMessageChannel {
   Future<void> cancel(String requestId);
+}
+
+abstract interface class BodyExternalPluginRuntimeMessageChannel {
+  Future<ComicResourceBody> takeResourceBody(
+    ExternalPluginRuntimeBodyFile reference,
+  );
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference);
 }
 
 /// Versioned startup message produced by an isolated runtime after payload
@@ -93,7 +102,8 @@ final class ExternalPluginRuntimeHandshake {
 /// wire representation. Close is joinable and new calls are rejected once
 /// teardown begins.
 final class MessageChannelExternalPluginRuntimeConnection
-    implements CancellableExternalPluginRuntimeConnection {
+    implements CancellableExternalPluginRuntimeConnection,
+        BodyExternalPluginRuntimeConnection {
   MessageChannelExternalPluginRuntimeConnection({
     required ExternalPluginRuntimeHandshake handshake,
     required ExternalPluginRuntimeMessageChannel channel,
@@ -129,12 +139,43 @@ final class MessageChannelExternalPluginRuntimeConnection
     final raw = await _channel.send(request.toMessage());
     final response = ExternalPluginRuntimeResponse.fromMessage(raw);
     if (response.requestId != request.requestId) {
+      final payload = response.payload;
+      if (ExternalPluginRuntimeBodyFile.isBodyFile(payload)) {
+        await discardResourceBody(
+          ExternalPluginRuntimeBodyFile.fromMessage(payload),
+        );
+      }
       throw FormatException(
         'runtime response requestId ${response.requestId} does not match '
         '${request.requestId}',
       );
     }
     return response;
+  }
+
+  @override
+  bool get supportsResourceBodyDelivery =>
+      _channel is BodyExternalPluginRuntimeMessageChannel;
+
+  @override
+  Future<ComicResourceBody> takeResourceBody(
+    ExternalPluginRuntimeBodyFile reference,
+  ) {
+    final channel = _channel;
+    if (channel is! BodyExternalPluginRuntimeMessageChannel) {
+      throw StateError('runtime channel cannot deliver a body file');
+    }
+    return (channel as BodyExternalPluginRuntimeMessageChannel)
+        .takeResourceBody(reference);
+  }
+
+  @override
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference) {
+    final channel = _channel;
+    return channel is BodyExternalPluginRuntimeMessageChannel
+        ? (channel as BodyExternalPluginRuntimeMessageChannel)
+            .discardResourceBody(reference)
+        : Future<void>.value();
   }
 
   @override

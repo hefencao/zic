@@ -18,7 +18,10 @@ import android.webkit.WebViewClient
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.CancellationException
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -97,12 +100,14 @@ internal class VeneraImageTransformRuntime(
     context: Context,
     private val driverId: String,
     maxResponseBytes: Int,
+    executor: ExecutorService,
 ) : Closeable {
     private val workers = List(MAX_CONCURRENT_TRANSFORMS) { index ->
         VeneraImageTransformWorker(
             context = context,
             driverId = "$driverId:$index",
             maxResponseBytes = maxResponseBytes,
+            executor = executor,
         )
     }
     private val assignmentLock = Any()
@@ -112,6 +117,7 @@ internal class VeneraImageTransformRuntime(
         ConcurrentHashMap.newKeySet<VeneraImageTransformWorker>()
     private val prewarmCount = AtomicInteger(0)
     private val closed = AtomicBoolean(false)
+    private val closeCompletion = CompletableFuture<Unit>()
 
     fun prewarm() {
         if (closed.get()) return
@@ -124,12 +130,22 @@ internal class VeneraImageTransformRuntime(
         script: String,
         bytes: ByteArray,
         result: NativeDriverResult,
+    ) = invoke(requestId, script, bytes, result, null, {})
+
+    fun invoke(
+        requestId: String,
+        script: String,
+        bytes: ByteArray,
+        result: NativeDriverResult,
+        encodeBody: ((Bitmap, () -> Unit) -> RuntimeServiceBodyReference)?,
+        discardBody: (RuntimeServiceBodyReference) -> Unit,
     ) {
         if (closed.get()) {
             result.error("runtime-closing", "Venera image transform runtime is closing")
             return
         }
         val worker = synchronized(assignmentLock) {
+            if (closed.get()) return@synchronized null
             workers.firstOrNull { candidate ->
                 !busyWorkers.contains(candidate)
             }?.also {
@@ -148,6 +164,8 @@ internal class VeneraImageTransformRuntime(
             requestId = requestId,
             script = script,
             bytes = bytes,
+            encodeBody = encodeBody,
+            discardBody = discardBody,
             result = object : NativeDriverResult {
                 override fun success(value: Any) {
                     release(requestId, worker)
@@ -172,12 +190,24 @@ internal class VeneraImageTransformRuntime(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        workers.forEach(VeneraImageTransformWorker::close)
-        synchronized(assignmentLock) {
-            assignments.clear()
-            busyWorkers.clear()
-        }
+        closeWhenDrained()
+    }
+
+    fun closeWhenDrained(): CompletableFuture<Unit> {
+        if (!closed.compareAndSet(false, true)) return closeCompletion
+        CompletableFuture.allOf(*workers.map { it.closeWhenDrained() }.toTypedArray())
+            .whenComplete { _, failure ->
+                synchronized(assignmentLock) {
+                    assignments.clear()
+                    busyWorkers.clear()
+                }
+                if (failure == null) {
+                    closeCompletion.complete(Unit)
+                } else {
+                    closeCompletion.completeExceptionally(failure)
+                }
+            }
+        return closeCompletion
     }
 
     private fun release(
@@ -208,26 +238,55 @@ private class VeneraImageTransformWorker(
     context: Context,
     private val driverId: String,
     private val maxResponseBytes: Int,
+    executor: ExecutorService,
 ) : Closeable {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val pending = ConcurrentHashMap<String, NativeDriverResult>()
+    private data class PendingTransform(
+        val result: NativeDriverResult,
+        val encodeBody: ((Bitmap, () -> Unit) -> RuntimeServiceBodyReference)?,
+        val discardBody: (RuntimeServiceBodyReference) -> Unit,
+    )
+
+    private val pending = ConcurrentHashMap<String, PendingTransform>()
     private val inputs = ConcurrentHashMap<String, ByteArray>()
     private val completions = ConcurrentHashMap<String, Completion>()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val started = ConcurrentHashMap.newKeySet<String>()
     private val startedAtNanos = ConcurrentHashMap<String, Long>()
     private val closed = AtomicBoolean(false)
+    private val submissions = NativeRuntimeWorkDrain()
+    private val closeCompletion = CompletableFuture<Unit>()
     private val bridge = TransformBridge(
         maxResponseBytes = maxResponseBytes,
+        executor = executor,
         takeInput = { requestId -> inputs.remove(requestId) },
-        onSuccess = { requestId, bytes ->
-            completions[requestId] = Completion.Success(bytes)
+        encodeBody = { requestId, bitmap ->
+            val task = pending[requestId] ?: error("Venera transform request has retired")
+            task.encodeBody?.invoke(bitmap) {
+                if (closed.get() || cancelled.contains(requestId)) throw CancellationException()
+            }
+        },
+        onSuccess = { requestId, value ->
+            val task = pending[requestId]
+            val completion = Completion.Success(value) {
+                if (value is RuntimeServiceBodyReference) task?.discardBody?.invoke(value)
+            }
+            if (closed.get()) completion.discard()
+            else discardCompletion(completions.put(requestId, completion))
         },
         onFailure = { requestId, code, message ->
-            completions[requestId] = Completion.Failure(code, message)
+            discardCompletion(completions.put(requestId, Completion.Failure(code, message)))
         },
         onFinished = ::finish,
+        onEncoded = { requestId ->
+            mainHandler.post {
+                if (!closed.get()) webView?.evaluateJavascript(
+                    "__zicImageTransformEncoded(${JSONObject.quote(requestId)});",
+                    null,
+                )
+            }
+        },
     )
     private var webView: WebView? = null
     private var ready = false
@@ -243,7 +302,28 @@ private class VeneraImageTransformWorker(
         script: String,
         bytes: ByteArray,
         result: NativeDriverResult,
+        encodeBody: ((Bitmap, () -> Unit) -> RuntimeServiceBodyReference)?,
+        discardBody: (RuntimeServiceBodyReference) -> Unit,
     ) {
+        val work = submissions.begin()
+        if (work == null) {
+            result.error("runtime-closing", "Venera image transform runtime is closing")
+            return
+        }
+        try {
+            invokeAccepted(requestId, script, bytes, PendingTransform(result, encodeBody, discardBody))
+        } finally {
+            work.finish()
+        }
+    }
+
+    private fun invokeAccepted(
+        requestId: String,
+        script: String,
+        bytes: ByteArray,
+        task: PendingTransform,
+    ) {
+        val result = task.result
         if (closed.get()) {
             result.error("runtime-closing", "Venera image transform runtime is closing")
             return
@@ -262,7 +342,7 @@ private class VeneraImageTransformWorker(
             )
             return
         }
-        if (pending.putIfAbsent(requestId, result) != null) {
+        if (pending.putIfAbsent(requestId, task) != null) {
             result.error(
                 "venera-operation-failed",
                 "Venera isolated transform request identity is already active",
@@ -276,10 +356,7 @@ private class VeneraImageTransformWorker(
             "isolated-transform-start driver=$driverId request=$requestId inputBytes=${bytes.size}",
         )
         mainHandler.post {
-            if (closed.get()) {
-                finishUnavailable(requestId, "Venera image transform runtime is closing")
-                return@post
-            }
+            if (closed.get()) return@post
             if (initializationFailed) {
                 finishUnavailable(requestId, "Venera image transform runtime is unavailable")
                 return@post
@@ -299,8 +376,8 @@ private class VeneraImageTransformWorker(
         if (!started.contains(requestId)) {
             queuedScripts.remove(requestId)
             inputs.remove(requestId)
-            completions.remove(requestId)
-            val result = pending.remove(requestId) ?: return
+            discardCompletion(completions.remove(requestId))
+            val result = pending.remove(requestId)?.result ?: return
             cancelled.remove(requestId)
             startedAtNanos.remove(requestId)
             result.error("runtime-request-cancelled", "Venera request was cancelled")
@@ -308,42 +385,46 @@ private class VeneraImageTransformWorker(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        val finishClose = {
-            pending.keys.toList().forEach { requestId ->
-                queuedScripts.remove(requestId)
-                inputs.remove(requestId)
-                completions.remove(requestId)
-                started.remove(requestId)
-                cancelled.remove(requestId)
-                startedAtNanos.remove(requestId)
-                pending.remove(requestId)?.error(
-                    "runtime-closing",
-                    "Venera image transform runtime is closing",
-                )
+        closeWhenDrained()
+    }
+
+    fun closeWhenDrained(): CompletableFuture<Unit> {
+        if (!closed.compareAndSet(false, true)) return closeCompletion
+        CompletableFuture.allOf(submissions.close(), bridge.closeWhenDrained())
+            .whenComplete { _, failure ->
+                mainHandler.post {
+                    runCatching {
+                        webView?.let { view ->
+                            view.removeJavascriptInterface(BRIDGE_NAME)
+                            view.stopLoading()
+                            view.loadUrl("about:blank")
+                            view.clearHistory()
+                            view.removeAllViews()
+                            view.destroy()
+                        }
+                        webView = null
+                        ready = false
+                        pending.keys.toList().forEach { requestId ->
+                            pending.remove(requestId)?.result?.error(
+                                "runtime-closing",
+                                "Venera image transform runtime is closing",
+                            )
+                        }
+                        queuedScripts.clear()
+                        inputs.clear()
+                        completions.values.forEach(::discardCompletion)
+                        completions.clear()
+                        started.clear()
+                        cancelled.clear()
+                        startedAtNanos.clear()
+                        if (failure != null) throw failure
+                    }.fold(
+                        onSuccess = { closeCompletion.complete(Unit) },
+                        onFailure = { closeCompletion.completeExceptionally(it) },
+                    )
+                }
             }
-            bridge.close()
-            webView?.let { view ->
-                view.removeJavascriptInterface(BRIDGE_NAME)
-                view.stopLoading()
-                view.loadUrl("about:blank")
-                view.clearHistory()
-                view.removeAllViews()
-                view.destroy()
-            }
-            webView = null
-            ready = false
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            finishClose()
-        } else {
-            val latch = java.util.concurrent.CountDownLatch(1)
-            mainHandler.post {
-                finishClose()
-                latch.countDown()
-            }
-            latch.await()
-        }
+        return closeCompletion
     }
 
     private val queuedScripts = ConcurrentHashMap<String, String>()
@@ -423,10 +504,11 @@ private class VeneraImageTransformWorker(
     }
 
     private fun finish(requestId: String) {
+        if (closed.get()) return
         inputs.remove(requestId)
         started.remove(requestId)
-        val result = pending.remove(requestId) ?: run {
-            completions.remove(requestId)
+        val result = pending.remove(requestId)?.result ?: run {
+            discardCompletion(completions.remove(requestId))
             cancelled.remove(requestId)
             startedAtNanos.remove(requestId)
             return
@@ -435,7 +517,7 @@ private class VeneraImageTransformWorker(
             (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000L
         }
         if (cancelled.remove(requestId)) {
-            completions.remove(requestId)
+            discardCompletion(completions.remove(requestId))
             result.error("runtime-request-cancelled", "Venera request was cancelled")
             return
         }
@@ -444,9 +526,9 @@ private class VeneraImageTransformWorker(
                 Log.i(
                     LOG_TAG,
                     "isolated-transform-finish driver=$driverId request=$requestId " +
-                        "elapsedMicros=${elapsedMicros ?: -1} outputBytes=${completion.bytes.size}",
+                        "elapsedMicros=${elapsedMicros ?: -1} outputBytes=${completion.byteLength}",
                 )
-                result.success(completion.bytes)
+                result.success(completion.value)
             }
             is Completion.Failure -> result.error(
                 completion.code,
@@ -462,11 +544,11 @@ private class VeneraImageTransformWorker(
     private fun finishUnavailable(requestId: String, message: String) {
         queuedScripts.remove(requestId)
         inputs.remove(requestId)
-        completions.remove(requestId)
+        discardCompletion(completions.remove(requestId))
         started.remove(requestId)
         cancelled.remove(requestId)
         startedAtNanos.remove(requestId)
-        pending.remove(requestId)?.error(
+        pending.remove(requestId)?.result?.error(
             "venera-isolated-transform-unavailable",
             message,
         )
@@ -480,24 +562,50 @@ private class VeneraImageTransformWorker(
         }
     }
 
+    private fun discardCompletion(completion: Completion?) {
+        if (completion is Completion.Success) completion.discard()
+    }
+
     private sealed interface Completion {
-        data class Success(val bytes: ByteArray) : Completion
+        data class Success(val value: Any, val discard: () -> Unit) : Completion {
+            val byteLength: Long get() = when (value) {
+                is ByteArray -> value.size.toLong()
+                is RuntimeServiceBodyReference -> value.byteLength
+                else -> error("invalid Venera transform output")
+            }
+        }
         data class Failure(val code: String, val message: String) : Completion
     }
 
     private class TransformBridge(
         private val maxResponseBytes: Int,
+        private val executor: ExecutorService,
         private val takeInput: (String) -> ByteArray?,
-        private val onSuccess: (String, ByteArray) -> Unit,
+        private val encodeBody: (String, Bitmap) -> RuntimeServiceBodyReference?,
+        private val onSuccess: (String, Any) -> Unit,
         private val onFailure: (String, String, String) -> Unit,
         private val onFinished: (String) -> Unit,
+        private val onEncoded: (String) -> Unit,
     ) : Closeable {
         private val images = ConcurrentHashMap<Int, Bitmap>()
         private val nextImageKey = AtomicInteger(1)
         private val closed = AtomicBoolean(false)
+        private val nativeWork = NativeRuntimeWorkDrain()
+        private val closeCompletion = CompletableFuture<Unit>()
 
         @JavascriptInterface
         fun request(raw: String): String {
+            val work = nativeWork.begin()
+            if (work == null) return JSONObject().put("ok", false)
+                .put("message", "Venera isolated transform bridge is closed").toString()
+            return try {
+                requestAccepted(raw)
+            } finally {
+                work.finish()
+            }
+        }
+
+        private fun requestAccepted(raw: String): String {
             val response = runCatching {
                 check(!closed.get()) { "Venera isolated transform bridge is closed" }
                 val message = JSONObject(raw)
@@ -514,30 +622,76 @@ private class VeneraImageTransformWorker(
 
         @JavascriptInterface
         fun complete(requestId: String, imageKey: Int) {
-            runCatching { encode(requireImage(imageKey)) }
-                .onSuccess { onSuccess(requestId, it) }
-                .onFailure {
-                    onFailure(
-                        requestId,
-                        "venera-operation-failed",
-                        it.message ?: "Venera image encode failed",
-                    )
+            val work = nativeWork.begin() ?: return
+            try {
+                // WebViews can share one JavaBridge thread. Only the admitted
+                // output encode borrows the host executor; JS keeps the worker
+                // and Bitmap namespace until this work physically returns.
+                executor.execute {
+                    try {
+                        runCatching {
+                            val bitmap = requireImage(imageKey)
+                            encodeBody(requestId, bitmap) ?: encode(bitmap)
+                        }.onSuccess { onSuccess(requestId, it) }
+                            .onFailure { failEncoding(requestId, it) }
+                    } finally {
+                        work.finish()
+                        if (!closed.get()) onEncoded(requestId)
+                    }
                 }
+            } catch (error: Throwable) {
+                try {
+                    failEncoding(requestId, error)
+                } finally {
+                    work.finish()
+                    if (!closed.get()) onEncoded(requestId)
+                }
+            }
+        }
+
+        private fun failEncoding(requestId: String, error: Throwable) {
+            if (!closed.get()) onFailure(
+                requestId,
+                "venera-operation-failed",
+                error.message ?: "Venera image encode failed",
+            )
         }
 
         @JavascriptInterface
-        fun fail(requestId: String, code: String, message: String) {
-            onFailure(requestId, code, message)
+        fun fail(requestId: String, code: String, message: String) = withNativeWork {
+            if (!closed.get()) onFailure(requestId, code, message)
         }
 
         @JavascriptInterface
-        fun finished(requestId: String) {
-            onFinished(requestId)
+        fun finished(requestId: String) = withNativeWork {
+            if (!closed.get()) onFinished(requestId)
+        }
+
+        private inline fun withNativeWork(action: () -> Unit) {
+            val work = nativeWork.begin() ?: return
+            try {
+                action()
+            } finally {
+                work.finish()
+            }
         }
 
         override fun close() {
-            if (!closed.compareAndSet(false, true)) return
-            releaseImages()
+            closeWhenDrained()
+        }
+
+        fun closeWhenDrained(): CompletableFuture<Unit> {
+            if (!closed.compareAndSet(false, true)) return closeCompletion
+            nativeWork.close().whenComplete { _, failure ->
+                runCatching {
+                    releaseImages()
+                    if (failure != null) throw failure
+                }.fold(
+                    onSuccess = { closeCompletion.complete(Unit) },
+                    onFailure = { closeCompletion.completeExceptionally(it) },
+                )
+            }
+            return closeCompletion
         }
 
         private fun image(message: JSONObject): Any? = when (message.getString("function")) {
@@ -671,6 +825,18 @@ private class VeneraImageTransformWorker(
         private const val MAX_IMAGE_PIXELS = 32L * 1024L * 1024L
 
         private val TRANSFORM_BOOTSTRAP = """
+const __zicImageEncodingReplies = new Map();
+function __zicEncodeImageTransform(requestId, imageKey) {
+  return new Promise(resolve => {
+    __zicImageEncodingReplies.set(requestId, resolve);
+    ZicTransform.complete(requestId, imageKey);
+  });
+}
+function __zicImageTransformEncoded(requestId) {
+  const resolve = __zicImageEncodingReplies.get(requestId);
+  __zicImageEncodingReplies.delete(requestId);
+  if (resolve) resolve();
+}
 function __zicImageRequest(message) {
   const response = JSON.parse(ZicTransform.request(JSON.stringify(message)));
   if (!response.ok) throw new Error(String(response.message || 'Venera image operation failed'));
@@ -693,7 +859,7 @@ async function __zicRunImageTransform(requestId, script) {
     if (typeof modifier !== 'function') throw new Error('Venera modifyImage script defines no modifyImage function');
     const transformed = await Promise.resolve(modifier(new Image(sourceKey)));
     if (!transformed || typeof transformed.key !== 'number') throw new Error('Venera modifyImage returned no Image');
-    ZicTransform.complete(requestId, transformed.key);
+    await __zicEncodeImageTransform(requestId, transformed.key);
   } catch (error) {
     const incompatible = error instanceof ReferenceError;
     ZicTransform.fail(

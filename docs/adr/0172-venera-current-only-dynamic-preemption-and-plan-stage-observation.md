@@ -2,7 +2,9 @@
 
 ## 状态
 
-Accepted。**Supersedes ADR 0171 的动态抢占触发规则**；保留 ADR 0171 的 scheduler-owned priority signal、request-plan/final-image ownership 边界与单 JavaScript invocation 约束。ADR 0169 的首次 previous=780 normal pressure仍有效。
+Accepted
+
+**Supersedes ADR 0171 的动态抢占触发规则**；保留 ADR 0171 的 scheduler-owned priority signal、request-plan/final-image ownership 边界与单 JavaScript invocation 约束。ADR 0169 的首次 previous=780 normal pressure仍有效。
 
 ## 新证据
 

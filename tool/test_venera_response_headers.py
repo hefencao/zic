@@ -24,6 +24,13 @@ match = re.search(
 )
 if not match:
     raise SystemExit('veneraResponse helper not found')
+decoder = re.search(
+    r'(internal fun decodeVeneraUtf8\(.*?\n\n)internal data class VeneraHttpResponse',
+    source,
+    re.S,
+)
+if not decoder:
+    raise SystemExit('Venera UTF-8 text decoder not found')
 for token in (
     'defaultUserAgent = webView.settings.userAgentString.orEmpty()',
     'veneraRequestHeaders(',
@@ -40,7 +47,7 @@ for token in (
         raise SystemExit(
             f'Venera native HTTP default user-agent contract is missing: {token}'
         )
-helper = match.group(1)
+helper = decoder.group(1) + match.group(1)
 
 with tempfile.TemporaryDirectory() as directory:
     work = Path(directory)
@@ -49,6 +56,7 @@ with tempfile.TemporaryDirectory() as directory:
 class JSONObject {
     private val values = linkedMapOf<String, Any?>()
     fun put(name: String, value: Any?): JSONObject { values[name] = value; return this }
+    fun get(name: String): Any? = values[name]
     override fun toString(): String = values.toString()
 }
 '''
@@ -64,6 +72,13 @@ fun main() {
     val nullable: Map<String?, List<String>?> = mapOf("set-cookie" to listOf("a=1"), null to null)
     check(veneraResponse(200, strict, byteArrayOf(1, 2)).toWire(true).toString().contains("content-type"))
     check(veneraResponse(200, nullable, byteArrayOf()).toWire(false).toString().contains("set-cookie"))
+    val text = "{\\\"title\\\":\\\"中文\\uFEFF正文\\\"}"
+    val body = ("\\uFEFF" + text).toByteArray(Charsets.UTF_8)
+    val original = body.copyOf()
+    val response = veneraResponse(200, strict, body)
+    check(response.toWire(false).get("body") == text)
+    check(response.toWire(true).get("body") === body)
+    check(body.contentEquals(original))
     println("Venera response header adapter: OK")
 }
 '''

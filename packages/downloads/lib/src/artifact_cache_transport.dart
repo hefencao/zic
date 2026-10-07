@@ -295,6 +295,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
     final response = await _awaitResponseWithControl(
       pendingResponse,
       control,
+      joinCancelledOpen: selfBoundedFallback,
     );
     if (control?.cancelled == true) {
       await response.discard(control: control);
@@ -1004,8 +1005,9 @@ void _throwIfTaskCancelled(TaskControl? control) {
 
 Future<ByteResponse> _awaitResponseWithControl(
   Future<ByteResponse> pending,
-  TaskControl? control,
-) async {
+  TaskControl? control, {
+  required bool joinCancelledOpen,
+}) async {
   if (control == null) return pending;
   _throwIfTaskCancelled(control);
   try {
@@ -1023,18 +1025,21 @@ Future<ByteResponse> _awaitResponseWithControl(
       // An uncontrolled fallback may still hand back a response after this
       // caller has left. Consume and discard that late body rather than
       // leaking its transport lease.
-      unawaited(
-        pending.then<void>(
-          (response) async {
-            try {
-              await response.discard(control: control);
-            } on Object {
-              // The cancellation result remains authoritative.
-            }
-          },
-          onError: (Object _, StackTrace __) {},
-        ),
+      final cleanup = pending.then<void>(
+        (response) async {
+          try {
+            await response.discard(control: control);
+          } on Object {
+            // The cancellation result remains authoritative.
+          }
+        },
+        onError: (Object _, StackTrace __) {},
       );
+      if (joinCancelledOpen) {
+        await cleanup;
+      } else {
+        unawaited(cleanup);
+      }
       _throwIfTaskCancelled(control);
     }
     throw Error.throwWithStackTrace(error, stackTrace);

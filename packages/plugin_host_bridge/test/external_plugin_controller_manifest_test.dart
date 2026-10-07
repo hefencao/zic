@@ -36,6 +36,63 @@ void main() {
     );
   });
 
+  test('Mihon replay coordinates preserve Unicode and integer boundaries', () {
+    String locator(String json) =>
+        'mihon:resource:${base64UrlEncode(utf8.encode(json))}';
+    for (final chapter in <String>[
+      '章節😀',
+      '  chapter  ',
+      '\ud800',
+    ]) {
+      final value = locator(jsonEncode(<String, Object?>{
+        'kind': 'resource',
+        'retryChapterId': chapter,
+        'retryPageIndex': 0,
+      }));
+      expect(mihonResourceLocatorHasReplayCoordinates(value), isTrue);
+      expect(isLegacyMihonResourceLocator(value), isFalse);
+    }
+    const payload =
+        '{"kind":"resource","retryChapterId":"chapter","retryPageIndex":0}';
+    expect(
+      mihonResourceLocatorHasReplayCoordinates(locator('\ufeff$payload')),
+      isTrue,
+    );
+    for (final index in <String>['-1', '0.0', '0e0', '"0"', 'null']) {
+      final value = locator(payload.replaceFirst(':0}', ':$index}'));
+      expect(mihonResourceLocatorHasReplayCoordinates(value), isFalse);
+      expect(isLegacyMihonResourceLocator(value), isTrue);
+    }
+    for (final chapter in <String>['', ' \t ', '\u2003\u00a0']) {
+      final value = locator(jsonEncode(<String, Object?>{
+        'kind': 'resource',
+        'retryChapterId': chapter,
+        'retryPageIndex': 0,
+      }));
+      expect(mihonResourceLocatorHasReplayCoordinates(value), isFalse);
+    }
+  });
+
+  test('Mihon malformed locator encoding fails closed before source use', () {
+    const payload =
+        '{"kind":"resource","retryChapterId":"chapter","retryPageIndex":0}';
+    for (final bytes in <List<int>>[
+      <int>[0xff],
+      <int>[0xed, 0xa0, 0x80],
+      <int>[...utf8.encode(payload), 0xff],
+      utf8.encode('$payload null'),
+      utf8.encode(payload.substring(0, payload.length - 1)),
+      utf8.encode('\ufeff\ufeff$payload'),
+      utf8.encode('[]'),
+    ]) {
+      final value = 'mihon:resource:${base64UrlEncode(bytes)}';
+      expect(mihonResourceLocatorHasReplayCoordinates(value), isFalse);
+      expect(isLegacyMihonResourceLocator(value), isTrue);
+    }
+    expect(mihonResourceLocatorHasReplayCoordinates('mihon:resource:!'), isFalse);
+    expect(isLegacyMihonResourceLocator('mihon:resource:!'), isTrue);
+  });
+
   test('controller close is joinable across concurrent callers', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-joinable-close-',

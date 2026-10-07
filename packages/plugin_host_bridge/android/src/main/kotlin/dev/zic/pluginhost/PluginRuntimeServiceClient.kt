@@ -4,7 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.os.Build
 import android.os.Bundle
+import android.os.Trace
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -17,6 +19,8 @@ import java.util.ArrayDeque
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CancellationException
 
 internal class PluginRuntimeServiceClient(context: Context) {
     private val appContext = context.applicationContext
@@ -33,6 +37,8 @@ internal class PluginRuntimeServiceClient(context: Context) {
     private val requestIds = AtomicLong(1L)
     private val pending = LinkedHashMap<Long, PendingCall>()
     private val queued = ArrayDeque<OutgoingRequest>()
+    private val bodyClaims = LinkedHashSet<BodyClaim>()
+    private var responseWork = 0
     private val replyMessenger = Messenger(ReplyHandler())
     private val serviceIntent = Intent(appContext, ExternalPluginRuntimeService::class.java)
     private val bindingState = RuntimeServiceConnectionState()
@@ -46,7 +52,31 @@ internal class PluginRuntimeServiceClient(context: Context) {
     private var closing = false
     private var cleanedUp = false
 
+    init {
+        requestExecutor.execute { packetStore.clearStaleBodyLeases() }
+    }
+
     fun invoke(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == RuntimeServiceMethodNames.CANCEL ||
+            call.method == RuntimeServiceMethodNames.CLOSE_SESSION ||
+            call.method == RuntimeServiceMethodNames.CLOSE_PROCESS) {
+            val arguments = call.arguments as? Map<*, *>
+            bodyClaims.forEach { claim ->
+                if (call.method == RuntimeServiceMethodNames.CLOSE_PROCESS ||
+                    (claim.processId == arguments?.get("processId") &&
+                        claim.sessionId == arguments["sessionId"] &&
+                        (call.method == RuntimeServiceMethodNames.CLOSE_SESSION ||
+                            claim.requestId == arguments["requestId"]))) {
+                    claim.cancelled.set(true)
+                }
+            }
+        }
+        if (call.method == RuntimeServiceIpc.CLAIM_BODY_METHOD ||
+            call.method == RuntimeServiceIpc.RELEASE_BODY_METHOD ||
+            call.method == RuntimeServiceIpc.DISCARD_BODY_METHOD) {
+            handleBody(call, result)
+            return
+        }
         if (closing) {
             result.error(
                 "bridge-closed",
@@ -58,11 +88,83 @@ internal class PluginRuntimeServiceClient(context: Context) {
         enqueue(call.method, call.arguments, result)
     }
 
+    private fun handleBody(call: MethodCall, result: MethodChannel.Result) {
+        if (cleanedUp || (closing && call.method == RuntimeServiceIpc.CLAIM_BODY_METHOD)) {
+            result.error("bridge-closed", "plugin body transport is closing", null)
+            return
+        }
+        val arguments = call.arguments as? Map<*, *>
+        val claim = if (call.method == RuntimeServiceIpc.CLAIM_BODY_METHOD) {
+            val processId = arguments?.get("processId") as? String
+            val sessionId = arguments?.get("sessionId") as? String
+            val requestId = arguments?.get("requestId") as? String
+            if (processId.isNullOrBlank() || sessionId.isNullOrBlank() || requestId.isNullOrBlank()) {
+                result.error("runtime-body-invalid", "body claim binding is missing", null)
+                return
+            }
+            BodyClaim(processId, sessionId, requestId).also(bodyClaims::add)
+        } else null
+        val reference = if (claim != null) arguments?.get("reference") else call.arguments
+        executeResponse {
+            val outcome = runCatching {
+                when (call.method) {
+                    RuntimeServiceIpc.CLAIM_BODY_METHOD -> {
+                        require(RuntimeServiceBodyReference.fromMessage(reference).requestId ==
+                            requireNotNull(claim).requestId) { "body claim request mismatch" }
+                        val tracing = Build.VERSION.SDK_INT >= 29 && Trace.isEnabled()
+                        if (tracing) Trace.beginSection("zic.plugin.bodyClaim")
+                        try {
+                            packetStore.claimBody(reference) {
+                                if (claim.cancelled.get()) throw CancellationException()
+                            }
+                        } finally {
+                            if (tracing) Trace.endSection()
+                        }
+                    }
+                    RuntimeServiceIpc.RELEASE_BODY_METHOD -> {
+                        packetStore.releaseBody(call.arguments)
+                        null
+                    }
+                    else -> {
+                        packetStore.discardBody(call.arguments)
+                        null
+                    }
+                }
+            }
+            mainHandler.post {
+                if (claim != null) bodyClaims.remove(claim)
+                if (claim?.cancelled?.get() == true && outcome.isSuccess) {
+                    executeResponse {
+                        val released = runCatching { packetStore.releaseBody(reference) }
+                        mainHandler.post {
+                            result.error(
+                                "runtime-body-cancelled",
+                                released.exceptionOrNull()?.message ?: "body claim was cancelled",
+                                null,
+                            )
+                        }
+                    }
+                    return@post
+                }
+                outcome.fold(
+                    onSuccess = result::success,
+                    onFailure = { error ->
+                        result.error(
+                            if (error is CancellationException) "runtime-body-cancelled"
+                            else "runtime-body-invalid", error.message, null,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
     fun shutdown() {
         if (closing) {
             return
         }
         closing = true
+        bodyClaims.forEach { it.cancelled.set(true) }
         failAll("bridge-closed", "plugin runtime bridge is closing")
         if (serviceMessenger == null) {
             cleanupBinding()
@@ -330,11 +432,12 @@ internal class PluginRuntimeServiceClient(context: Context) {
 
     private fun handleResponse(message: Message) {
         val requestId = message.data.getLong(RuntimeServiceIpc.KEY_REQUEST_ID, -1L)
-        if (requestId < 0 || !pending.containsKey(requestId)) {
+        val packet = Bundle(message.data)
+        if (cleanedUp && responseWork == 0) {
+            packetStore.delete(packet)
             return
         }
-        val packet = Bundle(message.data)
-        responseExecutor.execute {
+        executeResponse {
             val decoded = runCatching {
                 val bytes = packetStore.read(packet)
                 RuntimeServiceWireCodec.decode(bytes)
@@ -356,6 +459,10 @@ internal class PluginRuntimeServiceClient(context: Context) {
     }
 
     private fun completeEnvelope(requestId: Long, value: Any?) {
+        if (!pending.containsKey(requestId)) {
+            executeResponse { packetStore.deleteEnvelopeBody(value) }
+            return
+        }
         val envelope = value as? Map<*, *> ?: run {
             completeError(
                 requestId,
@@ -477,8 +584,32 @@ internal class PluginRuntimeServiceClient(context: Context) {
         }
         appContext.stopService(serviceIntent)
         requestExecutor.shutdownNow()
-        responseExecutor.shutdownNow()
+        finishResponseShutdownIfIdle()
         packetStore.clear()
+    }
+
+    // The existing response executor drains admitted IO and its main-thread
+    // publication/cleanup callbacks before shutdown; cancellation never drops a result.
+    private fun executeResponse(work: () -> Unit) {
+        responseWork++
+        responseExecutor.execute {
+            try {
+                work()
+            } finally {
+                mainHandler.post {
+                    responseWork--
+                    finishResponseShutdownIfIdle()
+                }
+            }
+        }
+    }
+
+    private fun finishResponseShutdownIfIdle() {
+        if (cleanedUp && responseWork == 0) responseExecutor.shutdown()
+    }
+
+    private class BodyClaim(val processId: String, val sessionId: String, val requestId: String) {
+        val cancelled = AtomicBoolean(false)
     }
 
     private fun unlinkDeathRecipient(generation: Long) {
@@ -541,5 +672,7 @@ internal class PluginRuntimeServiceClient(context: Context) {
 }
 
 private object RuntimeServiceMethodNames {
+    const val CANCEL = "cancelExternalRuntime"
+    const val CLOSE_SESSION = "closeExternalRuntime"
     const val CLOSE_PROCESS = "closeExternalRuntimeProcess"
 }

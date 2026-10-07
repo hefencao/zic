@@ -5,6 +5,65 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('transform output body delivery preserves input and source locator', () {
+    final bytes = Uint8List.fromList(<int>[1, 2, 3]);
+    final request = ExternalPluginRuntimeRequest(
+      requestId: 'transform-body-request',
+      operation: ExternalPluginRuntimeOperation.transformResource,
+      externalSourceId: 'fixture',
+      arguments: <String, Object?>{
+        'uri': 'venera-resource:unchanged',
+        'bytes': bytes,
+        'bodyDelivery': 'sealed-file-v1',
+        '__zicIsolatedModifyImage': 'function modifyImage(image){return image}',
+      },
+    );
+    final decoded = ExternalPluginRuntimeRequest.fromMessage(request.toMessage());
+    expect(decoded.arguments['uri'], 'venera-resource:unchanged');
+    expect(decoded.arguments['bytes'], bytes);
+    expect(decoded.arguments['bodyDelivery'], 'sealed-file-v1');
+    for (final invalid in <Object?>['pipe', true, 1]) {
+      expect(() => ExternalPluginRuntimeRequest(
+        requestId: 'invalid-transform-body',
+        operation: ExternalPluginRuntimeOperation.transformResource,
+        externalSourceId: 'fixture',
+        arguments: <String, Object?>{...request.arguments, 'bodyDelivery': invalid},
+      ), throwsFormatException);
+    }
+  });
+
+  test('sealed body delivery is explicit and does not change resource identity',
+      () {
+    final request = ExternalPluginRuntimeRequest(
+      requestId: 'body-request',
+      operation: ExternalPluginRuntimeOperation.loadResource,
+      externalSourceId: 'fixture',
+      arguments: <String, Object?>{
+        'uri': 'mihon:resource:unchanged',
+        'bodyDelivery': 'sealed-file-v1',
+      },
+    );
+    final decoded = ExternalPluginRuntimeRequest.fromMessage(
+      request.toMessage(),
+    );
+    expect(decoded.arguments['uri'], 'mihon:resource:unchanged');
+    expect(decoded.arguments['bodyDelivery'], 'sealed-file-v1');
+    for (final invalid in <Object?>['pipe', true, 1]) {
+      expect(
+        () => ExternalPluginRuntimeRequest(
+          requestId: 'invalid-body-request',
+          operation: ExternalPluginRuntimeOperation.loadResource,
+          externalSourceId: 'fixture',
+          arguments: <String, Object?>{
+            'uri': 'mihon:resource:unchanged',
+            'bodyDelivery': invalid,
+          },
+        ),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('runtime requests round-trip through one versioned message schema', () {
     final request = ExternalPluginRuntimeRequest.browse(
       requestId: 'request-7',
@@ -218,6 +277,55 @@ void main() {
     expect(preview.operation, ExternalPluginRuntimeOperation.loadComicPreview);
     expect(comments.operation, ExternalPluginRuntimeOperation.loadComicComments);
     expect(comments.arguments['page'], 2);
+  });
+
+  test('source documents are explicit HTTP binary resources', () {
+    final request = ExternalPluginRuntimeRequest(
+      requestId: 'version-document',
+      operation: ExternalPluginRuntimeOperation.loadResource,
+      externalSourceId: 'fixture',
+      arguments: const <String, Object?>{
+        'uri': 'https://gallery.invalid/g/1/token/',
+        'sourceDocument': true,
+      },
+    );
+    expect(request.arguments['sourceDocument'], isTrue);
+    expect(
+      ExternalPluginRuntimeRequest.loadResource(
+        requestId: 'document-factory',
+        externalSourceId: 'fixture',
+        uri: Uri.parse('https://gallery.invalid/g/1/token/'),
+        sourceDocument: true,
+      ).arguments,
+      request.arguments,
+    );
+    expect(
+      ExternalPluginRuntimeRequest.loadResource(
+        requestId: 'image-default',
+        externalSourceId: 'fixture',
+        uri: Uri.parse('https://gallery.invalid/image.jpg'),
+      ).arguments,
+      <String, Object?>{'uri': 'https://gallery.invalid/image.jpg'},
+    );
+    expect(
+      ExternalPluginRuntimeRequest.fromMessage(request.toMessage()).arguments,
+      request.arguments,
+    );
+    for (final arguments in <Map<String, Object?>>[
+      {'uri': 'https://gallery.invalid/g/1/token/', 'sourceDocument': 'true'},
+      {'uri': 'venera-resource:opaque', 'sourceDocument': true},
+      {'uri': 'file:///tmp/document', 'sourceDocument': true},
+    ]) {
+      expect(
+        () => ExternalPluginRuntimeRequest(
+          requestId: 'invalid-document',
+          operation: ExternalPluginRuntimeOperation.loadResource,
+          externalSourceId: 'fixture',
+          arguments: arguments,
+        ),
+        throwsFormatException,
+      );
+    }
   });
 
   test('operation schema rejects unknown arguments and relative resources', () {

@@ -38,6 +38,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
     this.supportsSearch = true,
     this.supportsComicPreview = false,
     this.supportsComicComments = false,
+    this.supportsResourceBodyDelivery = false,
+    this.supportsResourceTransformBodyDelivery = false,
     this.browserUserAgent,
     this.adaptiveReaderType,
     Iterable<SourceContentRating> contentRatings = const <SourceContentRating>{
@@ -64,6 +66,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
   final bool supportsSearch;
   final bool supportsComicPreview;
   final bool supportsComicComments;
+  final bool supportsResourceBodyDelivery;
+  final bool supportsResourceTransformBodyDelivery;
   final String? browserUserAgent;
   final SourceAdaptiveReaderType? adaptiveReaderType;
   final Set<SourceContentRating> contentRatings;
@@ -78,6 +82,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
       'supportsSearch': supportsSearch,
       'supportsComicPreview': supportsComicPreview,
       'supportsComicComments': supportsComicComments,
+      'supportsResourceBodyDelivery': supportsResourceBodyDelivery,
+      'supportsResourceTransformBodyDelivery': supportsResourceTransformBodyDelivery,
       if (browserUserAgent != null) 'browserUserAgent': browserUserAgent,
       if (adaptiveReaderType != null)
         'adaptiveReaderType': adaptiveReaderType!.name,
@@ -110,6 +116,10 @@ final class ExternalPluginRuntimeSourceDescriptor {
           _optionalBool(message['supportsComicPreview']) ?? false,
       supportsComicComments:
           _optionalBool(message['supportsComicComments']) ?? false,
+      supportsResourceBodyDelivery:
+          _optionalBool(message['supportsResourceBodyDelivery']) ?? false,
+      supportsResourceTransformBodyDelivery:
+          _optionalBool(message['supportsResourceTransformBodyDelivery']) ?? false,
       browserUserAgent: switch (message['browserUserAgent']) {
         null => null,
         final String value when value.trim().isNotEmpty => value,
@@ -267,12 +277,16 @@ final class ExternalPluginRuntimeRequest {
     required String requestId,
     required String externalSourceId,
     required Uri uri,
+    bool sourceDocument = false,
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
         operation: ExternalPluginRuntimeOperation.loadResource,
         externalSourceId: externalSourceId,
-        arguments: <String, Object?>{'uri': uri.toString()},
+        arguments: <String, Object?>{
+          'uri': uri.toString(),
+          if (sourceDocument) 'sourceDocument': true,
+        },
       );
 
   factory ExternalPluginRuntimeRequest.resolveResource({
@@ -472,6 +486,86 @@ abstract interface class CancellableExternalPluginRuntimeConnection
   Future<void> cancel(String requestId);
 }
 
+/// Optional transport capability. Claim/release never enters the source gate
+/// or creates another network invocation. The reference is transient only.
+abstract interface class BodyExternalPluginRuntimeConnection {
+  bool get supportsResourceBodyDelivery;
+  Future<ComicResourceBody> takeResourceBody(
+    ExternalPluginRuntimeBodyFile reference,
+  );
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference);
+}
+
+final class ExternalPluginRuntimeBodyFile {
+  ExternalPluginRuntimeBodyFile.fromMessage(Object? value) {
+    final message = _stringObjectMap(value, 'runtime body file');
+    if (message['bodyDelivery'] != delivery) {
+      throw const FormatException('unsupported runtime body delivery');
+    }
+    ownerId = _requiredString(message, 'ownerId');
+    bodyId = _requiredString(message, 'bodyId');
+    requestId = _requiredString(message, 'requestId');
+    externalSourceId = _requiredString(message, 'externalSourceId');
+    runtimeId = _requiredString(message, 'runtimeId');
+    authorityRevision = _requiredString(message, 'authorityRevision');
+    resourceUri = _requiredString(message, 'resourceUri');
+    sha256 = _requiredString(message, 'sha256');
+    fnv64 = _requiredString(message, 'fnv64');
+    final length = message['byteLength'];
+    final prefix = message['metadataPrefix'];
+    if (!_uuid.hasMatch(bodyId) ||
+        !ownerId.startsWith('native-') ||
+        !_uuid.hasMatch(ownerId.substring(7)) ||
+        !_digest.hasMatch(sha256) ||
+        !RegExp(r'^[0-9a-f-]{16,17}$').hasMatch(fnv64) ||
+        length is! int || length < 0 || length > maxByteLength ||
+        prefix is! Uint8List || prefix.length != (length < 64 ? length : 64)) {
+      throw const FormatException('invalid runtime body file reference');
+    }
+    byteLength = length;
+    metadataPrefix = Uint8List.fromList(prefix).asUnmodifiableView();
+  }
+
+  static const String delivery = 'sealed-file-v1';
+  static const int maxByteLength = 32 * 1024 * 1024;
+  static final _uuid = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  );
+  static final _digest = RegExp(r'^[0-9a-f]{64}$');
+  late final String ownerId;
+  late final String bodyId;
+  late final String requestId;
+  late final String externalSourceId;
+  late final String runtimeId;
+  late final String authorityRevision;
+  late final String resourceUri;
+  late final int byteLength;
+  late final String sha256;
+  late final String fnv64;
+  late final Uint8List metadataPrefix;
+
+  String get key => '$ownerId/$bodyId';
+  String get validator => '"runtime-$byteLength-$fnv64"';
+
+  static bool isBodyFile(Object? value) =>
+      value is Map && value['bodyDelivery'] == delivery;
+
+  Map<String, Object?> toMessage() => <String, Object?>{
+        'bodyDelivery': delivery,
+        'ownerId': ownerId,
+        'bodyId': bodyId,
+        'requestId': requestId,
+        'externalSourceId': externalSourceId,
+        'runtimeId': runtimeId,
+        'authorityRevision': authorityRevision,
+        'resourceUri': resourceUri,
+        'byteLength': byteLength,
+        'sha256': sha256,
+        'fnv64': fnv64,
+        'metadataPrefix': metadataPrefix,
+      };
+}
+
 void _validateArguments(
   ExternalPluginRuntimeOperation operation,
   Map<String, Object?> arguments,
@@ -546,9 +640,23 @@ void _validateArguments(
       _expectOptionalFreshNetwork(arguments);
       return;
     case ExternalPluginRuntimeOperation.loadResource:
-      _expectSingleNonEmptyString(arguments, 'uri');
+      _expectKeys(
+        arguments,
+        const <String>{'uri'},
+        optional: const <String>{'sourceDocument', 'bodyDelivery'},
+      );
+      _expectNonEmptyString(arguments, 'uri');
       final uri = Uri.tryParse(arguments['uri']! as String);
-      if (uri == null || !uri.hasScheme) {
+      final sourceDocument = arguments['sourceDocument'];
+      final bodyDelivery = arguments['bodyDelivery'];
+      if (uri == null ||
+          !uri.hasScheme ||
+          (sourceDocument != null && sourceDocument is! bool) ||
+          (bodyDelivery != null &&
+              bodyDelivery != ExternalPluginRuntimeBodyFile.delivery) ||
+          (sourceDocument == true &&
+              ((uri.scheme != 'http' && uri.scheme != 'https') ||
+                  uri.host.isEmpty))) {
         throw const FormatException('resource URI is invalid');
       }
       return;
@@ -571,14 +679,17 @@ void _validateArguments(
       _expectKeys(
         arguments,
         const <String>{'uri', 'bytes'},
-        optional: const <String>{'__zicIsolatedModifyImage'},
+        optional: const <String>{'__zicIsolatedModifyImage', 'bodyDelivery'},
       );
       _expectNonEmptyString(arguments, 'uri');
       final isolatedModifyImage = arguments['__zicIsolatedModifyImage'];
+      final transformBodyDelivery = arguments['bodyDelivery'];
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null ||
           !uri.hasScheme ||
           arguments['bytes'] is! Uint8List ||
+          (transformBodyDelivery != null &&
+              transformBodyDelivery != ExternalPluginRuntimeBodyFile.delivery) ||
           (isolatedModifyImage != null &&
               (isolatedModifyImage is! String ||
                   isolatedModifyImage.trim().isEmpty))) {
@@ -675,11 +786,6 @@ void _expectOptionalFreshNetwork(Map<String, Object?> arguments) {
   if (freshNetwork != null && freshNetwork is! bool) {
     throw const FormatException('fresh network flag is invalid');
   }
-}
-
-void _expectSingleNonEmptyString(Map<String, Object?> value, String key) {
-  _expectKeys(value, <String>{key});
-  _expectNonEmptyString(value, key);
 }
 
 void _expectNonEmptyString(Map<String, Object?> value, String key) {

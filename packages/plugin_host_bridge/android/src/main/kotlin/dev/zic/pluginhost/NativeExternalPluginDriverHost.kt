@@ -8,6 +8,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.Closeable
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -19,6 +20,7 @@ internal interface NativeExternalPluginDriver : Closeable {
 
     fun invoke(request: Map<String, Any?>, result: NativeDriverResult)
     fun cancel(requestId: String)
+    fun closeWhenDrained(): CompletableFuture<Unit>
 }
 
 internal interface NativeDriverResult {
@@ -45,15 +47,27 @@ internal class NativeExternalPluginDriverHost(
     private val cacheCleanup: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zic-mihon-cache-cleanup").apply { isDaemon = true }
     }
-    private val drivers = ConcurrentHashMap<String, NativeExternalPluginDriver>()
+    private class DriverEntry(
+        val driver: NativeExternalPluginDriver,
+        val lifetime: NativeRuntimeWorkDrain.Work,
+    )
+
+    private val drivers = ConcurrentHashMap<String, DriverEntry>()
+    private val nativeWork = NativeRuntimeWorkDrain()
+    private val closeCompletion = CompletableFuture<Unit>()
     @Volatile private var closed = false
 
     init {
         // Legacy per-driver roots can contain large extracted plugin state.
         // They are maintenance work and must not run on the service main
         // thread, which is also responsible for Binder/Flutter bootstrap.
+        val cleanup = checkNotNull(nativeWork.begin())
         cacheCleanup.execute {
-            runCatching { cleanupStaleMihonRuntimeRoots(context.codeCacheDir) }
+            try {
+                runCatching { cleanupStaleMihonRuntimeRoots(context.codeCacheDir) }
+            } finally {
+                cleanup.finish()
+            }
         }
     }
 
@@ -89,33 +103,48 @@ internal class NativeExternalPluginDriverHost(
         val payloadLength = message.requireLong("payloadByteLength")
         val payloadSha256 = message.requireString("payloadSha256")
         val driverId = "native-${UUID.randomUUID()}"
+        val lifetime = nativeWork.begin()
+        if (lifetime == null) {
+            result.error("native-runtime-closed", "native runtime host is closed", null)
+            return
+        }
         when (format) {
-            "mihonExtension" -> worker.execute {
-                runCatching {
-                    MihonRuntimeDriver.create(
-                        context = context,
-                        driverId = driverId,
-                        activation = activation,
-                        payloadPath = payloadPath,
-                        payloadLength = payloadLength,
-                        payloadSha256 = payloadSha256,
-                        executor = worker,
-                    )
-                }.fold(
-                    onSuccess = { driver ->
-                        drivers[driver.driverId] = driver
-                        mainHandler.post { result.success(driver.activationMessage()) }
-                    },
-                    onFailure = { error ->
-                        mainHandler.post {
-                            result.error(
-                                "mihon-driver-activation-failed",
-                                error.sanitizedMessage(),
-                                null,
+            "mihonExtension" -> {
+                try {
+                    worker.execute {
+                        runCatching {
+                            MihonRuntimeDriver.create(
+                                context = context,
+                                driverId = driverId,
+                                activation = activation,
+                                payloadPath = payloadPath,
+                                payloadLength = payloadLength,
+                                payloadSha256 = payloadSha256,
+                                executor = worker,
                             )
-                        }
-                    },
-                )
+                        }.fold(
+                            onSuccess = { driver ->
+                                mainHandler.post { activated(driver, lifetime, result) }
+                            },
+                            onFailure = { error ->
+                                mainHandler.post {
+                                    try {
+                                        result.error(
+                                            "mihon-driver-activation-failed",
+                                            error.sanitizedMessage(),
+                                            null,
+                                        )
+                                    } finally {
+                                        lifetime.finish()
+                                    }
+                                }
+                            },
+                        )
+                    }
+                } catch (error: Throwable) {
+                    lifetime.finish()
+                    throw error
+                }
             }
             "veneraJavaScript" -> {
                 check(Looper.myLooper() == Looper.getMainLooper())
@@ -133,37 +162,66 @@ internal class NativeExternalPluginDriverHost(
                     ) { driverResult ->
                         driverResult.fold(
                             onSuccess = { driver ->
-                                drivers[driver.driverId] = driver
-                                result.success(driver.activationMessage())
+                                activated(driver, lifetime, result)
                             },
                             onFailure = { error ->
-                                result.error(
-                                    "venera-driver-activation-failed",
-                                    error.sanitizedMessage(),
-                                    null,
-                                )
+                                try {
+                                    result.error(
+                                        "venera-driver-activation-failed",
+                                        error.sanitizedMessage(),
+                                        null,
+                                    )
+                                } finally {
+                                    lifetime.finish()
+                                }
                             },
                         )
                     }
                 }.onFailure { error ->
-                    result.error(
-                        "venera-driver-activation-failed",
-                        error.sanitizedMessage(),
-                        null,
-                    )
+                    try {
+                        result.error(
+                            "venera-driver-activation-failed",
+                            error.sanitizedMessage(),
+                            null,
+                        )
+                    } finally {
+                        lifetime.finish()
+                    }
                 }
             }
-            else -> result.error(
-                "native-runtime-format-unsupported",
-                "unsupported native runtime format",
-                null,
-            )
+            else -> {
+                try {
+                    result.error(
+                        "native-runtime-format-unsupported",
+                        "unsupported native runtime format",
+                        null,
+                    )
+                } finally {
+                    lifetime.finish()
+                }
+            }
+        }
+    }
+
+    private fun activated(
+        driver: NativeExternalPluginDriver,
+        lifetime: NativeRuntimeWorkDrain.Work,
+        result: MethodChannel.Result,
+    ) {
+        val entry = DriverEntry(driver, lifetime)
+        drivers[driver.driverId] = entry
+        if (closed) {
+            retire(entry) {
+                result.error("native-runtime-closed", "native runtime host is closed", null)
+            }
+        } else {
+            result.success(driver.activationMessage())
         }
     }
 
     private fun invoke(arguments: Any?, result: MethodChannel.Result) {
         val message = arguments.stringMap("native driver invocation")
-        val driver = drivers[message.requireString("driverId")]
+        val driver = drivers[message.requireString("driverId")]?.driver
         if (driver == null) {
             result.error("native-driver-missing", "native runtime driver is not active", null)
             return
@@ -196,7 +254,7 @@ internal class NativeExternalPluginDriverHost(
 
     private fun cancel(arguments: Any?, result: MethodChannel.Result) {
         val message = arguments.stringMap("native driver cancellation")
-        val driver = drivers[message.requireString("driverId")]
+        val driver = drivers[message.requireString("driverId")]?.driver
         if (driver == null) {
             result.success(null)
             return
@@ -207,37 +265,66 @@ internal class NativeExternalPluginDriverHost(
 
     private fun closeDriver(arguments: Any?, result: MethodChannel.Result) {
         val message = arguments.stringMap("native driver close")
-        val driver = drivers.remove(message.requireString("driverId"))
-        if (driver == null) {
+        val entry = drivers[message.requireString("driverId")]
+        if (entry == null) {
             result.success(null)
             return
         }
-        worker.execute {
-            runCatching { driver.close() }.fold(
-                onSuccess = { mainHandler.post { result.success(null) } },
-                onFailure = { error ->
-                    mainHandler.post {
-                        result.error(
-                            "native-driver-close-failed",
-                            error.sanitizedMessage(),
-                            null,
-                        )
-                    }
-                },
-            )
+        val reply = checkNotNull(nativeWork.begin())
+        retire(entry) { failure ->
+            try {
+                if (failure == null) {
+                    result.success(null)
+                } else {
+                    result.error(
+                        "native-driver-close-failed",
+                        failure.sanitizedMessage(),
+                        null,
+                    )
+                }
+            } finally {
+                reply.finish()
+            }
+        }
+    }
+
+    private fun retire(entry: DriverEntry, onClosed: ((Throwable?) -> Unit)? = null) {
+        entry.driver.closeWhenDrained().whenComplete { _, failure ->
+            mainHandler.post {
+                try {
+                    onClosed?.invoke(failure)
+                } finally {
+                    if (drivers.remove(entry.driver.driverId, entry)) entry.lifetime.finish()
+                }
+            }
         }
     }
 
     override fun close() {
-        if (closed) return
+        closeWhenDrained()
+    }
+
+    fun closeWhenDrained(): CompletableFuture<Unit> {
+        // Host admission, activation delivery and teardown run on Main.
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (closed) return closeCompletion
         closed = true
-        val values = drivers.values.toList()
-        drivers.clear()
-        values.forEach { runCatching { it.close() } }
-        veneraNetworkCache.clearMemory()
-        veneraResolverHttp.close()
-        worker.shutdownNow()
-        cacheCleanup.shutdownNow()
+        val drained = nativeWork.close()
+        drivers.values.toList().forEach { retire(it) }
+        drained.whenComplete { _, _ ->
+            mainHandler.post {
+                runCatching {
+                    veneraNetworkCache.clearMemory()
+                    veneraResolverHttp.close()
+                    worker.shutdown()
+                    cacheCleanup.shutdown()
+                }.fold(
+                    onSuccess = { closeCompletion.complete(Unit) },
+                    onFailure = { closeCompletion.completeExceptionally(it) },
+                )
+            }
+        }
+        return closeCompletion
     }
 
     companion object {

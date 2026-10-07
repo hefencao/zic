@@ -83,6 +83,12 @@ abstract interface class ExternalPluginRuntimeDriver {
   Future<void> close();
 }
 
+/// Cleanup capability for a produced body that cannot be published. It belongs
+/// to the same driver/packet lifecycle, not to a second source invocation.
+abstract interface class BodyExternalPluginRuntimeDriver {
+  Future<void> discardResourceBody(ExternalPluginRuntimeBodyFile reference);
+}
+
 /// Server-side protocol owner shared by Mihon and Venera isolated runtimes.
 ///
 /// It validates raw requests again inside the isolation boundary, rejects
@@ -165,14 +171,19 @@ final class ExternalPluginRuntimeWorker {
     ExternalPluginRuntimeRequest request,
     ExternalPluginRuntimeCancellationToken cancellation,
   ) async {
+    Object? producedPayload;
+    var published = false;
     try {
       cancellation.throwIfCancelled();
       final payload = await _driver.invoke(request, cancellation);
+      producedPayload = payload;
       cancellation.throwIfCancelled();
-      return ExternalPluginRuntimeResponse.success(
+      final response = ExternalPluginRuntimeResponse.success(
         requestId: request.requestId,
         payload: payload,
       ).toMessage();
+      published = true;
+      return response;
     } on ExternalPluginRuntimeCancelledException {
       return ExternalPluginRuntimeResponse.failure(
         requestId: request.requestId,
@@ -202,6 +213,14 @@ final class ExternalPluginRuntimeWorker {
           message: 'isolated runtime operation failed',
         ),
       ).toMessage();
+    } finally {
+      final driver = _driver;
+      if (!published && driver is BodyExternalPluginRuntimeDriver &&
+          ExternalPluginRuntimeBodyFile.isBodyFile(producedPayload)) {
+        await (driver as BodyExternalPluginRuntimeDriver).discardResourceBody(
+          ExternalPluginRuntimeBodyFile.fromMessage(producedPayload),
+        );
+      }
     }
   }
 

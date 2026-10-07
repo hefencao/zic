@@ -175,12 +175,16 @@ final class SourceBrowsePage {
     required Iterable<SourceComicSummary> items,
     required this.offset,
     required this.hasMore,
+    this.nextOffset,
   })  : assert(offset >= 0),
+        assert(nextOffset == null || (hasMore && nextOffset > offset)),
         items = List<SourceComicSummary>.unmodifiable(items);
 
   final List<SourceComicSummary> items;
   final int offset;
   final bool hasMore;
+  /// Source-owned request coordinate when item count is not the paging stride.
+  final int? nextOffset;
 }
 
 
@@ -1040,6 +1044,39 @@ abstract interface class ControlledRefreshableComicResourceSource {
 
 abstract interface class ControlledComicResourceSource {
   Future<Uint8List> loadResourceControlled(Uri uri, {TaskControl? control});
+}
+
+/// A transient, single-consumer encoded body. It is transport input, never a
+/// persistent locator or cache authority. Dispose joins admitted physical reads.
+abstract interface class ComicResourceBody {
+  int get byteLength;
+  Uint8List get metadataPrefix;
+  String get validator;
+
+  /// End is exclusive. One body permits at most one stream subscription.
+  Stream<List<int>> open({int start = 0, int? end});
+  Future<void> dispose();
+}
+
+/// Source-owned clients may deliver a sealed body without copying the complete
+/// encoded result through RPC. The existing scheduler control remains live.
+abstract interface class BodyDeliveringComicResourceSource {
+  bool get supportsResourceBodyDelivery;
+  Future<ComicResourceBody> openResourceBody(
+    Uri uri, {
+    TaskControl? control,
+  });
+}
+
+/// A source transform may return the same transient body contract. Input stays
+/// complete for source hooks; this capability only changes the output carrier.
+abstract interface class BodyTransformingComicResourceSource {
+  bool get supportsResourceTransformBodyDelivery;
+  Future<ComicResourceBody> transformResourceBody(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  });
 }
 
 abstract interface class BrowsableComicSource implements ComicSource {

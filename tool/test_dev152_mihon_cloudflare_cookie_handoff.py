@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -17,12 +18,19 @@ def main() -> int:
         print('SKIP: kotlinc/javac are unavailable for Mihon cookie handoff behavior')
         return 0
 
+    cache = Path(os.environ.get('GRADLE_USER_HOME', str(Path.home() / '.gradle'))) / 'caches/modules-2/files-2.1'
+    libraries = []
+    for group, name, version in [('com.squareup.okhttp3', 'okhttp-jvm', '5.4.0'),
+            ('com.squareup.okio', 'okio-jvm', '3.17.0')]:
+        jars = list((cache / group / name / version).glob('*/*.jar'))
+        if len(jars) != 1:
+            print(f'SKIP: resolved {name} {version} jar unavailable for Mihon cookie handoff')
+            return 0
+        libraries.append(str(jars[0]))
+
     java_sources = {
         'android/content/Context.java': '''package android.content; public class Context { public Context getApplicationContext(){ return this; } }''',
         'android/webkit/CookieManager.java': '''package android.webkit; public class CookieManager { private static final CookieManager INSTANCE=new CookieManager(); public static CookieManager getInstance(){ return INSTANCE; } public String getCookie(String url){ return ""; } public void setCookie(String url,String value){} public void flush(){} }''',
-        'okhttp3/HttpUrl.java': '''package okhttp3; public class HttpUrl { private final String value; public HttpUrl(String value){this.value=value;} public String toString(){ return value; } }''',
-        'okhttp3/Cookie.java': '''package okhttp3; public class Cookie { private final String name; private final String value; public Cookie(String name,String value){this.name=name;this.value=value;} public static Cookie parse(HttpUrl url,String raw){ int i=raw.indexOf('='); return i<=0?null:new Cookie(raw.substring(0,i),raw.substring(i+1)); } public String getName(){return name;} public String getValue(){return value;} public String toString(){ return name+"="+value; } }''',
-        'okhttp3/CookieJar.java': '''package okhttp3; import java.util.List; public interface CookieJar { void saveFromResponse(HttpUrl url,List<Cookie> cookies); List<Cookie> loadForRequest(HttpUrl url); }''',
     }
     kotlin_support = '''package dev.zic.network
 
@@ -47,16 +55,18 @@ internal object AndroidBrowserCookieSession {
 '''
     behavior = '''package dev.zic.network
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
+
 fun main() {
     val jar = AndroidCookieJar(android.content.Context()) { "source-agent" }
-    val cookies = jar.loadForRequest(okhttp3.HttpUrl("https://18comic.vip/albums?o=mv&page=1"))
+    val cookies = jar.loadForRequest("https://18comic.vip/albums?o=mv&page=1".toHttpUrl())
     check(cookies.any { it.name == "cf_clearance" && it.value == "fresh-token" }) {
         "browser snapshot cf_clearance was not available synchronously to the first OkHttp request"
     }
     check(cookies.any { it.name == "session" && it.value == "abc" }) {
         "browser snapshot cookies were not imported into the in-memory jar"
     }
-    check(jar.browserSessionUserAgent(okhttp3.HttpUrl("https://18comic.vip/albums")) ==
+    check(jar.browserSessionUserAgent("https://18comic.vip/albums".toHttpUrl()) ==
         "Mozilla/5.0 real-webview") {
         "browser snapshot UA was not exposed with the cookie session"
     }
@@ -86,7 +96,7 @@ fun main() {
                 str(support),
                 str(runner),
                 '-classpath',
-                str(classes),
+                os.pathsep.join([str(classes), *libraries]),
                 '-include-runtime',
                 '-d',
                 str(output),
@@ -94,7 +104,8 @@ fun main() {
             check=True,
         )
         subprocess.run(
-            ['java', '-cp', f'{output}:{classes}', 'dev.zic.network.CookieHandoffBehaviorKt'],
+            ['java', '-cp', os.pathsep.join([str(output), str(classes), *libraries]),
+                'dev.zic.network.CookieHandoffBehaviorKt'],
             check=True,
         )
     print('Mihon Cloudflare browser-snapshot -> first OkHttp request handoff: OK')

@@ -157,6 +157,13 @@ host = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginh
 android_service = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/ExternalPluginRuntimeService.kt')
 bridge_pubspec = read('packages/plugin_host_bridge/pubspec.yaml')
 
+# AndroidX Startup runs in the main process, not the isolated runtime service.
+# Domain/cookie handling must have the host Context before any driver can run.
+bootstrap = android_service[android_service.index('private fun bootstrapEngine()'):]
+initialization = bootstrap.find('OkHttp.initialize(applicationContext)')
+if initialization < 0 or initialization > bootstrap.index('FlutterEngine(applicationContext'):
+    raise SystemExit('isolated runtime must initialize OkHttp with host application Context before engine/driver activation')
+
 for forbidden in ('HttpURLConnection', 'ReflectiveVeneraHttpClient', 'ReflectiveVeneraCall', 'resolveVeneraPublicAddresses', 'openConnection()'):
     if forbidden in venera:
         raise SystemExit(f'old Venera resolver HTTP owner still present: {forbidden}')

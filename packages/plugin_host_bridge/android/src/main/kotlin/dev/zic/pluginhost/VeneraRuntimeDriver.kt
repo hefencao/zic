@@ -29,6 +29,8 @@ import java.nio.charset.Charset
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
@@ -66,6 +68,9 @@ internal class VeneraRuntimeDriver private constructor(
     private val webView: WebView,
     private val bridge: VeneraNativeBridge,
     private val transformRuntime: VeneraImageTransformRuntime,
+    private val bodyFiles: RuntimeServicePacketFiles,
+    private val bodyAuthorityRevision: String,
+    private val maxResponseBytes: Int,
     override val sources: List<Map<String, Any?>>,
 ) : NativeExternalPluginDriver {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -73,6 +78,8 @@ internal class VeneraRuntimeDriver private constructor(
     private val cancelledRequests = ConcurrentHashMap.newKeySet<String>()
     private val isolatedTransformRequests = ConcurrentHashMap.newKeySet<String>()
     private val closed = AtomicBoolean(false)
+    private val submissions = NativeRuntimeWorkDrain()
+    private val closeCompletion = CompletableFuture<Unit>()
 
     init {
         bridge.resultSink = resultSink@ { requestId, envelope ->
@@ -155,6 +162,19 @@ internal class VeneraRuntimeDriver private constructor(
     }
 
     override fun invoke(request: Map<String, Any?>, result: NativeDriverResult) {
+        val work = submissions.begin()
+        if (work == null) {
+            result.error("runtime-closing", "Venera runtime is closing")
+            return
+        }
+        try {
+            invokeAccepted(request, result)
+        } finally {
+            work.finish()
+        }
+    }
+
+    private fun invokeAccepted(request: Map<String, Any?>, result: NativeDriverResult) {
         if (closed.get()) {
             result.error("runtime-closing", "Venera runtime is closing")
             return
@@ -174,6 +194,15 @@ internal class VeneraRuntimeDriver private constructor(
             result.error("source-missing", "Venera source is not active")
             return
         }
+        val bodyDelivery = requestArguments?.get("bodyDelivery")
+        if (bodyDelivery != null &&
+            (request["operation"] != "transformResource" ||
+                bodyDelivery != RuntimeServiceBodyReference.DELIVERY)
+        ) {
+            result.error("venera-operation-failed", "Unsupported Venera body delivery")
+            return
+        }
+        val outputResult = if (bodyDelivery != null) bodyResult(request, result) else result
         val isolatedArgument = (request["arguments"] as? Map<*, *>)
             ?.get("__zicIsolatedModifyImage") as? String
         if (request["operation"] == "transformResource" && isolatedArgument != null) {
@@ -200,7 +229,7 @@ internal class VeneraRuntimeDriver private constructor(
                 result = object : NativeDriverResult {
                     override fun success(value: Any) {
                         isolatedTransformRequests.remove(requestId)
-                        result.success(value)
+                        outputResult.success(value)
                     }
 
                     override fun error(
@@ -210,21 +239,78 @@ internal class VeneraRuntimeDriver private constructor(
                         details: Map<String, Any?>,
                     ) {
                         isolatedTransformRequests.remove(requestId)
-                        result.error(code, message, retryable, details)
+                        outputResult.error(code, message, retryable, details)
                     }
                 },
+                encodeBody = if (bodyDelivery == null) null else { bitmap, checkCancelled ->
+                    bodyFiles.writeBody(
+                        driverId, requestId, sourceKey, runtimeId, bodyAuthorityRevision,
+                        requireNotNull(requestArguments?.get("uri") as? String),
+                        maxBytes = maxResponseBytes,
+                        checkCancelled = checkCancelled,
+                    ) { output ->
+                        require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                            "Venera image encode failed"
+                        }
+                    }
+                },
+                discardBody = bodyFiles::deleteBody,
             )
             return
         }
-        pending[requestId] = result
+        pending[requestId] = outputResult
+        if (!bridge.beginInvocation(requestId)) {
+            pending.remove(requestId)?.error("runtime-closing", "Venera bridge is unavailable")
+            return
+        }
         val encoded = (encodeWireValue(request) as JSONObject).toString().jsQuoted()
         mainHandler.post {
-            if (closed.get()) {
-                pending.remove(requestId)?.error("runtime-closing", "Venera runtime is closing")
-                return@post
-            }
+            if (closed.get()) return@post
             webView.evaluateJavascript("__zicInvoke($encoded);", null)
         }
+    }
+
+    private fun bodyResult(
+        request: Map<String, Any?>,
+        result: NativeDriverResult,
+    ): NativeDriverResult = object : NativeDriverResult {
+        override fun success(value: Any) {
+            var produced: RuntimeServiceBodyReference? = null
+            try {
+                val requestId = request.requireString("requestId")
+                fun checkCancelled() {
+                    if (closed.get() || cancelledRequests.contains(requestId)) {
+                        throw CancellationException()
+                    }
+                }
+                produced = if (value is RuntimeServiceBodyReference) value else {
+                    val bytes = value as? ByteArray
+                        ?: error("Venera transformed result is not encoded bytes")
+                    bytes.inputStream().use { input ->
+                        bodyFiles.writeBody(
+                            input, driverId, requestId, sourceKey, runtimeId,
+                            bodyAuthorityRevision,
+                            requireNotNull((request["arguments"] as? Map<*, *>)?.get("uri") as? String),
+                            maxBytes = maxResponseBytes,
+                            checkCancelled = ::checkCancelled,
+                        )
+                    }
+                }
+                checkCancelled()
+                result.success(produced.toMessage())
+            } catch (error: Throwable) {
+                produced?.let(bodyFiles::deleteBody)
+                result.error(
+                    if (error is CancellationException) "runtime-request-cancelled"
+                    else "venera-operation-failed",
+                    error.message ?: "Venera transform body sealing failed",
+                )
+            }
+        }
+
+        override fun error(
+            code: String, message: String, retryable: Boolean, details: Map<String, Any?>,
+        ) = result.error(code, message, retryable, details)
     }
 
     override fun cancel(requestId: String) {
@@ -249,26 +335,37 @@ internal class VeneraRuntimeDriver private constructor(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        closeWhenDrained()
+    }
+
+    override fun closeWhenDrained(): CompletableFuture<Unit> {
+        if (!closed.compareAndSet(false, true)) return closeCompletion
         pending.keys.toList().forEach(bridge::cancel)
-        pending.values.forEach {
-            it.error("runtime-closing", "Venera runtime is closing")
-        }
-        pending.clear()
-        cancelledRequests.clear()
-        isolatedTransformRequests.clear()
-        transformRuntime.close()
-        bridge.close()
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            destroyWebView()
-        } else {
-            val latch = java.util.concurrent.CountDownLatch(1)
+        CompletableFuture.allOf(
+            submissions.close(),
+            bridge.closeWhenDrained(),
+            transformRuntime.closeWhenDrained(),
+        ).whenComplete { _, failure ->
             mainHandler.post {
-                destroyWebView()
-                latch.countDown()
+                runCatching {
+                    destroyWebView()
+                    pending.keys.toList().forEach { requestId ->
+                        pending.remove(requestId)?.error(
+                            "runtime-closing",
+                            "Venera runtime is closing",
+                        )
+                    }
+                    cancelledRequests.clear()
+                    isolatedTransformRequests.clear()
+                    bodyFiles.deleteBodyOwner(driverId)
+                    if (failure != null) throw failure
+                }.fold(
+                    onSuccess = { closeCompletion.complete(Unit) },
+                    onFailure = { closeCompletion.completeExceptionally(it) },
+                )
             }
-            latch.await()
         }
+        return closeCompletion
     }
 
     private fun destroyWebView() {
@@ -389,10 +486,15 @@ internal class VeneraRuntimeDriver private constructor(
                     stageStarted,
                 )
                 if (result.isFailure) {
-                    state.bridge.close()
-                    state.webView.removeJavascriptInterface(BRIDGE_NAME)
-                    state.webView.stopLoading()
-                    state.webView.destroy()
+                    state.bridge.closeWhenDrained().whenComplete { _, _ ->
+                        mainHandler.post {
+                            state.webView.removeJavascriptInterface(BRIDGE_NAME)
+                            state.webView.stopLoading()
+                            state.webView.destroy()
+                            callback(result)
+                        }
+                    }
+                    return
                 }
                 callback(result)
             }
@@ -428,7 +530,13 @@ internal class VeneraRuntimeDriver private constructor(
                                     context = context,
                                     driverId = "$driverId:image-transform",
                                     maxResponseBytes = state.maxResponseBytes,
+                                    executor = executor,
                                 ),
+                                bodyFiles = RuntimeServicePacketFiles(
+                                    File(context.cacheDir, "zic-plugin-runtime-ipc"),
+                                ),
+                                bodyAuthorityRevision = "venera-runtime-transform-v1:$payloadSha256",
+                                maxResponseBytes = state.maxResponseBytes,
                                 sources = listOf(
                                     mapOf(
                                         "externalId" to discoveredKey,
@@ -436,6 +544,7 @@ internal class VeneraRuntimeDriver private constructor(
                                         "language" to "und",
                                         "website" to website,
                                         "supportsSearch" to supportsSearch,
+                                        "supportsResourceTransformBodyDelivery" to true,
                                         "supportsComicPreview" to envelope.optBoolean(
                                             "supportsComicPreview",
                                             false,
@@ -556,11 +665,23 @@ private class VeneraNativeBridge(
     )
     private val images = ConcurrentHashMap<Int, Bitmap>()
     private val nextImageKey = AtomicInteger(1)
-    private val nativeBytes = LinkedHashMap<String, ByteArray>()
+    private val nativeBytes = LinkedHashMap<String, Pair<String?, ByteArray>>()
     private val cookieManager = CookieManager.getInstance()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
-    private val asyncCalls = ConcurrentHashMap<String, String>()
+    private val invocationDrain = VeneraBridgeInvocationDrain<JSONObject> { requestId, envelope ->
+        try {
+            if (!closed && !cancelled.contains(requestId) && envelope != null) {
+                resultSink?.invoke(requestId, envelope)
+            }
+        } finally {
+            cancelled.remove(requestId)
+            finishedSink?.invoke(requestId)
+        }
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val nativeWork = NativeRuntimeWorkDrain()
+    private val closeStarted = AtomicBoolean(false)
+    private val closeCompletion = CompletableFuture<Unit>()
     @Volatile private var closed = false
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
     @Volatile var finishedSink: ((String) -> Unit)? = null
@@ -568,6 +689,17 @@ private class VeneraNativeBridge(
 
     @JavascriptInterface
     fun request(raw: String): String {
+        val work = nativeWork.begin() ?: return veneraBridgeFailureEnvelope(
+            IllegalStateException("Venera bridge is closed"),
+        ).toString()
+        return try {
+            requestAccepted(raw)
+        } finally {
+            work.finish()
+        }
+    }
+
+    private fun requestAccepted(raw: String): String {
         var method = "unknown"
         var activationCall = false
         var startedAt = 0L
@@ -601,11 +733,21 @@ private class VeneraNativeBridge(
      */
     @JavascriptInterface
     fun requestAsync(raw: String) {
-        val message = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val work = nativeWork.begin() ?: return
+        var submitted = false
+        try {
+            submitted = requestAsyncAccepted(raw, work)
+        } finally {
+            if (!submitted) work.finish()
+        }
+    }
+
+    private fun requestAsyncAccepted(raw: String, work: NativeRuntimeWorkDrain.Work): Boolean {
+        val message = runCatching { JSONObject(raw) }.getOrNull() ?: return false
         val callId = message.optString("bridgeCallId")
             .trim()
             .takeIf { it.isNotEmpty() }
-            ?: return
+            ?: return false
         val requestId = message.optString("requestId")
             .trim()
             .takeIf { it.isNotEmpty() }
@@ -615,41 +757,55 @@ private class VeneraNativeBridge(
         } else {
             message
         }
-        asyncCalls[callId] = transportRequestId
+        if (!invocationDrain.beginCall(transportRequestId, callId, activation = requestId == null)) {
+            postAsyncResponse(callId, veneraBridgeFailureEnvelope(
+                IllegalStateException("Venera bridge request has retired"),
+            ))
+            return false
+        }
         try {
             executor.execute {
-                val startedAt = SystemClock.elapsedRealtime()
-                val response = runCatching {
-                    require(executeMessage.optString("method") in setOf("http", "http_binary", "http_image_binary")) {
-                        "Venera asynchronous bridge only supports HTTP"
+                try {
+                    val startedAt = SystemClock.elapsedRealtime()
+                    val response = runCatching {
+                        require(executeMessage.optString("method") in setOf("http", "http_binary", "http_image_binary")) {
+                            "Venera asynchronous bridge only supports HTTP"
+                        }
+                        if (closed || cancelled.contains(transportRequestId)) {
+                            error("Venera request was cancelled")
+                        }
+                        val value = execute(executeMessage)
+                        JSONObject().put("ok", true).put("value", encodeWireValue(value))
+                    }.getOrElse { error ->
+                        veneraBridgeFailureEnvelope(error)
                     }
-                    if (cancelled.contains(transportRequestId)) {
-                        error("Venera request was cancelled")
+                    if (requestId == null) {
+                        veneraActivationLog(
+                            driverId = driverId,
+                            stage = "activation-async-bridge",
+                            startedAt = startedAt,
+                            stageStarted = startedAt,
+                            detail = "method=${message.optString("method", "unknown")}",
+                        )
                     }
-                    val value = execute(executeMessage)
-                    JSONObject().put("ok", true).put("value", encodeWireValue(value))
-                }.getOrElse { error ->
-                    veneraBridgeFailureEnvelope(error)
+                    postAsyncResponse(callId, response)
+                } finally {
+                    try {
+                        invocationDrain.endCall(transportRequestId, callId)
+                    } finally {
+                        work.finish()
+                    }
                 }
-                asyncCalls.remove(callId)
-                if (requestId == null) {
-                    veneraActivationLog(
-                        driverId = driverId,
-                        stage = "activation-async-bridge",
-                        startedAt = startedAt,
-                        stageStarted = startedAt,
-                        detail = "method=${message.optString("method", "unknown")}",
-                    )
-                }
-                postAsyncResponse(callId, response)
             }
         } catch (error: Throwable) {
-            asyncCalls.remove(callId)
+            invocationDrain.endCall(transportRequestId, callId)
             postAsyncResponse(
                 callId,
                 veneraBridgeFailureEnvelope(error),
             )
+            work.finish()
         }
+        return true
     }
 
     private fun postAsyncResponse(callId: String, response: JSONObject) {
@@ -699,7 +855,7 @@ private class VeneraNativeBridge(
     }
 
     @JavascriptInterface
-    fun activated(rawEnvelope: String) {
+    fun activated(rawEnvelope: String) = withNativeWork {
         val envelope = runCatching { JSONObject(rawEnvelope) }.getOrElse {
             JSONObject()
                 .put("ok", false)
@@ -709,12 +865,12 @@ private class VeneraNativeBridge(
     }
 
     @JavascriptInterface
-    fun complete(requestId: String, rawEnvelope: String) {
-        if (cancelled.remove(requestId)) return
+    fun complete(requestId: String, rawEnvelope: String) = withNativeWork {
+        if (closed || cancelled.contains(requestId)) return@withNativeWork
         runCatching { JSONObject(rawEnvelope) }
-            .onSuccess { resultSink?.invoke(requestId, it) }
+            .onSuccess { invocationDrain.complete(requestId, it) }
             .onFailure {
-                resultSink?.invoke(
+                invocationDrain.complete(
                     requestId,
                     JSONObject()
                         .put("ok", false)
@@ -725,14 +881,29 @@ private class VeneraNativeBridge(
     }
 
     @JavascriptInterface
-    fun finished(requestId: String) {
-        cancelled.remove(requestId)
-        finishedSink?.invoke(requestId)
+    fun finished(requestId: String) = withNativeWork {
+        // JS waiter rejection is prompt; the original invocation result and
+        // cancellation identity remain until all admitted native calls exit.
+        invocationDrain.finish(requestId)
     }
+
+    private inline fun withNativeWork(action: () -> Unit) {
+        val work = nativeWork.begin() ?: return
+        try {
+            action()
+        } finally {
+            work.finish()
+        }
+    }
+
+    fun beginInvocation(requestId: String): Boolean = invocationDrain.beginInvocation(requestId)
 
     fun cancel(requestId: String) {
         cancelled.add(requestId)
         resolverHttp.cancel(requestId)
+        synchronized(nativeBytes) {
+            nativeBytes.entries.removeAll { it.value.first == requestId }
+        }
     }
 
     private fun http(message: JSONObject): Any =
@@ -747,7 +918,7 @@ private class VeneraNativeBridge(
             if (!requireImage) {
                 // Public Network.fetchBinary is a general binary API. Image
                 // semantics belong only to the private loadResource fast path.
-                result.put("nativeBytesToken", retainNativeBytes(response.body))
+                result.put("nativeBytesToken", retainNativeBytes(response.body, message))
                 return result
             }
             val encodedImage = hasVeneraEncodedImageSignature(response.body)
@@ -759,7 +930,7 @@ private class VeneraNativeBridge(
             // through onLoadFailed; retaining an HTML/error body here would
             // both leak a token and report a successful image operation.
             if (encodedImage) {
-                result.put("nativeBytesToken", retainNativeBytes(response.body))
+                result.put("nativeBytesToken", retainNativeBytes(response.body, message))
             } else {
                 networkCache.invalidate(
                     namespace = networkCacheNamespace,
@@ -946,19 +1117,23 @@ private class VeneraNativeBridge(
         error("Venera HTTP redirect state escaped its bounded loop")
     }
 
-    private fun retainNativeBytes(bytes: ByteArray): String {
+    private fun retainNativeBytes(bytes: ByteArray, message: JSONObject): String {
+        val requestId = message.optString("requestId").takeIf { it.isNotBlank() }
         val token = UUID.randomUUID().toString()
         synchronized(nativeBytes) {
+            check(!closed && (requestId == null || !cancelled.contains(requestId))) {
+                "Venera request was cancelled"
+            }
             while (nativeBytes.size >= VENERA_MAX_NATIVE_BYTE_PAYLOADS) {
                 nativeBytes.remove(nativeBytes.keys.first())
             }
-            nativeBytes[token] = bytes
+            nativeBytes[token] = requestId to bytes
         }
         return token
     }
 
     fun takeNativeBytes(token: String): ByteArray? = synchronized(nativeBytes) {
-        nativeBytes.remove(token)
+        nativeBytes.remove(token)?.second
     }
 
     private fun executeHttpRequest(
@@ -1276,6 +1451,7 @@ private class VeneraNativeBridge(
             "utf8", "gbk" -> {
                 val charset = if (type == "gbk") Charset.forName("GBK") else Charsets.UTF_8
                 if (encode) value.toString().toByteArray(charset)
+                else if (type == "utf8") decodeVeneraUtf8(value as ByteArray)
                 else (value as ByteArray).toString(charset)
             }
             "base64" -> if (encode) {
@@ -1364,19 +1540,32 @@ private class VeneraNativeBridge(
     }
 
     override fun close() {
-        if (closed) return
+        closeWhenDrained()
+    }
+
+    fun closeWhenDrained(): CompletableFuture<Unit> {
+        if (!closeStarted.compareAndSet(false, true)) return closeCompletion
         closed = true
         activationSink = null
         resultSink = null
         finishedSink = null
-        asyncCalls.values.toList().forEach { requestId ->
+        val drained = nativeWork.close()
+        invocationDrain.close().forEach { requestId ->
             cancelled.add(requestId)
             resolverHttp.cancel(requestId)
         }
-        asyncCalls.clear()
-        cancelled.clear()
-        synchronized(nativeBytes) { nativeBytes.clear() }
-        releaseImages()
+        drained.whenComplete { _, failure ->
+            runCatching {
+                cancelled.clear()
+                synchronized(nativeBytes) { nativeBytes.clear() }
+                releaseImages()
+                if (failure != null) throw failure
+            }.fold(
+                onSuccess = { closeCompletion.complete(Unit) },
+                onFailure = { closeCompletion.completeExceptionally(it) },
+            )
+        }
+        return closeCompletion
     }
 }
 
@@ -1461,6 +1650,10 @@ internal fun mergeVeneraCookieHeaders(
     .joinToString("; ")
     .takeIf(String::isNotEmpty)
 
+// Dart's UTF-8 decoder consumes one initial byte order mark.
+internal fun decodeVeneraUtf8(bytes: ByteArray): String =
+    bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+
 internal data class VeneraHttpResponse(
     val status: Int,
     val headers: JSONObject,
@@ -1471,7 +1664,7 @@ internal data class VeneraHttpResponse(
         .put("headers", headers)
         .put(
             "body",
-            if (bytes) encodeWireValue(body) else body.toString(Charsets.UTF_8),
+            if (bytes) encodeWireValue(body) else decodeVeneraUtf8(body),
         )
 }
 
@@ -1863,7 +2056,7 @@ function __zicHasBrowseCapability(source){return !!(__zicExploreLoader(source)||
 function __zicNextToken(result){return result?.next??result?.nextPage??result?.nextToken??result?.cursor??null}
 function __zicHasNextToken(value){return value!==null&&value!==undefined&&value!==false&&String(value)!==''}
 async function __zicLoadPage(loader,prefixArgs,page,stateKey,requiredCount){
- if(typeof loader?.load==='function')return await loader.load(...prefixArgs,page);
+ if(typeof loader?.load==='function'){const complete=loader.type==='multiPartPage',loaded=await loader.load(...prefixArgs,complete?null:page);return complete?{comics:__zicFlatten(loaded),__zicCompleteCollection:true}:loaded}
  if(typeof loader?.loadNext!=='function')throw new Error('Venera loader exposes neither load nor loadNext');
  if(page===1)__zicPaging.delete(stateKey);
  let state=__zicPaging.get(stateKey);if(!state){state={pages:[],next:null,exhausted:false,seen:new Set()};__zicPaging.set(stateKey,state)}
@@ -1904,8 +2097,8 @@ async function __zicOperation(request){
    else if(value?.kind==='category'&&__zicHasLoader(source.categoryComics)){const target={category:value.category,param:value.param??null},options=await __zicCategoryOptions(source,target);loaded=await __zicLoadPage(source.categoryComics,[target.category,target.param,options],page,'category:'+String(target.category)+':'+String(target.param??'')+':'+JSON.stringify(options),args.offset+args.limit)}
    else if(search){const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,['',options],page,'search::'+JSON.stringify(options),args.offset+args.limit)}
    else throw new Error('Venera source exposes no browse capability (keys: '+Object.keys(source).join(', ')+')')}
-  const all=__zicFlatten(loaded),cursor=loaded?.__zicCursor===true,start=cursor?args.offset:args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
-  const maxPage=Number(loaded?.maxPage),hasMore=cursor?all.length>start+items.length||!loaded.exhausted:(Number.isFinite(maxPage)&&maxPage>page)||__zicHasNextToken(__zicNextToken(loaded))||all.length>start+items.length;return {items,offset:args.offset,hasMore};
+  const all=__zicFlatten(loaded),cursor=loaded?.__zicCursor===true,complete=loaded?.__zicCompleteCollection===true,start=cursor||complete?args.offset:args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
+  const maxPage=Number(loaded?.maxPage),hasMore=complete?all.length>start+items.length:cursor?all.length>start+items.length||!loaded.exhausted:(Number.isFinite(maxPage)&&maxPage>page)||__zicHasNextToken(__zicNextToken(loaded))||all.length>start+items.length;return {items,offset:args.offset,hasMore};
  }
  if(request.operation==='loadComic'){
   const opaque=__zicComicOpaque(args.comicId);const info=await source.comic.loadInfo(opaque.id);
@@ -1956,6 +2149,9 @@ async function __zicOperation(request){
  }
  if(request.operation==='loadResource'){
   const uri=String(args.uri||'');const isResource=uri.startsWith('venera-resource:');let config;
+  // Source-version documents share the binary/session/request lifecycle, but
+  // must not enter artwork hooks, image validation or image semantic recovery.
+  if(args.sourceDocument===true){if(!/^https?:\/\//i.test(uri))throw new Error('Venera source document URI must use HTTP(S)');const direct=await Network.fetchBinary('GET',uri,{});if(direct.status<200||direct.status>=300)throw new Error('Venera source document HTTP '+direct.status);if(!direct.nativeBytesToken)throw new Error('Venera native document payload is unavailable');return {__zicNativeBytesToken:direct.nativeBytesToken}}
   if(isResource){config=await __zicResolveResourceConfig(uri,source)}
   else if(/^https?:\/\//i.test(uri)){config=await __zicResolveHttpArtworkConfig(uri,source)}
   else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');

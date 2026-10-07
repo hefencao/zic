@@ -767,16 +767,25 @@ final class _SourceResourceTransport
       );
     }
     _throwIfTaskCancelled(control);
-    late final Uint8List transformed;
+    Uint8List? transformed;
+    ComicResourceBody? transformedBody;
     final transformWatch = Stopwatch()..start();
     try {
-      transformed = controlled != null
+      final bodyTransform = source is BodyTransformingComicResourceSource
+          ? source as BodyTransformingComicResourceSource : null;
+      if (bodyTransform?.supportsResourceTransformBodyDelivery == true) {
+        transformedBody = await bodyTransform!.transformResourceBody(
+          locator, rawBytes, control: control,
+        );
+      } else {
+        transformed = controlled != null
           ? await controlled.transformResourceControlled(
               locator,
               rawBytes,
               control: control,
             )
           : await transforming!.transformResource(locator, rawBytes);
+      }
       transformWatch.stop();
     } on Object catch (error, stackTrace) {
       transformWatch.stop();
@@ -795,20 +804,29 @@ final class _SourceResourceTransport
         stackTrace,
       );
     }
+    final diagnostics = <String, Object?>{
+      'sourceRawOpenMicros': rawOpenWatch.elapsedMicroseconds,
+      'sourceRawCollectMicros': rawCollectWatch.elapsedMicroseconds,
+      'sourceRuntimeTransformMicros': transformWatch.elapsedMicroseconds,
+    };
+    if (transformedBody != null) {
+      return (
+        response: await _runtimeBodyResponse(
+          locator, transformedBody, range: range, validators: validators,
+          control: control, semanticRetryExhausted: false,
+          rejectionDetailKey: 'runtimeTransformImageSignatureRejected',
+          diagnostics: diagnostics,
+        ),
+        openPath: '${pathPrefix}host-fetch-runtime-transform',
+      );
+    }
     _throwIfTaskCancelled(control);
     return (
       response: _runtimeBytesResponse(
-        locator,
-        transformed,
-        range: range,
-        validators: validators,
+        locator, transformed!, range: range, validators: validators,
         semanticRetryExhausted: false,
         rejectionDetailKey: 'runtimeTransformImageSignatureRejected',
-        diagnostics: <String, Object?>{
-          'sourceRawOpenMicros': rawOpenWatch.elapsedMicroseconds,
-          'sourceRawCollectMicros': rawCollectWatch.elapsedMicroseconds,
-          'sourceRuntimeTransformMicros': transformWatch.elapsedMicroseconds,
-        },
+        diagnostics: diagnostics,
       ),
       openPath: '${pathPrefix}host-fetch-runtime-transform',
     );
@@ -1000,6 +1018,16 @@ final class _SourceResourceTransport
   }) async {
     _throwIfTaskCancelled(control);
     final source = _source;
+    if (source is BodyDeliveringComicResourceSource &&
+        (source as BodyDeliveringComicResourceSource).supportsResourceBodyDelivery) {
+      final body = await (source as BodyDeliveringComicResourceSource)
+          .openResourceBody(uri, control: control);
+      return _runtimeBodyResponse(
+        uri, body, range: range, validators: validators, control: control,
+        semanticRetryExhausted: true,
+        rejectionDetailKey: 'runtimeBodyImageSignatureRejected',
+      );
+    }
     final bytes = source is ControlledComicResourceSource
         ? await (source as ControlledComicResourceSource)
             .loadResourceControlled(uri, control: control)
@@ -1013,6 +1041,60 @@ final class _SourceResourceTransport
       semanticRetryExhausted: true,
       rejectionDetailKey: 'runtimeBodyImageSignatureRejected',
     );
+  }
+
+  Future<ByteResponse> _runtimeBodyResponse(
+    Uri uri,
+    ComicResourceBody body, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+    required bool semanticRetryExhausted,
+    required String rejectionDetailKey,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
+  }) async {
+    try {
+      _throwIfTaskCancelled(control);
+      if (!hasSupportedEncodedImageSignature(body.metadataPrefix)) {
+        _invalidate(uri);
+        if (semanticRetryExhausted) _failedStreams.add(uri);
+        throw Failure(
+          code: ErrorCode.source,
+          message: 'source runtime returned non-image bytes for $uri',
+          details: <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceMediaSemanticRejected': true,
+            if (semanticRetryExhausted) 'sourceSemanticRetryExhausted': true,
+            rejectionDetailKey: true,
+          },
+        );
+      }
+      final current = Validators(etag: body.validator);
+      final canRange = range != null && range.start <= body.byteLength &&
+          (validators == null || validators.isEmpty || validators.matches(current));
+      final start = canRange ? range.start : 0;
+      final requestedEnd = canRange ? range.end : null;
+      final end = requestedEnd != null
+          ? (requestedEnd + 1).clamp(start, body.byteLength).toInt()
+          : body.byteLength;
+      return ByteResponse(
+        bytes: body.open(start: start, end: end),
+        statusCode: canRange ? HttpStatus.partialContent : HttpStatus.ok,
+        rangeStart: start,
+        totalLength: body.byteLength,
+        validators: current,
+        rangeSupported: true,
+        flowControl: ByteResponseFlowControl.consumerPacing,
+        diagnostics: <String, Object?>{
+          'sourceRuntimeBodyDelivery': 'sealed-file-v1',
+          ...diagnostics,
+        },
+        onDiscard: body.dispose,
+      );
+    } on Object {
+      await body.dispose();
+      rethrow;
+    }
   }
 
   ByteResponse _runtimeBytesResponse(

@@ -1548,6 +1548,14 @@ final class DownloadJob {
     final pending = Future<ByteResponse>.sync(() => open(attemptControl));
     final openIsSelfBounded = transport is SelfBoundedOpenTransport &&
         (transport as SelfBoundedOpenTransport).selfBoundsOpen(_requestUri);
+    Future<void> discardCancelledOpen() async {
+      try {
+        final response = await pending;
+        await response.discard(control: control);
+      } on Object {
+        // The scheduler cancellation remains authoritative after physical exit.
+      }
+    }
     if (readStallTimeout <= Duration.zero || openIsSelfBounded) {
       if (control == null) {
         return pending.then<ByteResponse>((response) {
@@ -1568,18 +1576,12 @@ final class DownloadJob {
         return response;
       }, onError: (Object error, StackTrace stackTrace) async {
         if (control.cancelled) {
-          unawaited(
-            pending.then<void>(
-              (response) async {
-                try {
-                  await response.discard(control: control);
-                } on Object {
-                  // The cancellation error remains authoritative.
-                }
-              },
-              onError: (Object _, StackTrace __) {},
-            ),
-          );
+          final cleanup = discardCancelledOpen();
+          if (openIsSelfBounded) {
+            await cleanup;
+          } else {
+            unawaited(cleanup);
+          }
           control.throwIfCancelled();
         }
         throw Error.throwWithStackTrace(error, stackTrace);
@@ -1653,7 +1655,19 @@ final class DownloadJob {
       }));
     }
 
-    return result.future.whenComplete(timer.cancel);
+    return result.future.whenComplete(timer.cancel).then<ByteResponse>(
+      (response) => response,
+      onError: (Object error, StackTrace stackTrace) async {
+        if (control?.cancelled == true &&
+            attemptControl?.openIsSelfBounded == true) {
+          // A transparent wrapper handed off to the proven lower deadline.
+          // Keep the lane task alive until that same open and discard exit.
+          await discardCancelledOpen();
+          control!.throwIfCancelled();
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
   }
 
 }
@@ -1682,6 +1696,7 @@ final class _OpenAttemptTaskControl
   Stream<int> get priorityChanges => _scheduler.priorityChanges;
 
   Future<void> get whenOpenSelfBounded => _openSelfBounded.future;
+  bool get openIsSelfBounded => _openSelfBounded.isCompleted;
 
   @override
   void markOpenSelfBounded() {

@@ -106,7 +106,7 @@ def main() -> None:
     ordered(
         "packages/plugin_host/lib/src/runtime_source_adapter.dart",
         "legacy Venera runtime locator must be refreshed before resource load",
-        "final existing = _resourceLoads[uri]",
+        "final existing = _resourceLoads[",
     )
     require(
         "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",

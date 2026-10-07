@@ -9,6 +9,169 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  for (final action in <String>['range', 'validator mismatch', 'discard']) {
+    test('transform file output preserves legacy $action semantics', () async {
+      final locator = Uri.parse('venera-resource:unchanged');
+      final raw = Uint8List.fromList(<int>[3, 1, 4, 1, 5]);
+      final encoded = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 6, 5, 4, 3, 0xff, 0xd9]);
+      final request = ComicResourceRequest(
+        uri: Uri.parse('https://cdn.invalid/encrypted.bin'), requiresRuntimeTransform: true,
+      );
+      ByteResponse hostResponse() => ByteResponse(
+        bytes: Stream<List<int>>.value(raw), statusCode: HttpStatus.ok,
+        rangeStart: 0, totalLength: raw.length,
+      );
+      final legacyPool = ExternalPluginResourceTransportPool(directOpen: (_) async => hostResponse());
+      final bodyPool = ExternalPluginResourceTransportPool(directOpen: (r) async {
+        expect(r.headers.keys.any((k) => k.toLowerCase() == 'range'), isFalse);
+        return hostResponse();
+      });
+      addTearDown(legacyPool.close);
+      addTearDown(bodyPool.close);
+      final legacy = await legacyPool.loaderFor(_FixtureSource(
+        request: request, supportsTransform: true, transform: (_) async => encoded,
+      ), locator)();
+      await _collect(legacy.bytes);
+      final source = _TransformBodyFixtureSource(
+        request: request, bytes: encoded, validator: legacy.validators.etag!,
+      );
+      final control = _MutableTaskControl(priority: 1000);
+      final response = await bodyPool.controlledLoaderFor(source, locator)(
+        range: const ByteRange(start: 3, end: 5), control: control,
+        validators: action == 'validator mismatch'
+            ? const Validators(etag: '"older-body"') : legacy.validators,
+      );
+      expect(response.validators, isA<Validators>());
+      expect(response.validators.etag, legacy.validators.etag);
+      expect(response.rangeStart, action == 'validator mismatch' ? 0 : 3);
+      expect(response.totalLength, encoded.length);
+      expect(response.disposition, ByteResponseDisposition.staged);
+      expect(response.bodyAuthority, ByteResponseBodyAuthority.source);
+      expect(response.flowControl, ByteResponseFlowControl.consumerPacing);
+      expect(response.diagnostics['sourceOpenPath'], 'host-fetch-runtime-transform');
+      expect(response.diagnostics['sourceRuntimeBodyDelivery'], 'sealed-file-v1');
+      expect(response.diagnostics['sourceRuntimeTransformMicros'], isA<int>());
+      if (action == 'discard') {
+        await response.discard(control: control);
+        expect(source.bodies.single.reads, 0);
+      } else {
+        expect(await _collect(response.bytes),
+          action == 'validator mismatch' ? encoded : encoded.sublist(3, 6));
+      }
+      expect(source.bodies.single.disposed, isTrue);
+      expect(source.lastInput, raw);
+      expect(source.bodyControl, same(control));
+      expect(source.transformCalls, 0);
+      expect(source.loadCalls, 0);
+    });
+  }
+
+  test('non-image transform files are released within the existing semantic budget', () async {
+    final locator = Uri.parse('venera-resource:invalid-transform-body');
+    ComicResourceRequest plan(int index) => ComicResourceRequest(
+      uri: Uri.parse('https://cdn.invalid/raw-$index.bin'), requiresRuntimeTransform: true,
+    );
+    final source = _TransformBodyFixtureSource(
+      request: plan(0), bytes: Uint8List.fromList('<html>error</html>'.codeUnits),
+      validator: '"invalid"', retryRequests: [for (var i = 1; i <= 5; i++) plan(i)],
+    );
+    var hostLoads = 0;
+    final pool = ExternalPluginResourceTransportPool(directOpen: (_) async {
+      hostLoads++;
+      return ByteResponse(bytes: Stream<List<int>>.value(const <int>[1, 2, 3]),
+        statusCode: HttpStatus.ok, rangeStart: 0, totalLength: 3);
+    });
+    addTearDown(pool.close);
+    await expectLater(pool.loaderFor(source, locator)(), throwsA(isA<Failure>()
+      .having((e) => e.details['sourceSemanticRetryExhausted'], 'budget exhausted', true)
+      .having((e) => e.details['sourceSemanticAcceptedPlans'], 'accepted plans', 5)));
+    expect(source.bodies, hasLength(6));
+    expect(source.bodies.every((b) => b.disposed && b.reads == 0), isTrue);
+    expect(source.retryCalls, 5);
+    expect(source.transformCalls, 0);
+    expect(source.loadCalls, 0);
+    expect(hostLoads, 6);
+  });
+
+  test('sealed source body keeps legacy validator and Range semantics', () async {
+    final locator = Uri.parse('mihon:resource:body');
+    final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 6, 5, 4, 3, 0xff, 0xd9]);
+    final request = ComicResourceRequest(uri: locator, requiresRuntimeTransform: true);
+    final legacyPool = ExternalPluginResourceTransportPool();
+    final bodyPool = ExternalPluginResourceTransportPool();
+    addTearDown(legacyPool.close);
+    addTearDown(bodyPool.close);
+    final legacy = await legacyPool.loaderFor(
+      _FixtureSource(request: request, runtimeBytes: bytes), locator,
+    )();
+    await _collect(legacy.bytes);
+    final source = _BodyFixtureSource(
+      request: request, bytes: bytes, validator: legacy.validators.etag!,
+    );
+    final control = _MutableTaskControl(priority: 1000);
+    final response = await bodyPool.controlledLoaderFor(source, locator)(
+      range: const ByteRange(start: 4, end: 6), validators: legacy.validators, control: control,
+    );
+    expect(response.validators.etag, legacy.validators.etag);
+    expect(response.validators.matches(legacy.validators), isTrue);
+    expect(response.statusCode, HttpStatus.partialContent);
+    expect(response.rangeStart, 4);
+    expect(response.totalLength, bytes.length);
+    expect(response.disposition, ByteResponseDisposition.staged);
+    expect(response.bodyAuthority, ByteResponseBodyAuthority.source);
+    expect(response.diagnostics['sourceRuntimeBodyDelivery'], 'sealed-file-v1');
+    expect(await _collect(response.bytes), bytes.sublist(4, 7));
+    expect(source.loadCalls, 0);
+    expect(source.bodyControl, same(control));
+    expect(source.body.disposed, isTrue);
+  });
+
+  test('sealed body validator mismatch restarts from zero without cache authority',
+      () async {
+    final locator = Uri.parse('mihon:resource:body');
+    final source = _BodyFixtureSource(
+      request: ComicResourceRequest(uri: locator, requiresRuntimeTransform: true),
+      bytes: Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]), validator: '"same-body"',
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+    final response = await pool.loaderFor(source, locator)(
+      range: const ByteRange(start: 2), validators: const Validators(etag: '"older-body"'),
+    );
+    expect(response.statusCode, HttpStatus.ok);
+    expect(response.rangeStart, 0);
+    expect(await _collect(response.bytes), source.body.data);
+    expect(source.body.disposed, isTrue);
+    expect(source.loadCalls, 0);
+  });
+
+  test('unconsumed and rejected source bodies return the same physical lease',
+      () async {
+    final locator = Uri.parse('mihon:resource:body');
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+    final source = _BodyFixtureSource(
+      request: ComicResourceRequest(uri: locator, requiresRuntimeTransform: true),
+      bytes: Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]), validator: '"body"',
+    );
+    final response = await pool.loaderFor(source, locator)();
+    await response.discard();
+    expect(source.body.disposed, isTrue);
+    expect(source.body.reads, 0);
+    final rejected = _BodyFixtureSource(
+      request: ComicResourceRequest(uri: locator, requiresRuntimeTransform: true),
+      bytes: Uint8List.fromList('<html>error</html>'.codeUnits), validator: '"html"',
+    );
+    final rejectedPool = ExternalPluginResourceTransportPool();
+    addTearDown(rejectedPool.close);
+    await expectLater(rejectedPool.loaderFor(rejected, locator)(),
+      throwsA(isA<Failure>().having((e) => e.details['runtimeBodyImageSignatureRejected'],
+        'image admission', true)));
+    expect(rejected.body.disposed, isTrue);
+    expect(rejected.body.reads, 0);
+    expect(rejected.loadCalls, 0);
+  });
+
   test('source transport self-bounds open only with both proven owners', () {
     final locator = Uri.parse('venera-resource:bounded');
     final request = ComicResourceRequest(
@@ -1601,6 +1764,76 @@ final class _BoundedFixtureSource extends _FixtureSource
 
   @override
   Duration get resourceOperationTimeout => const Duration(seconds: 30);
+}
+
+final class _TransformBodyFixtureSource extends _FixtureSource
+    implements BodyTransformingComicResourceSource {
+  _TransformBodyFixtureSource({
+    required super.request, required this.bytes, required this.validator,
+    super.retryRequests = const <ComicResourceRequest?>[],
+  }) : super(supportsTransform: true);
+
+  final Uint8List bytes;
+  final String validator;
+  final bodies = <_MemoryBody>[];
+  Uint8List? lastInput;
+  TaskControl? bodyControl;
+  @override
+  bool get supportsResourceTransformBodyDelivery => true;
+  @override
+  Future<ComicResourceBody> transformResourceBody(
+    Uri uri, Uint8List input, {TaskControl? control}
+  ) async {
+    lastInput = input;
+    bodyControl = control;
+    final body = _MemoryBody(bytes, validator);
+    bodies.add(body);
+    return body;
+  }
+}
+
+final class _BodyFixtureSource extends _FixtureSource
+    implements BodyDeliveringComicResourceSource {
+  _BodyFixtureSource({
+    required super.request, required Uint8List bytes, required String validator,
+  }) : body = _MemoryBody(bytes, validator);
+
+  final _MemoryBody body;
+  TaskControl? bodyControl;
+
+  @override
+  bool get supportsResourceBodyDelivery => true;
+
+  @override
+  Future<ComicResourceBody> openResourceBody(Uri uri, {TaskControl? control}) async {
+    bodyControl = control;
+    return body;
+  }
+}
+
+final class _MemoryBody implements ComicResourceBody {
+  _MemoryBody(this.data, this.validator);
+  final Uint8List data;
+  @override
+  final String validator;
+  bool disposed = false;
+  int reads = 0;
+  @override
+  int get byteLength => data.length;
+  @override
+  Uint8List get metadataPrefix =>
+      Uint8List.sublistView(data, 0, data.length < 64 ? data.length : 64);
+  @override
+  Stream<List<int>> open({int start = 0, int? end}) async* {
+    try {
+      reads++;
+      yield Uint8List.sublistView(data, start, end ?? data.length);
+    } finally {
+      await dispose();
+    }
+  }
+  @override
+  Future<void> dispose() async { disposed = true; }
 }
 
 class _FixtureSource
