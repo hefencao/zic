@@ -19,7 +19,7 @@
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
 - artwork持久化：retained晋升复用canonical key；已有副本只改元数据，缺失transient副本从未过期内存响应后台补写，不重下或阻塞呈现。ResourceCacheManager独占晋升claim，失效/刷新/clear撤销旧意图。
-  文件回归与43项隔离Profile真机通过：真实browse/details晋升、24封面压力、metadata/目录刷新、manual trim及无来源冷命中。033关闭；034/035仅剩Reader progress/允许失效与history入口。不归因原19/20正文加载。
+  51项隔离Profile通过：browse/details/真实Reader进度与history同key不重下、24封面压力、metadata/目录刷新、trim和冷命中；精确artwork刷新、整漫画删除、设置清缓存已验，033–035关闭。不归因原19/20正文。
 - external-static 状态治理已把 presentation generation 与 raster residency 拆开：Pipeline 保持 same-generation identity，`PipelinePresentationRasterCache`独占 decoded raster residency；
   mounted adapter 在 eviction/revoke 时清掉本地 attempt/provider 并允许 same-identity regrant，detached resident provider 不再被二次 resize/cache wrap。
 - 只有携带 exact `storageId + ArtifactCache mutation generation` authority 的 presentation rejection 才允许 `DownloadTransferOwner` 失效 durable body；
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 2330/Rust22/27analyzer、三ABI Debug/Profile/Release及native packaging通过；Android110复用相同Kotlin/native输入的既有结果。Release33448744/PID27366/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 2330/Rust22/27analyzer、三ABI Debug/Profile/Release及native packaging通过；Android110复用相同Kotlin/native输入的既有结果。Release33448744/PID24887/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device27/toolchain6/superseded2/partial37/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader；保留普通来源已验分量。原加载/性能/真实来源开放。
+  当前112项：device29/toolchain6/superseded2/partial35/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader；保留普通来源已验分量。原加载/性能/真实来源开放。

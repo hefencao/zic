@@ -36,14 +36,9 @@
 - Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner：非空时分类栏按“最新 → 热门 → 筛选”显示，空列表不发明入口；bridge完整支持官方 8 类 Filter及插件自定义子类，筛选面板以类型化 `filterState`回传 Text/Sort等状态。首次默认 section仍由当前展示排序第一项决定，catalog cache不得恢复导航默认值。
 - 对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。
 
-## P0：Retained Artwork 生命周期与失效边界真机闭环
-
-- 详情metadata/1→2章目录刷新保持retained cover已验；继续验证真实Reader progress不删除封面，并分别验精确artwork刷新、整漫画资源删除和用户清缓存的允许失效边界。
-- source browse→真实details的同key晋升及已trim副本热内存补写已验；继续验实际history入口不建立第二文件/namespace/来源下载。
-
 ## P0：Artwork 生命周期与更新语义真机闭环
 
-- 使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
+- 使用原始报障 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
 - 普通主入口用来源实际确认的同源successor验证Home版本更新筛选；以home-update-shelf-admission审计中的当前筛选/metadata/progress合同为基线，不因父项partial改写已验行为。
 - 普通主入口验证真实来源版本首次入架确认既有chapter/version通知、后续successor仍可提醒；隔离来源验收不得代替真实版本发现流程（ADR0383 Provisional）。
 

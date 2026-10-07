@@ -7,6 +7,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
+import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
 // Test-only access to the existing durable response store.
 // ignore: depend_on_referenced_packages
@@ -17,15 +18,19 @@ import 'package:telemetry/telemetry.dart';
 import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_pull_to_refresh.dart';
+import 'package:zic/app_settings_screen.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_export.dart';
 import 'package:zic/home_library_session.dart';
 import 'package:zic/home_shell.dart';
 import 'package:zic/library_backup.dart';
+import 'package:zic/local_media_composition.dart';
+import 'package:zic/misc_page.dart';
 import 'package:zic/source_browser.dart';
+import 'package:zic/source_resource_gateway.dart';
 
-// Explicit device entrypoint: production Home/details/storage owners with a
+// Explicit device entrypoint: production Home/details/Reader/storage owners with a
 // controlled source and a fresh temporary SQLite database. It never opens the
 // user's library, preferences, external plugins or download artifact index.
 final _trace = DebugTraceLog();
@@ -201,6 +206,7 @@ Future<void> main() async {
   } finally {
     if (resourcesReady) {
       await _unmount();
+      await shutdownDefaultLocalMediaPipeline();
       await _queue.close();
       await _downloads.close();
       await _cache.close();
@@ -495,9 +501,59 @@ Future<void> _retentionChecks(Directory root) async {
     _source.resourceLoads[early] == 1 &&
     originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString() &&
     (await bytes.read(key(early)))?.expiresAt == null);
+  _preferences.setReaderStartsImmersive(false);
+  (_element((element) => element.widget.key ==
+    details.comicDetailsChapterKey(_sourceId, '$early:chapter'))!
+      .widget as ListTile).onTap!();
+  await _wait(() => _element((element) => element.widget is ReaderRuntimeScreen) != null &&
+    _trace.exportEvents.any((event) => event.kind == TraceEventKind.firstFrameReady &&
+      event.payload['pageIndex'] == 0));
+  _check('real-reader-starts-on-source-page',
+    _source.resourceLoads['$early/page-0.png'] == 1);
+  final slider = _element((element) => element.widget.key == readerPageSliderKey)!
+      .widget as Slider;
+  slider.onChangeStart!(2);
+  slider.onChanged!(2);
+  slider.onChangeEnd!(2);
+  await _wait(() => _trace.exportEvents.any((event) =>
+    event.kind == TraceEventKind.firstFrameReady && event.payload['pageIndex'] == 2) &&
+    (_element((element) => element.widget.key == readerPageSliderKey)!
+      .widget as Slider).value == 2);
+  _check('real-slider-target-produces-first-frame',
+    _source.resourceLoads['$early/page-2.png'] == 1);
+  final reader = _element((element) => element.widget is ReaderRuntimeScreen)!;
+  await Navigator.of(reader).maybePop();
+  await _wait(() => _element((element) => element.widget is ReaderRuntimeScreen) == null);
+  await _frames(25);
+  await _cache.responses.drainPersistence();
+  _check('reader-pop-durably-saves-progress-without-rewriting-cover',
+    (await _store.get(_sourceId, '$early:chapter'))?.progress?.pageIndex == 2 &&
+    _source.resourceLoads[early] == 1 &&
+    originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString() &&
+    (await bytes.read(key(early)))?.expiresAt == null);
   await shelve();
   _check('refreshed-catalog-is-persisted-with-cover',
     (await _store.getSavedComic(_sourceId, early))?.chapters.length == 2);
+  _selectNavigation(0);
+  final historyKey = ValueKey<String>('home-history:$_sourceId\u0000$early');
+  await _wait(() {
+    final history = _element((element) => element.widget.key == historyKey);
+    return history != null && _element((element) => element.widget is RawImage &&
+      (element.widget as RawImage).image != null, within: history) != null;
+  });
+  _check('actual-history-cover-keeps-canonical-file-and-no-source-reload',
+    _card(early)?.coverIdentity == '$_sourceId\u0000$early' &&
+    _source.resourceLoads[early] == 1 &&
+    originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString());
+  await _openDetails(early);
+  await _cache.responses.drainPersistence();
+  _check('history-details-return-keeps-progress-and-canonical-cover',
+    (await _store.get(_sourceId, '$early:chapter'))?.progress?.pageIndex == 2 &&
+    _source.resourceLoads[early] == 1 &&
+    originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString());
+  await _popDetails();
+  _selectNavigation(2);
+  await _frames(25);
 
   (_element((element) => element.widget.key == comicSourceNextPageKey)!
     .widget as IconButton).onPressed!();
@@ -559,15 +615,85 @@ Future<void> _retentionChecks(Directory root) async {
   final calls = Map<String, int>.from(_source.resourceLoads);
   await _mount(sources: const <BrowsableComicSource>[]);
   _selectNavigation(1);
-  await _wait(() => _elements((element) => element.widget is RawImage &&
-    (element.widget as RawImage).image != null).length == 2);
+  await _wait(() {
+    final shelf = _element((element) => element.widget.key == bookshelfPageKey);
+    return shelf != null && _elements((element) => element.widget is RawImage &&
+      (element.widget as RawImage).image != null, within: shelf).length == 2;
+  });
   _check('trimmed-covers-cold-hit-and-paint-before-source-activation',
     _cache.responses.stats.persistentHits >= 2 &&
     _source.resourceLoads.toString() == calls.toString());
+  final coldBytes = _cache.responses.byteStore! as FileResourceCacheByteStore;
+  final siblingBefore = await coldBytes.read(key(late));
+  final payloadsBeforeRefresh = await _artworkPayloads(cachePath);
+  final gateway = ComicSourceResourceGateway(sourceForId: (id) =>
+    id == _sourceId ? _source : null);
+  try {
+    final refreshed = await gateway.loadArtworkSource(cache: _cache.responses,
+      sourceId: _sourceId, comicId: early, uri: Uri.parse('fixture:$early'),
+      forceRefresh: true, awaitPersistence: true,
+      retention: ResourceCacheRetention.retained);
+    _check('exact-artwork-refresh-reloads-only-requested-cover',
+      (await readEncodedResourceBytes(refreshed)).length == _source.png.length &&
+      _source.resourceLoads[early] == calls[early]! + 1 &&
+      _source.resourceLoads[late] == calls[late] &&
+      payloadsBeforeRefresh.keys.join(',') ==
+        (await _artworkPayloads(cachePath)).keys.join(',') &&
+      (await coldBytes.read(key(early)))?.expiresAt == null &&
+      (await coldBytes.read(key(late)))?.bytes.toString() == siblingBefore?.bytes.toString());
+  } finally {
+    gateway.close();
+  }
+  (_element((element) => element.widget.key == bookshelfManageKey)!
+    .widget as TextButton).onPressed!();
+  await _frames(10);
+  (_element((element) => element.widget.key == comicDeleteKey(_sourceId, early))!
+    .widget as IconButton).onPressed!();
+  await _wait(() => _element((element) => element.widget is AlertDialog) != null);
+  final deletionDialog = _element((element) => element.widget is AlertDialog)!;
+  (_element((element) => element.widget is FilledButton,
+    within: deletionDialog)!.widget as FilledButton).onPressed!();
+  await _wait(() {
+    final shelf = _element((element) => element.widget.key == bookshelfPageKey);
+    return shelf != null && _card(early, within: shelf) == null;
+  });
+  await _cache.responses.drainPersistence();
+  _selectNavigation(0);
+  await _frames(25);
+  _check('whole-comic-delete-removes-only-that-retained-artwork',
+    _card(early, within: _element((element) => element.widget.key == homePageKey)) == null &&
+    await _store.getSavedComic(_sourceId, early) == null &&
+    await coldBytes.read(key(early)) == null &&
+    await coldBytes.read(key(late)) != null &&
+    (await coldBytes.inspect()).retainedEntries == 1);
+  _selectNavigation(3);
+  await _frames(25);
+  (_element((element) => element.widget.key == miscSettingsEntryKey)!
+    .widget as ListTile).onTap!();
+  await _wait(() => _element((element) => element.widget.key == settingsDataEntryKey) != null);
+  final dataEntry = _element((element) => element.widget.key == settingsDataEntryKey)!;
+  (_element((element) => element.widget is ListTile,
+    within: dataEntry)!.widget as ListTile).onTap!();
+  await _wait(() => _element((element) => element.widget is DataSettingsScreen) != null);
+  await _frames(25);
+  (_element((element) => element.widget.key == dataCacheClearKey)!
+    .widget as ListTile).onTap!();
+  await _wait(() => _element((element) => element.widget is AlertDialog) != null);
+  final clearDialog = _element((element) => element.widget is AlertDialog)!;
+  (_element((element) => element.widget is FilledButton,
+    within: clearDialog)!.widget as FilledButton).onPressed!();
+  await _wait(() => _cache.responses.stats.entries == 0);
+  await _cache.responses.drainPersistence();
+  _check('settings-user-clear-removes-retained-artwork',
+    (await coldBytes.inspect()).retainedEntries == 0 &&
+    await coldBytes.read(key(late)) == null &&
+    (await _artworkPayloads(cachePath)).isEmpty);
 }
 
 Future<Map<String, String>> _artworkPayloads(String path) async {
-  final files = await Directory(path).list(recursive: true)
+  final directory = Directory(path);
+  if (!await directory.exists()) return <String, String>{};
+  final files = await directory.list(recursive: true)
       .where((file) => file.path.endsWith('.bin')).toList();
   files.sort((a, b) => a.path.compareTo(b.path));
   return <String, String>{for (final file in files)
@@ -693,9 +819,10 @@ Element? _element(bool Function(Element element) predicate, {Element? within}) {
   return found.isEmpty ? null : found.first;
 }
 
-ComicCoverCard? _card(String id) => _element((element) =>
+ComicCoverCard? _card(String id, {Element? within}) => _element((element) =>
     element.widget is ComicCoverCard &&
-    (element.widget as ComicCoverCard).comic.comicId == id)?.widget as ComicCoverCard?;
+    (element.widget as ComicCoverCard).comic.comicId == id,
+    within: within)?.widget as ComicCoverCard?;
 
 List<String> _updates() => _elements((element) =>
     element.widget.key is ValueKey<String> &&
@@ -750,7 +877,8 @@ final class _UpdateSource implements BrowsableComicSource {
     chapters: <Chapter>[
       for (var index = 0; index < (chapterCounts[id] ?? 1); index++) Chapter(
         chapterId: index == 0 ? '$id:chapter' : '$id:chapter-$index',
-        comicId: id, title: 'Chapter $index', sequence: index, pageCount: 1,
+        comicId: id, title: 'Chapter $index', sequence: index,
+        pageCount: id.startsWith('retention-') ? 3 : 1,
         sourceRevision: 'r1',
       ),
     ],
@@ -774,8 +902,24 @@ final class _UpdateSource implements BrowsableComicSource {
     return manifest(comicId);
   }
   @override
-  Future<ChapterManifest> loadChapter(String chapterId) =>
-      throw StateError('No Reader source in fixture');
+  Future<ChapterManifest> loadChapter(String chapterId) async {
+    if (!retentionBrowse || !chapterId.startsWith('retention-')) {
+      throw StateError('No Reader source in update fixture');
+    }
+    final comicId = chapterId.split(':').first;
+    final chapter = manifest(comicId).chapters.singleWhere((chapter) =>
+      chapter.chapterId == chapterId);
+    return ChapterManifest(sourceId: sourceId, comicId: comicId, chapter: chapter,
+      readingDirection: ReadingDirection.ltr,
+      pages: <PageAsset>[
+        for (var index = 0; index < chapter.pageCount; index++) PageAsset(
+          pageId: '$chapterId:page-$index', chapterId: chapterId, index: index,
+          uri: Uri.parse('fixture:$comicId/page-$index.png'), width: 1, height: 1,
+          byteLength: png.length, contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+  }
   @override
   Future<Uint8List> loadResource(Uri uri) async {
     if (!artworkMode) throw StateError('No resource transport in update fixture');
