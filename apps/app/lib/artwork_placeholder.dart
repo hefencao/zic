@@ -58,6 +58,8 @@ final class SoftArtworkPlaceholder extends StatelessWidget {
 /// every parent rebuild. A decode failure therefore
 /// stays on one stable placeholder instead of starting presentation-owned retry,
 /// lifecycle, eviction or force-refresh loops.
+/// Equal providers keep the Image State; a different provider retires its old
+/// error while the new immutable source is waiting for its first frame.
 final class StableArtworkImage extends StatefulWidget {
   const StableArtworkImage({
     required this.source,
@@ -114,6 +116,9 @@ final class _StableArtworkImageState extends State<StableArtworkImage> {
   @override
   Widget build(BuildContext context) {
     return Image(
+      // A new provider must not report the previous Image State's decode error
+      // while its first frame is pending. Equal providers keep the same State.
+      key: ValueKey<ImageProvider<Object>>(_provider),
       image: _effectiveProvider,
       fit: widget.fit,
       gaplessPlayback: widget.gaplessPlayback,

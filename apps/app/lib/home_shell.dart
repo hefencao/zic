@@ -1334,14 +1334,16 @@ final class _HomeShellState extends State<HomeShell> {
   Future<EncodedResourceSource> _loadSourceBrowseCover(
     BrowsableComicSource source,
     SourceComicSummary comic,
-    Uri uri,
-  ) =>
+    Uri uri, {
+    bool forceRefresh = false,
+  }) =>
       _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
         sourceId: source.sourceId,
         comicId: comic.comicId,
         cacheComicId: _canonicalComicId(source.sourceId, comic.comicId),
         uri: uri,
+        forceRefresh: forceRefresh,
       );
 
   Future<Uint8List> _loadMigrationCoverBytes({

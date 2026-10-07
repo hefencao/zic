@@ -40,12 +40,13 @@ Future<void> main() async {
           onSourceSelected: (_) {},
           queryRevision: revision,
           traceSink: _trace,
-          loadCover: (_, comic, uri) => gateway.loadArtworkSource(
+          loadCover: (_, comic, uri, {bool forceRefresh = false}) => gateway.loadArtworkSource(
             cache: cache,
             sourceId: source.sourceId,
             comicId: comic.comicId,
             cacheComicId: source.canonicalComicIdentity(comic.comicId),
             uri: uri,
+            forceRefresh: forceRefresh,
           ),
           onOpenComic: (_, comic) async {
             source.openedComicId = comic.comicId;
@@ -83,10 +84,22 @@ Future<void> main() async {
     _check('source-failure-remount-does-not-retry', _hasCard('comic-0') &&
       source.calls['comic-0'] == 1 &&
       _stage('cover-source-failed').length == 1);
+    _check('decoder-failure-remount-does-not-reacquire',
+      _hasCard('comic-1') && source.calls['comic-1'] == 1);
     source.pending.complete(_png);
     await _frames(20);
     _check('unpainted-source-completion-does-not-retry',
       source.calls['comic-23'] == 1);
+    _check('offscreen-ready-source-not-painted', !_hasCard('comic-23') &&
+      !_stage('cover-first-frame').any(
+        (event) => event.identityHash?.endsWith('comic-23') ?? false));
+    scroll.jumpTo(scroll.maxScrollExtent);
+    await _frames(30);
+    _check('offscreen-ready-source-paints-after-demand', _hasCard('comic-23') &&
+      source.calls['comic-23'] == 1 && _stage('cover-first-frame').any(
+        (event) => event.identityHash?.endsWith('comic-23') ?? false));
+    scroll.jumpTo(0);
+    await _frames(30);
 
     final healthyCalls = source.calls['comic-2'];
     source.recovered = true;
@@ -95,8 +108,16 @@ Future<void> main() async {
     _check('explicit-refresh-recovers-source-failure',
       source.calls['comic-0'] == 2 && _stage('cover-first-frame').any(
         (event) => event.identityHash?.endsWith('comic-0') ?? false));
+    _check('explicit-refresh-replaces-corrupt-encoded-response',
+      source.calls['comic-1'] == 2 && _stage('cover-first-frame').any(
+        (event) => event.identityHash?.endsWith('comic-1') ?? false));
     _check('explicit-refresh-preserves-other-encoded-cache',
       healthyCalls == 1 && source.calls['comic-2'] == healthyCalls);
+    await _refreshState().show();
+    await _frames(30);
+    _check('successful-recovery-does-not-repeat-forced-source-request',
+      source.calls['comic-0'] == 2 && source.calls['comic-1'] == 2 &&
+      source.calls['comic-2'] == healthyCalls);
 
     final originalCard = _cardElement('comic-2');
     final originalImageState = _imageState('comic-2');
@@ -156,8 +177,8 @@ Future<void> main() async {
       'limits': <String>[
         'Decoder failure is checked across mounted rebuild/idle, not claimed '
             'terminal across a new presentation mount.',
-        'Explicit refresh recovers a failed source request; corrupt cached '
-            'encoded-byte replacement is a separate unverified scenario.',
+        'Controlled memory-cache repair does not claim real-origin or '
+            'durable-store corruption acceptance.',
       ],
     };
     await exportDebugTraceFile(
@@ -286,7 +307,9 @@ final class _ArtworkFixtureSource
     if (comicId == 'comic-0' && !recovered) {
       throw Failure(code: ErrorCode.source, message: 'terminal source fixture');
     }
-    if (comicId == 'comic-1') return Uint8List.sublistView(_png, 0, 24);
+    if (comicId == 'comic-1' && !recovered) {
+      return Uint8List.sublistView(_png, 0, 24);
+    }
     if (comicId == 'comic-23') return pending.future;
     return _png;
   }

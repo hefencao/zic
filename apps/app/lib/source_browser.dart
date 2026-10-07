@@ -97,8 +97,9 @@ Key sourceChapterKey(String sourceId, String chapterId) =>
 typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   BrowsableComicSource source,
   SourceComicSummary comic,
-  Uri uri,
-);
+  Uri uri, {
+  bool forceRefresh,
+});
 
 typedef SourceComicShelfResolver = bool Function(
   BrowsableComicSource source,
@@ -405,6 +406,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   int _artworkRetryRevision = 0;
   final Map<String, Future<EncodedResourceSource>> _cardCoverFutures =
       <String, Future<EncodedResourceSource>>{};
+  final Map<String, Future<EncodedResourceSource>> _cardCoverDecodeFailures =
+      <String, Future<EncodedResourceSource>>{};
+  final Set<String> _cardCoverRefreshIntents = <String>{};
   bool _recoveringSourceAccess = false;
   final Set<String> _verificationBrowserAttempts = <String>{};
   final MonoClock _traceClock = const SystemClock();
@@ -590,6 +594,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   @override
   void dispose() {
     _cardCoverFutures.clear();
+    _cardCoverDecodeFailures.clear();
+    _cardCoverRefreshIntents.clear();
     _scroll.dispose();
     _searchExpanded.dispose();
     _aggregateSearch.dispose();
@@ -837,7 +843,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     setState(() {
       _failure = null;
       if (forceRefresh) _artworkRetryRevision++;
-      if (forceRefresh) _cardCoverFutures.clear();
+      if (forceRefresh) _retireSourceCardCovers(source.sourceId);
       _loading = !hasCached && !hasVisibleItems;
       _refreshing = hasCached || hasVisibleItems;
       if (cached != null && cachedChanged) {
@@ -1039,7 +1045,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final identity = _sourceCoverIdentity(source, comic);
     final existing = _cardCoverFutures[identity];
     if (existing != null) return existing;
-    final future = _loadSourceCardCoverUncached(source, comic, uri, identity);
+    final future = _loadSourceCardCoverUncached(source, comic, uri, identity,
+      forceRefresh: _cardCoverRefreshIntents.remove(identity));
     _cardCoverFutures[identity] = future;
     return future;
   }
@@ -1048,17 +1055,22 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     BrowsableComicSource source,
     SourceComicSummary comic,
     Uri uri,
-    String identity,
-  ) async {
+    String identity, {
+    required bool forceRefresh,
+  }) async {
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
       'cover-load-start',
       source,
       identityHash: identity,
-      payload: <String, Object?>{'uriHash': uri.toString().hashCode},
+      payload: <String, Object?>{
+        'uriHash': uri.toString().hashCode,
+        'forceRefresh': forceRefresh,
+      },
     );
     try {
-      final encoded = await widget.loadCover(source, comic, uri);
+      final encoded = await widget.loadCover(source, comic, uri,
+        forceRefresh: forceRefresh);
       _recordSourceTrace(
         TraceEventKind.sourceReady,
         'cover-source-ready',
@@ -1085,6 +1097,39 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       rethrow;
     }
+  }
+
+  void _retireSourceCardCovers(String sourceId) {
+    final prefix = 'source-cover:$sourceId\u0000';
+    final identities = _cardCoverFutures.keys
+        .where((identity) => identity.startsWith(prefix)).toList();
+    for (final identity in identities) {
+      if (identical(_cardCoverDecodeFailures[identity], _cardCoverFutures[identity])) {
+        _cardCoverRefreshIntents.add(identity);
+      }
+      _cardCoverFutures.remove(identity);
+      _cardCoverDecodeFailures.remove(identity);
+    }
+  }
+
+  void _recordCoverDecodeFailure(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+    Future<EncodedResourceSource> future, {
+    bool aggregate = false,
+  }) {
+    final identity = _sourceCoverIdentity(source, comic);
+    if (!mounted || !identical(_cardCoverFutures[identity], future)) return;
+    // This observation does not invalidate bytes or start a source request.
+    // Only an explicit refresh turns it into a one-shot gateway command.
+    _cardCoverDecodeFailures[identity] = future;
+    _recordSourceTrace(
+      TraceEventKind.taskFailed,
+      aggregate ? 'aggregate-cover-decode-failed' : 'cover-decode-failed',
+      source,
+      identityHash: identity,
+      payload: const <String, Object?>{'failureLayer': 'presentation-decode'},
+    );
   }
 
   Map<String, SourceSearchFilterNode> _searchFilterNodesById(
@@ -1557,6 +1602,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               .toList(growable: false)
           : _aggregateSearchPlugins();
       if (plugins.isNotEmpty) {
+        setState(() {
+          for (final sourceId in <String>{
+            for (final plugin in plugins) plugin.source.sourceId,
+          }) {
+            _retireSourceCardCovers(sourceId);
+          }
+          _artworkRetryRevision++;
+        });
         await _runAggregateSearch(query, plugins);
         return true;
       }
@@ -2308,15 +2361,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                           source,
                           identityHash: _sourceCoverIdentity(source, comic),
                         ),
-                        onCoverDecodeFailure: () => _recordSourceTrace(
-                          TraceEventKind.taskFailed,
-                          'cover-decode-failed',
-                          source,
-                          identityHash: _sourceCoverIdentity(source, comic),
-                          payload: const <String, Object?>{
-                            'failureLayer': 'presentation-decode',
-                          },
-                        ),
+                        onCoverDecodeFailure: (future) =>
+                            _recordCoverDecodeFailure(source, comic, future),
                         onSourceVerificationRequired:
                             widget.onOpenSourceWebView == null
                                 ? null
@@ -2439,15 +2485,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                               source,
                               identityHash: _sourceCoverIdentity(source, comic),
                             ),
-                            onCoverDecodeFailure: () => _recordSourceTrace(
-                              TraceEventKind.taskFailed,
-                              'aggregate-cover-decode-failed',
-                              source,
-                              identityHash: _sourceCoverIdentity(source, comic),
-                              payload: const <String, Object?>{
-                                'failureLayer': 'presentation-decode',
-                              },
-                            ),
+                            onCoverDecodeFailure: (future) =>
+                                _recordCoverDecodeFailure(source, comic, future,
+                                  aggregate: true),
                             onSourceVerificationRequired:
                                 widget.onOpenSourceWebView == null
                                     ? null
@@ -2888,9 +2928,11 @@ final class _SourceComicCard extends StatelessWidget {
   final bool inShelf;
   final bool hasUpdate;
   final int reloadToken;
-  final SourceComicCoverLoader loadCover;
+  final Future<EncodedResourceSource> Function(
+    BrowsableComicSource source, SourceComicSummary comic, Uri uri,
+  ) loadCover;
   final VoidCallback onCoverFrameReady;
-  final VoidCallback onCoverDecodeFailure;
+  final ValueChanged<Future<EncodedResourceSource>> onCoverDecodeFailure;
   final VoidCallback onTap;
   final VoidCallback? onOpenUpdate;
   final VoidCallback? onSourceVerificationRequired;
@@ -4005,7 +4047,7 @@ final class _RemoteImage extends StatefulWidget {
   final int reloadToken;
   final Key verificationKey;
   final VoidCallback? onFrameReady;
-  final VoidCallback? onDecodeFailure;
+  final ValueChanged<Future<EncodedResourceSource>>? onDecodeFailure;
   final VoidCallback? onSourceVerificationRequired;
 
   @override
@@ -4071,7 +4113,12 @@ final class _RemoteImageState extends State<_RemoteImage> {
                 fit: BoxFit.cover,
                 filterQuality: FilterQuality.low,
                 onFrameReady: widget.onFrameReady,
-                onDecodeFailure: widget.onDecodeFailure,
+                onDecodeFailure: () {
+                  if (snapshot.connectionState == ConnectionState.done &&
+                      identical(_source, source)) {
+                    widget.onDecodeFailure?.call(source);
+                  }
+                },
               );
             },
           );

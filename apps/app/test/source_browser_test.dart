@@ -17,6 +17,7 @@ import 'package:zic/home_shell.dart';
 import 'package:zic/debug_trace.dart';
 import 'package:zic/app.dart';
 import 'package:zic/source_browser.dart';
+import 'package:zic/source_resource_gateway.dart';
 import 'package:zic/webp_demo.dart';
 
 Uint8List _tinyPng() => base64Decode(
@@ -279,7 +280,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
             isInShelf: (_, __) => true,
@@ -313,7 +314,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
             isInShelf: (_, __) => true,
@@ -355,7 +356,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
           ),
@@ -404,7 +405,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
           ),
@@ -495,7 +496,7 @@ void main() {
               },
               searchHistory: const <String>['漫画'],
               onSearchCommitted: searches.add,
-              loadCover: (_, __, ___) async =>
+              loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                   MemoryEncodedResourceSource(_tinyPng()),
               onOpenComic: (_, __) async {},
             ),
@@ -697,7 +698,7 @@ void main() {
                   sources: sources,
                   activeSourceId: active.sourceId,
                   onSourceSelected: (_) {},
-                  loadCover: (_, __, ___) async =>
+                  loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                       MemoryEncodedResourceSource(_tinyPng()),
                   onOpenComic: (_, __) async {},
                 ),
@@ -756,7 +757,7 @@ void main() {
                 sources: sources,
                 activeSourceId: source.sourceId,
                 onSourceSelected: (_) {},
-                loadCover: (_, __, ___) async =>
+                loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                     MemoryEncodedResourceSource(_tinyPng()),
                 onOpenComic: (_, __) async {},
               ),
@@ -816,7 +817,7 @@ void main() {
                 sources: sources,
                 activeSourceId: source.sourceId,
                 onSourceSelected: (_) {},
-                loadCover: (_, __, ___) async =>
+                loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                     MemoryEncodedResourceSource(_tinyPng()),
                 onOpenComic: (_, __) async {},
               ),
@@ -854,7 +855,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
           ),
@@ -923,7 +924,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onOpenComic: (_, __) async {},
           ),
@@ -960,7 +961,7 @@ void main() {
               for (var i = 0; i < 20; i++) '历史查询 $i',
             ],
             onSearchCommitted: searches.add,
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 MemoryEncodedResourceSource(_tinyPng()),
             onSourceSelected: (_) {},
             onOpenComic: (_, __) async {},
@@ -1003,7 +1004,7 @@ void main() {
               onSourceSelected: (sourceId) {
                 setState(() => activeSourceId = sourceId);
               },
-              loadCover: (_, __, ___) async =>
+              loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                   MemoryEncodedResourceSource(_tinyPng()),
               onOpenComic: (_, __) async {},
             ),
@@ -1111,7 +1112,7 @@ void main() {
                 onSourceSelected: (_) {},
                 queryRevision: queryRevision,
                 requestedQuery: '',
-                loadCover: (_, __, ___) async {
+                loadCover: (_, __, ___, {bool forceRefresh = false}) async {
                   coverLoads++;
                   return MemoryEncodedResourceSource(_tinyPng());
                 },
@@ -1201,7 +1202,7 @@ void main() {
             sources: <BrowsableComicSource>[source, other],
             activeSourceId: activeSourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async {
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async {
               coverLoads++;
               return MemoryEncodedResourceSource(_tinyPng());
             },
@@ -1267,7 +1268,7 @@ void main() {
           onSourceSelected: (_) {},
           queryRevision: revision,
           traceSink: trace,
-          loadCover: (_, __, ___) async {
+          loadCover: (_, __, ___, {bool forceRefresh = false}) async {
             coverLoads++;
             return MemoryEncodedResourceSource(_tinyPng());
           },
@@ -1329,7 +1330,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, comic, __) async {
+            loadCover: (_, comic, __, {bool forceRefresh = false}) async {
               if (comic.comicId == comicId) {
                 failedCoverLoads++;
                 if (!recovered) {
@@ -1375,6 +1376,116 @@ void main() {
     await tester.pumpAndSettle();
     expect(failedCoverLoads, 2);
     expect(find.descendant(of: card, matching: find.byType(Image)), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('explicit source refresh replaces only corrupt cached artwork',
+      (tester) async {
+    const sourceId = 'fixture-corrupt-cover';
+    final brokenUri = Uri.parse('fixture:broken-cover');
+    final healthyUri = Uri.parse('fixture:healthy-cover');
+    final source = _FixtureSource(sourceId, '损坏封面源',
+      browsePageOverrides: <int, SourceBrowsePage>{
+        0: SourceBrowsePage(offset: 0, hasMore: false, items: <SourceComicSummary>[
+          for (final id in <String>['broken', 'healthy']) SourceComicSummary(
+            sourceId: sourceId, comicId: id, title: id,
+            authors: const <String>[],
+            coverUri: id == 'broken' ? brokenUri : healthyUri,
+          ),
+        ]),
+      },
+    );
+    final cache = ResourceCacheManager();
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => source);
+    addTearDown(gateway.close);
+    addTearDown(() async {
+      final closing = cache.close();
+      await tester.pump();
+      await closing;
+    });
+    for (final id in <String>['broken', 'healthy']) {
+      await loadCachedComicImageSource(
+        cache: cache, sourceId: sourceId, comicId: id,
+        imageIdentity: (id == 'broken' ? brokenUri : healthyUri).toString(),
+        revision: comicArtworkCacheSchemaRevision,
+        loader: () async => id == 'broken'
+            ? Uint8List.sublistView(_tinyPng(), 0, 24) : _tinyPng(),
+      );
+    }
+    final trace = MemoryTraceSink();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: ComicSourcesPage(
+        sources: <BrowsableComicSource>[source], activeSourceId: sourceId,
+        onSourceSelected: (_) {}, traceSink: trace,
+        loadCover: (_, comic, uri, {bool forceRefresh = false}) => gateway.loadArtworkSource(
+          cache: cache, sourceId: sourceId, comicId: comic.comicId, uri: uri,
+          forceRefresh: forceRefresh,
+        ),
+        onOpenComic: (_, __) async {},
+      ),
+    )));
+    await tester.pumpAndSettle();
+    expect(trace.events.where((event) =>
+      event.payload['stage'] == 'cover-decode-failed'), hasLength(1));
+    expect(source.loadedResources, isEmpty);
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.descendant(of: find.byKey(comicSourcePullRefreshKey),
+        matching: find.byType(RefreshIndicator)),
+    );
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(source.loadedResources, <Uri>[brokenUri]);
+    final repaired = await readCachedComicImageSource(
+      cache: cache, sourceId: sourceId, comicId: 'broken',
+      imageIdentity: brokenUri.toString(),
+      revision: comicArtworkCacheSchemaRevision,
+    );
+    expect((repaired! as MemoryEncodedResourceSource).bytes, _tinyPng());
+    expect(cache.stats.entries, 2);
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(source.loadedResources, <Uri>[brokenUri]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('refresh of another source preserves a terminal cover Future',
+      (tester) async {
+    final failed = _FixtureSource('fixture-failed-cover', '失败封面源');
+    final other = _FixtureSource('fixture-other-cover', '其它封面源');
+    var activeSourceId = failed.sourceId;
+    final calls = <String, int>{};
+    late StateSetter update;
+    await tester.pumpWidget(MaterialApp(home: StatefulBuilder(
+      builder: (_, setState) {
+        update = setState;
+        return Scaffold(body: ComicSourcesPage(
+          sources: <BrowsableComicSource>[failed, other],
+          activeSourceId: activeSourceId, onSourceSelected: (_) {},
+          loadCover: (source, _, _, {bool forceRefresh = false}) async {
+            calls.update(source.sourceId, (count) => count + 1, ifAbsent: () => 1);
+            if (source.sourceId == failed.sourceId) {
+              throw Failure(code: ErrorCode.source, message: 'terminal cover');
+            }
+            return MemoryEncodedResourceSource(_tinyPng());
+          },
+          onOpenComic: (_, _) async {},
+        ));
+      },
+    )));
+    await tester.pumpAndSettle();
+    expect(calls[failed.sourceId], 1);
+    update(() => activeSourceId = other.sourceId);
+    await tester.pumpAndSettle();
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.descendant(of: find.byKey(comicSourcePullRefreshKey),
+        matching: find.byType(RefreshIndicator)),
+    );
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(calls[other.sourceId], 2);
+    update(() => activeSourceId = failed.sourceId);
+    await tester.pumpAndSettle();
+    expect(calls[failed.sourceId], 1);
     expect(tester.takeException(), isNull);
   });
 
@@ -1461,7 +1572,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
             onOpenSourceWebView: (_, url, {required cloudflareVerification}) async {
@@ -1504,7 +1615,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
             onOpenSourceWebView: (_, __, {required cloudflareVerification}) async {
@@ -1560,7 +1671,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
             onOpenSourceWebView: (_, url, {required cloudflareVerification}) async {
@@ -1606,7 +1717,7 @@ void main() {
             sources: <BrowsableComicSource>[stale],
             activeSourceId: stale.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async =>
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
             onOpenSourceWebView: (_, __, {required cloudflareVerification}) async {
@@ -1643,7 +1754,7 @@ void main() {
             sources: <BrowsableComicSource>[source],
             activeSourceId: source.sourceId,
             onSourceSelected: (_) {},
-            loadCover: (_, __, ___) async => throw const Failure(
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async => throw const Failure(
               code: ErrorCode.sourceVerificationRequired,
               message: 'Cloudflare verification failed',
             ),

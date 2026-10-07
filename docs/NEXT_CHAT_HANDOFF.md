@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device29/toolchain6/superseded2/partial35/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader。普通Release33448744/PID24887/Home已恢复。原加载/性能/真实来源开放，缺失证据不授权重改。
+- 当前112项：device31/toolchain6/superseded2/partial33/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader。普通Releasefbca6e0b/PID12969/Home已恢复。普通输入/Reader烟测未验；原加载/性能/真实来源开放，缺失证据不授权重改。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- artwork晋升claim边界保持。51/51隔离Profile通过真实Reader slider0→2/退出durable进度/history同key、24封面压力/metadata目录刷新/trim/冷命中；gateway精确刷新、书架删除、设置清缓存已验，033–035关闭。临时数据/导出/fixture APK清理，不归因19/20正文。
+- artwork晋升claim及51项Home验收保持；23项source-card Profile通过显式刷新损坏encoded/来源失败、健康不重下、provider换代退休旧错误、离屏/别名/分页。083/108关闭，真实来源/durable损坏与19/20正文未归因；临时导出/APK已清理。
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。

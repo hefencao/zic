@@ -105,7 +105,6 @@
 - 完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。
 - 验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。
 - 让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。
-- 分别制造 source loader错误与 Flutter decode错误；确认 presentation稳定停在占位且不启动 timer/watchdog/resume retry，也不 `ImageCache.evict`；显式来源刷新后才允许发起新请求。
 
 本文件覆盖用户要求的全部产品、性能与来源验收；112项有效状态只读`docs/IMPLEMENTATION_STATE.json`。只验证剩余合同，修改生产前须确认新的失败及根因；更新已有文件，不新增ADR/audit、完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
 
@@ -135,4 +134,3 @@
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 ## P1：漫画源、过滤与详情预览设备闭环
 - 真机验证 Mihon Popular/Latest 与 Venera 多 explore/category section 的顺序、分页和 section identity。
-- 制造 source Future失败、decoder错误和离屏未绘制三种状态，确认 presentation都稳定失败而不自动重启；随后显式刷新来源，确认由统一 gateway重新加载且不会清空其它封面缓存。

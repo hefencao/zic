@@ -22,8 +22,8 @@
     "repair_precondition": "Confirm a fresh failing production contract and its owner before changing code; missing historical raw files do not authorize a repair."
   },
   "requirement_summary": {
-    "partial": 35,
-    "verified_device": 29,
+    "partial": 33,
+    "verified_device": 31,
     "superseded": 2,
     "pending": 40,
     "verified_toolchain": 6
@@ -111,7 +111,7 @@
     {"id": "SWG-PLAN-080", "status": "pending", "current_contract": "完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-081", "status": "pending", "current_contract": "验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-082", "status": "pending", "current_contract": "让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。", "evidence_reproducibility": "no_recorded_acceptance"},
-    {"id": "SWG-PLAN-083", "status": "partial", "current_contract": "Source-card failed Futures remain terminal across unchanged source identity/remount; decode/presentation errors remain separate. Explicit source refresh reopens source acquisition without clearing unrelated artwork cache.", "remaining_acceptance": ["Remaining explicit refresh, decoder/source failure and offscreen variants beyond the accepted controlled source-card diagnostics."], "evidence_reproducibility": "available_references"},
+    {"id": "SWG-PLAN-083", "status": "verified_device", "current_contract": "Source-card failed Futures remain terminal across unchanged source identity/remount; decode/presentation errors remain separate. Controlled Android native-release Profile23/23 passes: explicit source refresh forwards a one-shot gateway forceRefresh for observed decode failures on the same canonical key; healthy artwork is not reacquired and another source refresh does not reopen its terminal Future. A different provider retires the previous Image error. Real-origin/durable corruption and original Reader loading are not claimed.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-084", "status": "verified_device", "current_contract": "Storage-owned progress writer batches latest-wins checkpoints at about8s idle/30s active. Ordinary page turns do not await SQLite; normal pop retains ADR0303 final durable flush.050 verifies targeted final progress publication, not transaction cadence.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-085", "status": "pending", "current_contract": "验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-086", "status": "pending", "current_contract": "确认目标页网络不等待 current source sealed、完整下载或 holder depth。", "evidence_reproducibility": "no_recorded_acceptance"},
@@ -136,7 +136,7 @@
     {"id": "SWG-PLAN-105", "status": "verified_device", "current_contract": "Real Mihon schema remains source-owned; Group/CheckBox/TriState/Select labels, defaults, typed roundtrip and actual sheet edits verified. Invocation-local draft survives route/IME rebuilds. Unsupported items are covered by executable production codec verification.", "evidence_reproducibility": "historical_raw_files_missing"},
     {"id": "SWG-PLAN-106", "status": "verified_device", "current_contract": "Exact cached section renders before unchanged background refresh with no new cover source. Threshold pull retains the displayed rows while forcing a source refresh; post-refresh card labels/bounds match.", "evidence_reproducibility": "historical_raw_files_missing"},
     {"id": "SWG-PLAN-107", "status": "verified_device", "current_contract": "The existing90% height/full-width/equal-area/shared-folding/sparse2.4 and row-count contracts are verified for14 actual Android controlled logical-window cases including max1–8 and extreme ratios. Oversized single-row height is repaired inside original preview geometry;28 marker-background negative controls and all current gates pass. Actual OS rotation/DPR and original Reader loading/performance belong to independent requirements.", "evidence_reproducibility": "available_references"},
-    {"id": "SWG-PLAN-108", "status": "partial", "current_contract": "Source acquisition, decoder failure and pending offscreen presentation remain separately observable; rebuild/idle do not create source retries, and explicit refresh targets the source artwork authority.", "remaining_acceptance": ["Remaining controlled source/decoder/offscreen failures and precise explicit artwork refresh without automatic presentation retry."], "evidence_reproducibility": "available_references"},
+    {"id": "SWG-PLAN-108", "status": "verified_device", "current_contract": "Controlled Android native-release Profile23/23 distinguishes source failure, decoder failure and offscreen pending/completion. Rebuild/idle/remount do not reacquire; ready offscreen bytes are painted only after visible demand. Real SourceBrowser refresh repairs the failed source and corrupt cached encoded response, leaves healthy source calls unchanged and does not repeat forced acquisition after recovery. Existing aliases/card State/paging still pass. No real-origin or durable-store corruption claim.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-109", "status": "verified_device", "current_contract": "设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。", "evidence_reproducibility": "current_available; historical_raw_files_missing"},
     {"id": "SWG-PLAN-110", "status": "verified_device", "current_contract": "On Android Profile with a controlled source and real file store, fast and slow covers independently reach homeCoverFirstFrame while durable writes are held. Both persist after release. This verifies ordering, not real-origin latency or final physical display.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
@@ -146,8 +146,8 @@
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
-    "sha256": "33448744fd98133e8bbfffb4e88b9d7d3ec82f7185d32f5048ff6dc506966811",
-    "app_pid": 24887,
+    "sha256": "fbca6e0b5cd846067b011a06cdd8a53fec717afdc94540ff3425e16a515bc753",
+    "app_pid": 12969,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
@@ -155,16 +155,16 @@
   "validation": {
     "command": "bash tool/check.sh --require-toolchains",
     "exit_code": 0,
-    "dart_flutter_tests": 2330,
+    "dart_flutter_tests": 2332,
     "analyzers": 27,
     "Rust_tests": 22,
     "Android_native_tests": 110,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Existing all3 ordinary Profile and3 minified Release ABIs are reused for unchanged production inputs from the retained-cover repair; current three-ABI Debug and Android source-built native packaging/symbol/build-id checks pass. The latest isolated entrypoint has a fresh analyzer and native-release Profile build.",
-    "Android_native_tests_scope": "Reused prior110 tests only for unchanged production Kotlin/native inputs; fresh three-ABI native packaging passes. The current change is the existing device fixture and state/docs; ordinary Profile/Release production inputs are unchanged.",
-    "scope": "Full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2330 Dart-Flutter tests/Rust22/three-ABI Debug; native packaging passes. Latest device fixture51/51 verifies actual Reader progress/history cover retention and explicit gateway refresh/shelf deletion/settings clear. Ordinary Release restored to Home. Previous ordinary slider smoke is retained, not rerun; original19/20, live-origin and final-display/performance acceptance remain open.",
-    "device_fixture": "Existing home_update_device_acceptance.dart default native-release Profile:51/51 checks pass, including actual browse/details/Reader slider0→2/normal-pop durable progress/history,24-cover pressure,metadata/catalog refresh,manual trim/source-free cold owner hits and explicit artwork refresh/comic deletion/user clear. PID23892; userStoresOpened=false; temporaryRootRemoved=true. No actual-process-cold rerun or real-origin/performance claim. Result overwrites current-device-result.json; device export and fixture APK copies are removed."
+    "ordinary_package_acceptance": "Fresh all3 ordinary Profile and3 minified Release ABIs pass for the current SourceBrowser command/provider fix, along with three-ABI Debug and source-built native packaging/symbol/build-id checks. Existing artwork and Home isolated entrypoints have fresh analyzer/native-release Profile builds.",
+    "Android_native_tests_scope": "Reuse prior110 native tests only for unchanged production Kotlin/native inputs; fresh three-ABI native packaging passes. Current production changes are Dart SourceBrowser refresh command pass-through and StableArtworkImage provider-State lifetime.",
+    "scope": "Full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2332 Dart-Flutter tests/Rust22/three-ABI Debug. Fresh all3 ordinary Profile/minified Release/native packaging and final documentation/ownership gates pass. Failing-first corrupt encoded-cache and source isolation regressions plus Android artwork23/Home51 fixtures pass. Ordinary Release restored to Home. Its Reader slider smoke is unverified: injected Home-card/navigation taps produced no route change in both ordinary Profile and Release; no exception/ANR/high-CPU attribution. No production repair is inferred from this input observation. Original19/20, live-origin and final-display/performance remain open.",
+    "device_fixture": "Fresh existing artwork_device_acceptance.dart native-release Profile23/23 passes source/decode/offscreen boundaries, actual SourceBrowser refresh repair, healthy cache preservation, no repeated forced acquisition after recovery, aliases/card State/paging. Fresh Home default51/51 (PID5845) covers details/Reader slider/progress/history/retention pressure/explicit invalidation; userStoresOpened=false and temporaryRootRemoved=true. Latest result overwrites current-device-result.json. Device exports, scratch, both fixture APK copies and temporary screenshot are removed; latest ordinary Release fbca6e0b/PID12969/Home restored and ADB forwards empty. No process-cold rerun, real-origin/durable corruption or performance claim; no per-round result copies."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",

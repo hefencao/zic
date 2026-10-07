@@ -29,7 +29,7 @@ Widget _page(List<_Source> sources, {
 }) => MaterialApp(home: ComicTitleSearchPage(
   query: query,
   sources: sources,
-  loadCover: (_, _, _) async => MemoryEncodedResourceSource(_png()),
+  loadCover: (_, _, _, {bool forceRefresh = false}) async => MemoryEncodedResourceSource(_png()),
   onOpenComic: open ?? (_, _) async {},
 ));
 
@@ -159,7 +159,7 @@ void main() {
       requestedQuery: '  route-tag  ',
       queryRevision: 1,
       onSourceSelected: (_) {},
-      loadCover: (_, __, ___) async => MemoryEncodedResourceSource(_png()),
+      loadCover: (_, __, ___, {bool forceRefresh = false}) async => MemoryEncodedResourceSource(_png()),
       onOpenComic: (_, __) async {},
     ))));
     await _until(tester, find.byKey(sourceComicCardKey(source.sourceId, 'book')));

@@ -2176,6 +2176,8 @@ direct baseline relation 缺 mapping 的 legacy 情况才允许 same raw chapter
 被 downloadHead 取代的旧手动 row 只从主列表投影隐藏，其 exact durable placement/artifact 与删除 authority 仍保留。
 source 新版只成为 `latestKnownHead`，必须经过书架迁移或显式下载后才分别成为 shelf/download head。
 
+### 11.3 Artwork 身份与呈现
+
 稳定响应 key 的编码由 `encodeStableCacheKey` 负责：使用 `zic-key-v1:` 前缀和长度前缀组件，
 因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：
 
@@ -2220,7 +2222,13 @@ namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL
 
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；
 Flutter decode 错误只影响 presentation。
-来源列表的既有 canonical card Future 保留成功或失败结果，Sliver 重新挂载不重发失败请求；显式来源刷新仍退休这些 Future。
+来源列表的既有 canonical card Future 保留成功或失败结果，Sliver 重新挂载不重发失败请求。
+SourceBrowser 只记录当前 Future 的 decode 失败观察；显式来源刷新退休目标来源的 Future，
+将失败项的一次性 `forceRefresh` 命令经 `SourceComicCoverLoader` 与 Home composition 交给 gateway。
+gateway/ResourceCacheManager 在原 canonical key 上替换该响应，健康项继续正常 cache probe；普通 rebuild、
+来源切换和迟到的旧 Future 回调不能生成刷新命令。聚合刷新同样只针对当前选中的来源。
+`StableArtworkImage` 以实际 provider 等值身份保持内部 Image State；不同 provider 退休旧 State，
+防止上一代解码错误在新首帧等待期间被归到新资源。该呈现边界不拥有 encoded 字节、缓存失效或重试。
 普通 browse 在现有查询投影边界按来源 canonical identity保留首条 summary；cached/refreshed比较同一投影，不在逐帧builder归并。
 显示去重不改变来源分页：显式nextOffset优先，fallback使用原始条目数；raw locator继续归来源命令与资源请求。
 既有来源view保存已接纳的访问坐标与不可变快照；上一页使用真实前一坐标，页序号按访问路径展示。

@@ -267,7 +267,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
                           reloadToken: 0,
                           loadCover: widget.loadCover,
                           onCoverFrameReady: () {},
-                          onCoverDecodeFailure: () {},
+                          onCoverDecodeFailure: (_) {},
                           onSourceVerificationRequired: widget.onOpenSourceWebView == null
                               ? null : () => unawaited(_verify(group, null)),
                           onOpenUpdate: widget.onOpenUpdate == null ? null
