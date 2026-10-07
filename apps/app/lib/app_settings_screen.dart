@@ -428,7 +428,6 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   Future<void> _exportBackup() async {
     setState(() {
       _busy = true;
-      _failure = null;
     });
     try {
       final path = await widget.exportBackup();
@@ -437,7 +436,11 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
         SnackBar(content: Text('备份已导出：$path')),
       );
     } on Object catch (error) {
-      if (mounted) setState(() => _failure = error);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          copyableDiagnosticSnackBar('备份导出失败：$error'),
+        );
+      }
     } finally {
       _finishBusy();
     }

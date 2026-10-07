@@ -206,6 +206,12 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             TRACE_EXPORT_CHANNEL,
         ).setMethodCallHandler(::handleTraceExport)
+        // Backups share the existing single pending OS document operation,
+        // without depending on Debug Trace's state or export destination.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "dev.zic.zic/document_export",
+        ).setMethodCallHandler(::handleTraceExport)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.zic.zic/saf_store",
@@ -1415,7 +1421,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleTraceExport(call: MethodCall, result: MethodChannel.Result) {
-        if (call.method != "saveJsonl" && call.method != "saveJsonlToDownloadsDirectory") {
+        if (call.method != "saveJsonl" && call.method != "saveJsonlToDownloadsDirectory" &&
+            call.method != "saveDocument") {
             result.notImplemented()
             return
         }
@@ -1446,12 +1453,14 @@ class MainActivity : FlutterActivity() {
             return
         }
         if (pendingTraceResult != null) {
-            result.error("trace-export-busy", "another trace export is active", null)
+            result.error("trace-export-busy", "another document export is active", null)
             return
         }
         pendingTraceResult = result
         pendingTraceBytes = bytes
-        val mimeType = when {
+        val mimeType = if (call.method == "saveDocument") {
+            call.argument<String>("mimeType") ?: "application/octet-stream"
+        } else when {
             suggestedName.endsWith(".txt") || suggestedName.endsWith(".log") -> "text/plain"
             // application/json makes DocumentsUI normalize the title to the
             // canonical .json extension, turning name.jsonl into

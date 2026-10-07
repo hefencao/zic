@@ -1167,6 +1167,8 @@ network 的 `NetLane` 与 decode/upload lane 都由 composition-owned scheduler 
   SavedComic、分类、偏好、已读、source preference 与 migration issue，Memory/Lazy 保持同一语义；
   Lazy 的显式 backup 属于 library durability action，必须先 single-flight materialize/merge durable library，
   避免已有磁盘数据在 bootstrap handoff 窗口被 memory projection 遮蔽。
+  Android备份通过App的document-export channel提交JSON bytes/MIME到既有单一OS文档创建操作；与Trace共用平台pending-result生命周期，备份不依赖Trace log或目标目录。
+  平台只写所选document并回传URI或取消；library snapshot/进度flush仍归library，备份失败单独显示诊断，不写入缓存统计失败状态。
   长生命周期 `LibraryDiagnosticsScreen` 同样不得冻结 route-open 时的 `ImportedLibraryStore`：
   Home 只注入动态 current-store resolver，并监听 `HomeLibrarySession.libraryGenerationChanges` 这一窄 generation signal；
   refresh/copy/ack 在完成前必须重验 store generation/identity；

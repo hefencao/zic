@@ -102,6 +102,8 @@
   Settings/UI MUST NOT 自行逐 section 拼接可跨 revision 的备份；
   Lazy store 的显式 backup MUST 先 single-flight materialize/merge durable library，再从该 owner 读取 snapshot；
   它属于用户主动的 library durability action，不得因 bootstrap memory projection 遮蔽已存在的磁盘数据。
+  Android备份 MUST使用平台支持的文档创建/写入路径并保持JSON MIME及文件名，MUST NOT调用file_selector未支持的save-location API；取消 MUST返回空结果且允许后续再次导出。
+  备份导出失败 MUST归备份操作诊断，不得伪装成缓存统计读取失败；OS文档操作不得复制library authority或改变snapshot/flush合同。
   长生命周期 Library Diagnostics route MUST NOT 持有 route-open 时的 concrete `ImportedLibraryStore`；
   它 MUST 通过 current-store resolver + library-generation signal 跟随 `HomeLibrarySession` 当前 owner。
   migration issue refresh/copy/ack MUST 在完成时确认同一 generation/store identity；

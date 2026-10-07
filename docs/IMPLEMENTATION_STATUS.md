@@ -5,7 +5,7 @@ App build：0.31.0+328
 
 本文件只描述当前源码快照和验证等级。历史见 CHANGELOG.md，单轮证据见 docs/audits/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
-
+当前源码分界：Android备份共用OS文档操作；独立性能/真实来源验收仍开放。
 ## 1. 当前所有权与实现快照
 
 ### 调度与传输 (NetLane & Transport)

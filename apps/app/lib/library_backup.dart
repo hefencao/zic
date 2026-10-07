@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 Future<Map<String, Object?>> buildImportedLibraryBackup(
   ImportedLibraryStore store,
@@ -62,6 +64,15 @@ Future<String?> exportImportedLibraryBackup(ImportedLibraryStore store) async {
   final createdAt = DateTime.parse(payload['createdAt'] as String);
   final date = createdAt.toIso8601String().replaceAll(':', '-').split('.').first;
   final name = 'zic-backup-$date.json';
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    final encoded = const JsonEncoder.withIndent('  ').convert(payload);
+    return const MethodChannel('dev.zic.zic/document_export')
+        .invokeMethod<String>('saveDocument', <String, Object?>{
+      'suggestedName': name,
+      'mimeType': 'application/json',
+      'bytes': Uint8List.fromList(utf8.encode(encoded)),
+    });
+  }
   final location = await getSaveLocation(suggestedName: name);
   if (location == null) return null;
   final encoded = const JsonEncoder.withIndent('  ').convert(payload);
