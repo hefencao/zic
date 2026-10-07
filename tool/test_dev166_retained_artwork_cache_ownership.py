@@ -50,8 +50,8 @@ for token in (
     'enum ResourceCacheRetention',
     'transient,',
     'retained,',
-    'final Set<ResourceCacheKey> _retainedPersistence',
-    'Future<void> retain(ResourceCacheKey key);',
+    'final Map<ResourceCacheKey, Object> _retainedPersistence',
+    'Future<bool> retain(ResourceCacheKey key);',
     'expiresAt: retention == ResourceCacheRetention.retained',
 ):
     require(cache, token, 'retention ownership')

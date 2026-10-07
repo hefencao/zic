@@ -695,6 +695,7 @@ void main() {
     await cache.drainPersistence();
 
     expect(store.values.keys, <ResourceCacheKey>[key]);
+    expect(store.writes, 1);
     expect(store.retentions[key], ResourceCacheRetention.retained);
     expect(store.values[key]!.expiresAt, isNull);
     final trim = await store.trimTo(targetBytes: 0);
@@ -702,14 +703,96 @@ void main() {
     expect(store.values[key]!.bytes, <int>[1, 2, 3]);
     },
   );
+
+  for (final revocation in <String>[
+    'invalidate', 'clear', 'refresh', 'transient-refresh', 'expire', 'memory-trim',
+  ]) {
+    test('queued hot promotion respects $revocation', () async {
+      var now = DateTime.utc(2026, 10, 8);
+      final retainStarted = Completer<void>();
+      final retainGate = Completer<void>();
+      final store = _MemoryResourceByteStore(
+        retainStarted: retainStarted,
+        retainGate: retainGate,
+      );
+      const key = ResourceCacheKey(
+        kind: ResourceCacheKind.imageBytes,
+        identity: 'evicted-browse-cover',
+      );
+      final cache = ResourceCacheManager(byteStore: store, now: () => now);
+      addTearDown(cache.close);
+      addTearDown(() {
+        if (!retainGate.isCompleted) {
+          retainGate.complete();
+        }
+      });
+      await cache.getOrLoadEncodedImage(
+        key: key,
+        loader: () async => Uint8List.fromList(<int>[1, 2, 3]),
+      );
+      store.values.clear();
+      store.retentions.clear();
+
+      final promoted = await cache.getEncodedImageIfPresent(
+        key,
+        retention: ResourceCacheRetention.retained,
+      ).timeout(const Duration(seconds: 1));
+      expect((promoted as MemoryEncodedResourceSource).bytes, <int>[1, 2, 3]);
+      await retainStarted.future;
+
+      if (revocation == 'invalidate') {
+        cache.invalidate(key);
+      } else if (revocation == 'clear') {
+        cache.clear();
+      } else if (revocation == 'refresh' || revocation == 'transient-refresh') {
+        await cache.getOrLoadEncodedImage(
+          key: key,
+          forceRefresh: true,
+          awaitPersistence: false,
+          retention: revocation == 'refresh'
+              ? ResourceCacheRetention.retained
+              : ResourceCacheRetention.transient,
+          loader: () async => Uint8List.fromList(<int>[9]),
+        );
+      } else if (revocation == 'expire') {
+        now = now.add(const Duration(days: 8));
+      } else {
+        cache.trimTo(targetWeight: 0);
+      }
+      retainGate.complete();
+      await cache.drainPersistence();
+
+      if (revocation == 'refresh' || revocation == 'transient-refresh') {
+        expect(store.writes, 2);
+        expect(store.values[key]!.bytes, <int>[9]);
+        expect(store.retentions[key], revocation == 'refresh'
+            ? ResourceCacheRetention.retained
+            : ResourceCacheRetention.transient);
+      } else if (revocation == 'memory-trim') {
+        expect(store.writes, 2);
+        expect(store.values[key]!.bytes, <int>[1, 2, 3]);
+        expect(store.retentions[key], ResourceCacheRetention.retained);
+      } else {
+        expect(store.writes, 1);
+        expect(store.values, isEmpty);
+      }
+    });
+  }
 }
 
 final class _MemoryResourceByteStore
     implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance {
-  _MemoryResourceByteStore({this.writeStarted, this.writeGate});
+  _MemoryResourceByteStore({
+    this.writeStarted,
+    this.writeGate,
+    this.retainStarted,
+    this.retainGate,
+  });
 
   final Completer<void>? writeStarted;
   final Completer<void>? writeGate;
+  final Completer<void>? retainStarted;
+  final Completer<void>? retainGate;
   int writes = 0;
   final Map<ResourceCacheKey, PersistedResourceBytes> values =
       <ResourceCacheKey, PersistedResourceBytes>{};
@@ -744,13 +827,20 @@ final class _MemoryResourceByteStore
   }
 
   @override
-  Future<void> retain(ResourceCacheKey key) async {
+  Future<bool> retain(ResourceCacheKey key) async {
+    if (retainStarted != null && !retainStarted!.isCompleted) {
+      retainStarted!.complete();
+    }
+    if (retainGate != null) {
+      await retainGate!.future;
+    }
     final value = values[key];
     if (value == null) {
-      return;
+      return false;
     }
     retentions[key] = ResourceCacheRetention.retained;
     values[key] = PersistedResourceBytes(bytes: value.bytes, expiresAt: null);
+    return true;
   }
 
   @override

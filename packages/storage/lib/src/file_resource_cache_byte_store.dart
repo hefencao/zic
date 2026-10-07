@@ -112,25 +112,18 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
   }
 
   @override
-  Future<void> retain(ResourceCacheKey key) async {
+  Future<bool> retain(ResourceCacheKey key) async {
     _requireOpen();
-    await _ensureManifestLoaded();
-    final id = _recordId(key);
-    final current = _pendingTouches[id] ?? _records[id];
-    if (current == null || current.key != key) {
-      return;
-    }
-    final currentExpiry = current.expiresAt;
-    if (current.retention == ResourceCacheRetention.transient &&
-        currentExpiry != null &&
-        !currentExpiry.isAfter(_now())) {
-      await _removePaths(_paths(key), key: key);
+    final paths = _paths(key);
+    final current = await _validatedRecord(paths, key: key);
+    if (current == null) {
       await _flushManifest();
-      return;
+      return false;
     }
     if (current.retention == ResourceCacheRetention.retained) {
-      return;
+      return true;
     }
+    final id = _recordId(key);
     _pendingTouches.remove(id);
     final retained = current.copyWith(
       retention: ResourceCacheRetention.retained,
@@ -142,12 +135,12 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     // Retention is lifetime-critical metadata. Keep the per-entry recovery
     // journal in sync so a crash between manifest generations cannot demote a
     // retained library/history cover back into the transient eviction plane.
-    final paths = _paths(key);
     await paths.metadata.parent.create(recursive: true);
     final temporary = File('${paths.metadata.path}.tmp');
     await temporary.writeAsString(jsonEncode(retained.toJson()), flush: true);
     await _replace(temporary, paths.metadata);
     await _flushManifest();
+    return true;
   }
 
   @override

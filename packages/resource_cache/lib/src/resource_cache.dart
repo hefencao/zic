@@ -229,9 +229,9 @@ abstract interface class ResourceCacheByteStore {
   /// Promotes an existing durable record to retained lifetime without changing
   /// its cache identity or rewriting the encoded payload.
   ///
-  /// Missing records are a no-op: a later write for a retained request carries
-  /// the retention intent explicitly.
-  Future<void> retain(ResourceCacheKey key);
+  /// Returns false when the unexpired payload is missing. The cache owner can
+  /// then persist its still-valid memory response on the same key.
+  Future<bool> retain(ResourceCacheKey key);
 
   Future<void> remove(ResourceCacheKey key);
 
@@ -360,7 +360,8 @@ final class ResourceCacheManager {
       <ResourceCacheKey, Future<Object>>{};
   final Map<ResourceCacheKey, int> _generations = <ResourceCacheKey, int>{};
   final Map<ResourceCacheKey, int> _activeLoads = <ResourceCacheKey, int>{};
-  final Set<ResourceCacheKey> _retainedPersistence = <ResourceCacheKey>{};
+  final Map<ResourceCacheKey, Object> _retainedPersistence =
+      <ResourceCacheKey, Object>{};
 
   var _clock = 0;
   var _epoch = 0;
@@ -657,7 +658,7 @@ final class ResourceCacheManager {
     final keys = <ResourceCacheKey>{
       ..._entries.keys,
       ..._inFlight.keys,
-      ..._retainedPersistence,
+      ..._retainedPersistence.keys,
     }.where(predicate).toList(growable: false);
     for (final key in keys) {
       _invalidateLocal(key);
@@ -855,7 +856,7 @@ final class ResourceCacheManager {
   });
 
   ResourceCacheRetention _persistenceRetentionFor(ResourceCacheKey key) =>
-      _retainedPersistence.contains(key)
+      _retainedPersistence.containsKey(key)
           ? ResourceCacheRetention.retained
           : ResourceCacheRetention.transient;
 
@@ -864,11 +865,34 @@ final class ResourceCacheManager {
     ResourceCacheRetention retention,
   ) {
     if (retention != ResourceCacheRetention.retained ||
-        !_retainedPersistence.add(key)) {
+        _retainedPersistence.containsKey(key)) {
       return;
     }
+    final claim = Object();
+    _retainedPersistence[key] = claim;
+    final store = byteStore;
+    if (store == null) {
+      return;
+    }
+    final entry = _entries[key];
     _queuePersistenceMutation(() async {
-      await byteStore?.retain(key);
+      if (_closed || !identical(_retainedPersistence[key], claim)) {
+        return;
+      }
+      final retained = await store.retain(key);
+      if (!retained &&
+          entry != null &&
+          entry.value is Uint8List &&
+          entry.expiresAt.isAfter(_now()) &&
+          !_closed &&
+          identical(_retainedPersistence[key], claim)) {
+        await store.write(
+          key: key,
+          bytes: entry.value as Uint8List,
+          expiresAt: null,
+          retention: ResourceCacheRetention.retained,
+        );
+      }
     });
   }
 

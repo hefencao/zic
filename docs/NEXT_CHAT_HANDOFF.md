@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device26/toolchain6/superseded2/partial35/pending43。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader。普通Release295d5159/PID21462/Home已恢复。原加载/性能/真实来源开放，缺失证据不授权重改。
+- 当前112项：device27/toolchain6/superseded2/partial37/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader。普通Release33448744/PID27366/Home已恢复。原加载/性能/真实来源开放，缺失证据不授权重改。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,6 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
+- artwork晋升修复仅ResourceCacheManager/byte store：补回仍有效的热内存副本，失效/刷新/clear/过期撤销旧claim。43/43隔离Profile通过browse/details/24封面压力/metadata目录刷新/trim/无来源冷命中，033关闭；034/035保留Reader progress/允许失效/history，不关联19/20正文。
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。
@@ -21,9 +22,8 @@
   因此active只继续defer `far/near`；既有2/1 deadline窗口的`next/next2/previous`可提前pre-present并retain，vertical real UploadDemand同时预绑定detached output consumer，仍由UploadLane/FrameBudgeter限流，不得写成扩大预加载窗口。
   首次JPEG布局另保留64B metadata ABI，并用最多64KiB的一次性dimension probe尽早发布source-canvas size。
   fresh Profile `08-55-17` 已验证16次跨页0次在正coverage后补首帧；native `outputReadyToPresent` 为53/53/88µs，page27–30 detached prewarm约提前310–510ms，详见ADR 0323。
-  之后 `09-01-07` 的高速空白定位到 external-static 第二调度/驻留 owner：detached raster 已在 viewport entry 前约554ms ready，
-  但 Flutter `Image` 的 `ScrollAwareImageProvider` 仍可高速滚动 defer mounted resolve；`TickerMode(false)` 又会让 `Image` 自己持有 private completer keepAlive，导致 cache owner 宣布 eviction 后 mounted consumer 仍可能留活。
-  managed static统一provider，mounted只持`ImageInfo`，backpressure归cache owner（ADR0324）；fresh trace定位 detached-raster eviction/revisit：same identity 必须可 regrant，resident provider 禁二次 wrap；ADR0335 误加的 authority-less generation recovery 已撤销，见ADR0336。
+  external-static绕过ScrollAwareImageProvider高速defer与TickerMode private keepAlive；detached-ready不得继续等待mounted resolve，eviction必须释放mounted consumer。
+  managed static统一provider/只持ImageInfo，backpressure归cache owner；same identity允许regrant，resident provider禁二次wrap，无authority generation recovery已撤销（ADR0324/0335/0336）。
   6-screen bootstrap、`current±7` KeepAlive和有界recenter目前也保留。2026-09-24 已确认 source-canvas ratio live feed 会把 pending-only/future geometry 事实放大成 whole-Reader rebuild；
   现改为 pending-only 零 rebuild、真实 extent 变化只重建 vertical ListView geometry subtree，Pipeline policy 不变；逐帧displacement又把finger-down drag与ballistic拆开：无resampling平均相邻速度摆动9.9%–18.3%、最高255%，built-in resampling降到0个>20% jump、max<=0.0171%。
   ADR 0325恢复`reader_runtime` scoped ref-counted lease；旧dev.310 ballistic cadence否证仍有效，禁止调`samplingOffset`或自定义插值。下一真机同时验视觉平滑和touch latency；功耗继续先量化warm task cadence，不缩窗口/禁warm。

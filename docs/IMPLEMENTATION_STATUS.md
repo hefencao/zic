@@ -18,6 +18,8 @@
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
+- artwork持久化：retained晋升复用canonical key；已有副本只改元数据，缺失transient副本从未过期内存响应后台补写，不重下或阻塞呈现。ResourceCacheManager独占晋升claim，失效/刷新/clear撤销旧意图。
+  文件回归与43项隔离Profile真机通过：真实browse/details晋升、24封面压力、metadata/目录刷新、manual trim及无来源冷命中。033关闭；034/035仅剩Reader progress/允许失效与history入口。不归因原19/20正文加载。
 - external-static 状态治理已把 presentation generation 与 raster residency 拆开：Pipeline 保持 same-generation identity，`PipelinePresentationRasterCache`独占 decoded raster residency；
   mounted adapter 在 eviction/revoke 时清掉本地 attempt/provider 并允许 same-identity regrant，detached resident provider 不再被二次 resize/cache wrap。
 - 只有携带 exact `storageId + ArtifactCache mutation generation` authority 的 presentation rejection 才允许 `DownloadTransferOwner` 失效 durable body；
@@ -138,8 +140,6 @@
   35个tap区间另有131次presentation sourceRead，其中28次为同页重复读取（21.4%，累计约188.7ms），detached raster已经prepared后mounted consumer仍先重开encoded presentation file。
   现selected page只覆盖navigation identity；held scrub中的physical logicalPosition会随实际layout revision在pointer-up前重新发布，absolute scrub自身velocity固定为0且不更新travel direction。
   mounted external-static先按同一presentation identity直接attach统一raster owner已有completer，owner miss才回退encoded acquisition。
-  真机验收中发现`prepare_reader_device_test.py`只是“安装现有APK+readiness preflight”，不会构建；因此前两份误装13:44旧Profile APK的样本作废。
-  重新执行`./tool/build_android.sh profile`并安装后，11-57-54 Profile Trace中held target118先稳定为logical=118.5/velocity=0，约5.25s后仍为118.5/0；pointer-up后的idle仍为118.5/0，页码119→119不漂移。
   同一新Profile Trace的artifact-cache presentation-file-lease为26次/26个unique identity、重复读取0；同任务pre-fix 11-18-08为64次/37个unique、27次额外重复读取，重复identity累计readMicros约531.5ms。说明resident-raster mounted attach已切断“prepared后再重开encoded file”的重复路径。
   Reader/media 当前验收统一更新`docs/IMPLEMENTATION_STATE.json`，既有RMR记录已归档。RMR-011..017七项由production source独立确认的已验边界保持。
   presentation侧包括：same-generation first-frame仍按widget lifetime去重；managed raster decode error被同步eviction先撤下error/authority；requested→ready分步通知制造瞬时双false；widget级recovery gate会吞新grant；旧rendered error可污染新attempt。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 2322/Rust22/27analyzer、三ABI Debug/Profile/Release及native packaging通过；Android110复用相同Kotlin/native输入的既有结果。Release295d5159/PID21462/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 2330/Rust22/27analyzer、三ABI Debug/Profile/Release及native packaging通过；Android110复用相同Kotlin/native输入的既有结果。Release33448744/PID27366/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device26/toolchain6/superseded2/partial35/pending43。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader；保留普通来源已验分量。原加载/性能/真实来源开放。
+  当前112项：device27/toolchain6/superseded2/partial37/pending40。061详情Sliver退出19/24ms及首末/排序/进度已验。110–112隔离Profile16项通过，含实际进程重启/冷缓存/别名去重/无隐藏loader；保留普通来源已验分量。原加载/性能/真实来源开放。

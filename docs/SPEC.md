@@ -522,6 +522,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：
   browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；
   library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。
+  已有有效 durable payload 的晋升 MUST 只改生命周期元数据；transient 副本已回收且内存响应仍有效时，cache owner MUST 在同一 key 后台补写 retained，不再次调用来源。该补写 MUST NOT 成为呈现等待条件；过期或已被精确失效/强制刷新/clear 撤销的旧响应 MUST NOT 被补写复活。
   metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；
   retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
 - `local-folder` 导入 MUST 将 cover 与 Reader 正文 identity 分离：

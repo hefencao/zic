@@ -38,9 +38,8 @@
 
 ## P0：Retained Artwork 生命周期与失效边界真机闭环
 
-- 在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。
-- 分别执行详情下拉 metadata refresh、章节目录刷新和 Reader progress更新，确认这些操作不删除 retained cover；只有精确 artwork revision/force refresh、整漫画资源删除或用户显式清缓存可以删除。
-- 对同一封面先由 source browse以 transient写入，再从 history/details请求，确认同一个 canonical key只发生 retention promotion，不创建第二文件、第二 namespace或第二下载。
+- 详情metadata/1→2章目录刷新保持retained cover已验；继续验证真实Reader progress不删除封面，并分别验精确artwork刷新、整漫画资源删除和用户清缓存的允许失效边界。
+- source browse→真实details的同key晋升及已trim副本热内存补写已验；继续验实际history入口不建立第二文件/namespace/来源下载。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
 

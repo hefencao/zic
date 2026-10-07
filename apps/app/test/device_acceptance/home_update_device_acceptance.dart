@@ -16,12 +16,14 @@ import 'package:telemetry/telemetry.dart';
 
 import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
+import 'package:zic/app_pull_to_refresh.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_export.dart';
 import 'package:zic/home_library_session.dart';
 import 'package:zic/home_shell.dart';
 import 'package:zic/library_backup.dart';
+import 'package:zic/source_browser.dart';
 
 // Explicit device entrypoint: production Home/details/storage owners with a
 // controlled source and a fresh temporary SQLite database. It never opens the
@@ -189,6 +191,7 @@ Future<void> main() async {
       (await _versions.listAllComicVersionRelations()).length == 2 &&
       (await _store.get(_sourceId, 'old-comic:chapter'))!.progress != null);
     await _artworkChecks(root);
+    await _retentionChecks(root);
     completed = true;
   } on Object catch (error, stack) {
     _checks.add(<String, Object?>{
@@ -428,6 +431,149 @@ Future<void> _artworkChecks(Directory root) async {
   }
 }
 
+Future<void> _retentionChecks(Directory root) async {
+  await _unmount();
+  await _cache.close();
+  await _store.close();
+  final libraryPath = '${root.path}/retention-library';
+  final cachePath = '${root.path}/retention-cache';
+  _store = await openImportedLibraryStore(libraryPath);
+  final bytes = FileResourceCacheByteStore(cachePath,
+    transientMaxEntries: 2, transientMaxBytes: _source.png.length * 2);
+  _cache = ResourceCacheCoordinator(responses: ResourceCacheManager(byteStore: bytes));
+  _source.retentionBrowse = true;
+  const early = 'retention-cover';
+  const late = 'retention-late';
+  ResourceCacheKey key(String id) {
+    final identity = ComicResourceCacheIdentity(sourceId: _sourceId, comicId: id);
+    return ResourceCacheKey(kind: ResourceCacheKind.imageBytes,
+      identity: identity.response('cover'), namespace: identity.namespace,
+      revision: comicArtworkCacheSchemaRevision);
+  }
+  Future<void> openDetails(String id) async {
+    (_element((element) => element.widget.key == sourceComicCardKey(_sourceId, id))!
+      .widget as InkWell).onTap!();
+    await _wait(() => _element((element) =>
+      element.widget is details.RemoteComicDetailsScreen) != null);
+    await _frames(25);
+    await _cache.responses.drainPersistence();
+  }
+  Future<void> shelve() async {
+    final action = _element((element) => element.widget.key == details.comicDetailsShelfKey)!;
+    (_element((element) => element.widget is IconButton, within: action)!
+      .widget as IconButton).onPressed!();
+    await _frames(25);
+    await _popDetails();
+  }
+
+  await _mount();
+  _selectNavigation(2);
+  await _wait(() => _source.resourceLoads[early] == 1 &&
+    _source.resourceLoads[late] == 1);
+  await _frames(25);
+  await _cache.responses.drainPersistence();
+  _check('browse-writes-only-transient-canonical-covers',
+    (await bytes.inspect()).transientEntries == 2 &&
+    (await bytes.inspect()).retainedEntries == 0);
+  final originalPayloads = await _artworkPayloads(cachePath);
+  await openDetails(early);
+  _check('details-promotes-existing-payload-without-rewrite-or-download',
+    _source.resourceLoads[early] == 1 &&
+    originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString() &&
+    (await bytes.inspect()).retainedEntries == 1);
+  final refresh = _element((element) =>
+    element.widget.key == details.comicDetailsPullRefreshKey)!.widget as AppPullToRefresh;
+  _source.description = 'Retention metadata refresh';
+  _check('details-metadata-refresh-keeps-retained-artwork', await refresh.onRefresh());
+  await _frames(25);
+  _source.chapterCounts[early] = 2;
+  final chapterRefresh = _element((element) =>
+    element.widget.key == details.comicDetailsPullRefreshKey)!.widget as AppPullToRefresh;
+  _check('chapter-refresh-completes-with-retained-artwork', await chapterRefresh.onRefresh());
+  await _frames(25);
+  _check('metadata-and-chapter-refresh-do-not-rewrite-cover',
+    _source.resourceLoads[early] == 1 &&
+    originalPayloads.toString() == (await _artworkPayloads(cachePath)).toString() &&
+    (await bytes.read(key(early)))?.expiresAt == null);
+  await shelve();
+  _check('refreshed-catalog-is-persisted-with-cover',
+    (await _store.getSavedComic(_sourceId, early))?.chapters.length == 2);
+
+  (_element((element) => element.widget.key == comicSourceNextPageKey)!
+    .widget as IconButton).onPressed!();
+  await _frames(25);
+  final browser = _element((element) => element.widget is ComicSourcesPage)!;
+  final scroll = (_element((element) => element.widget is Scrollable &&
+    (element.widget as Scrollable).axisDirection == AxisDirection.down,
+    within: browser)! as StatefulElement).state as ScrollableState;
+  for (var index = 0; index <= 10; index++) {
+    scroll.position.jumpTo(scroll.position.maxScrollExtent * index / 10);
+    await _frames(10);
+  }
+  await _cache.responses.drainPersistence();
+  _check('browse-pressure-really-loads-twenty-four-transient-covers',
+    _source.resourceLoads.keys.where((id) => id.startsWith('pressure-')).length == 24 &&
+    (await bytes.inspect()).transientEntries == 2);
+  _check('auto-trim-keeps-retained-cover-but-evicts-late-durable-copy',
+    await bytes.read(key(late)) == null &&
+    _cache.responses.peek<Uint8List>(key(late)) != null &&
+    (await bytes.inspect()).retainedEntries == 1);
+  (_element((element) => element.widget.key == comicSourcePreviousPageKey)!
+    .widget as IconButton).onPressed!();
+  await _frames(25);
+  await openDetails(late);
+  _check('late-details-promotion-restores-missing-file-without-source-reload',
+    _source.resourceLoads[late] == 1 &&
+    (await bytes.read(key(late)))?.bytes.length == _source.png.length &&
+    (await bytes.inspect()).retainedEntries == 2);
+  final detail = _element((element) => element.widget is details.RemoteComicDetailsScreen)!;
+  _check('promoted-cover-produces-a-real-details-frame',
+    _element((element) => element.widget is RawImage &&
+      (element.widget as RawImage).image != null, within: detail) != null);
+  await shelve();
+
+  final before = (await bytes.inspect());
+  await _cache.trim();
+  await _cache.responses.trimPersistentBytesTo(targetBytes: 0);
+  final after = await bytes.inspect();
+  _check('manual-trim-preserves-retained-statistics', after.transientEntries == 0 &&
+    after.retainedEntries == before.retainedEntries &&
+    after.retainedBytes == before.retainedBytes);
+  final manifest = jsonDecode(await File('$cachePath/response-manifest-v1.json').readAsString())
+      as Map<String, Object?>;
+  final records = (manifest['records'] as List).cast<Map<String, Object?>>();
+  _check('each-cover-has-one-canonical-key-file-and-schema-revision',
+    records.length == 2 && (await _artworkPayloads(cachePath)).length == 2 &&
+    <String>[early, late].every((id) => records.where((record) =>
+      record['identity'] == key(id).identity && record['namespace'] == key(id).namespace &&
+      record['revision'] == comicArtworkCacheSchemaRevision).length == 1));
+  await _unmount();
+  await _cache.close();
+  await _store.close();
+  PaintingBinding.instance.imageCache.clear();
+  PaintingBinding.instance.imageCache.clearLiveImages();
+  _store = await openImportedLibraryStore(libraryPath);
+  _cache = ResourceCacheCoordinator(responses: ResourceCacheManager(
+    byteStore: FileResourceCacheByteStore(cachePath),
+  ));
+  final calls = Map<String, int>.from(_source.resourceLoads);
+  await _mount(sources: const <BrowsableComicSource>[]);
+  _selectNavigation(1);
+  await _wait(() => _elements((element) => element.widget is RawImage &&
+    (element.widget as RawImage).image != null).length == 2);
+  _check('trimmed-covers-cold-hit-and-paint-before-source-activation',
+    _cache.responses.stats.persistentHits >= 2 &&
+    _source.resourceLoads.toString() == calls.toString());
+}
+
+Future<Map<String, String>> _artworkPayloads(String path) async {
+  final files = await Directory(path).list(recursive: true)
+      .where((file) => file.path.endsWith('.bin')).toList();
+  files.sort((a, b) => a.path.compareTo(b.path));
+  return <String, String>{for (final file in files)
+    file.path: '${(await file.stat()).size}/${(await file.stat()).modified.microsecondsSinceEpoch}'};
+}
+
 // Only the fixture's durable write seam is held; reads, retain and actual
 // filesystem work delegate to the production store, without changing its owner.
 final class _HeldArtworkStore implements ResourceCacheByteStore {
@@ -448,7 +594,7 @@ final class _HeldArtworkStore implements ResourceCacheByteStore {
   @override
   Future<PersistedResourceBytes?> read(ResourceCacheKey key) => store.read(key);
   @override
-  Future<void> retain(ResourceCacheKey key) => store.retain(key);
+  Future<bool> retain(ResourceCacheKey key) => store.retain(key);
   @override
   Future<void> remove(ResourceCacheKey key) => store.remove(key);
   @override
@@ -569,7 +715,8 @@ Future<details.LocalComicDetailsScreen> _openDetails(String id) async {
 }
 
 Future<void> _popDetails() async {
-  final element = _element((element) => element.widget is details.LocalComicDetailsScreen)!;
+  final element = _element((element) => element.widget is details.LocalComicDetailsScreen ||
+      element.widget is details.RemoteComicDetailsScreen)!;
   Navigator.of(element).pop();
   await _frames(25);
 }
@@ -582,6 +729,7 @@ final class _UpdateSource implements BrowsableComicSource {
   String description = 'Baseline metadata';
   final chapterCounts = <String, int>{};
   bool artworkMode = false;
+  bool retentionBrowse = false;
   final resourceLoads = <String, int>{};
   final slowCover = Completer<Uint8List>();
   final png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
@@ -609,8 +757,17 @@ final class _UpdateSource implements BrowsableComicSource {
   );
   @override
   Future<SourceBrowsePage> browse({String query = '', int offset = 0,
-      int limit = 24}) async => SourceBrowsePage(items: const [],
-        offset: offset, hasMore: false);
+      int limit = 24}) async => SourceBrowsePage(
+    items: <SourceComicSummary>[
+      if (retentionBrowse) for (final id in offset == 0
+          ? <String>['retention-cover', 'retention-late']
+          : <String>[for (var index = 0; index < 24; index++) 'pressure-$index'])
+        SourceComicSummary(sourceId: sourceId, comicId: id, title: id,
+          authors: const <String>[], coverUri: Uri.parse('fixture:$id')),
+    ],
+    offset: offset, hasMore: retentionBrowse && offset == 0,
+    nextOffset: retentionBrowse && offset == 0 ? 24 : null,
+  );
   @override
   Future<ComicManifest> loadComic(String comicId) async {
     comicLoads++;

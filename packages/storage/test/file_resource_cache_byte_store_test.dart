@@ -529,6 +529,98 @@ void main() {
   });
 
 
+  test('hot artwork promotion restores a transient file evicted by capacity', () async {
+    var now = DateTime.utc(2026, 10, 8, 8);
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-hot-promotion-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    const cover = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'cover',
+      namespace: 'comic:source\u0000comic',
+      revision: 'artwork-v2',
+    );
+    const browse = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'other-browse-cover',
+    );
+    final store = FileResourceCacheByteStore(
+      directory.path,
+      transientMaxEntries: 1,
+      transientMaxBytes: 3,
+      now: () => now,
+    );
+    final cache = ResourceCacheManager(byteStore: store, now: () => now);
+    addTearDown(cache.close);
+    var sourceLoads = 0;
+    await cache.getOrLoadEncodedImage(
+      key: cover,
+      loader: () async {
+        sourceLoads++;
+        return Uint8List.fromList(<int>[1, 2]);
+      },
+    );
+    now = now.add(const Duration(seconds: 1));
+    await cache.getOrLoadEncodedImage(
+      key: browse,
+      loader: () async {
+        sourceLoads++;
+        return Uint8List.fromList(<int>[3, 4]);
+      },
+    );
+    expect(await store.read(cover), isNull);
+    expect(cache.peek<Uint8List>(cover), <int>[1, 2]);
+
+    final promoted = await cache.getEncodedImageIfPresent(
+      cover,
+      retention: ResourceCacheRetention.retained,
+    );
+    expect((promoted as MemoryEncodedResourceSource).bytes, <int>[1, 2]);
+    await cache.drainPersistence();
+    expect(sourceLoads, 2);
+    await cache.close();
+
+    now = now.add(const Duration(days: 30));
+    final reopened = FileResourceCacheByteStore(directory.path, now: () => now);
+    addTearDown(reopened.close);
+    final restored = await reopened.read(cover);
+    expect(restored, isNotNull);
+    expect(restored!.bytes, <int>[1, 2]);
+    expect(restored.expiresAt, isNull);
+    final usage = await reopened.inspect();
+    expect(usage.retainedEntries, 1);
+    expect(usage.retainedBytes, 2);
+    await reopened.trimTo(targetBytes: 0);
+    expect((await reopened.read(cover))?.bytes, <int>[1, 2]);
+  });
+
+  test('promotion reports a missing payload instead of retaining stale metadata', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-missing-promotion-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'missing-browse-cover',
+    );
+    final store = FileResourceCacheByteStore(directory.path);
+    addTearDown(store.close);
+    await store.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      expiresAt: DateTime.now().add(const Duration(hours: 1)),
+    );
+    expect(await store.retain(key), isTrue);
+    expect(await store.retain(key), isTrue);
+    final payload = await directory.list(recursive: true)
+        .where((file) => file.path.endsWith('.bin')).single;
+    await payload.delete();
+
+    expect(await store.retain(key), isFalse);
+    expect((await store.inspect()).entries, 0);
+  });
+
   test('promotion does not resurrect an already expired transient response', () async {
     var now = DateTime.utc(2026, 8, 8, 8);
     final directory = await Directory.systemTemp.createTemp(
@@ -552,7 +644,7 @@ void main() {
     );
     now = now.add(const Duration(minutes: 2));
 
-    await store.retain(key);
+    expect(await store.retain(key), isFalse);
 
     expect(await store.read(key), isNull);
     expect((await store.inspect()).entries, 0);

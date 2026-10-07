@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-07",
+  "updated_at": "2026-10-08",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -22,10 +22,10 @@
     "repair_precondition": "Confirm a fresh failing production contract and its owner before changing code; missing historical raw files do not authorize a repair."
   },
   "requirement_summary": {
-    "partial": 35,
-    "verified_device": 26,
+    "partial": 37,
+    "verified_device": 27,
     "superseded": 2,
-    "pending": 43,
+    "pending": 40,
     "verified_toolchain": 6
   },
   "requirements": [
@@ -61,9 +61,9 @@
     {"id": "SWG-PLAN-030", "status": "verified_device", "current_contract": "Real MangaFire filter focus/default/reset/ordinary section reentry is verified; ordinary JM details shelf add/remove immediately projects the left marker and dim and restores original membership.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-031", "status": "pending", "current_contract": "对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-032", "status": "verified_device", "current_contract": "Source canonical identity owns Sliver/interaction keys. Raw alias changes preserve Image State, commands retain current raw locator, same-page aliases keep first source occurrence at the query projection, and raw/native request coordinates remain intact. Previous and source return use accepted UI visits; request partition changes reset navigation.", "evidence_reproducibility": "available_references"},
-    {"id": "SWG-PLAN-033", "status": "pending", "current_contract": "在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。", "evidence_reproducibility": "no_recorded_acceptance"},
-    {"id": "SWG-PLAN-034", "status": "pending", "current_contract": "分别执行详情下拉 metadata refresh、章节目录刷新和 Reader progress更新，确认这些操作不删除 retained cover；只有精确 artwork revision/force refresh、整漫画资源删除或用户显式清缓存可以删除。", "evidence_reproducibility": "no_recorded_acceptance"},
-    {"id": "SWG-PLAN-035", "status": "pending", "current_contract": "对同一封面先由 source browse以 transient写入，再从 history/details请求，确认同一个 canonical key只发生 retention promotion，不创建第二文件、第二 namespace或第二下载。", "evidence_reproducibility": "no_recorded_acceptance"},
+    {"id": "SWG-PLAN-033", "status": "verified_device", "current_contract": "Controlled Android Home/source/details with the real file store:24 transient browse covers trigger automatic capacity trim;2 details-retained covers survive coordinator/manual transient trim with unchanged retained bytes/entries and cold owner-reopen hits/frames before source activation. Includes restoring an evicted transient copy from still-valid hot memory without another source request. No real-origin or final-display claim.", "evidence_reproducibility": "available_references"},
+    {"id": "SWG-PLAN-034", "status": "partial", "current_contract": "Details metadata refresh and a real1→2 chapter catalog refresh preserve the same retained cover payload/key without a source reload in the controlled Android production composition. Metadata/chapter/progress changes must not delete artwork; only exact artwork revision/force refresh, whole-comic resource deletion or user clear may remove it.", "evidence_reproducibility": "available_references", "remaining_acceptance": ["Actual Reader progress changes must preserve the retained cover; independently verify the allowed exact-artwork/resource-deletion/user-clear boundaries in the product flow."]},
+    {"id": "SWG-PLAN-035", "status": "partial", "current_contract": "Controlled Android source browse→actual details promotes an existing transient payload through metadata only, with no second file/namespace/download; an already trimmed payload is restored from valid memory on the same canonical artwork-v2 key without reloading. History/details must share that key and retention contract.", "evidence_reproducibility": "available_references", "remaining_acceptance": ["Verify the actual history entry promotion after source browse, preserving the same canonical key and no second file/namespace/source download."]},
     {"id": "SWG-PLAN-036", "status": "verified_toolchain", "current_contract": "真实analyzer、受影响owner测试及Android编译必须通过；保持当前source/resource调用方一致性。", "evidence_reproducibility": "historical_raw_files_missing"},
     {"id": "SWG-PLAN-037", "status": "pending", "current_contract": "使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-038", "status": "verified_device", "current_contract": "同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。", "evidence_reproducibility": "current_available; historical_raw_files_missing"},
@@ -146,8 +146,8 @@
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
-    "sha256": "295d51591d94e5bfc3b09a4d2415890b65a8853184f6929aacb3d4989ab009b3",
-    "app_pid": 21462,
+    "sha256": "33448744fd98133e8bbfffb4e88b9d7d3ec82f7185d32f5048ff6dc506966811",
+    "app_pid": 27366,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
@@ -155,16 +155,16 @@
   "validation": {
     "command": "bash tool/check.sh --require-toolchains",
     "exit_code": 0,
-    "dart_flutter_tests": 2322,
+    "dart_flutter_tests": 2330,
     "analyzers": 27,
     "Rust_tests": 22,
     "Android_native_tests": 110,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Current shared-details layout: all3 Profile and3 minified Release ABIs built; same Android runtime/native-core inputs. Prior runtime/Cookie baseline remains docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json.",
-    "Android_native_tests_scope": "Reused prior110 tests for unchanged production Kotlin/native inputs. All3 ABI native packaging results remain from the detail-layout closure.",
-    "scope": "Fresh full repository/documentation/ownership/platform/toolchain gate after extending the existing Android artwork fixture with optional process-cold acceptance; 27 suites/27 analyzers/2322 Dart-Flutter tests/Rust22/three-ABI Debug pass. Ordinary Profile/Release and native packaging results reuse unchanged production inputs from the detail-layout closure.",
-    "device_fixture": "apps/app/test/device_acceptance/home_update_device_acceptance.dart with ZIC_HOME_ARTWORK_PROCESS_COLD=true:16/16 passed across actual PIDs19298/20905 after force-stop; userStoresOpened=false; temporaryRootRemoved=true. Controlled artwork/proof inputs, not real-origin or final-display acceptance. Latest result overwrites the existing private current-device-result.json."
+    "ordinary_package_acceptance": "Fresh all3 ordinary Profile and3 minified Release ABIs built after retained-cover repair; Android source-built native packaging/symbol/build-id check passes for all3 ABIs.",
+    "Android_native_tests_scope": "Reused prior110 tests only for unchanged production Kotlin/native inputs; fresh three-ABI native packaging passes. Dart/resource-cache/storage tests and ordinary APKs are rebuilt for this repair.",
+    "scope": "Fresh full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2330 Dart-Flutter tests/Rust22/three-ABI Debug; fresh ordinary Profile/Release/native packaging pass. Ordinary Release144章3→4→3 cached slider paints after3s idle without a vertical gesture and returns with page3 history; Home restored. UI/visual smoke only, no new trace/performance/original19/20 claim. Final docs/state/diff gates pass after latest acceptance update.",
+    "device_fixture": "Existing home_update_device_acceptance.dart default Profile:43/43 checks pass, including actual browse/details retention,24-cover capacity pressure,metadata/chapter refresh,manual trim and cold owner-reopen frames without source activation. PID27030; userStoresOpened=false; temporaryRootRemoved=true. This is controlled source/owner reopen, not a new actual-process-cold or real-origin/performance claim. Result overwrites current-device-result.json; device export is removed."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
