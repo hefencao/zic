@@ -33,6 +33,8 @@ import 'package:zic/source_resource_gateway.dart';
 // Explicit device entrypoint: production Home/details/Reader/storage owners with a
 // controlled source and a fresh temporary SQLite database. It never opens the
 // user's library, preferences, external plugins or download artifact index.
+// Download completion checks use a separate persistent artifact index in that
+// temporary root, through the real chapter commands and whole-comic queue.
 final _trace = DebugTraceLog();
 final _preferences = AppPreferencesController();
 final _checks = <Map<String, Object?>>[];
@@ -42,7 +44,7 @@ final _signal = DateTime.utc(2026, 8, 8);
 final _source = _UpdateSource();
 late ImportedLibraryStore _store;
 ComicVersionRelationStore get _versions => _store as ComicVersionRelationStore;
-late MemoryChapterDownloadService _downloads;
+late ChapterDownloadService _downloads;
 late WholeComicDownloadQueue _queue;
 late ResourceCacheCoordinator _cache;
 final _startup = HomeStartupTelemetry(clock: const SystemClock(), sink: _trace);
@@ -195,6 +197,7 @@ Future<void> main() async {
       (await _store.getSavedComic(_sourceId, 'old-comic'))!.sourceUpdateAt == null &&
       (await _versions.listAllComicVersionRelations()).length == 2 &&
       (await _store.get(_sourceId, 'old-comic:chapter'))!.progress != null);
+    await _downloadCompletionChecks(root);
     await _artworkChecks(root);
     await _retentionChecks(root);
     completed = true;
@@ -341,6 +344,120 @@ Future<void> _processColdArtwork() async {
       phase: completed && keepForRestart ? 'prepared' : 'complete',
       preparedProcessId: prepared?['processId'] as int?);
   }
+}
+
+Future<void> _downloadCompletionChecks(Directory root) async {
+  await _unmount();
+  final previousDownloads = _downloads;
+  final previousQueue = _queue;
+  const id = 'download-badges';
+  final source = _UpdateSource()..chapterCounts[id] = 3;
+  for (var index = 0; index < 3; index++) {
+    source.downloadGates['badge/$index.png'] = Completer<void>();
+  }
+  source.downloadGates['badge/0.png']!.complete();
+  final manifest = source.manifest(id);
+  await _store.upsertSavedComic(SavedComicRecord.fromManifest(manifest));
+  await _store.saveComicPreference(ComicPreference.defaults(
+    sourceId: _sourceId, comicId: id, sourceKind: ComicSourceKind.remote,
+  ).copyWith(inShelf: true));
+  final entries = <ImportedLibraryEntry>[];
+  for (var index = 0; index < manifest.chapters.length; index++) {
+    final chapter = manifest.chapters[index];
+    await _store.upsertChapter(ImportedChapterRecord(
+      directoryId: chapter.chapterId, displayName: chapter.title,
+      sourceId: _sourceId, comicId: id, comicTitle: id,
+      chapterId: chapter.chapterId, sourceRevision: 'r1',
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(displayName: 'page', sourceId: 'venera-resource:badge/$index.png',
+          pageId: '${chapter.chapterId}:page-0', contentKindHint: ContentKindHint.png),
+      ],
+    ));
+    entries.add((await _store.get(_sourceId, chapter.chapterId))!);
+  }
+  final path = '${root.path}/badge-downloads';
+  Future<PersistentChapterDownloadService> openDownloads() async {
+    final service = await PersistentChapterDownloadService.open(path, traceSink: _trace);
+    service.setChapterResourceAccess(ChapterResourceAccess(
+      loadBytes: (_, uri) => source.loadResource(uri),
+    ));
+    return service;
+  }
+  var downloads = await openDownloads();
+  WholeComicDownloadQueue? queue;
+  try {
+    await downloads.download(entries[0]);
+    await downloads.close();
+    downloads = await openDownloads();
+    _downloads = downloads;
+    _queue = queue = WholeComicDownloadQueue(downloads: downloads);
+    await _mount(sources: <BrowsableComicSource>[source]);
+    _selectNavigation(1);
+    await _frames(25);
+    _check('existing-durable-chapter-has-no-completion-badge',
+      await downloads.isDownloaded(entries[0]) &&
+      (await downloads.readPage(entries[0], 0)).length == source.png.length &&
+      _card(id) != null && _card(id)!.downloadProgress == null);
+
+    var screen = await _openDetails(id);
+    final single = screen.onDownloadChapter(entries[1]);
+    await _popDetails();
+    await _wait(() => source.resourceLoads['badge/1.png'] == 1);
+    _check('pending-chapter-command-has-only-active-progress',
+      _card(id)?.downloadProgress?.kind == ComicDownloadProgressKind.active);
+    source.downloadGates['badge/1.png']!.complete();
+    await single;
+    await _wait(() => _card(id)?.downloadProgress?.kind ==
+      ComicDownloadProgressKind.chapterComplete);
+    _check('completed-chapter-command-paints-only-hollow-check',
+      _completionIcon(id, Icons.check_circle_outline, Colors.white) &&
+      !_completionIcon(id, Icons.check_circle, Colors.green));
+    await _openDetails(id);
+    await _popDetails();
+    _check('details-entry-clears-chapter-completion-badge',
+      _card(id)!.downloadProgress == null);
+
+    screen = await _openDetails(id);
+    await screen.onDownloadComic(entries);
+    await _popDetails();
+    await _wait(() => source.resourceLoads['badge/2.png'] == 1);
+    _check('pending-whole-comic-command-has-only-active-progress',
+      queue.snapshot.jobFor(_sourceId, id)?.phase == WholeComicQueuePhase.running &&
+      _card(id)?.downloadProgress?.kind == ComicDownloadProgressKind.active &&
+      !_completionIcon(id, Icons.check_circle, Colors.green));
+    source.downloadGates['badge/2.png']!.complete();
+    await _wait(() => queue!.snapshot.jobFor(_sourceId, id)?.phase ==
+      WholeComicQueuePhase.complete && _card(id)?.downloadProgress?.kind ==
+      ComicDownloadProgressKind.comicComplete);
+    _check('completed-whole-comic-queue-paints-only-green-solid-check',
+      _completionIcon(id, Icons.check_circle, Colors.green) &&
+      !_completionIcon(id, Icons.check_circle_outline, Colors.white) &&
+      source.resourceLoads.length == 3 &&
+      source.resourceLoads.values.every((count) => count == 1) &&
+      (await downloads.inspectMany(entries)).every((snapshot) => snapshot.isComplete));
+    await _openDetails(id);
+    await _popDetails();
+    _check('details-entry-clears-whole-comic-completion-badge',
+      _card(id)!.downloadProgress == null &&
+      queue.snapshot.jobFor(_sourceId, id)?.phase == WholeComicQueuePhase.complete);
+  } finally {
+    for (final gate in source.downloadGates.values) {
+      if (!gate.isCompleted) gate.complete();
+    }
+    await _unmount();
+    await queue?.close();
+    await downloads.close();
+    _downloads = previousDownloads;
+    _queue = previousQueue;
+  }
+}
+
+bool _completionIcon(String id, IconData data, Color color) {
+  final card = _element((element) => element.widget is ComicCoverCard &&
+    (element.widget as ComicCoverCard).comic.comicId == id);
+  return card != null && _elements((element) => element.widget is Icon &&
+    (element.widget as Icon).icon == data && (element.widget as Icon).color == color,
+    within: card).length == 1;
 }
 
 Future<void> _artworkChecks(Directory root) async {
@@ -858,6 +975,7 @@ final class _UpdateSource implements BrowsableComicSource {
   bool artworkMode = false;
   bool retentionBrowse = false;
   final resourceLoads = <String, int>{};
+  final downloadGates = <String, Completer<void>>{};
   final slowCover = Completer<Uint8List>();
   final png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
@@ -922,6 +1040,12 @@ final class _UpdateSource implements BrowsableComicSource {
   }
   @override
   Future<Uint8List> loadResource(Uri uri) async {
+    final gate = downloadGates[uri.path];
+    if (gate != null) {
+      resourceLoads.update(uri.path, (count) => count + 1, ifAbsent: () => 1);
+      await gate.future;
+      return png;
+    }
     if (!artworkMode) throw StateError('No resource transport in update fixture');
     resourceLoads.update(uri.path, (count) => count + 1, ifAbsent: () => 1);
     return uri.path == 'slow-cover' ? slowCover.future : png;

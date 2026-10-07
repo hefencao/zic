@@ -23,9 +23,9 @@
   },
   "requirement_summary": {
     "partial": 33,
-    "verified_device": 31,
+    "verified_device": 32,
     "superseded": 2,
-    "pending": 40,
+    "pending": 39,
     "verified_toolchain": 6
   },
   "requirements": [
@@ -59,7 +59,7 @@
     {"id": "SWG-PLAN-028", "status": "partial", "current_contract": "Canonical artwork identity and artwork revision are separate from changed browse/details metadata; cover source/ready/frame/decode diagnostics must preserve that boundary.", "remaining_acceptance": ["Remaining source/detail refresh correlation variants; do not infer artwork revision from changed browse metadata."], "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-029", "status": "partial", "current_contract": "The real source FilterList owns typed schema/defaults; supported Filter subclasses retain their official type, and unknown items cannot block ordinary browse. Section navigation/default selection remains presentation state, independent of catalog cache.", "remaining_acceptance": ["Remaining real source schema/subclass and navigation-default variants; preserve the accepted selected MangaFire codec/UI contracts."], "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-030", "status": "verified_device", "current_contract": "Real MangaFire filter focus/default/reset/ordinary section reentry is verified; ordinary JM details shelf add/remove immediately projects the left marker and dim and restores original membership.", "evidence_reproducibility": "available_references"},
-    {"id": "SWG-PLAN-031", "status": "pending", "current_contract": "对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。", "evidence_reproducibility": "no_recorded_acceptance"},
+    {"id": "SWG-PLAN-031", "status": "verified_device", "current_contract": "Controlled Android native-release Profile58/58 verifies real Home/details commands with an isolated PersistentChapterDownloadService and whole-comic queue. An existing chapter survives service close/reopen without a completion badge; pending chapter/whole commands show only active progress. Chapter completion paints the white hollow check; queue complete paints the green solid check. Entering details clears each temporary badge while durable chapters and the completed queue remain. Cached pages are not reacquired. No live-origin, physical touch-input or final-display claim.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-032", "status": "verified_device", "current_contract": "Source canonical identity owns Sliver/interaction keys. Raw alias changes preserve Image State, commands retain current raw locator, same-page aliases keep first source occurrence at the query projection, and raw/native request coordinates remain intact. Previous and source return use accepted UI visits; request partition changes reset navigation.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-033", "status": "verified_device", "current_contract": "Controlled Android Home/source/details with the real file store:24 transient browse covers trigger automatic capacity trim;2 details-retained covers survive coordinator/manual transient trim with unchanged retained bytes/entries and cold owner-reopen hits/frames before source activation. Includes restoring an evicted transient copy from still-valid hot memory without another source request. No real-origin or final-display claim.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-034", "status": "verified_device", "current_contract": "Controlled Android actual Reader slider0→2 and normal pop persist progress while preserving the same retained cover key/file/source count, as do details metadata and1→2 catalog refresh. Exact gateway artwork force-refresh reloads only its target; actual shelf comic deletion removes only that retained cover and its history/record; actual settings user-clear removes retained artwork. Scoped controlled-source/product-callback acceptance, not real-origin or final-display performance.", "evidence_reproducibility": "available_references"},
@@ -147,7 +147,7 @@
     "model": "M2007J1SC",
     "sdk": 36,
     "sha256": "fbca6e0b5cd846067b011a06cdd8a53fec717afdc94540ff3425e16a515bc753",
-    "app_pid": 12969,
+    "app_pid": 23446,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
@@ -161,10 +161,10 @@
     "Android_native_tests": 110,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Fresh all3 ordinary Profile and3 minified Release ABIs pass for the current SourceBrowser command/provider fix, along with three-ABI Debug and source-built native packaging/symbol/build-id checks. Existing artwork and Home isolated entrypoints have fresh analyzer/native-release Profile builds.",
-    "Android_native_tests_scope": "Reuse prior110 native tests only for unchanged production Kotlin/native inputs; fresh three-ABI native packaging passes. Current production changes are Dart SourceBrowser refresh command pass-through and StableArtworkImage provider-State lifetime.",
-    "scope": "Full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2332 Dart-Flutter tests/Rust22/three-ABI Debug. Fresh all3 ordinary Profile/minified Release/native packaging and final documentation/ownership gates pass. Failing-first corrupt encoded-cache and source isolation regressions plus Android artwork23/Home51 fixtures pass. Ordinary Release restored to Home. Its Reader slider smoke is unverified: injected Home-card/navigation taps produced no route change in both ordinary Profile and Release; no exception/ANR/high-CPU attribution. No production repair is inferred from this input observation. Original19/20, live-origin and final-display/performance remain open.",
-    "device_fixture": "Fresh existing artwork_device_acceptance.dart native-release Profile23/23 passes source/decode/offscreen boundaries, actual SourceBrowser refresh repair, healthy cache preservation, no repeated forced acquisition after recovery, aliases/card State/paging. Fresh Home default51/51 (PID5845) covers details/Reader slider/progress/history/retention pressure/explicit invalidation; userStoresOpened=false and temporaryRootRemoved=true. Latest result overwrites current-device-result.json. Device exports, scratch, both fixture APK copies and temporary screenshot are removed; latest ordinary Release fbca6e0b/PID12969/Home restored and ADB forwards empty. No process-cold rerun, real-origin/durable corruption or performance claim; no per-round result copies."
+    "ordinary_package_acceptance": "Reuse all3 ordinary Profile and minified Release packages for unchanged production inputs. Fresh full required gate includes three-ABI Debug; the existing Home entrypoint has a fresh analyzer/native-release Profile build. Fresh all3 release-native packaging/symbol/build-id checks pass.",
+    "Android_native_tests_scope": "Reuse prior110 native tests only for unchanged Kotlin/native inputs. This change extends an existing device acceptance entrypoint and current state; production code is unchanged. All3 release-native libraries are rebuilt and packaging/symbol/build-id checks pass.",
+    "scope": "Fresh full required repository/documentation/ownership/platform/toolchain gate passes:27 suites/27 analyzers/2332 Dart-Flutter tests/Rust22/three-ABI Debug. Fresh native-release Profile Home58/58 passes, including7 real persistent-download completion badge checks; prior source-card23 remains accepted for unchanged production inputs. Ordinary Release restored to Home. One injected Back displays the production root Snackbar; touchscreen taps and Reader slider smoke remain unverified. Device is awake/ON, focused/unobscured, input channel normal; these observations do not attribute a product defect. Original19/20, live-origin and final-display/performance remain open.",
+    "device_fixture": "Fresh existing Home default58/58 (PID16866): real persistent chapter close/reopen cache, chapter and whole-comic commands, active-vs-complete icons/colors and details-entry clearing pass7 checks; existing51 Home/details/Reader slider/progress/history/retention/explicit-invalidation checks also pass. userStoresOpened=false and temporaryRootRemoved=true. Latest result overwrites current-device-result.json; device exports, scratch and both fixture APK copies/metadata are removed. Ordinary Release fbca6e0b/PID23446/Home restored, ADB forwards empty. Retain prior artwork23 and process-cold acceptance for unchanged inputs. No live-origin, physical-touch or final-display claim; no per-round result copies."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
