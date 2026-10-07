@@ -147,7 +147,6 @@
 - 真机验证 Mihon Popular/Latest 与 Venera 多 explore/category section 的顺序、分页和 section identity。
 - 制造 source Future失败、decoder错误和离屏未绘制三种状态，确认 presentation都稳定失败而不自动重启；随后显式刷新来源，确认由统一 gateway重新加载且不会清空其它封面缓存。
 ## P1：首页与缓存身份
-- 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。
 - 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。
 - 验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。
 - 设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，且未访问书架页不创建额外 cover loader。

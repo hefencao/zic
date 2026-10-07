@@ -17,8 +17,8 @@
     "7/3 encoded、2/1 deadline与现有cache/presentation budgets"
   ],
   "requirement_summary": {
-    "partial": 40,
-    "verified_device": 18,
+    "partial": 39,
+    "verified_device": 19,
     "superseded": 2,
     "pending": 46,
     "verified_toolchain": 6
@@ -2975,25 +2975,30 @@
       "group": "P1：首页与缓存身份",
       "requirement": "设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。",
       "historical_status": "partial",
-      "status": "partial",
+      "status": "verified_device",
       "verified_subcontracts": [
         {
           "kind": "Device-observed",
           "file": "/tmp/zic-flushed-static-reader.jsonl",
           "result": "Nine warm Home covers requested in 0..6.457ms, source ready in 50.079..54.963ms, first frames 124.541..156.861ms; all durableCacheFile, before services open81.804ms and external-plugin-host ready49.426s. No shelf cover loader observed before visiting shelf. Cold/source-failure/alias-specific scenarios remain separately unverified."
+        },
+        {
+          "kind": "Device-verified-current",
+          "file": "/home/unkloser/.cache/zic-device-evidence/reader-cached-entry-after-CookieJar-2026-10-07/entry-attempt.jsonl",
+          "result": "Current ordinary Release/PID8239 starts a new process and Flutter engine; platform flutter-ui-displayed is843ms after process start. Nine primary Home cover requests occur at0..9.691ms on the trace clock, before bootstrapPresented26.871ms and servicesOpen78.960ms. Durable-hit cover frames arrive145.537..170.270ms, before chapter-downloads/queue568.106/568.217ms and external-plugin-host56.133s. main directly runs the Home; native prewarm is not an entry barrier.",
+          "limits": "Process-cold with warm durable covers. Mixed slow/fast covers, source-failure/alias variants and final physical-display performance remain separate criteria."
         }
       ],
       "current_evidence_references": [
-        "/tmp/zic-flushed-static-reader.jsonl"
+        "/home/unkloser/.cache/zic-device-evidence/reader-cached-entry-after-CookieJar-2026-10-07/entry-attempt.jsonl",
+        "docs/adr/0123-home-cold-start-primary-and-optional-runtime-deferral.md"
       ],
-      "remaining_acceptance": [
-        "Full ordinary cold first-home admission/prewarm/queue/plugin-start timing beyond recorded warm startup."
-      ],
-      "evidence_reproducibility": "historical_raw_files_missing",
+      "remaining_acceptance": [],
+      "evidence_reproducibility": "current_available; historical_raw_files_missing",
       "missing_local_evidence": [
         "/tmp/zic-flushed-static-reader.jsonl"
       ],
-      "next_action": "verify_only_remaining_current_contract; inspect_fresh_failure_before_any_repair",
+      "next_action": "closed_current_startup_contract; preserve_separate110_and112_acceptance",
       "current_contract": "设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。"
     },
     {

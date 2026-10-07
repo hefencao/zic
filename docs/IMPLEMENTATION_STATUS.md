@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2321/Rust22/27analyzer/Android110/Cookie15/真机9/六APK通过；643冻结输入仅CookieJar与门禁变化。native/Dart/公共ABI保持；common资产按新适配器更新。Release1b040401/PID8239/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项均有current_contract，requirement/historical_status仅历史；device18/toolchain6/superseded2/partial40/pending46。050普通Reader进度分离、重入及首返Home历史排序已验；061帧成本/084事务次数开放。014/016/021保留已验分量；非媒体typed recovery、fused候选拒绝保持。原加载/性能/真实来源开放；生产未改。
+  当前112项均有current_contract，requirement/historical_status仅历史；device19/toolchain6/superseded2/partial39/pending46。050进度与109普通Release冷进程Home时序已验（durable封面）；110快慢混合、061帧成本/084事务次数开放。014/016/021、typed recovery及fused候选拒绝保持；原加载/性能/真实来源开放，生产未改。

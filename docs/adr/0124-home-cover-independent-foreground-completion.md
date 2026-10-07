@@ -2,6 +2,10 @@
 
 **状态：Provisional**
 
+第3项的 cache-file presentation 已由 Accepted ADR0148 取代，当前 durable hit
+只交付自持有 encoded bytes；第5项的 raw-key 优先已由 ADR0147 的 canonical
+artwork identity 取代。其余前台完成/后台持久化边界保留，快慢混合真机验收仍为 SWG-PLAN-110。
+
 ## 背景
 
 首页的 `ComicCoverCard` 已经按卡片分别创建 loader，但冷 miss 经过

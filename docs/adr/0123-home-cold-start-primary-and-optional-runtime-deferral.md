@@ -1,6 +1,6 @@
 # ADR 0123：首页冷启动主投影与可选运行时延后
 
-**状态：Provisional**
+**状态：Accepted**
 
 ## 背景
 
@@ -22,7 +22,7 @@
    继续等待 `ready`。
 4. Home 先发布 entries/SavedComic primary，等待一个可注入的 primary frame 边界，
    再执行 enrichment。外部来源 ready 后只替换 source projection，不重新读取整库。
-5. `_CoverImage` 只在 identity 改变，或上一次加载失败且 loader 已改变时重试；
+5. `_CoverImage` 只在 cache identity 改变，或 source 加载失败且来源从不可用变为可用时重试；
    稳定 identity 的成功缓存不会因普通 Widget rebuild 重复请求。
 
 ## 后果
@@ -30,13 +30,14 @@
 - native 预热、队列 restore、插件激活和偏好补写不再成为首页首封面请求的硬门槛。
 - 已安装外部来源会在后台激活完成后加入 source projection；激活失败仍通过
   `activationFailures` 保留，不影响内置来源首页。
-- `HomeLibrarySession.ready` 仍表示 primary 后续 enrichment 与 queue ready 都已完成；
-  只有 primary frame boundary 被提前让出。
+- `HomeLibrarySession.ready` 表示 primary 与后续 enrichment 完成；队列恢复由 session
+  独立观察并只发布下载投影，不再成为该 ready 的等待条件。
 - 该决策只解决可归因的 App 冷启动排队，不改变远程封面服务器响应时间或统一
   response/artifact cache 所有权。
 
 ## 验证边界
 
-当前已完成源码核对、受影响 Flutter owner tests、downloads bridge test、plugin
-manifest test 和静态门禁；目标设备冷启动 Trace 与真实首封面时序仍待验证，因此
-本 ADR 保持 Provisional。
+源码、owner tests 与工具链已验。SWG-PLAN-109 复用当前普通 Release 的新进程与
+新 Flutter engine 启动记录：首页先显示，首批封面请求先于 durable services，封面帧
+先于章节下载/队列与外部插件就绪。该设备使用已有 durable covers；快慢混合、来源失败、
+alias 与最终物理显示验收仍由各自开放项承担，不从本启动时序推断。
