@@ -28,6 +28,127 @@ Future<void> _pumpUntilFound(
 
 void main() {
   testWidgets(
+    'long chapter catalogs keep offscreen rows unmounted across Reader return',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const sourceId = 'fixture-long-catalog';
+      const comicId = 'fixture-long-comic';
+      final entries = <ImportedLibraryEntry>[
+        for (var index = 0; index < 500; index++)
+          ImportedLibraryEntry(
+            chapter: ImportedChapterRecord(
+              directoryId: 'long-catalog',
+              displayName: 'Chapter $index',
+              sourceId: sourceId,
+              comicId: comicId,
+              comicTitle: 'Long catalog',
+              chapterId: 'chapter-$index',
+              sourceRevision: 'revision-$index',
+              sequence: index,
+              importedAt: DateTime(2026, 10, 7),
+              pages: <ImportedPageRecord>[
+                for (var page = 0; page < 5; page++)
+                  ImportedPageRecord(
+                    displayName: 'page-$page.png',
+                    sourceId: 'memory://$index/$page.png',
+                    contentKindHint: ContentKindHint.png,
+                  ),
+              ],
+            ),
+          ),
+      ];
+      final snapshot = details.ComicDetailsLibrarySnapshot(
+        chapters: entries,
+        readStates: const <String, ChapterReadState>{},
+        preference: ComicPreference.defaults(
+          sourceId: sourceId,
+          comicId: comicId,
+          sourceKind: ComicSourceKind.remote,
+        ),
+      );
+      final opened = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: details.LocalComicDetailsScreen(
+            comic: LibraryComic.fromEntries(entries),
+            initialLibrary: snapshot,
+            categories: const <LibraryCategory>[],
+            loadCover: ({
+              required String sourceId,
+              required String comicId,
+              required Uri? coverUri,
+              required ImportedLibraryEntry? fallbackChapter,
+              required String resourceRole,
+            }) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            reloadLibrary: ({required bool refreshContent}) async => snapshot,
+            onPreferenceChanged: (_) async {},
+            onReadChanged: (_, __) async {},
+            onOpenChapter: (
+              loadChapter, {
+              required bool refreshRemote,
+              required String title,
+              int? initialPageIndex,
+            }) async {
+              final entry = await loadChapter();
+              opened.add(entry.chapter.chapterId);
+              return ReadingProgress(
+                sourceId: sourceId,
+                comicId: comicId,
+                chapterId: entry.chapter.chapterId,
+                pageIndex: 1,
+                subPageOffset: 0,
+                readerMode: ReaderMode.paged,
+                updatedAt: DateTime(2026, 10, 7, 12),
+              );
+            },
+            onDownloadChapter: (_) async {},
+            inspectChapterDownload: (entry) async =>
+                ChapterDownloadSnapshot.idle(entry),
+            downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+            onDownloadComic: (_) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      int mountedRows() => tester.widgetList<ListTile>(find.byType(ListTile))
+          .where((tile) => tile.key is ValueKey<String> &&
+              (tile.key! as ValueKey<String>).value.startsWith('source-chapter:'))
+          .length;
+      expect(mountedRows(), inExclusiveRange(0, 40));
+      final latest = find.byKey(
+        details.comicDetailsChapterKey(sourceId, 'chapter-499'),
+      );
+      final oldest = find.byKey(
+        details.comicDetailsChapterKey(sourceId, 'chapter-0'),
+      );
+      expect(latest, findsOneWidget);
+      expect(oldest, findsNothing);
+      await tester.ensureVisible(latest);
+      await tester.tap(latest);
+      await tester.pumpAndSettle();
+      expect(opened, <String>['chapter-499']);
+      expect(find.descendant(of: latest, matching: find.text('第2页')),
+          findsOneWidget);
+      expect(mountedRows(), inExclusiveRange(0, 40));
+      final scrollable = find.descendant(
+        of: find.byKey(details.localComicDetailsScreenKey),
+        matching: find.byType(Scrollable),
+      ).first;
+      await tester.scrollUntilVisible(oldest, 1000,
+          scrollable: scrollable, maxScrolls: 60);
+      await tester.tap(oldest);
+      await tester.pumpAndSettle();
+      expect(opened, <String>['chapter-499', 'chapter-0']);
+      expect(find.descendant(of: oldest, matching: find.text('第2页')),
+          findsOneWidget);
+      expect(mountedRows(), inExclusiveRange(0, 40));
+      expect(latest, findsNothing);
+    },
+  );
+
+  testWidgets(
     'chapter rows show partial progress new marker and source or sync time',
     (tester) async {
       const sourceId = 'fixture-status';

@@ -1009,6 +1009,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   章节来源提供原始 `updatedAt` 时 MUST 优先显示来源更新时间；缺失时 MUST 显示当前持久投影可证明的本地导入/同步时间，不得用发布时间冒充更新时间。章节副标题 SHOULD 固定为单行紧凑状态：
   来源/同步图标 + `MM-DD HH:mm`、`待加载`/`N页`、以及存在进度时的历史图标 + `第N页`，各段以中点分隔；窄屏 MUST scale-down/省略而不得换成第二行。
   无标题的普通标签组 SHOULD 直接显示 chips，不得为了“标签”二字额外建立标题/展开父层。
+- 详情章节行 MUST 按当前滚动视口及有界缓存范围构建；长目录或 Reader 返回后的进度更新 MUST NOT 要求一次构建、布局全部章节行。完整目录、排序、source/chapter identity、章节操作与最新进度语义 MUST 保持。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，
   不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
 - 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；

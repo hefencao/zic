@@ -81,7 +81,6 @@
 
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
-- 归因已观察的Reader退出62ms build：用普通Profile分离final progress flush、targeted hydrate与详情/Home rebuild成本；保留已验warm翻页只enqueue、无逐页Home发布及ADR0303 durable barrier，不整库reload。
 - 用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。
 - 在source暂不可用时补真机`mihon:resource:` durable封面命中和durable miss等待来源，不能回退local file loader。
 

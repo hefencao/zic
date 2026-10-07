@@ -499,6 +499,7 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
 `_HomeShellSourceMigration` 组合 owner 完成。
 远程与本地详情共用同一章节 presentation：
+章节目录直接以 `SliverList` 接入外层 `CustomScrollView`，只构建可见及缓存范围的行，不嵌套全目录 shrink-wrap 视口。章节行沿用 source/chapter presentation identity 和既有交互回调；目录元数据、进度与下载 authority 仍由原 owner 提供。
 章节完成态优先由真实 `ReadingProgress` 与已知 pageCount 推导，到达最后一页或倒数第二页即视为已读并整体弱化，未完成进度保持正常亮度并显示“读到第 N 页”，进入章节本身不再写已读；
 用户右划的显式“标记已读/恢复未读”通过 `ChapterReadState.manualOverride` 保留为独立 durable override，
 因此旧版本“进入即已读”的普通 state 不得覆盖现存未完成 progress；

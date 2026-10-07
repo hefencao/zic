@@ -2424,7 +2424,7 @@ final class _LocalComicDetailsScreenState
       chapterCount: ordered.length,
       pageCount: catalogPages,
       pageCountPending: pageCountPending,
-      chapterList: _ComicChapterList(
+      chapterSliver: _ComicChapterList(
         chapters: ordered,
         onOpen: _open,
         onDownload: _download,
@@ -4055,7 +4055,7 @@ final class _RemoteComicDetailsScreenState
       chapterCount: ordered.length,
       pageCount: knownPageCount,
       pageCountPending: pageCountPending,
-      chapterList: _ComicChapterList(
+      chapterSliver: _ComicChapterList(
         chapters: chapterViewModels,
         onOpen: (chapter) => _open(chapter.sourceChapter!),
         onDownload: (chapter) => _download(chapter.sourceChapter!),
@@ -4361,14 +4361,16 @@ final class _ComicChapterList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (chapters.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(32),
-        child: Center(child: Text('暂无章节')),
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Center(child: Text('暂无章节')),
+        ),
       );
     }
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+    // Share the details viewport so a progress rebuild lays out only its
+    // visible/cache range, rather than every chapter in a nested viewport.
+    return SliverList.builder(
       itemCount: chapters.length,
       itemBuilder: (context, index) {
         final chapter = chapters[index];

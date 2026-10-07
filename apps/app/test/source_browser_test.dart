@@ -1892,7 +1892,10 @@ void main() {
     expect(
       tester.getBottomLeft(find.byKey(details.comicDetailsChapterCountKey)).dy,
       lessThan(
-        tester.getTopLeft(find.byKey(details.comicDetailsChapterListKey)).dy,
+        tester.getTopLeft(find.byKey(details.comicDetailsChapterKey(
+          source.sourceId,
+          source._chapterId,
+        ))).dy,
       ),
     );
 

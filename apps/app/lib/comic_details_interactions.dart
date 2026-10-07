@@ -95,7 +95,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     required this.chapterCount,
     required this.pageCount,
     this.pageCountPending = false,
-    required this.chapterList,
+    required this.chapterSliver,
     this.loadVersionState,
     this.onViewVersion,
     this.onMigrateVersion,
@@ -133,7 +133,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final int chapterCount;
   final int pageCount;
   final bool pageCountPending;
-  final Widget chapterList;
+  final Widget chapterSliver;
   final ComicDetailsVersionStateLoader? loadVersionState;
   final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
@@ -257,11 +257,9 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     ),
                   ),
                 ),
-                SliverToBoxAdapter(
-                  child: KeyedSubtree(
-                    key: comicDetailsChapterListKey,
-                    child: widget.chapterList,
-                  ),
+                KeyedSubtree(
+                  key: comicDetailsChapterListKey,
+                  child: widget.chapterSliver,
                 ),
                 if (widget.commentsSection != null)
                   SliverPadding(

@@ -25,7 +25,7 @@
 
 ### Home 组合与服务代际
 - 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。
-- `HomeShell` 只持真正的 Navigator/presentation 与 composition wiring；library/download/queue 当前 authority 继续由 `HomeLibrarySession` 持有，Reader/source/download/version 等长期职责继续由各自 Home owner 承担。
+- `HomeShell` 只持 Navigator/presentation/composition wiring；library/download/queue authority归`HomeLibrarySession`，其余长期职责归各自Home owner。
 - Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。 ADR0404：单源页首次挂载先接收已有query，再发原source请求；后续queryRevision与标签路由不变，冷真机queryLength2/offset0已验。
 - ADR0399/0400/0401已验保持。0402 Accepted：viewport/DPR/stitch消费原绝对center，DPR首轮接同一layout校正。8先失败、11新合同/105 focused及全门禁通过；Release4bd8351d/PID11582几何28步/真实OS变化16次通过，125完整payload保持。原加载/active视觉/最终显示开放。
 - ADR0384 Accepted：完整组合键脱敏保持原始hash/长度，修正507→511假象；不改缓存身份/URI/信任。2219/Rust22/三ABI与普通Release9214事件通过，127长scope/11exact key独立核对。设备上的Mihon扩展行v1.6.0/ABI1.6、下载、五静置slider/四首尾已验收；性能与原加载开放。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2321/Rust22/27analyzer/Android110/Cookie15/真机9/六APK通过；643冻结输入仅CookieJar与门禁变化。native/Dart/公共ABI保持；common资产按新适配器更新。Release1b040401/PID18559/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 本轮2322/Rust22/27analyzer、三ABI Debug/Profile/Release及native packaging通过；Android110复用相同Kotlin/native输入的既有结果。Release295d5159/PID23620/Home；完整浏览器生命周期、原加载/性能/真实代际开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项均有current_contract，requirement/historical_status仅历史；device22/toolchain6/superseded2/partial37/pending45。038/109冷进程封面、050进度与065新漫画重复路由/首返进度已验。063/066/112保留冷命中分量；084真机8/30秒合并已验；061 warm199帧/build4ms，退出62ms未归因。110快慢混合及原加载/性能/真实来源开放，生产未改。
+  当前112项均有current_contract；device23/toolchain6/superseded2/partial36/pending45。038/109冷封面、050/065路由进度、084真机8/30秒合并已验。061退出80ms根因为全目录布局；详情Sliver后采样19ms/无采样24ms，500行及真机首末滚动/排序/返回进度通过。063/066/112仅冷命中分量；110及原加载/性能/真实来源开放。
