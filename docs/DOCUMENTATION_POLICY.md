@@ -81,6 +81,8 @@ Handoff 每轮覆盖更新，不累积历史。当前有效状态只指向 `docs
 
 保留全部 requirement ID、当前合同、有效状态和独立剩余验收；部分验收必须明确 remaining_acceptance。pending 未单列 remaining_acceptance 时，整个 current_contract 仍待验。缺少历史原始文件不代表产品缺陷，不授权重改已验生产行为。
 
+partial 与 pending 的合计是未完成验收记录数，不是现存缺陷数。同一剩余场景可关联多个记录，应合并执行并更新各自状态，避免重复采集；不能为降低计数关闭尚未通过的合同。
+
 最新验证和设备安装信息覆盖更新；原需求措辞、逐轮过程、重复子审计和原始文件清单留在归档，不复制到当前状态。该文件保持在 96 KiB / 400 行以内。
 
 ### docs/archive/adr

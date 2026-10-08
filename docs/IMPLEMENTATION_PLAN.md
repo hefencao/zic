@@ -4,7 +4,7 @@
 - P0：补dev.282首次新OutputFrame的native呈现成本与快滑最终composition验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。首次frame独立测blit/schedule/frame timing，余下顿挫只按fresh证据定位首次visible/current frame与SurfaceProducer/compositor，不重改已验geometry/anchor或窗口。
 - P0：按dev.280 scroll-stable geometry的现行合同补真机视觉验收：保留painted extent；允许视口之外forward ratio预备、reverse prefix原子anchor校正及slider真实visible ratio采用。物理观察只用已布局geometry，剩余ratio在idle latest-wins提交。已验组件见ADR0330/0361与loading审计；不得恢复active全冻结或逐ratio jumpTo。
 - P0：dev.273真实WNACG八页local miss/prepare已观察（6.594–27.177ms，median14.803ms），不是与历史87ms的同条件加速比较。剩余：证明exact+verified-equivalent miss不materialize durable-store `DownloadSession`；真实cold partial应`local-hydration-ready`且`committedLength>0`，在provider `downloadStarted`前发布可消费prefix。local bytes只由`ArtifactCacheReadScheduler`调度；若真实hit后仍无首帧，冻结下载层并转查Decode→Upload→presentation generation。
-- P0：009已验EH142 demanded parked response释放body-read permit、保留同一response并原地resume；继续验饱和normal transport leases<=5/current-only handoff<=6、durable artifact local body释放两者。source request-plan/gate/host相对dev.270只在同输入下比较，不以普通停驻证明pressure行为。
+- P0：009选定可播放/0已解码帧的同response停驻恢复保持；剩余验饱和normal transport leases<=5/current-only handoff<=6、durable artifact local body释放两者。source request-plan/gate/host相对dev.270只在同输入下比较，不以普通停驻证明pressure行为。
 - P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
@@ -13,7 +13,7 @@
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
-- 017已验的来源请求/gate/host-open与EH139顶部强刷0字节新代5.343s自行呈现保持；原预下载/冷激活仍验。用现有持续传输字段对齐consumerPacing；只有设备证明并发active streams损害current且pause产生真实network backpressure，才考虑NetLane-owned transfer pressure。
+- 017已验来源请求/gate/host-open与EH139顶部强刷新代自行呈现保持；009选定0已解码帧停驻恢复不关闭原连续预下载/冷激活。用现有持续传输字段对齐consumerPacing；只有设备证明并发active streams损害current且pause产生真实network backpressure，才考虑NetLane-owned transfer pressure。
 - 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 ## P0：Current 首帧 policy/execution 真机闭环
 
