@@ -35,6 +35,7 @@ Native implementation
 漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。
 `CachedBrowsableComicSource` 缓存 browse、details、preview/comment 分页和 chapter metadata，
 所有这些可重新获取的响应共用注入的 `ResourceCacheManager`，但按稳定 response identity 分开；
+完整details响应嵌入请求的raw漫画/章节父ID，因此response key按raw comicId区分；同源别名仍共用canonical namespace失效与artwork身份，不能把一种别名的manifest返回给另一种。
 它不拥有 artwork 加载，Reader 页面正文仍透传到统一 Pipeline。
 
 ### `resource_cache`
@@ -633,6 +634,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
   runtime adapter 独立校验实际响应的 `maxResponseBytes`，字符串键和值直接计算 UTF-8 长度，不为计数物化 encoded bytes；合法 surrogate pair计4字节，孤立 surrogate按U+FFFD计3字节。depth/type、binary/scalar与body-file清理合同不变。
 - `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。
+  Mihon漫画输入在runtime内由`mihonMangaInput`转换为SManga：完整opaque模型保留所有来源字段，原生URL原文只补空初始标题；保留的`mihon:`前缀仍严格校验kind。插件调用及响应identity保持原始comicId。
+  `plugin_host`按同一source URL解析原生/opaque输入的Web与canonical身份；二者共用既有目录互斥和artwork namespace，UI不构造opaque模型、猜路径或另持identity authority。
   Mihon目录保留source返回的完整对象与newest-first顺序；opaque章节ID仍编码source ordinal，向外sequence投影为oldest-first逻辑序号。
   plugin-host的只读顺序适配兼容旧持久目录，Home composition消费该投影，Reader不解析来源identity。Venera既有sequence合同保持不变。
   同一source+canonical漫画URL的getMangaUpdate在runtime内互斥，等待可被取消；不同漫画仍可并发，NetLane继续拥有网络admission与rank。

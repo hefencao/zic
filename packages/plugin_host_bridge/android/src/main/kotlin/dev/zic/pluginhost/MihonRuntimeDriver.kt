@@ -448,7 +448,7 @@ internal class MihonRuntimeDriver private constructor(
         comicId: String,
         requestId: String,
     ): MihonComicCatalog {
-        val encoded = decodeOpaque(comicId, "manga")
+        val encoded = mihonMangaInput(comicId)
         val manga = createModel(
             source.javaClass.classLoader,
             "eu.kanade.tachiyomi.source.model.SManga",
@@ -556,7 +556,7 @@ internal class MihonRuntimeDriver private constructor(
             ?: source.javaClass.name
 
     private fun mihonComicCatalogKey(source: Any, comicId: String): String {
-        val encoded = runCatching { decodeOpaque(comicId, "manga") }.getOrNull()
+        val encoded = runCatching { mihonMangaInput(comicId) }.getOrNull()
         val locator = encoded?.optString("url")?.trim().orEmpty()
         val comicKey = if (locator.isNotEmpty()) "url:$locator" else comicId
         return "${mihonSourceCacheKey(source)}\u0000$comicKey"
@@ -2739,6 +2739,17 @@ private fun emptyFilterList(loader: ClassLoader): Any {
         return constructor.newInstance(java.lang.reflect.Array.newInstance(component, 0))
     }
     return type.constructors.first().newInstance(emptyList<Any>())
+}
+
+// Native SManga URLs and host opaque models enter the same source contract.
+// Opaque input keeps every source-owned field; native input supplies no metadata.
+internal fun mihonMangaInput(comicId: String): JSONObject {
+    if (comicId.startsWith("mihon:")) return decodeOpaque(comicId, "manga")
+    require(comicId.isNotBlank()) { "Mihon manga URL is missing" }
+    return JSONObject()
+        .put("kind", "manga")
+        .put("url", comicId)
+        .put("title", "")
 }
 
 private fun createModel(loader: ClassLoader, className: String, json: JSONObject): Any {

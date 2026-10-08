@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device33/toolchain6/superseded2/partial34/pending37。051真实JM详情自身origin关闭；062 Mihon普通往返/简介补全/三处同字节已验，实际mutable alias仍开放。061与110–112保持。Releasefbca6e0b/PID10206已恢复Home、forward空；物理输入/性能开放。
+- 当前112项：device33/toolchain6/superseded2/partial34/pending37。051/061与110–112保持；062实际mutable alias仍开放。025原生URL比较后原详情41章无重复已验，未确认迁移。Release67e4e4d0/PID4416/Home；物理输入/性能开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home58/source-card23及031/083/108保持。legacy runner/ACTION_CLICK普通路由已验；051详情Future/provider与canonical缓存同字节，062实际Mihon历史首帧通过。临时目录/设备导出已删；.log留5个必要原件，不搬迁。原19/20加载、真实alias/迁移及最终显示开放。
+- Home58/source-card23及031/083/108保持。修复原生Mihon输入及raw目录response key，共用canonical namespace/artwork；Profile/Release各两轮41章无重复、历史不变。2334/native112/六普通包通过；.log仍5原件，临时产物已删，原加载/真实alias/确认迁移/最终显示开放。
 - 0399/0401/0402/0404/0405及标题分源/JM WebView/原标签保持。21话3287新区间有18真实origin，74/115/71页静置1/6/15s均显示目标；第三次只回访原窗口，非同页。原19/20偶发加载未复现，固定顿挫/GC/输入/最终显示、旧输入异常、浏览器属性/重叠未知镜像仍开放；不重改已验控制面。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - 088/0400已验JM共享回调等待，原加载/性能开放。089默认GaiResolver为blocking DNS，HTTP取消不证明退出；当前VPN禁ZIC旁路，独立TestNetwork成功对照无DNS包/回溯需root，仍未验，未补生产。有效剩余项见IMPLEMENTATION_STATE的089；历史诊断已归档。
@@ -65,7 +65,7 @@
 - rhttp transport不得再次增加64/256 KiB聚合；DownloadJob 为单一数据聚合 owner。
 - Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、
   `UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
-  不得把这些兜底/验证语义迁到 Reader/Pipeline/Download。Mihon Injekt scope 同样由 plugin host 唯一拥有；`Application`、`NetworkHelper`、`Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
+  不得迁到Reader/Pipeline/Download；Injekt只属plugin host，Application/NetworkHelper/Json(ignoreUnknownKeys=true,explicitNulls=false)保持。原生/opaque漫画共用source调用、URL互斥/canonical artwork；完整manifest按raw请求缓存，raw响应ID不改。
   Mihon 新生成的 opaque page locator 都携带 stable chapter/page replay 坐标；host-direct plan 另有 `directPlanReplay`，可在 host transport failure 后沿现有一次性 source recovery 重取 page list。
   runtime-owned `mihon-runtime-transform-v3:<payload-sha256>` 仍只有非网络 source failure 可发布 replay eligibility，SSL/EOF 继续归 DownloadJob；payload-bound revision 继续绑定实际 extension payload。
   升级前缺 replay 坐标的普通 `mihon:resource:` 持久 locator 由 source-compat gate 识别并在消费前刷新，不要为它引入 sourceRevision/version churn。

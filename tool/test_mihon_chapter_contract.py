@@ -177,6 +177,8 @@ fun main() {
 def catalog_input_harness(driver: str) -> str:
     parts = []
     for pattern in (
+        r'internal fun mihonMangaInput\(.*?\n\}',
+        r'private fun mihonComicCatalogKey\(.*?\n    \}',
         r'private fun fetchMihonComicCatalog\(.*?\n    \}',
         r'private fun mihonChapterCatalogFailure\(.*?\n    \).also \{.*?\n',
         r'private fun Throwable.isMihonCapabilityAbsence\(\).*?\n\}',
@@ -195,7 +197,11 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
-private class JSONObject
+internal class JSONObject {
+    val fields = mutableMapOf<String, Any>()
+    fun put(key: String, value: Any): JSONObject = apply { fields[key] = value }
+    fun optString(key: String): String = fields[key] as? String ?: ""
+}
 private class RawManga(val url: String)
 private class CompleteChapter(val url: String, val memo: String)
 private data class Combined(val manga: Any, val chapters: List<Any>)
@@ -210,9 +216,18 @@ private val completeChapters: List<Any> = (0 until 80).map {
 private class FixtureSource(val legacy: Boolean = false, val failure: Throwable? = null) {
     val calls = mutableListOf<String>()
 }
-private fun decodeOpaque(value: String, kind: String) = JSONObject()
+private val opaqueManga = JSONObject()
+    .put("url", "opaque-source-url")
+    .put("title", "source-title")
+    .put("description", "source-description")
+    .put("memo", "source-request-state")
+private fun decodeOpaque(value: String, kind: String): JSONObject {
+    require(value == "mihon:manga:fixture" && kind == "manga")
+    return opaqueManga
+}
 private fun createModel(loader: ClassLoader, type: String, encoded: JSONObject): Any = rawManga
 private fun cachedMihonChaptersForComic(source: Any, comicId: String): List<Any> = completeChapters
+private fun mihonSourceCacheKey(source: Any): String = "fixture-source"
 private fun ensureNotCancelled(requestId: String) {}
 private fun Any.invokeMihonCompatible(method: String, args: List<Any>): Any {
     val source = this as FixtureSource
@@ -272,6 +287,16 @@ private fun immediate(block: suspend () -> SMangaUpdate): SMangaUpdate {
     return requireNotNull(completion).getOrThrow()
 }
 fun main() {
+    val nativeUrl = "/album/1236711/开花岛-极欲绽放之村"
+    val nativeInput = mihonMangaInput(nativeUrl)
+    check(nativeInput.fields == mapOf("kind" to "manga", "url" to nativeUrl, "title" to ""))
+    check(mihonMangaInput("mihon:manga:fixture") === opaqueManga)
+    check(opaqueManga.fields["memo"] == "source-request-state")
+    check(mihonComicCatalogKey(FixtureSource(), "opaque-source-url") ==
+          mihonComicCatalogKey(FixtureSource(), "mihon:manga:fixture"))
+    for (invalid in listOf("", "   ", "mihon:chapter:fixture", "mihon:resource:fixture")) {
+        check(runCatching { mihonMangaInput(invalid) }.exceptionOrNull() is IllegalArgumentException)
+    }
     val current = FixtureSource()
     val combined = fetchMihonComicCatalog(current, "raw-input", "request")
     check(current.calls == listOf("getMangaUpdate"))

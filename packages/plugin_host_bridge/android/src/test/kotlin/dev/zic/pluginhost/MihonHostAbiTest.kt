@@ -314,4 +314,26 @@ class MihonHostAbiTest {
         assertNotNull(encoded.optJSONObject("memo"))
         assertEquals(42, encoded.getJSONObject("memo").getInt("size"))
     }
+
+    @Test
+    fun nativeMangaInputPreservesTheSourceUrlWithoutInventingMetadata() {
+        for (url in listOf(
+            "/album/1236711/开花岛-极欲绽放之村",
+            "https://18comic.ink/album/1236711?token=source#fragment",
+            "1236711",
+        )) {
+            val input = mihonMangaInput(url)
+            assertEquals("manga", input.getString("kind"))
+            assertEquals(url, input.getString("url"))
+            assertEquals("", input.getString("title"))
+            assertEquals(3, input.length())
+        }
+    }
+
+    @Test
+    fun nativeMangaInputRejectsBlankAndOtherReservedMihonIdentities() {
+        for (id in listOf("", "   ", "mihon:chapter:fixture", "mihon:resource:fixture")) {
+            assertTrue(runCatching { mihonMangaInput(id) }.exceptionOrNull() is IllegalArgumentException)
+        }
+    }
 }

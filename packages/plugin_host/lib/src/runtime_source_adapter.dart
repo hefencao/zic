@@ -33,14 +33,15 @@ Uri? resolveMihonComicWebUri({
   required String comicId,
   required Uri sourceWebsite,
 }) {
-  final decoded = _decodeOpaqueIdentity(
-    comicId,
-    'mihon:manga:',
-    'manga',
-  );
-  final raw = decoded?['url'];
+  final raw = comicId.startsWith('mihon:')
+      ? (_decodeOpaqueIdentity(comicId, 'mihon:manga:', 'manga')?['url'])
+      : comicId;
   if (raw is! String || raw.trim().isEmpty) return null;
-  return sourceWebsite.resolve(raw.trim());
+  try {
+    return sourceWebsite.resolve(raw.trim());
+  } on FormatException {
+    return null;
+  }
 }
 
 /// Stable same-source comparison key for Mihon manga aliases.

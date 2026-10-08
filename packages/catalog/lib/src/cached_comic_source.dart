@@ -465,7 +465,7 @@ final class CachedBrowsableComicSource
     );
     if (cached != null) return cached;
     if (nextToken == null) {
-      return cache.peek<ComicManifest>(_comicKey(identity))?.preview;
+      return cache.peek<ComicManifest>(_comicKey(identity, comicId))?.preview;
     }
     return null;
   }
@@ -504,7 +504,7 @@ final class CachedBrowsableComicSource
       forceRefresh: forceRefresh,
       loader: () {
         final embedded = nextToken == null
-            ? cache.peek<ComicManifest>(_comicKey(identity))?.preview
+            ? cache.peek<ComicManifest>(_comicKey(identity, comicId))?.preview
             : null;
         if (!forceRefresh && embedded != null) {
           return Future<ComicPreviewPage>.value(embedded);
@@ -559,7 +559,7 @@ final class CachedBrowsableComicSource
     );
     if (cached != null) return cached;
     if (page == 1 && replyTo == null) {
-      return cache.peek<ComicManifest>(_comicKey(identity))?.comments;
+      return cache.peek<ComicManifest>(_comicKey(identity, comicId))?.comments;
     }
     return null;
   }
@@ -617,7 +617,7 @@ final class CachedBrowsableComicSource
       forceRefresh: forceRefresh,
       loader: () {
         final embedded = page == 1 && replyTo == null
-            ? cache.peek<ComicManifest>(_comicKey(identity))?.comments
+            ? cache.peek<ComicManifest>(_comicKey(identity, comicId))?.comments
             : null;
         if (!forceRefresh && embedded != null) {
           return Future<ComicCommentPage>.value(embedded);
@@ -651,7 +651,7 @@ final class CachedBrowsableComicSource
   @override
   ComicManifest? peekComic(String comicId) {
     final identity = _comicIdentity(comicId);
-    final manifest = cache.peek<ComicManifest>(_comicKey(identity));
+    final manifest = cache.peek<ComicManifest>(_comicKey(identity, comicId));
     if (manifest == null) return null;
     final preview = peekComicPreview(comicId);
     final comments = peekComicComments(
@@ -684,7 +684,7 @@ final class CachedBrowsableComicSource
     final identity = _comicIdentity(comicId);
     return cache
         .getOrLoad<ComicManifest>(
-          key: _comicKey(identity),
+          key: _comicKey(identity, comicId),
           loader: () {
             final controlled = source is ControlledComicSource
                 ? source as ControlledComicSource
@@ -1094,7 +1094,7 @@ final class CachedBrowsableComicSource
 
   void invalidateComicMetadata(String comicId) {
     final identity = _comicIdentity(comicId);
-    final cached = cache.peek<ComicManifest>(_comicKey(identity));
+    final cached = cache.peek<ComicManifest>(_comicKey(identity, comicId));
     if (cached != null) {
       _rememberComic(cached);
     }
@@ -1370,10 +1370,18 @@ void invalidateCachedSearch(BrowsableComicSource source) {
   }
 }
 
-ResourceCacheKey _comicKey(ComicResourceCacheIdentity identity) =>
+ResourceCacheKey _comicKey(
+  ComicResourceCacheIdentity identity,
+  String comicId,
+) =>
     ResourceCacheKey(
       kind: ResourceCacheKind.comicDetails,
-      identity: identity.response('details'),
+      // A manifest embeds the requested raw comic/parent IDs. Aliases share
+      // invalidation and artwork, but cannot share this response object.
+      identity: encodeStableCacheKey(
+        'comic-response',
+        <String>[identity.sourceId, comicId, 'details'],
+      ),
       namespace: identity.namespace,
       // dev.160 corrects the Mihon 1.6 CatalogueSource host contract. Avoid
       // serving durable manifests produced by the previous shim, where chapter

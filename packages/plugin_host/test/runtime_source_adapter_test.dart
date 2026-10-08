@@ -168,7 +168,7 @@ void main() {
     );
     expect(
       resolveMihonComicWebUri(
-        comicId: 'comic-1',
+        comicId: 'mihon:manga:invalid',
         sourceWebsite: Uri.parse('https://example.invalid'),
       ),
       isNull,
@@ -208,6 +208,43 @@ void main() {
         sourceWebsite: Uri.parse('https://18comic.vip/base/'),
       ),
     );
+  });
+
+  test('Mihon native manga URLs share the opaque canonical artwork identity', () {
+    const nativeUrl = '/album/1236711/开花岛-极欲绽放之村';
+    final website = Uri.parse('https://18comic.ink/');
+    final payload = base64Url
+        .encode(utf8.encode(jsonEncode(<String, Object?>{
+          'kind': 'manga',
+          'url': nativeUrl,
+          'title': '来源标题',
+          'description': '来源简介',
+          'memo': <String, Object?>{'token': 'source-owned'},
+        })))
+        .replaceAll('=', '');
+    final opaqueId = 'mihon:manga:$payload';
+    final expected = canonicalMihonComicIdentity(
+      comicId: opaqueId,
+      sourceWebsite: website,
+    );
+    expect(expected, isNotNull);
+    for (final id in <String>[nativeUrl, website.resolve(nativeUrl).toString()]) {
+      expect(
+        canonicalMihonComicIdentity(comicId: id, sourceWebsite: website),
+        expected,
+      );
+      expect(
+        resolveMihonComicWebUri(comicId: id, sourceWebsite: website),
+        resolveMihonComicWebUri(comicId: opaqueId, sourceWebsite: website),
+      );
+    }
+    for (final id in <String>[
+      '', '   ', 'mihon:manga:invalid', 'mihon:chapter:invalid',
+      'mihon:resource:invalid', 'https://[invalid',
+    ]) {
+      expect(canonicalMihonComicIdentity(comicId: id, sourceWebsite: website), isNull);
+      expect(resolveMihonComicWebUri(comicId: id, sourceWebsite: website), isNull);
+    }
   });
 
   test('maps runtime verification requirement to a typed domain failure',

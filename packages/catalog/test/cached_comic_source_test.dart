@@ -298,6 +298,73 @@ void main() {
     );
   });
 
+  test('canonical aliases retain request-scoped comic manifests and artwork',
+      () async {
+    final raw = _CanonicalAliasCountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    const native = '/album/123';
+    const opaque = 'mihon:manga:original';
+    final identity = ComicResourceCacheIdentity.fromSource(source, native);
+    expect(
+      ComicResourceCacheIdentity.fromSource(source, opaque).namespace,
+      identity.namespace,
+    );
+
+    final nativeManifest = await source.loadComic(native);
+    expect(source.peekComic(opaque), isNull);
+    final opaqueManifests = await Future.wait(<Future<ComicManifest>>[
+      source.loadComic(opaque),
+      source.loadComic(opaque),
+    ]);
+    final opaqueManifest = opaqueManifests.first;
+    expect(opaqueManifests.last, same(opaqueManifest));
+    expect(nativeManifest.comic.comicId, native);
+    expect(nativeManifest.chapters.single.comicId, native);
+    expect(opaqueManifest.comic.comicId, opaque);
+    expect(opaqueManifest.chapters.single.comicId, opaque);
+    expect(source.peekComic(native), same(nativeManifest));
+    expect(source.peekComic(opaque), same(opaqueManifest));
+    expect(raw.comicLoads, 2);
+
+    await source.refreshComic(native);
+    expect(source.peekComic(opaque), same(opaqueManifest));
+    expect(await source.loadComic(opaque), same(opaqueManifest));
+    expect(raw.comicLoads, 3);
+
+    Future<Uint8List> loadCover() async {
+      raw.resourceLoads++;
+      return Uint8List.fromList(<int>[9, 8, 7]);
+    }
+
+    Future<Uint8List> cover(String comicId) => loadCachedComicImage(
+          cache: cache,
+          sourceId: source.sourceId,
+          comicId: source.canonicalComicIdentity(comicId),
+          imageIdentity: 'cover',
+          loader: loadCover,
+        );
+    final bytes = await cover(native);
+    expect(await cover(opaque), same(bytes));
+    await source.browse(query: 'query');
+    source.invalidateComicMetadata(opaque);
+    expect(source.peekComic(native), isNull);
+    expect(source.peekComic(opaque), isNull);
+    final reloaded = await Future.wait(<Future<ComicManifest>>[
+      source.loadComic(native),
+      source.loadComic(opaque),
+    ]);
+    expect(reloaded.first.comic.comicId, native);
+    expect(reloaded.last.comic.comicId, opaque);
+    expect(raw.comicLoads, 5);
+    expect(await cover(native), same(bytes));
+    expect(await cover(opaque), same(bytes));
+    await source.browse(query: 'query');
+    expect(raw.resourceLoads, 1);
+    expect(raw.browseLoads, 1);
+  });
+
   test('cached source preserves the WebView request user agent', () {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
@@ -619,6 +686,39 @@ final class _BoundedCountingSource extends _CountingSource
     implements BoundedComicResourceSource {
   @override
   Duration get resourceOperationTimeout => const Duration(seconds: 23);
+}
+
+final class _CanonicalAliasCountingSource extends _CountingSource {
+  @override
+  String get sourceId => 'mihon:fixture';
+
+  @override
+  String canonicalComicIdentity(String comicId) =>
+      'https://example.invalid/album/123';
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) async {
+    comicLoads++;
+    return ComicManifest(
+      comic: Comic(
+        comicId: comicId,
+        sourceId: sourceId,
+        title: 'Comic',
+        authors: const <String>[],
+        readingDirection: ReadingDirection.ltr,
+      ),
+      chapters: <Chapter>[
+        Chapter(
+          chapterId: '$comicId/chapter',
+          comicId: comicId,
+          title: 'Chapter',
+          sequence: 1,
+          pageCount: 1,
+          sourceRevision: 'r1',
+        ),
+      ],
+    );
+  }
 }
 
 class _CountingSource implements

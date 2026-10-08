@@ -58,8 +58,8 @@
   ordinary replay 的 replacement authority 只供紧随其后的 runtime load 一次性消费，fresh generation authority 则供 resolve/re-resolve/load 共用；实际取图继续走 source client，完整 method/headers/body/interceptor/cookie 不降级。
   source setting mutation 会同步失效该 source 的 retained fresh/replay state；旧/跨 payload 持久 locator 由 Reader/下载入口强制刷新后再消费。
   Android network/Mihon runtime 的 `FallbackDns` 不再强制 IPv4 优先；系统非空 DNS 结果保持原顺序，public fallback 仅在系统失败/空时启动，并同时查询 A/AAAA。
-  terminal Reader refresh 仍只由当前失败页触发，但 fresh chapter 的 matched page carriers 现在按稳定 page identity 原子换代并保留旧 page order，
-  不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
+  terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
+- Mihon原生URL/完整opaque模型共用source调用、URL互斥/canonical artwork，raw响应ID不改。目录response key按raw请求区分，避免比较后历史目录混用父ID。Profile/Release各两轮均41章/已知21页/历史1页、无重复；目标41/精确1/未匹配0/额外40，未确认迁移。
 ### 渲染与几何 (Pipeline & Reader View)
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 全门禁2332/Rust22/27suite/analyzer、三ABI Debug/native通过，3个既有quarantine跳过；Android110及普通包复用相同输入。Releasefbca6e0b/PID10206在Home。legacy runner补已有base JAR后执行，ACTION_CLICK实际路由通过；物理触摸/性能未验 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 全门禁2334/Rust22/27suite/analyzer、三ABI Debug/JNI与六普通包通过，3个既有quarantine跳过；native112通过，vendor测试用临时SDK34/ASM9.9兼容JDK25，生产不变。Release67e4e4d0/PID4416；物理输入/性能未验 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device33/toolchain6/superseded2/partial34/pending37。051真实JM详情origin关闭；062 Mihon往返/简介补全/三处同字节已验，实际mutable alias开放。061与110–112保持。599事件/7首帧/0失败；临时文件已删。原加载/物理输入/最终显示开放。
+  当前112项：device33/toolchain6/superseded2/partial34/pending37。051/061与110–112保持；062普通往返/三处同字节已验，真实mutable alias开放。025原生Mihon URL比较及原详情41章无重复已验，未确认迁移。原加载/物理输入/最终显示开放。

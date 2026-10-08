@@ -2265,6 +2265,9 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    缓存首显后的 source refresh MUST 更新当前 route/面板。“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。
    同源替换对已验证等价的 durable source artifact MUST 物化为目标 exact DownloadId，确保移除旧记录或重启后仍不重新下载；未验证页面 MUST NOT 复用。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。
+   漫画输入 MUST接受完整`mihon:manga:`模型或插件原生`SManga.url`；原生输入只提供原文URL与空初始标题，其余元数据/目录仍由source返回。保留的`mihon:`身份 MUST按kind严格校验，不得将损坏或章节/资源identity当原生URL。
+   调用及返回漫画/章节父身份 MUST保留调用者的原始comicId；相同source URL的两种输入 MUST共用目录互斥与canonical artwork namespace，UI不得包装opaque ID或猜测站点路径。
+   完整目录响应缓存 MUST按raw请求comicId区分，因为其漫画/章节父身份属于该请求；同源别名仍 MUST共用canonical namespace进行metadata失效，MUST NOT失效健康artwork或用另一别名manifest改写历史/下载身份。
    source对象和newest-first列表 MUST原样保存；opaque章节ID内source ordinal MUST保持identity兼容，向外sequence MUST投影为oldest-first逻辑序号，旧持久目录MUST通过同一source合同适配而不得重写下载ID。
    Reader当前章定位 MUST优先exact ID；同source/comic内 MAY以唯一完整source model一致性处理host ordinal/parent locator变化。URL单独或歧义匹配 MUST NOT作为定位proof，逻辑定位 MUST NOT授权page复用或改写ID。
    只读详情 MAY将同source/comic的既存metadata投影到唯一完整source model对应的当前章节行，MUST以快照实际章节作用域保留历史进度/手动已读且不重复计数，不以route别名过滤；歧义、模型变化及跨scope MUST NOT归并。

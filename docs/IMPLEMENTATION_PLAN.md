@@ -25,7 +25,7 @@
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
-- 真机从普通入口完成真实同源版本迁移，以及跨源搜索同名候选/手填原生 ID 迁移。确认必须经过同一个比较页面，sequence-only 不复制状态；覆盖实际来源下 artifact/metadata/cleanup callback内部的中断，验证 library schema 11 `source_migration_journal` 幂等恢复。
+- 从普通入口完成真实同源版本及跨源搜索/手填原生ID的确认迁移；Mihon原生URL比较及原详情41章无重复已验，确认事务仍开放。sequence-only不复制状态；覆盖实际来源artifact/metadata/cleanup callback内部中断与schema11 journal幂等恢复。
   `metadataCommitted` 后无需目标源在线，只继续旧 source cleanup；journal phase不得触发Home projection revision。真实来源/普通入口证据须与隔离事务phase-boundary及callback内部中断证据分别登记。
 - 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
