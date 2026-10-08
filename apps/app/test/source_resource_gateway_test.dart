@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -142,6 +143,117 @@ void main() {
 
     expect(raw.resolveCalls, 1);
   });
+
+  for (final controlled in <bool>[false, true]) {
+    test('gateway ${controlled ? 'controlled' : 'plain'} full bytes and range '
+        'share the source plan without caching page bodies', () async {
+      final bytes = base64Decode(
+        'R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+      );
+      final transport = _GatewayPlanTransport(bytes);
+      final requests = transport.requests;
+      final origin = Uri.parse('https://fixture.invalid');
+      final raw = _GatewayPlanSource(origin: origin, bytes: bytes);
+      final cache = ResourceCacheManager();
+      addTearDown(cache.close);
+      final source = CachedBrowsableComicSource(source: raw, cache: cache);
+      final downloads = _RecordingDownloads();
+      final gateway = ComicSourceResourceGateway(
+        sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+        directTransport: transport,
+        defaultUserAgentProvider: () => 'global-fallback/1',
+      );
+      addTearDown(gateway.close);
+      gateway.bindTo(downloads);
+      final access = downloads.access!;
+
+      final manifest = await source.loadComic('comic');
+      expect(await source.loadComic('comic'), same(manifest));
+      expect(raw.comicLoads, 1);
+      expect(cache.stats.forKind(ResourceCacheKind.comicDetails).entries, 1);
+      final cover = await gateway.loadArtworkSource(
+        cache: cache, sourceId: source.sourceId, comicId: 'comic',
+        uri: _GatewayPlanSource.cover,
+      ) as MemoryEncodedResourceSource;
+      final cachedCover = await gateway.loadArtworkSource(
+        cache: cache, sourceId: source.sourceId, comicId: 'comic',
+        uri: _GatewayPlanSource.cover,
+      ) as MemoryEncodedResourceSource;
+      expect(cover.bytes, bytes);
+      expect(cachedCover.bytes, same(cover.bytes));
+      expect(requests, hasLength(1));
+      expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 1);
+      final cachedEntries = cache.stats.entries;
+
+      final control = controlled ? _OpenPhaseControl() : null;
+      final full = controlled
+          ? await access.loadBytesControlled!(
+              source.sourceId, _GatewayPlanSource.page, control: control,
+            )
+          : await access.loadBytes!(source.sourceId, _GatewayPlanSource.page);
+      expect(full, bytes);
+      expect(raw.loads, 0, reason: 'full bytes must not call the raw source');
+      expect(raw.resolvedLocators.where((uri) => uri == _GatewayPlanSource.page),
+          <Uri>[_GatewayPlanSource.page]);
+      final response = controlled
+          ? await access.openControlledResponse!(
+              source.sourceId, _GatewayPlanSource.page,
+              range: const ByteRange(start: 17, end: 31),
+              validators: const Validators(etag: '"gateway-body"'),
+              control: control,
+            )
+          : await access.openResponse!(
+              source.sourceId, _GatewayPlanSource.page,
+              range: const ByteRange(start: 17, end: 31),
+              validators: const Validators(etag: '"gateway-body"'),
+            );
+      addTearDown(response.discard);
+      expect(response.statusCode, HttpStatus.partialContent);
+      expect(response.rangeStart, 17);
+      expect(response.totalLength, bytes.length);
+      final chunks = StreamIterator<List<int>>(response.bytes);
+      addTearDown(chunks.cancel);
+      expect(await chunks.moveNext(), isTrue);
+      expect(chunks.current, isNotEmpty);
+      expect(chunks.current.length, lessThanOrEqualTo(7));
+      expect(chunks.current, bytes.sublist(17, 17 + chunks.current.length));
+      expect(transport.rangeEnded, isFalse,
+          reason: 'range must expose bytes before the origin completes');
+      final received = <int>[...chunks.current];
+      transport.finishRange.complete();
+      while (await chunks.moveNext()) {
+        received.addAll(chunks.current);
+      }
+      expect(received, bytes.sublist(17, 32));
+      expect(requests, hasLength(3));
+      expect(requests.map((request) => request.uri.path),
+          <String>['/planned/cover', '/planned/page', '/planned/page']);
+      for (final request in requests) {
+        expect(request.method, 'GET');
+        expect(request.headers['User-Agent'], 'source-plan/1');
+        expect(request.headers['Cookie'], 'fixture=source');
+        expect(request.headers['X-Source-Plan'], 'source-owned');
+      }
+      expect(requests[1].headers[HttpHeaders.rangeHeader], isNull);
+      expect(requests[2].headers[HttpHeaders.rangeHeader], 'bytes=17-31');
+      expect(requests[2].headers[HttpHeaders.ifRangeHeader], '"gateway-body"');
+      expect(transport.controls, <TaskControl?>[null, control, control]);
+      expect(raw.resolvedLocators,
+          <Uri>[_GatewayPlanSource.cover, _GatewayPlanSource.page]);
+      expect(raw.loads, 0, reason: 'full bytes must not call the raw source');
+      expect(cache.stats.entries, cachedEntries);
+      expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 1);
+      expect(cache.stats.forKind(ResourceCacheKind.comicDetails).entries, 1);
+      final coverAfterPage = await gateway.loadArtworkSource(
+        cache: cache, sourceId: source.sourceId, comicId: 'comic',
+        uri: _GatewayPlanSource.cover,
+      ) as MemoryEncodedResourceSource;
+      expect(coverAfterPage.bytes, same(cover.bytes));
+      expect(await source.loadComic('comic'), same(manifest));
+      expect(raw.comicLoads, 1);
+      expect(requests, hasLength(3));
+    });
+  }
 
   test('artwork cache coalesces one source request-plan resolution', () async {
     final locator = Uri.parse('mihon:resource:cover');
@@ -800,6 +912,84 @@ final class _ImageSource
   @override
   Future<ChapterManifest> loadChapter(String chapterId) =>
       throw UnimplementedError();
+}
+
+final class _GatewayPlanTransport implements SourceResourceDirectTransport {
+  _GatewayPlanTransport(this.bytes);
+
+  final Uint8List bytes;
+  final List<ComicResourceRequest> requests = <ComicResourceRequest>[];
+  final List<TaskControl?> controls = <TaskControl?>[];
+  final Completer<void> finishRange = Completer<void>();
+  bool rangeEnded = false;
+
+  @override
+  Future<ByteResponse> open(
+    ComicResourceRequest request, {
+    TaskControl? control,
+  }) async {
+    requests.add(request);
+    controls.add(control);
+    final ranged = request.headers[HttpHeaders.rangeHeader] == 'bytes=17-31';
+    return ByteResponse(
+      bytes: ranged ? _rangeBody() : Stream<List<int>>.value(bytes),
+      statusCode: ranged ? HttpStatus.partialContent : HttpStatus.ok,
+      rangeStart: ranged ? 17 : 0,
+      totalLength: bytes.length,
+      validators: const Validators(etag: '"gateway-body"'),
+      rangeSupported: true,
+    );
+  }
+
+  Stream<List<int>> _rangeBody() async* {
+    yield bytes.sublist(17, 24);
+    await finishRange.future;
+    yield bytes.sublist(24, 32);
+    rangeEnded = true;
+  }
+
+  @override
+  void close() {
+    if (!finishRange.isCompleted) finishRange.complete();
+  }
+}
+
+final class _GatewayPlanSource extends _ResolvedSource {
+  _GatewayPlanSource({required this.origin, required Uint8List bytes})
+      : super(resolvedUri: origin.resolve('/planned/page'), bytes: bytes,
+          requiresRuntimeTransform: false);
+
+  static final cover = Uri.parse('venera:resource:gateway-cover');
+  static final page = Uri.parse('venera:resource:gateway-page');
+  final Uri origin;
+  final List<Uri> resolvedLocators = <Uri>[];
+  int comicLoads = 0;
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) async {
+    resolvedLocators.add(uri);
+    return ComicResourceRequest(
+      uri: origin.resolve(uri == cover ? '/planned/cover' : '/planned/page'),
+      headers: const <String, String>{
+        'User-Agent': 'source-plan/1',
+        'Cookie': 'fixture=source',
+        'X-Source-Plan': 'source-owned',
+      },
+    );
+  }
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) async {
+    comicLoads++;
+    return ComicManifest(
+      comic: Comic(
+        comicId: comicId, sourceId: sourceId, title: 'Fixture',
+        authors: const <String>[], readingDirection: ReadingDirection.ltr,
+        coverUri: cover,
+      ),
+      chapters: const <Chapter>[],
+    );
+  }
 }
 
 final class _OpenPhaseControl implements OpenPhaseReportingTaskControl {

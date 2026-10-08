@@ -25,8 +25,8 @@
     "partial": 34,
     "verified_device": 35,
     "superseded": 2,
-    "pending": 35,
-    "verified_toolchain": 6
+    "pending": 34,
+    "verified_toolchain": 7
   },
   "requirements": [
     {"id": "SWG-PLAN-001", "status": "partial", "current_contract": "Static satisfied decode/retained-ready upload do not restart lane work on role migration. New Profile shows control spike component reduced; visual fixed-position/final-present acceptance still pending.", "remaining_acceptance": ["Fixed-position visual hitch, input and final physical-display correlation; retain the verified no-op control-plane component."], "evidence_reproducibility": "historical_raw_files_missing"},
@@ -73,7 +73,7 @@
     {"id": "SWG-PLAN-042", "status": "verified_device", "current_contract": "Original physical download retry/terminal ownership is verified by FailureRetry6 and actual source-runtime Network.post Pipeline4. ADR0398 repairs only bounded-open cancellation waiting so NetLane retires after source/discard exit; real origins and other clients stay independent.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-043", "status": "verified_device", "current_contract": "Source-card failures emit typed errorCode/errorMessage and decoder failures emit presentation-decode layer. A physical Profile fixture verifies these separate paths without real-origin claims.", "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-044", "status": "verified_toolchain", "current_contract": "真实analyzer、受影响owner测试及Android编译必须通过；保持当前source/resource调用方一致性。", "evidence_reproducibility": "historical_raw_files_missing"},
-    {"id": "SWG-PLAN-045", "status": "pending", "current_contract": "真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。", "evidence_reproducibility": "no_recorded_acceptance"},
+    {"id": "SWG-PLAN-045", "status": "verified_toolchain", "current_contract": "现有Gateway受控transport fixture经原子ChapterResourceAccess同时验plain/controlled完整字节与streaming Range：每种正文共享一次source-resolved plan及source UA/Cookie/headers，Range/If-Range保留且EOF前交付正文；raw source body调用为0。metadata/artwork前后保持同一cache对象及entry，page body不进入response cache。临时副本恢复两条raw full-byte bypass后均被断言拒绝。本项按允许的host fixture验收，使用应用同一SourceResourceDirectTransport注入边界，不代替Android/rhttp或真实origin验收。", "evidence_reproducibility": "current executable gateway fixture; mutation scratch deleted"},
     {"id": "SWG-PLAN-046", "status": "pending", "current_contract": "在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-047", "status": "pending", "current_contract": "Record host-replay/source-client capability decisions. Redirect, Set-Cookie and unknown/source-owned wrappers preserve their source-client semantics. Non-media2xx is sourceMediaSemanticRejected and enters the single bounded source recovery owner; do not replay the same locator through full runtime merely because sourceMediaProtocolMismatch is present. Stateless supported media keeps host streaming.", "remaining_acceptance": ["Actual remaining Mihon/Venera origins, wrappers, redirect and Cookie variants and typed semantic rejection/replacement; selected Cookie8/FailureRetry6 cases remain accepted."], "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-048", "status": "pending", "current_contract": "全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。", "evidence_reproducibility": "no_recorded_acceptance"},
@@ -155,18 +155,18 @@
   "validation": {
     "command": "bash tool/check.sh --require-toolchains",
     "exit_code": 0,
-    "dart_flutter_tests": 2334,
+    "dart_flutter_tests": 2336,
     "analyzers": 27,
     "Rust_tests": 22,
     "Android_native_tests": 112,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Reuse the all3 ordinary Profile/minified Release builds verified on the same production inputs in d895d864. Actual Profile69c1425d/PID8301 verifies JM ordinary artwork and EH crop/size presentation in058/059. Restore ordinary minified Release67e4e4d0/PID14195 to Home; its five static entries are unique and task forwards are empty. All3 JNI symbols/build IDs pass again. Preserve the prior two native-input comparisons per device mode and original41-chapter/history acceptance in025.",
-    "Android_native_tests_scope": "Native gate112 passes: plugin_host_bridge85, app3, local_media_bridge7 and vendor file_selector_android17. The vendor Robolectric4.12.1/Mockito fixture needs test-only SDK34, cached ASM9.9 and net.bytebuddy.experimental=true under JDK25; a temporary init script limits these to its unit-test runtime and is deleted. Production SDK, dependencies and Gradle files are unchanged. All available native tasks complete; unchanged tasks may be Gradle up-to-date.",
-    "scope": "Fresh required gate passes in308.2s:2334 Dart-Flutter tests/27 suites/27 analyzers/Rust22/three-ABI Debug and repository/docs/ownership/platform contracts, with3 existing quarantined skips. Native112 and all6 ordinary packages reuse the same production-input validation from d895d864; all3 JNI checks pass again. Actual Profile artwork listeners, role keys and cache-byte identity close058/059. This change updates documentation and deletes completed test artifacts; original19/20, real mutable aliases/confirmed transactions, physical input, GC and final-display/performance remain open.",
-    "artifact_retention": ".log keeps4 original reported traces and1 necessary source APK (11,137,690 bytes), without bulk relocation. Existing rules require minimum open-issue inputs, overwrite current outputs and remove completed/duplicate captures immediately, including private cache. The two unreferenced Flutter crash logs (7717 bytes), current screenshots and all host/device JAR/XML/forward scratch are deleted; test TemporaryDirectory is cleaned on exit. Private device evidence retains166 files (162355587 bytes), including5 reused current validation/build/XML files and minimum open-issue inputs; all32 current-production GC inputs remain. No new audit, trace, snapshot or permanent manifest.",
-    "device_fixture": "058/059 use existing real JM1480022 detail/comments and EH4096962 detail/expanded previews with ordinary source settings. Inline same-PID VM inspection verifies mounted listeners and actual cache/provider byte identity; visual observation verifies ready crop images. Prior Home58/source-card23 and025 native-input/history acceptance keep their recorded scope. This round does not rerun those fixtures or perform a confirmed migration.",
-    "input_delivery": "Exact unique accessibility actions verify ordinary detail, comments and preview expansion. Single-chapter shelf ACTION_CLICK enters Reader, so use ACTION_LONG_CLICK for details; the earlier empty view is not evidence of a detail failure. Current Profile VM PID8301 matches the device during all artwork checks. Physical touch and performance remain unverified. Release is restored to Home; task JAR/XML/screenshots/forwards are removed."
+    "ordinary_package_acceptance": "Reuse native112 and all3 ordinary Profile/minified Release packages verified against unchanged production inputs in d895d864; none is newly rerun or rebuilt here. Fresh three-ABI Debug and JNI symbol/build-ID checks pass. Last observed ordinary Release67e4e4d0/PID14195/Home remains the installation record; no device action this change.",
+    "Android_native_tests_scope": "Reuse prior native gate112 against identical production inputs: plugin_host_bridge85, app3, local_media_bridge7 and vendor file_selector_android17. The vendor Robolectric4.12.1/Mockito fixture needs test-only SDK34, cached ASM9.9 and net.bytebuddy.experimental=true under JDK25; a temporary init script limits these to its unit-test runtime and is deleted. Production SDK, dependencies and Gradle files are unchanged. All available native tasks complete; unchanged tasks may be Gradle up-to-date.",
+    "scope": "Fresh required gate passes in310.4s:2336 Dart-Flutter tests/27 suites/27 analyzers/Rust22/three-ABI Debug and repository/docs/ownership/platform contracts, with3 existing quarantined skips. All3 JNI checks pass again; native112 and six ordinary packages reuse d895d864 production-input validation. Two Gateway fixtures plus two rejected raw-bypass mutations close045 at the application transport-injection boundary. Linux rhttp execution is unverified: its librhttp.so is absent in the host test environment. No production changes; original19/20, mutable aliases/confirmed migration, physical input, GC and final display remain open.",
+    "artifact_retention": ".log retains4 original reported traces and1 necessary source APK (11,137,690 bytes). Keep only minimum open-issue inputs, overwrite current validation/XML and delete completed or duplicate captures immediately, including private cache. Fixture, initialization-probe, mutation and full-check TemporaryDirectory objects clean up on success or failure. Existing validation.log is overwritten; no new audit, trace, snapshot or cleanup manifest. The32 current-production GC inputs remain for their open criterion.",
+    "device_fixture": "This change uses the existing executable Gateway test with a controlled SourceResourceDirectTransport and bounded producer latch; no socket, fixed delay, ADB or device capture. Existing058/059 real artwork/listener acceptance and025 ordinary native-alias/history acceptance retain their recorded scopes.",
+    "input_delivery": "No device input in this change. Retain the prior exact accessibility-route conclusions without extending them to physical touch or performance; those criteria remain open."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -178,7 +178,7 @@
     "Original19/20 intermittent loading, active visual/input/GC/fixed-position/final display.",
     "Real source generation, source-declared predecessor/notification and ordinary confirmed live-origin migration.",
     "Full Cloudflare/browser cookie attributes/unknown mirror identity and default system-DNS physical exit.",
-    "All other specifically unverified current112 criteria and honest missing raw evidence recovery/revalidation."
+    "All other explicitly open current112 criteria. Missing historical raw files or cleanup of completed captures alone does not reopen accepted scope; revalidate only a changed contract or fresh failure."
   ],
   "parent_acceptance_complete": false,
   "historical_record": "docs/archive/audits/state-governance-closure-2026-10-01.json",
