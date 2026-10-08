@@ -34,6 +34,8 @@ def main():
         help='Run the build with ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY=true')
     mode.add_argument('--partial-metadata-only', action='store_true',
         help='Run the build with ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY=true')
+    mode.add_argument('--capacity-only', action='store_true',
+        help='Run the build with ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY=true')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     record = {'fixture_source_sha256': hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
@@ -48,7 +50,8 @@ def main():
         result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
         record['commands'].append({'command': command, 'begin_ns': begin,
             'end_ns': time.time_ns(), 'exit_code': result.returncode,
-            'stdout': result.stdout, 'stderr': result.stderr})
+            'stdout': result.stdout[-4096:], 'stderr': result.stderr[-4096:],
+            'stdout_chars': len(result.stdout), 'stderr_chars': len(result.stderr)})
         save()
         if required and result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
@@ -182,7 +185,7 @@ def main():
                     if rows[-1]['case'] == 'complete':
                         if rows[-1]['status'] != 'passed':
                             raise RuntimeError('Dart body fixture failed: ' + str(rows[-1]))
-                        expected_count = (1 if args.transition_only or args.partial_metadata_only else 2 if args.partial_only
+                        expected_count = (1 if args.transition_only or args.partial_metadata_only or args.capacity_only else 2 if args.partial_only
                             else 4 if args.partial_failures_only else 6)
                         expected_rows = 4 if args.transition_only else expected_count + 1
                         if len(rows) != expected_rows or rows[-1]['cases'] != expected_count:
@@ -191,13 +194,15 @@ def main():
                             'transition-zero-current'} if args.transition_only else
                             {'partial-first-presentation', 'partial-cold-reentry'} if args.partial_only else
                             {'partial-network-metadata'} if args.partial_metadata_only else
+                            {'capacity'} if args.capacity_only else
                             {'partial-range-EOF', 'partial-range-mismatch', 'partial-full-body-EOF',
                                 'partial-network-metadata'} if args.partial_failures_only else
                             {f'{plane}-{case}' for plane in ('static', 'animated')
                                 for case in ('first-download', 'cold-READY', 'route-cancellation')})
                         if {row['case'] for row in rows[:-1]} != expected:
                             raise RuntimeError('Missing or duplicated Pipeline case')
-                        expected_requests = (2 if args.transition_only or args.partial_only or args.partial_metadata_only else
+                        expected_requests = (7 if args.capacity_only else
+                            2 if args.transition_only or args.partial_only or args.partial_metadata_only else
                             5 if args.partial_failures_only else 4)
                         if rows[-1]['actual_HTTP_requests'] != expected_requests:
                             raise RuntimeError('Cold READY reopened origin or lost cancellation input')

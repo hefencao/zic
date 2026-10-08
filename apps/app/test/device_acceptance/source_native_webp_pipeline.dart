@@ -34,6 +34,7 @@ const _transitionOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_TRANSITION_
 const _partialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY');
 const _partialFailuresOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY');
 const _partialMetadataOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY');
+const _capacityOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -61,17 +62,20 @@ Future<void> main() async {
   ExternalPluginResourceTransportPool? pool;
   _Composition? current;
   try {
-    _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly]
+    _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly,
+      _capacityOnly]
       .where((enabled) => enabled).length <= 1, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
       "class SourceNativeWebpPipelineFixture extends ComicSource {name='Fixture';"
       "key='$_key';version='1';url='https://fixture.invalid';"
       "explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];"
-      "comic={onThumbnailLoad:(uri)=>({method:uri.includes('/partial-range-')?'GET':'POST',"
+      "comic={onThumbnailLoad:(uri)=>({method:(uri.includes('/partial-range-')||"
+      "uri.includes('/capacity-'))?'GET':'POST',"
       "headers:{Cookie:'acceptance=present','User-Agent':'$_sourceUa'},"
-      "data:uri.includes('/partial-range-')?'':'$_post',"
-      "...((uri.includes('/transition-')||uri.includes('/partial-'))?{}:"
+      "data:(uri.includes('/partial-range-')||uri.includes('/capacity-'))?'':'$_post',"
+      "...((uri.includes('/transition-')||uri.includes('/partial-')||"
+      "uri.includes('/capacity-'))?{}:"
       "{onResponse:async(input)=>input})})};}",
     );
     final plugin = ExternalComicPluginCatalogEntry(
@@ -113,9 +117,12 @@ Future<void> main() async {
       directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
-    if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly) {
+    if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly ||
+        _capacityOnly) {
       if (_transitionOnly) {
         await _transitionCase(root.path, origin, pool, source, wire);
+      } else if (_capacityOnly) {
+        await _capacityCase(root.path, origin, pool, source);
       } else {
         await _partialCase(root.path, origin, pool, source, wire,
           failures: _partialFailuresOnly || _partialMetadataOnly);
@@ -131,7 +138,8 @@ Future<void> main() async {
       await root.delete(recursive: true);
       await _record(<String, Object?>{
         'case': 'complete', 'status': 'passed',
-        'cases': _transitionOnly || _partialMetadataOnly ? 1 : _partialFailuresOnly ? 4 : 2,
+        'cases': _transitionOnly || _partialMetadataOnly || _capacityOnly ? 1 :
+          _partialFailuresOnly ? 4 : 2,
         'production_modified': false, 'host_pid': pid, 'source_pid': sourcePid,
         'actual_HTTP_requests': originRequestsForMode,
         'test_root_removed': !root.existsSync(),
@@ -717,6 +725,160 @@ Future<void> _partialFailures(String path, ImportedChapterRecord record,
   }
 }
 
+Future<void> _capacityCase(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source) async {
+  final path = '$directory/capacity';
+  final readyRecord = _chapter('capacity-ready', origin.uri('/static/capacity-ready'));
+  final readyManifest = readyRecord.toManifest();
+  final readyId = readerPageDownloadId(readyManifest, readyManifest.pages.single);
+  _Composition? active;
+  DownloadTransferConsumer? consumer;
+  try {
+    final warm = await _Composition.open(path);
+    active = warm;
+    final seedLoader = _ObservedLoader(pool.controlledLoaderFor(source, readyId.canonicalUri),
+      selfBoundedOpen: pool.selfBoundsOpenFor(source, readyId.canonicalUri));
+    await _present(readyRecord, warm, seedLoader);
+    final ready = await warm.ready(readyId);
+    await _unmount();
+    await warm.close();
+    active = null;
+
+    final c = await _Composition.open(path);
+    active = c;
+    _require(c.cache.memoryEntryCount == 0 && c.runtime.registry.sessions.isEmpty,
+      'capacity entry retained warm transfer/cache owners');
+    final records = <ImportedChapterRecord>[];
+    final ids = <DownloadId>[];
+    final inputs = <_HeldInput>[];
+    final loaders = <_ObservedLoader>[];
+    final transportSources = <Uri, LoaderTransportSource>{};
+    for (var i = 0; i < 6; i++) {
+      final uri = origin.uri('/animated/capacity-$i');
+      final record = _chapter('capacity-$i', uri);
+      final manifest = record.toManifest();
+      records.add(record);
+      ids.add(readerPageDownloadId(manifest, manifest.pages.single));
+      inputs.add(origin.hold(uri.path)..progressive = true..prefixLength = 16 * 1024);
+      final loader = _ObservedLoader(pool.controlledLoaderFor(source, uri),
+        selfBoundedOpen: pool.selfBoundsOpenFor(source, uri));
+      loaders.add(loader);
+      transportSources[uri] = LoaderTransportSource(openControlledResponse: loader.open,
+        selfBoundedOpen: loader.selfBoundedOpen, revision: ids.last.sourceRevision);
+    }
+    final transport = LoaderTransport(transportSources);
+    consumer = c.runtime.attachConsumer(scopeId: 'fixture-capacity',
+      transportFor: (_) => transport, consumerTraceSink: c.trace,
+      localPhysicalTraceSink: c.trace);
+    final demands = <DownloadId, TransferDemand>{};
+    var revision = 0;
+    void submit() => consumer!.replaceDemands('fixture-capacity', ++revision, demands);
+    for (final id in ids.take(5)) {
+      demands[id] = const TransferDemand(priority: 500, reason: 'capacity-normal',
+        flowTargetFrames: 1);
+    }
+    submit();
+    await Future.wait(inputs.take(5).map((input) => input.headers.future))
+      .timeout(const Duration(seconds: 20));
+    await _until(() => c.lane.transportLeases == 5 && c.lane.active == 5,
+      'five actual normal responses did not own five transport/read leases');
+    final normal = _lane(c);
+    demands[ids.last] = const TransferDemand(priority: 500, reason: 'capacity-normal',
+      flowTargetFrames: 1);
+    submit();
+    await _until(() => c.lane.queued == 1, 'sixth normal request did not remain queued');
+    _require(!inputs.last.headers.isCompleted && c.lane.transportLeases == 5 &&
+      origin.requests.length == 6, 'normal request bypassed the five-lease limit');
+    demands[ids.last] = const TransferDemand(priority: 1000, reason: 'capacity-current');
+    submit();
+    await inputs.last.headers.future.timeout(const Duration(seconds: 20));
+    _require(c.lane.transportLeases == 6 && c.lane.active == 6 &&
+      c.lane.handoffActive == 1, 'current did not use exactly one reserved handoff');
+    final handoff = _lane(c);
+    final sessions = ids.map((id) => c.runtime.findSession(id)!).toList();
+    final epochs = sessions.map((session) => session.snapshot.epoch).toList();
+    final keys = ids.map(c.runtime.owner.taskKeyFor).toList();
+
+    final prefix = _animatedPrefix(origin.bytesFor('animated'), 2) + 64 * 1024;
+    for (var i = 0; i < 5; i++) {
+      await origin.advance(ids[i].canonicalUri.path, prefix);
+      final loopsBefore = c.trace.events.where((e) =>
+        e.kind == TraceEventKind.animationLoop && e.payload['partialPrefix'] == true).length;
+      await _present(records[i], c, loaders[i]);
+      await _until(() => c.trace.events.where((e) => e.kind == TraceEventKind.animationLoop &&
+        e.payload['partialPrefix'] == true).length > loopsBefore,
+        'actual native decode did not prove the parked playable prefix');
+      await _unmount();
+      await c.factory.disposeRetainedSessions();
+      // The pending socket read observes the new credit at its next safe
+      // boundary. Supply actual bytes instead of requiring a silent read to end.
+      await origin.advance(ids[i].canonicalUri.path, prefix + 16 * 1024);
+      await _until(() => c.lane.demandedParkedResponses == i + 1,
+        'flow parking did not release read capacity while keeping demand');
+      _require(c.lane.transportLeases == 6 && c.lane.active == 5 - i &&
+        c.lane.inactiveParkedResponses == 0,
+        'demanded flow parking lost its response lease or kept its read permit');
+    }
+    final parked = _lane(c);
+    final coldLoader = _ObservedLoader(pool.controlledLoaderFor(source, readyId.canonicalUri),
+      selfBoundedOpen: pool.selfBoundsOpenFor(source, readyId.canonicalUri));
+    await _present(readyRecord, c, coldLoader);
+    final cached = c.runtime.findSession(readyId)!;
+    final currentReady = await c.ready(readyId);
+    _require(coldLoader.opens == 0 && origin.requests.length == 7 &&
+      c.lane.transportLeases == 6 && c.lane.active == 1 &&
+      cached.residentBodyBacked && cached.artifact.committedLength == 0 &&
+      c.store.materializedSessionCount == 0 && _sameArtifact(currentReady, ready),
+      'local durable presentation consumed remote capacity or copied the stored artifact');
+    final local = _lane(c);
+    await _unmount();
+    await c.factory.disposeRetainedSessions();
+
+    final beforeResume = sessions.first.committedLength;
+    demands[ids.first] = const TransferDemand(priority: 1000, reason: 'capacity-reacquire');
+    submit();
+    await _until(() => c.lane.active == 2 && c.lane.demandedParkedResponses == 4,
+      'existing current response could not reacquire its read permit');
+    // Commit progress is aggregated at64KiB after the initial prefix; supply
+    // two real quanta rather than mistaking a smaller pending chunk for a stall.
+    await origin.advance(ids.first.canonicalUri.path, beforeResume + 128 * 1024);
+    await _until(() => sessions.first.committedLength > beforeResume,
+      'reacquired response did not consume its actual existing TCP body');
+    _require(c.lane.transportLeases == 6 && loaders.every((loader) => loader.opens == 1) &&
+      c.trace.events.every((e) => e.kind != TraceEventKind.downloadPreempted &&
+        e.kind != TraceEventKind.downloadEvicted && e.kind != TraceEventKind.taskFailed) &&
+      ids.asMap().entries.every((e) => identical(c.runtime.findSession(e.value), sessions[e.key]) &&
+        sessions[e.key].snapshot.epoch == epochs[e.key] &&
+        c.runtime.owner.taskKeyFor(e.value) == keys[e.key]),
+      'capacity/reacquire replaced a demanded physical response or generation');
+    _captureTrace('capacity', c.trace);
+    await consumer.dispose();
+    consumer = null;
+    c.runtime.detachPhysicalTrace(localPhysicalTraceSink: c.trace);
+    await c.close();
+    active = null;
+    await Future.wait(inputs.map((input) => input.peerClosed.future))
+      .timeout(const Duration(seconds: 20));
+    await _record(<String, Object?>{
+      'case': 'capacity', 'status': 'passed',
+      'normal': normal, 'current_handoff': handoff, 'five_demanded_parked': parked,
+      'local_durable_under_pressure': local, 'local_network_requests': coldLoader.opens,
+      'persistent_artifact_session_copies': 0,
+      'same_response_current_reacquire': true, 'same_physical_sessions_and_epochs': true,
+      'preemptions': 0, 'retention_evictions': 0, 'actual_HTTP_requests': origin.requests.length,
+      'all_six_TCP_peers_closed': true, 'composition_exit': c.exitProof,
+    });
+  } finally {
+    if (active != null) {
+      _captureTrace('capacity-failed', active.trace);
+      await _unmount();
+      await consumer?.dispose();
+      active.runtime.detachPhysicalTrace(localPhysicalTraceSink: active.trace);
+      await active.close();
+    }
+  }
+}
+
 int _animatedPrefix(Uint8List bytes, int frames, {bool extendDuration = false}) {
   var offset = 12;
   var found = 0;
@@ -928,7 +1090,8 @@ Future<Map<String, Uint8List>> _inputs(String support) async {
     _require(bytes.length > 512 * 1024 && bytes.length < 8 * 1024 * 1024,
       'staged WebP input size violates the fixed test bounds');
     result[kind] = bytes;
-    if ((_partialOnly || _partialFailuresOnly || _partialMetadataOnly) && kind == 'animated') {
+    if ((_partialOnly || _partialFailuresOnly || _partialMetadataOnly || _capacityOnly) &&
+        kind == 'animated') {
       _animatedPrefix(bytes, 2, extendDuration: true);
     }
   }
@@ -1073,6 +1236,16 @@ final class _Origin {
     socket.add(bytesFor(path.split('/')[1]).sublist(input.sent));
     await socket.flush();
     await socket.close();
+  }
+
+  Future<void> advance(String path, int length) async {
+    final input = held[path]!;
+    _require(length > input.sent && length < bytesFor(path.split('/')[1]).length,
+      'capacity server advance must retain an unsealed actual body');
+    input.keepAlive?.cancel();
+    input.socket!.add(bytesFor(path.split('/')[1]).sublist(input.sent, length));
+    input.sent = length;
+    await input.socket!.flush();
   }
 
   Future<void> finishFault(String path) async {

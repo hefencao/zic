@@ -227,6 +227,7 @@ for row in requirements:
         raise SystemExit(f"{row['id']} hides pending acceptance")
 completed_plan_markers = {
     "SWG-PLAN-008": "证明exact+verified-equivalent miss不materialize durable-store",
+    "SWG-PLAN-009": "009选定可播放/0已解码帧的同response停驻恢复保持",
     "SWG-PLAN-012": "继续Range probe/full-body catch-up的EOF/mismatch",
     "SWG-PLAN-029": "Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner",
     "SWG-PLAN-101": "已有partial动画重入必须从frame0立即播放",

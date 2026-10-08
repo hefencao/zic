@@ -40,9 +40,11 @@ Verified artifact bytes must equal the origin bytes and the claimed body
 hash. Cancellation must close the actual TCP peer and physical task without
 a body claim, READY or frame. All compositions/source/input files close.
 
-The fixture only opens temporary stores. Compare complete user backups
-before/after; the runner restores the ordinary APK in finally and retains
-traces/screenshots. Previous PNG, resolver, Cookie/redirect and body-lifetime
+The fixture only opens temporary stores. The runner restores the ordinary APK
+in finally and overwrites the same purpose trace/results. Command output keeps
+only its last4096 characters and original length, so raw trace/logcat are not
+duplicated into command records. Remove completed captures after recording the
+scoped conclusion. Previous PNG, resolver, Cookie/redirect and body-lifetime
 fixtures stay independent and unchanged.
 
 For the independent zero-frame transition case, build with
@@ -88,6 +90,25 @@ To run only the metadata branch, build with
 `--dart-define=ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY=true` and pass
 `--partial-metadata-only`. Resolve the sidecar through the current durable index
 after physical retirement; the departed warm spool is not its storage owner.
+
+For saturated transport/read capacity, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY=true` and `--capacity-only`.
+The default coordinator admits five actual normal HTTP responses, queues the
+sixth equal-ranked request, then admits it only after current promotion through
+the one reserved handoff. Five native-proven playable responses park while
+retaining demand and all six transport leases; only their read permits release.
+The server supplies a bounded next chunk after current detaches, so the pending
+socket read reaches the Spec's next safe read boundary before parking.
+An independent cold durable Reader presents under this saturation with zero
+origin requests, zero remote capacity and zero persistent-artifact session copies.
+Current reacquisition must continue one existing TCP body/session/epoch/task key
+without eviction, preemption or a second open; all six peers and owners close.
+The resume input supplies128KiB, exceeding the unchanged64KiB commit quantum;
+an uncommitted smaller chunk is not interpreted as stopped transport.
+Server-only output pacing and native decode prove these facts without injecting
+playable evidence or altering the production NetLane or budgets. This mode does
+not prove a blocked retention-exit race, destructive preemption or historical
+real-origin timing acceleration.
 
 This proves selected canonical onResponse/file and ordinary streaming/native
 WebP paths, including the selected unsealed-prefix transition and cold reentry.
