@@ -36,6 +36,7 @@ const _partialFailuresOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIA
 const _partialMetadataOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY');
 const _capacityOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY');
 const _aliasOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_ALIAS_ONLY');
+const _pressureOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PRESSURE_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -64,7 +65,7 @@ Future<void> main() async {
   _Composition? current;
   try {
     _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly,
-      _capacityOnly, _aliasOnly]
+      _capacityOnly, _aliasOnly, _pressureOnly]
       .where((enabled) => enabled).length <= 1, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
@@ -119,13 +120,16 @@ Future<void> main() async {
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
     if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly ||
-        _capacityOnly || _aliasOnly) {
+        _capacityOnly || _aliasOnly || _pressureOnly) {
       if (_transitionOnly) {
         await _transitionCase(root.path, origin, pool, source, wire);
       } else if (_capacityOnly) {
         await _capacityCase(root.path, origin, pool, source);
       } else if (_aliasOnly) {
         await _aliasCases(root.path, origin, pool, source);
+      } else if (_pressureOnly) {
+        await _pressureCase(root.path, origin, pool, source, retention: false);
+        await _pressureCase(root.path, origin, pool, source, retention: true);
       } else {
         await _partialCase(root.path, origin, pool, source, wire,
           failures: _partialFailuresOnly || _partialMetadataOnly);
@@ -1008,6 +1012,159 @@ Future<void> _capacityCase(String directory, _Origin origin,
   }
 }
 
+// Only the two remaining pressure branches. Real source/TCP operations exit
+// normally; no production Future, lane capacity or cancellation is replaced.
+Future<void> _pressureCase(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source,
+    {required bool retention}) async {
+  final label = retention ? 'retention-exit-reacquire' : 'body-read-preemption';
+  final c = await _Composition.open('$directory/$label');
+  DownloadTransferConsumer? consumer;
+  final ids = <DownloadId>[];
+  final inputs = <_HeldInput>[];
+  final loaders = <_ObservedLoader>[];
+  final sources = <Uri, LoaderTransportSource>{};
+  final demands = <DownloadId, TransferDemand>{};
+  var revision = 0;
+  var armed = false;
+  var victim = -1;
+  var target = -1;
+  bool? resumedDuringExit;
+  var cancellationDuringLease = false;
+  final keys = <String>[];
+  void submit() => consumer!.replaceDemands(label, ++revision, demands);
+  final observed = CallbackTraceSink((event) {
+    c.trace.record(event);
+    if (victim >= 0 && resumedDuringExit == null &&
+        event.payload['stage'] == 'transport-flow-control' &&
+        <String>['resumed', 'pseudo-resumed'].contains(event.payload['action'])) {
+      resumedDuringExit = c.lane.isActive(keys[victim]) &&
+        c.lane.isCancelled(keys[victim]) &&
+        c.lane.diagnosticSnapshotOf(keys[target])?.responseReadPermitHeld == true;
+    }
+  });
+  final requestsBefore = origin.requests.length;
+  try {
+    for (var i = 0; i < 7; i++) {
+      final uri = origin.uri('/animated/capacity-pressure-$label-$i');
+      final manifest = _chapter('$label-$i', uri).toManifest();
+      ids.add(readerPageDownloadId(manifest, manifest.pages.single));
+      // Leave room for transport fragmentation and the existing64KiB commit
+      // quantum; a server write is not an authoritative session boundary.
+      inputs.add(origin.hold(uri.path)..prefixLength = 128 * 1024);
+      final loader = _ObservedLoader(pool.controlledLoaderFor(source, uri),
+        selfBoundedOpen: pool.selfBoundsOpenFor(source, uri));
+      if (retention && i < 2) {
+        loader.onCancelled = () {
+          if (!armed || victim >= 0) return;
+          victim = i;
+          target = 1 - i;
+          cancellationDuringLease = c.lane.isActive(keys[victim]) &&
+            c.lane.isCancelled(keys[victim]) &&
+            c.lane.transportLeaseHeldOf(keys[victim]) == true;
+          // Test-owned current command at the actual cancellation boundary.
+          // The trace callback above only observes the resulting read grant.
+          demands[ids[target]] = const TransferDemand(priority: 1000,
+            reason: 'current-retention-reacquire');
+          submit();
+        };
+      }
+      loaders.add(loader);
+      sources[uri] = LoaderTransportSource(openControlledResponse: loader.open,
+        selfBoundedOpen: loader.selfBoundedOpen, revision: ids.last.sourceRevision);
+    }
+    final transport = LoaderTransport(sources);
+    consumer = c.runtime.attachConsumer(scopeId: label, transportFor: (_) => transport,
+      consumerTraceSink: observed, localPhysicalTraceSink: observed);
+    for (final id in ids.take(5)) {
+      demands[id] = const TransferDemand(priority: 500, reason: 'pressure-original');
+    }
+    submit();
+    await Future.wait(inputs.take(5).map((input) => input.headers.future))
+      .timeout(const Duration(seconds: 20));
+    demands[ids[5]] = const TransferDemand(priority: 1000, reason: 'pressure-original-current');
+    submit();
+    await Future.wait(inputs.take(6).map((input) => input.headers.future))
+      .timeout(const Duration(seconds: 20));
+    await _until(() => ids.take(6).every((id) =>
+      (c.runtime.findSession(id)?.committedLength ?? 0) > 0) &&
+      c.lane.transportLeases == 6 && c.lane.active == 6,
+      'six actual receiving bodies did not commit a nonempty prefix');
+    keys.addAll(ids.take(6).map((id) => c.runtime.owner.taskKeyFor(id)!));
+    final originals = ids.take(6).map((id) => c.runtime.findSession(id)!).toList();
+    final epochs = originals.map((s) => s.snapshot.epoch).toList();
+    if (retention) {
+      for (var i = 0; i < 2; i++) {
+        demands.remove(ids[i]);
+        submit();
+        await origin.advance(ids[i].canonicalUri.path, inputs[i].sent + 64 * 1024);
+        await _until(() => c.lane.inactiveParkedResponses == i + 1,
+          'withdrawn body did not park at its actual safe read boundary');
+      }
+      _require(c.lane.transportLeases == 6 && c.lane.active == 4,
+        'parked original responses released transport ownership');
+      armed = true;
+      demands[ids.last] = const TransferDemand(priority: 780, reason: 'normal-lease-pressure');
+      submit();
+      await _until(() => resumedDuringExit != null, 'current original response never resumed');
+      _require(cancellationDuringLease && resumedDuringExit == true,
+        'current read grant was not observed during actual retention task exit');
+      final before = originals[target].committedLength;
+      await origin.advance(ids[target].canonicalUri.path, inputs[target].sent + 128 * 1024);
+      await _until(() => originals[target].committedLength > before,
+        'current did not read more bytes from its existing TCP response');
+      _require(loaders[target].opens == 1 &&
+        identical(c.runtime.findSession(ids[target]), originals[target]) &&
+        originals[target].snapshot.epoch == epochs[target] &&
+        c.runtime.owner.taskKeyFor(ids[target]) == keys[target],
+        'retention exit replaced the current response/session/epoch/task');
+    } else {
+      demands[ids[5]] = const TransferDemand(priority: 500, reason: 'old-current-demotion');
+      demands[ids.last] = const TransferDemand(priority: 1000, reason: 'blocked-current');
+      submit();
+      await inputs.last.headers.future.timeout(const Duration(seconds: 20));
+      await _until(() => c.trace.events.any((e) => e.kind == TraceEventKind.downloadPreempted),
+        'blocked current did not produce a typed body-read preemption');
+    }
+    armed = false;
+    final preemptions = c.trace.events.where((e) =>
+      e.kind == TraceEventKind.downloadPreempted).toList();
+    final evictions = c.trace.events.where((e) => e.kind == TraceEventKind.downloadEvicted).toList();
+    final cancellations = retention ? evictions : preemptions;
+    _require(cancellations.length == 1 && (retention ? preemptions : evictions).isEmpty &&
+      cancellations.single.payload['partialPreserved'] == true &&
+      cancellations.single.payload['partialState'] == 'idle' &&
+      (!retention || cancellations.single.payload['evictionReason'] ==
+        'inactive-transport-lease-reclaim') &&
+      c.trace.events.every((e) => e.kind != TraceEventKind.taskFailed) &&
+      c.lane.transportLeases <= 6 && c.lane.active <= 6,
+      'pressure lost partial bytes, mixed cancellation owners or exceeded capacity');
+    final requests = origin.requests.length - requestsBefore;
+    _require(requests == (retention ? 6 : 7), 'pressure opened an unexpected response');
+    _captureTrace(label, c.trace);
+    await consumer.dispose();
+    consumer = null;
+    c.runtime.detachPhysicalTrace(localPhysicalTraceSink: observed);
+    await c.close();
+    await Future.wait(inputs.take(requests).map((input) => input.peerClosed.future))
+      .timeout(const Duration(seconds: 20));
+    await _record(<String, Object?>{'case': label, 'status': 'passed',
+      'actual_HTTP_requests': requests, 'all_actual_TCP_peers_closed': true,
+      'typed_preemptions': preemptions.length, 'typed_retention_evictions': evictions.length,
+      'partial_preserved_idle_without_failure': true,
+      if (retention) 'same_response_read_grant_during_retention_exit': resumedDuringExit,
+      'composition_exit': c.exitProof});
+  } finally {
+    armed = false;
+    if (!c.runtime.disposed) {
+      _captureTrace('$label-failed', c.trace);
+      await consumer?.dispose();
+      c.runtime.detachPhysicalTrace(localPhysicalTraceSink: observed);
+      await c.close();
+    }
+  }
+}
+
 int _animatedPrefix(Uint8List bytes, int frames, {bool extendDuration = false}) {
   var offset = 12;
   var found = 0;
@@ -1132,11 +1289,15 @@ final class _ObservedLoader {
   final bool selfBoundedOpen;
   int opens = 0;
   int cancelled = 0;
+  void Function()? onCancelled;
   final deliveries = <String>[];
 
   Future<ByteResponse> open({TaskControl? control, ByteRange? range,
       Validators? validators}) async {
     opens++;
+    if (onCancelled != null && control != null) {
+      unawaited(control.whenCancelled.then<void>((_) => onCancelled?.call()));
+    }
     try {
       final result = await delegate(control: control, range: range, validators: validators);
       deliveries.add(result.diagnostics['sourceRuntimeBodyDelivery'] as String? ??

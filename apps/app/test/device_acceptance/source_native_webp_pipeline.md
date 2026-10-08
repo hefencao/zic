@@ -124,6 +124,18 @@ must exit. This tests physical/exact ownership with test-contributed byte
 equivalence, without claiming Reader UI, native frames or real source-version
 discovery. Previously accepted native/frame cases are skipped.
 
+For the two remaining pressure branches, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_PRESSURE_ONLY=true` and `--pressure-only`.
+Six real source HTTP bodies saturate the unchanged default NetLane. A new
+current must produce one typed body-read preemption and preserve the victim's
+authoritative partial as idle without failure. Separately, two withdrawn
+responses park; actual inactive-lease cancellation triggers a test-owned current
+command for the surviving original response. Observe its read grant while the
+cancelled physical task still owns its lease, then consume more original TCP
+bytes without replacing its session, epoch or task. No production Future is
+delayed, and trace callbacks only observe results. All13 peers and temporary
+owners must close. Previously accepted capacity/native/READY cases are skipped.
+
 This proves selected canonical onResponse/file and ordinary streaming/native
 WebP paths, including the selected unsealed-prefix transition and cold reentry.
 It does not prove Mihon clients, real origins, every partial error branch,
