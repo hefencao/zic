@@ -210,11 +210,11 @@
 ## 3. 验证矩阵
 | 检查项 | 状态 | 说明 |
 |---|---|---|
-| repository / documentation / Dart 静态门禁 | Verified-static | source-first预检helper与CLI提示统一，既有回归先失败后通过；.log仅5个必要原件，完成采集/旧崩溃日志及临时目录直接删除，私有缓存同规则，当前XML/日志覆盖复用。Perfetto成功/失败均清理临时文件且失败保留旧输出 |
+| repository / documentation / Dart 静态门禁 | Verified-static | 当前文档/所有权门禁重跑；.log仅5必要原件，完成trace/helper及时删除，私有缓存同规则；当前XML/日志按用途覆盖。共享临时目录仅删本任务明确路径，Runner退出码须结合实际结果 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 全门禁2342/Rust22/27suite/analyzer、三ABI Debug/JNI及新普通Profile/minified Release通过，3个既有quarantine跳过；native112复用未变Kotlin/native输入。Release ce59d78d/PID17681/Home；物理输入/性能未验 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 本轮仅状态/测试规则，复用相同生产输入的2342/Rust22/27suite/analyzer、三ABI Debug/JNI/普通Profile/minified Release及native112；3个既有quarantine跳过。Release ce59d78d/PID17681/Home；物理输入/性能未验 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device36/toolchain7/superseded2/partial34/pending33。078六种首帧/迟到失败/分类cache边界与普通Release Mihon/Venera三轮离线往返已验：六次真实网络失败只留目标cache/error，恢复后列表正常；临时trace/helper已清理。原19/20、性能及真实alias/迁移开放。
+  当前112项：device36/toolchain7/superseded2/partial35/pending32。008真实八页miss/prepare、103 WNACG/EH切换及1→2→1通过，cold partial与其余来源/category仍开放；078六种cache边界及三轮真实离线往返保持。临时trace/helper已删；原19/20、性能及真实alias/迁移开放。
