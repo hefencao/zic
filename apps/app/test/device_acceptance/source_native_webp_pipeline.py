@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 
 PACKAGE = 'dev.zic.zic'
 REMOTE = 'files/zic-source-native-webp-pipeline-results.json'
@@ -24,6 +25,8 @@ def main():
     parser.add_argument('--sdk-root', type=Path, default=Path(
         os.environ.get('ANDROID_SDK_ROOT', str(Path.home() / 'android-sdk'))))
     parser.add_argument('--timeout', type=int, default=180)
+    parser.add_argument('--transition-only', action='store_true',
+        help='Run the build with ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY=true')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     record = {'fixture_source_sha256': hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
@@ -71,11 +74,32 @@ def main():
         if len(base) != 1 or adb('shell', 'sha256sum', base[0]).stdout.split()[0] != expected:
             raise RuntimeError('Installed APK does not match supplied artifact')
 
+    def drag(start_fraction, end_fraction, duration):
+        # Resolve the actual Reader surface afresh; never reuse device coordinates.
+        remote = '/sdcard/zic-source-native-webp-gesture.xml'
+        try:
+            adb('shell', 'uiautomator', 'dump', remote)
+            xml = adb('shell', 'cat', remote).stdout
+            nodes = [node for node in ET.fromstring(xml).iter('node')
+                if node.get('content-desc') == '正文拖动验收区域']
+            if len(nodes) != 1 or nodes[0].get('enabled') == 'false':
+                raise RuntimeError('Expected one enabled current Reader gesture surface')
+            match = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',
+                nodes[0].get('bounds', ''))
+            if not match:
+                raise RuntimeError('Reader gesture surface has no actual bounds')
+            left, top, right, bottom = map(int, match.groups())
+            if right - left < 100 or bottom - top < 100:
+                raise RuntimeError('Reader gesture surface is clipped or absent')
+            y = (top + bottom) // 2
+            adb('shell', 'input', 'swipe',
+                left + int((right - left) * start_fraction), y,
+                left + int((right - left) * end_fraction), y, duration)
+        finally:
+            adb('shell', 'rm', '-f', remote, required=False)
+
     changed = False
     try:
-        previous = adb('shell', 'run-as', PACKAGE, 'cat', REMOTE, required=False)
-        if previous.returncode == 0:
-            (args.out / 'previous-device-results.json').write_text(previous.stdout)
         adb('shell', 'am', 'force-stop', PACKAGE)
         changed = True
         install(args.fixture_apk, record['fixture_apk']['sha256'])
@@ -112,6 +136,7 @@ def main():
         started = time.monotonic()
         last_count = -1
         screenshots = set()
+        gestures = set()
         while time.monotonic() - started < args.timeout:
             result = adb('shell', 'run-as', PACKAGE, 'cat', REMOTE,
                 required=False, timeout=15)
@@ -128,6 +153,15 @@ def main():
                             rows[-1]['status'], flush=True)
                     save()
                     latest = rows[-1]
+                    if args.transition_only and latest['case'] not in gestures:
+                        if latest['case'] == 'transition-awaiting-drag':
+                            gestures.add(latest['case'])
+                            drag(.8, .55, 1400)
+                        elif latest['case'] == 'transition-awaiting-reverse':
+                            gestures.add(latest['case'])
+                            drag(.8, .2, 700)
+                            time.sleep(.7)
+                            drag(.2, .8, 700)
                     if latest.get('reader_mounted') and latest['case'] not in screenshots:
                         screenshots.add(latest['case'])
                         target = args.out / (latest['case'] + '.png')
@@ -141,13 +175,16 @@ def main():
                     if rows[-1]['case'] == 'complete':
                         if rows[-1]['status'] != 'passed':
                             raise RuntimeError('Dart body fixture failed: ' + str(rows[-1]))
-                        if len(rows) != 7 or rows[-1]['cases'] != 6:
+                        expected_count = 1 if args.transition_only else 6
+                        if len(rows) != (4 if args.transition_only else 7) or rows[-1]['cases'] != expected_count:
                             raise RuntimeError('Incomplete Dart Pipeline case count')
-                        expected = {f'{plane}-{case}' for plane in ('static', 'animated')
-                            for case in ('first-download', 'cold-READY', 'route-cancellation')}
+                        expected = ({'transition-awaiting-drag', 'transition-awaiting-reverse',
+                            'transition-zero-current'} if args.transition_only else
+                            {f'{plane}-{case}' for plane in ('static', 'animated')
+                                for case in ('first-download', 'cold-READY', 'route-cancellation')})
                         if {row['case'] for row in rows[:-1]} != expected:
                             raise RuntimeError('Missing or duplicated Pipeline case')
-                        if rows[-1]['actual_HTTP_requests'] != 4:
+                        if rows[-1]['actual_HTTP_requests'] != (2 if args.transition_only else 4):
                             raise RuntimeError('Cold READY reopened origin or lost cancellation input')
                         record['device_cases_passed'] = True
                         break
@@ -166,12 +203,15 @@ def main():
         if changed:
             adb('shell', 'am', 'force-stop', PACKAGE)
             adb('shell', 'run-as', PACKAGE, 'rm', '-rf', 'files/zic-source-native-webp-inputs')
+            cleanup = adb('shell', 'run-as', PACKAGE, 'rm', '-f', REMOTE,
+                REMOTE + '.trace.jsonl', required=False)
+            record['fixture_device_results_removed'] = cleanup.returncode == 0
             install(args.restore_apk, record['restore_apk']['sha256'])
             adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
             record['ordinary_APK_restored'] = True
             record['ordinary_app_pid'] = adb('shell', 'pidof', PACKAGE).stdout.strip()
         save()
-    print('Six actual source Pipeline/cache/lifecycle cases passed; ordinary APK restored.', flush=True)
+    print('Actual source Pipeline cases passed; ordinary APK restored.', flush=True)
 
 
 if __name__ == '__main__':

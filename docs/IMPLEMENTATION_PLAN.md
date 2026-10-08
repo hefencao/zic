@@ -16,7 +16,6 @@
 - 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 ## P0：Current 首帧 policy/execution 真机闭环
 
-- 首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。
 - network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
 - Venera current pressure经requestId取消现有isolated Dart rhttp请求；JS finished与已接纳native call退出齐备后才转交single-context permit。selected gate/held HTTP取消已验，真实来源长尾和default system-DNS退出另验；不得恢复旧native HTTP owner、改chunk或缩7/3。
 
@@ -96,12 +95,6 @@
 - 让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。
 
 本文件覆盖用户要求的全部产品、性能与来源验收；112项有效状态只读`docs/IMPLEMENTATION_STATE.json`。只验证剩余合同，修改生产前须确认新的失败及根因；更新已有文件，不新增ADR/audit、完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
-
-## P0：Transition 首帧与切页设备闭环
-
-- 验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。
-- 确认目标页网络不等待 current source sealed、完整下载或 holder depth。
-- 验证 transition 首帧后 current 基础水位先于 transition 深水位，且反向拖动不重建同一 identity。
 
 ## P0：Venera requestId 物理取消闭环
 

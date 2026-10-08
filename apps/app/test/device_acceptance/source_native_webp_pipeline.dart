@@ -26,6 +26,7 @@ import 'package:zic/startup_platform.dart';
 const _key = 'source_native_webp_pipeline_fixture';
 const _post = 'native-webp-fixture-post';
 const _sourceUa = 'SourceNativeWebpFixture/1';
+const _transitionOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -60,7 +61,8 @@ Future<void> main() async {
       "explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];"
       "comic={onThumbnailLoad:(uri)=>({method:'POST',"
       "headers:{Cookie:'acceptance=present','User-Agent':'$_sourceUa'},"
-      "data:'$_post',onResponse:async(input)=>input})};}",
+      "data:'$_post',...(uri.includes('/transition-')?{}:"
+      "{onResponse:async(input)=>input})})};}",
     );
     final plugin = ExternalComicPluginCatalogEntry(
       format: ExternalComicPluginFormat.veneraJavaScript,
@@ -101,6 +103,27 @@ Future<void> main() async {
       directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
+    if (_transitionOnly) {
+      await _transitionCase(root.path, origin, pool, source, wire);
+      await session.close();
+      session = null;
+      pool.close();
+      pool = null;
+      await origin.close();
+      origin = null;
+      await Directory('$support/zic-source-native-webp-inputs').delete(recursive: true);
+      await root.delete(recursive: true);
+      await _record(<String, Object?>{
+        'case': 'complete', 'status': 'passed', 'cases': 1,
+        'production_modified': false, 'host_pid': pid, 'source_pid': sourcePid,
+        'actual_HTTP_requests': 2, 'test_root_removed': !root.existsSync(),
+        'all_test_compositions_and_source_session_closed': true,
+        'test_inputs_removed': !Directory('$support/zic-source-native-webp-inputs').existsSync(),
+        'real_origin_or_final_display_performance_proven': false,
+      });
+      _status('拖动首帧验收通过');
+      return;
+    }
     for (final plane in <String>['static', 'animated']) {
       final record = _chapter(plane, origin.uri('/$plane/full'));
       final manifest = record.toManifest();
@@ -273,17 +296,158 @@ ImportedChapterRecord _chapter(String label, Uri uri) => ImportedChapterRecord(
 
 void _mount(ImportedChapterRecord record, _Composition composition,
     _ObservedLoader loader, VoidCallback onFirstFrame) {
-  runApp(MaterialApp(key: UniqueKey(), home: ImportedImageChapterScreen(
+  _mountPages(record, composition,
+    <String, _ObservedLoader>{record.pages.single.sourceId: loader}, onFirstFrame);
+}
+
+void _mountPages(ImportedChapterRecord record, _Composition composition,
+    Map<String, _ObservedLoader> loaders, VoidCallback onFirstFrame,
+    {bool gestureTarget = false}) {
+  final screen = ImportedImageChapterScreen(
     record: record, pipelineFactory: composition.factory,
     staticPresentation: composition.presentation, traceSink: composition.trace,
     responseSources: <String, LocalImageResponseSource>{
-      record.pages.single.sourceId: LocalImageResponseSource(
-        openControlledResponse: loader.open,
-        selfBoundedOpen: loader.selfBoundedOpen,
+      for (final entry in loaders.entries) entry.key: LocalImageResponseSource(
+        openControlledResponse: entry.value.open,
+        selfBoundedOpen: entry.value.selfBoundedOpen,
       ),
     },
+    initialReaderSettings: gestureTarget ? const ReaderSessionSettings(
+      comicSpecificEnabled: true, directionOverride: ReadingDirection.ltr,
+      verticalStitchOverride: false) : const ReaderSessionSettings(),
     onFirstPresentationFrame: onFirstFrame,
-  )));
+  );
+  runApp(MaterialApp(key: UniqueKey(), home: gestureTarget
+    ? Semantics(container: true, explicitChildNodes: true,
+        label: '正文拖动验收区域', child: screen)
+    : screen));
+}
+
+Future<void> _until(bool Function() condition, String reason) async {
+  final timer = Stopwatch()..start();
+  while (!condition()) {
+    _require(timer.elapsed < const Duration(seconds: 30), reason);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+Future<void> _transitionCase(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source,
+    _Wire wire) async {
+  final currentUri = origin.uri('/animated/transition-current');
+  final nextUri = origin.uri('/animated/transition-next');
+  final held = origin.hold(currentUri.path)..progressive = true;
+  final record = ImportedChapterRecord(
+    directoryId: 'fixture:transition', displayName: 'Transition fixture',
+    sourceId: 'venera:source_native_webp_pipeline_fixture', comicId: 'fixture-comic',
+    chapterId: 'transition', sourceRevision: 'fixture-r1',
+    pages: <ImportedPageRecord>[
+      for (final uri in <Uri>[currentUri, nextUri]) ImportedPageRecord(
+        displayName: 'page.webp', sourceId: uri.toString(), pageId: uri.path,
+        mediaFormat: 'webp', contentKindHint: ContentKindHint.webp),
+    ],
+  );
+  final manifest = record.toManifest();
+  final ids = manifest.pages.map((page) => readerPageDownloadId(manifest, page)).toList();
+  final loaders = <String, _ObservedLoader>{
+    for (final uri in <Uri>[currentUri, nextUri]) uri.toString(): _ObservedLoader(
+      pool.controlledLoaderFor(source, uri), selfBoundedOpen: pool.selfBoundsOpenFor(source, uri)),
+  };
+  wire.beginCase();
+  final composition = await _Composition.open('$directory/transition');
+  final trace = composition.trace;
+  try {
+    _mountPages(record, composition, loaders, () {}, gestureTarget: true);
+    await held.headers.future.timeout(const Duration(seconds: 20));
+    await _until(() => composition.runtime.findSession(ids[1])?.snapshot.committedLength != null &&
+      composition.runtime.findSession(ids[1])!.snapshot.committedLength > 0 &&
+      trace.events.any((e) => e.kind == TraceEventKind.decodeState &&
+        e.payload['state'] == 'waitingSource' && e.payload['depth'] == 0),
+      'current did not wait at zero frames while neighbor predownload committed');
+    _require(trace.events.every((e) => e.kind != TraceEventKind.frameDecoded &&
+      e.kind != TraceEventKind.firstFrameReady && e.kind != TraceEventKind.taskFailed),
+      'fixture did not establish zero-frame current and unpresented neighbor');
+    final currentIdentity = trace.events.firstWhere((e) =>
+      e.kind == TraceEventKind.decodeRefill && e.payload['role'] == 'current').identityHash;
+    final sessions = ids.map(composition.runtime.findSession).toList();
+    final epochs = sessions.map((session) => session!.snapshot.epoch).toList();
+    await _record(<String, Object?>{
+      'case': 'transition-awaiting-drag', 'status': 'ready',
+      'current_depth': 0, 'current_body_unsealed': true,
+      'target_predownload_committed_bytes': sessions[1]!.snapshot.committedLength,
+      'target_decoded_frames': 0, 'gesture_target': '正文拖动验收区域',
+    });
+    await _until(() => trace.events.any((e) => e.kind == TraceEventKind.firstFrameReady &&
+      e.payload['pageIndex'] == 1), 'real drag target did not present while current was waiting');
+    final targetFrame = trace.events.firstWhere((e) =>
+      e.kind == TraceEventKind.firstFrameReady && e.payload['pageIndex'] == 1);
+    // Coverage diagnostics are sampled, whereas the real transition demand is
+    // reconciled every frame. Its threshold need not have an earlier trace row.
+    await _until(() => trace.events.any((e) => e.kind == TraceEventKind.pageTransition &&
+      (e.payload['targetCoverage'] as num? ?? 0) >= .15 && e.payload['currentIndex'] == 0 &&
+      e.payload['interaction'] == 'dragging'), 'real partial drag did not cross transition coverage');
+    _require(trace.events.every((e) => e.kind != TraceEventKind.frameDecoded ||
+      e.identityHash != currentIdentity), 'current frame arrived before independent target');
+    final transitionRefill = trace.events.firstWhere((e) =>
+      e.kind == TraceEventKind.decodeRefill && e.payload['role'] == 'transition');
+    _require(transitionRefill.monotonicMicros <= targetFrame.monotonicMicros &&
+      transitionRefill.payload['depth'] == 0 && transitionRefill.payload['target'] == 1,
+      'transition did not bootstrap its own single frame');
+    await origin.release(currentUri.path);
+    await _until(() => trace.events.any((e) => e.kind == TraceEventKind.decodeState &&
+      e.identityHash == currentIdentity && e.payload['state'] == 'ready' &&
+      (e.payload['depth'] as num? ?? 0) >= 3), 'current bootstrap did not recover after body release');
+    final bootstrap = trace.events.firstWhere((e) =>
+      e.kind == TraceEventKind.decodeState && e.identityHash == currentIdentity &&
+      e.payload['state'] == 'ready' && (e.payload['depth'] as num? ?? 0) >= 3);
+    _require(trace.events.every((e) => e.kind != TraceEventKind.decodeRefill ||
+      e.monotonicMicros >= bootstrap.monotonicMicros ||
+      !<String>['transition', 'next', 'next2', 'previous'].contains(e.payload['role']) ||
+      (e.payload['target'] as num? ?? 0) <= 1),
+      'neighbor deep refill preceded current bootstrap');
+    await _record(<String, Object?>{
+      'case': 'transition-awaiting-reverse', 'status': 'ready',
+      'reader_mounted': true, 'target_first_frame_current_depth_zero': true,
+      'current_bootstrap_before_neighbor_deep_refill': true,
+      'target_mount_to_first_frame_micros': targetFrame.payload['mountToFirstFrameMicros'],
+    });
+    await _until(() => trace.events.any((e) => e.kind == TraceEventKind.readerObservation &&
+      e.payload['currentIndex'] == 1), 'forward gesture did not make target current');
+    final forward = trace.events.lastWhere((e) =>
+      e.kind == TraceEventKind.readerObservation && e.payload['currentIndex'] == 1);
+    await _until(() => trace.events.any((e) => e.kind == TraceEventKind.readerObservation &&
+      e.monotonicMicros > forward.monotonicMicros && e.payload['currentIndex'] == 0),
+      'reverse gesture did not restore original current');
+    for (var i = 0; i < ids.length; i++) {
+      _require(identical(sessions[i], composition.runtime.findSession(ids[i])) &&
+        sessions[i]!.snapshot.epoch == epochs[i], 'reverse drag replaced media identity or epoch');
+    }
+    final sourcePlanPreserved = origin.requests.every((r) => r['method_POST'] == true &&
+      r['nonempty_Cookie_preserved'] == true && r['source_UA_preserved'] == true &&
+      r['nonempty_POST_body_preserved'] == true);
+    _require(loaders.values.every((loader) => loader.opens == 1) && origin.requests.length == 2 &&
+      sourcePlanPreserved &&
+      trace.events.every((e) => e.kind != TraceEventKind.taskFailed) && wire.transforms == 0,
+      'gesture reopened source, failed or bypassed progressive delivery');
+    _captureTrace('transition-zero-current', trace);
+    await _unmount();
+    await composition.close();
+    await _record(<String, Object?>{
+      'case': 'transition-zero-current', 'status': 'passed',
+      'target_first_frame_current_depth_zero': true,
+      'current_bootstrap_before_neighbor_deep_refill': true,
+      'reverse_same_physical_sessions_and_epochs': true,
+      'actual_HTTP_requests': origin.requests.length,
+      'source_plan_POST_Cookie_UA_body_preserved': sourcePlanPreserved,
+      'composition_exit': composition.exitProof,
+    });
+  } finally {
+    if (composition.exitProof == null) {
+      _captureTrace('transition-failed-case', trace);
+      await _unmount();
+      await composition.close();
+    }
+  }
 }
 
 Future<void> _present(ImportedChapterRecord record, _Composition composition,
@@ -393,7 +557,8 @@ final class _ObservedLoader {
     opens++;
     try {
       final result = await delegate(control: control, range: range, validators: validators);
-      deliveries.add(result.diagnostics['sourceRuntimeBodyDelivery'] as String);
+      deliveries.add(result.diagnostics['sourceRuntimeBodyDelivery'] as String? ??
+        result.diagnostics['sourceOpenPath'] as String);
       return result;
     } on Object catch (error) {
       if (error is Failure && error.code == ErrorCode.cancelled) cancelled++;
@@ -513,6 +678,9 @@ final class _HeldInput {
   final peerClosed = Completer<void>();
   Socket? socket;
   int? peerClosedAt;
+  bool progressive = false;
+  int sent = 0;
+  Timer? keepAlive;
 }
 
 final class _Origin {
@@ -556,9 +724,21 @@ final class _Origin {
         socket.listen((_) {}, onDone: closed, onError: (Object _) => closed());
         socket.add(ascii.encode('HTTP/1.1 200 OK\r\nContent-Type: image/webp\r\n'
           'Content-Length: ${output.length}\r\nConnection: close\r\n\r\n'));
-        socket.add(output.sublist(0, 4096));
+        input.sent = input.progressive ? 16 * 1024 : 4096;
+        socket.add(output.sublist(0, input.sent));
         await socket.flush();
         input.headers.complete();
+        if (input.progressive) {
+          input.keepAlive = Timer.periodic(const Duration(seconds: 1), (_) {
+            // Server output pacing keeps actual TCP alive, below a complete frame.
+            if (input.sent >= 64 * 1024 || input.peerClosed.isCompleted) {
+              input.keepAlive?.cancel();
+              return;
+            }
+            socket.add(output.sublist(input.sent, input.sent + 1024));
+            input.sent += 1024;
+          });
+        }
       } else {
         request.response.headers.contentType = ContentType('image', 'webp');
         request.response.contentLength = output.length;
@@ -571,8 +751,20 @@ final class _Origin {
     }
   }
 
+  Future<void> release(String path) async {
+    final input = held[path]!;
+    input.keepAlive?.cancel();
+    final socket = input.socket!;
+    socket.add(bytesFor(path.split('/')[1]).sublist(input.sent));
+    await socket.flush();
+    await socket.close();
+  }
+
   Future<void> close() async {
-    for (final input in held.values) { input.socket?.destroy(); }
+    for (final input in held.values) {
+      input.keepAlive?.cancel();
+      input.socket?.destroy();
+    }
     await server.close(force: true);
   }
 }

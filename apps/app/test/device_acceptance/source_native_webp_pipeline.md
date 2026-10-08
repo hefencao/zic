@@ -45,6 +45,20 @@ before/after; the runner restores the ordinary APK in finally and retains
 traces/screenshots. Previous PNG, resolver, Cookie/redirect and body-lifetime
 fixtures stay independent and unchanged.
 
+For the independent zero-frame transition case, build with
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY=true` and pass
+`--transition-only` to the same runner. The server sends an incomplete animated
+prefix on the current page and keeps actual TCP alive below one complete frame.
+The neighbor predownloads through the ordinary source request plan and host
+stream, with no whole-body transform. Fresh XML bounds locate the test-only
+Reader semantics surface for an actual partial drag. The target must produce
+its own first native frame while current remains at zero, then current must
+recover its three-frame bootstrap before neighbor deep refill. Full forward
+and reverse gestures must preserve both physical session objects and epochs
+with only two origin requests. Test-owned server pacing never replaces a
+production Future, scheduler, frame or playback clock. Already accepted six
+file-body cases are skipped in this mode.
+
 This proves selected canonical onResponse/file/native WebP paths only. It
 does not prove Mihon clients, real origins, partial animated streaming,
 Venera whole-input allocation/backpressure, every lifecycle/loop variant,
