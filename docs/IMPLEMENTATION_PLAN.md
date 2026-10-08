@@ -13,7 +13,6 @@
 ## P0：Current 首帧 policy/execution 真机闭环
 
 - network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
-- Venera current pressure经requestId取消现有isolated Dart rhttp请求；JS finished与已接纳native call退出齐备后才转交single-context permit。selected gate/held HTTP取消已验，真实来源长尾和default system-DNS退出另验；不得恢复旧native HTTP owner、改chunk或缩7/3。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
@@ -36,7 +35,6 @@
 
 - 在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。
 - 对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper必须在Pipeline前切回source client，正常无状态媒体保持host streaming。非媒体正文按当前typed semantic recovery有界处理，不因protocol mismatch强制runtime重放。
-- 048的全仓入口/所有权门禁与既有cache/gateway fixtures保持；继续用实际来源trace覆盖metadata/artwork经 `ResourceCacheManager`、Reader正文经page-body API进入DownloadSession/artifact，补齐各入口与runtime生命周期观察。
 - 继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown；真实WNACG1.6受控GET/redirect的正文、原生呈现、冷READY和取消边界见source-mihon-client-pipeline审计。完整输入/canonical整块物化、live stream/backpressure及分配另验，保持原body/cache/NetLane/retry owner。
 
 
@@ -53,7 +51,6 @@
 
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
-- 在同一 Mihon漫画真实raw alias或标题/简介/thumbnail/memo变化后，补browse/details/history canonical namespace稳定性；062已验普通JM往返、简介补全及三处同字节命中，保持这些分量。
 - 在source暂不可用时补真机`mihon:resource:` durable封面命中和durable miss等待来源，不能回退local file loader。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环

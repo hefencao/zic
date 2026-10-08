@@ -236,6 +236,9 @@ completed_plan_markers = {
     "SWG-PLAN-103": "103当前8源选定分页保持",
     "SWG-PLAN-073": "对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断",
     "SWG-PLAN-027": "对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表",
+    "SWG-PLAN-021": "Venera current pressure经requestId取消现有isolated Dart rhttp请求",
+    "SWG-PLAN-048": "048的全仓入口/所有权门禁与既有cache/gateway fixtures保持",
+    "SWG-PLAN-062": "在同一 Mihon漫画真实raw alias或标题/简介/thumbnail/memo变化后",
     "SWG-PLAN-028": "记录 `source-cover:<sourceId>\\0<canonicalComicId>`",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
