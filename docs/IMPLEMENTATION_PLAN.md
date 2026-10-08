@@ -9,7 +9,7 @@
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
-- dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
+- 已验实际unsealed native prefix取消及cold handoff保留1.32MB原字节；继续Range probe/full-body catch-up的EOF/mismatch与network metadata损坏分支，只失败attempt或丢网络知识，旧partial/Ingress保持。DownloadSession/DecodeSession/NetLane、5+1、7/3、2/1及7/5/3/2冻结。
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
@@ -113,6 +113,5 @@
 - dev.228后真机验证改为直接统计`verified-transfer-acquire-alias`的join/rejection及physical state；不得再期待`verified-equivalent-promotion-takeover`。若同一强等价页仍出现独立重复physical owner，先区分“alias前已各自创建”“ambiguous existing owners”“proof尚未恢复”三类，再决定是否扩展TransferKey coverage，不恢复artifact promotion observer。
 - dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
-- 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 ## P1：漫画源、过滤与详情预览设备闭环
 - 当前8源的分类顺序与选定分页已验：WNACG/EH、Mihon JM/Pixiv en/Junmeitu、MangaDex及Venera JM單本完成1→2→1，肉漫屋真实到底禁用分页、EH watched为空且完成。继续未验热门分页、JM explore0/最新A漫/同人及其它语言；只读筛选面板不算应用筛选，连续手势/性能另验。103保留partial。

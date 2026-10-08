@@ -59,7 +59,20 @@ with only two origin requests. Test-owned server pacing never replaces a
 production Future, scheduler, frame or playback clock. Already accepted six
 file-body cases are skipped in this mode.
 
-This proves selected canonical onResponse/file/native WebP paths only. It
-does not prove Mihon clients, real origins, partial animated streaming,
+For cold partial hydration, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY=true` and `--partial-only`.
+Only the staged test animation's ANMF durations change to600ms in memory;
+the server publishes two complete frames with the remaining body unsealed.
+Exact and contributed verified-equivalent misses must not create a session in
+the durable store. Actual native presentation/DecodeSession looping precedes
+physical teardown and TCP closure. New store/cache/transfer/native owners
+then reopen the durable prefix; the second origin sends less than one frame,
+so first-frame playback must use local hydration before network admission.
+Both physical cancellations must preserve the exact, nonshrinking playable
+prefix. EOF/mismatch variants, real origins and performance are separate.
+
+This proves selected canonical onResponse/file and ordinary streaming/native
+WebP paths, including the selected unsealed-prefix transition and cold reentry.
+It does not prove Mihon clients, real origins, every partial error branch,
 Venera whole-input allocation/backpressure, every lifecycle/loop variant,
 original19/20 intermittent loading or final physical display performance.

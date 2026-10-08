@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:domain/domain.dart';
@@ -27,6 +28,7 @@ const _key = 'source_native_webp_pipeline_fixture';
 const _post = 'native-webp-fixture-post';
 const _sourceUa = 'SourceNativeWebpFixture/1';
 const _transitionOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY');
+const _partialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -54,6 +56,7 @@ Future<void> main() async {
   ExternalPluginResourceTransportPool? pool;
   _Composition? current;
   try {
+    _require(!_transitionOnly || !_partialOnly, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
       "class SourceNativeWebpPipelineFixture extends ComicSource {name='Fixture';"
@@ -61,7 +64,7 @@ Future<void> main() async {
       "explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];"
       "comic={onThumbnailLoad:(uri)=>({method:'POST',"
       "headers:{Cookie:'acceptance=present','User-Agent':'$_sourceUa'},"
-      "data:'$_post',...(uri.includes('/transition-')?{}:"
+      "data:'$_post',...((uri.includes('/transition-')||uri.includes('/partial-'))?{}:"
       "{onResponse:async(input)=>input})})};}",
     );
     final plugin = ExternalComicPluginCatalogEntry(
@@ -103,8 +106,12 @@ Future<void> main() async {
       directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
-    if (_transitionOnly) {
-      await _transitionCase(root.path, origin, pool, source, wire);
+    if (_transitionOnly || _partialOnly) {
+      if (_transitionOnly) {
+        await _transitionCase(root.path, origin, pool, source, wire);
+      } else {
+        await _partialCase(root.path, origin, pool, source, wire);
+      }
       await session.close();
       session = null;
       pool.close();
@@ -114,14 +121,14 @@ Future<void> main() async {
       await Directory('$support/zic-source-native-webp-inputs').delete(recursive: true);
       await root.delete(recursive: true);
       await _record(<String, Object?>{
-        'case': 'complete', 'status': 'passed', 'cases': 1,
+        'case': 'complete', 'status': 'passed', 'cases': _transitionOnly ? 1 : 2,
         'production_modified': false, 'host_pid': pid, 'source_pid': sourcePid,
         'actual_HTTP_requests': 2, 'test_root_removed': !root.existsSync(),
         'all_test_compositions_and_source_session_closed': true,
         'test_inputs_removed': !Directory('$support/zic-source-native-webp-inputs').existsSync(),
         'real_origin_or_final_display_performance_proven': false,
       });
-      _status('拖动首帧验收通过');
+      _status(_transitionOnly ? '拖动首帧验收通过' : 'partial重入验收通过');
       return;
     }
     for (final plane in <String>['static', 'animated']) {
@@ -450,6 +457,155 @@ Future<void> _transitionCase(String directory, _Origin origin,
   }
 }
 
+Future<void> _partialCase(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source,
+    _Wire wire) async {
+  final uri = origin.uri('/animated/partial-current');
+  final playableLength = _animatedPrefix(origin.bytesFor('animated'), 2);
+  final held = origin.hold(uri.path)..progressive = true
+    ..prefixLength = playableLength + 64 * 1024;
+  final record = _chapter('partial-current', uri);
+  final manifest = record.toManifest();
+  final id = readerPageDownloadId(manifest, manifest.pages.single);
+  final equivalent = DownloadId(
+    content: const ContentId(sourceId: 'venera:source_native_webp_pipeline_fixture',
+      comicId: 'fixture-predecessor', chapterId: 'predecessor', pageId: 'page-0'),
+    sourceRevision: 'fixture-r0', canonicalUri: uri,
+  );
+  final path = '$directory/partial';
+  _Composition? active;
+  try {
+    final warm = await _Composition.open(path);
+    active = warm;
+    var equivalentLookups = 0;
+    warm.runtime.versionPageAuthority.replaceScope('fixture-confirmed-page',
+      <String, VersionPageReuseResolver>{'page': (candidate) {
+        if (candidate != id) return const <DownloadId>[];
+        equivalentLookups++;
+        return <DownloadId>[equivalent];
+      }});
+    final loader = _ObservedLoader(pool.controlledLoaderFor(source, uri),
+      selfBoundedOpen: pool.selfBoundsOpenFor(source, uri));
+    final first = Completer<void>();
+    _mount(record, warm, loader, () { if (!first.isCompleted) first.complete(); });
+    await held.headers.future.timeout(const Duration(seconds: 20));
+    _require(equivalentLookups > 0 && warm.store.findSession(id) == null &&
+      warm.store.findSession(equivalent) == null,
+      'exact/equivalent cache miss materialized a durable-store DownloadSession');
+    await first.future.timeout(const Duration(seconds: 30));
+    await _until(() => warm.trace.events.any((e) => e.kind == TraceEventKind.animationLoop &&
+      e.payload['partialPrefix'] == true), 'unsealed playable prefix did not loop in DecodeSession');
+    final session = warm.runtime.findSession(id)!;
+    final committedBeforeCancel = session.snapshot.committedLength;
+    final native = warm.trace.events.firstWhere((e) => e.kind == TraceEventKind.frameDecoded);
+    _require(native.payload['frame'] == 0 && native.payload['sourceSealed'] == false &&
+      committedBeforeCancel >= playableLength && loader.opens == 1 && wire.transforms == 0,
+      'first presentation did not consume actual unsealed native WebP');
+    _captureTrace('partial-first-presentation', warm.trace);
+    await _unmount();
+    await warm.close();
+    active = null;
+    await held.peerClosed.future.timeout(const Duration(seconds: 20));
+    await _record(<String, Object?>{
+      'case': 'partial-first-presentation', 'status': 'passed',
+      'exact_and_verified_equivalent_miss_no_store_session': true,
+      'unsealed_native_frame_zero_and_DecodeSession_partial_loop': true,
+      'committed_before_physical_cancel': committedBeforeCancel,
+      'actual_TCP_peer_closed': true, 'composition_exit': warm.exitProof,
+    });
+
+    // The next actual request receives less than a complete frame. Its old
+    // playable prefix must come from durable hydration, not origin catch-up.
+    final coldHeld = _HeldInput()..progressive = true..prefixLength = 4096;
+    origin.held[uri.path] = coldHeld;
+    final cold = await _Composition.open(path);
+    active = cold;
+    _require(!identical(cold.cache, warm.cache) && !identical(cold.runtime, warm.runtime) &&
+      !identical(cold.media, warm.media) && cold.runtime.registry.sessions.isEmpty &&
+      cold.cache.memoryEntryCount == 0, 'cold entry retained previous media or transfer owners');
+    final restored = await cold.store.openPartialDownload(id);
+    _require(restored != null && restored.length >= committedBeforeCancel &&
+      restored.length < origin.bytesFor('animated').length,
+      'physical cancellation lost or sealed the previous playable prefix');
+    final prefix = restored!;
+    final coldLoader = _ObservedLoader(pool.controlledLoaderFor(source, uri),
+      selfBoundedOpen: pool.selfBoundsOpenFor(source, uri));
+    await _present(record, cold, coldLoader);
+    await coldHeld.headers.future.timeout(const Duration(seconds: 20));
+    final coldNative = cold.trace.events.firstWhere((e) => e.kind == TraceEventKind.frameDecoded);
+    final hydration = cold.trace.events.firstWhere((e) => e.kind == TraceEventKind.artifactSource &&
+      e.payload['stage'] == 'physical-local-prepare' && e.payload['action'] == 'local-hydration-ready');
+    final started = cold.trace.events.firstWhere((e) => e.kind == TraceEventKind.downloadStarted);
+    _require(coldNative.payload['frame'] == 0 && coldNative.payload['sourceSealed'] == false &&
+      (coldNative.payload['sourceLength'] as num) <= prefix.length &&
+      hydration.monotonicMicros < started.monotonicMicros &&
+      (started.payload['committedLength'] as num) >= prefix.length &&
+      coldHeld.sent < prefix.length && coldLoader.opens == 1,
+      'cold first frame waited for provider bytes or local prefix followed network admission');
+    await _until(() => cold.trace.events.any((e) => e.kind == TraceEventKind.animationLoop &&
+      e.payload['partialPrefix'] == true), 'cold native prefix did not resume its own loop');
+    _captureTrace('partial-cold-reentry', cold.trace);
+    await _unmount();
+    await cold.close();
+    active = null;
+    await coldHeld.peerClosed.future.timeout(const Duration(seconds: 20));
+    final stored = await _Composition.open(path);
+    active = stored;
+    final after = await stored.store.openPartialDownload(id);
+    _require(after != null && after.length >= prefix.length,
+      'second physical cancellation shrank durable partial');
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in after!.open(start: 0)) { bytes.add(chunk); }
+    final actual = bytes.takeBytes();
+    final expected = origin.bytesFor('animated');
+    _require(actual.length == after.length && actual.asMap().entries.every((e) =>
+      e.value == expected[e.key]) && origin.requests.length == 2,
+      'cold reentry/cancellation changed playable prefix bytes or duplicated provider requests');
+    await stored.close();
+    active = null;
+    await _record(<String, Object?>{
+      'case': 'partial-cold-reentry', 'status': 'passed',
+      'new_store_cache_transfer_native_owners': true,
+      'durable_prefix_bytes': prefix.length, 'after_cancel_prefix_bytes': after.length,
+      'local_hydration_before_provider_started': true,
+      'native_frame_zero_from_unsealed_durable_prefix': true,
+      'DecodeSession_partial_loop_resumed': true,
+      'actual_TCP_peer_closed': true, 'two_cancellations_preserve_exact_origin_prefix': true,
+      'actual_HTTP_requests': origin.requests.length, 'composition_exit': cold.exitProof,
+    });
+  } finally {
+    if (active != null) {
+      _captureTrace('partial-failed-case', active.trace);
+      await _unmount();
+      await active.close();
+    }
+  }
+}
+
+int _animatedPrefix(Uint8List bytes, int frames, {bool extendDuration = false}) {
+  var offset = 12;
+  var found = 0;
+  var prefix = 0;
+  while (offset + 8 <= bytes.length) {
+    final size = ByteData.sublistView(bytes, offset + 4, offset + 8).getUint32(0, Endian.little);
+    final end = offset + 8 + size + (size & 1);
+    _require(end <= bytes.length, 'invalid sealed fixture RIFF chunk');
+    if (String.fromCharCodes(bytes.sublist(offset, offset + 4)) == 'ANMF') {
+      found++;
+      if (extendDuration) {
+        // Test-only600ms frames make a two-frame unsealed prefix playable.
+        bytes[offset + 20] = 600 & 255;
+        bytes[offset + 21] = 600 >> 8;
+        bytes[offset + 22] = 0;
+      }
+      if (found == frames) prefix = end;
+    }
+    offset = end;
+  }
+  _require(prefix > 0 && found == 4, 'fixture is not the expected four-frame WebP');
+  return prefix;
+}
+
 Future<void> _present(ImportedChapterRecord record, _Composition composition,
     _ObservedLoader loader) async {
   final first = Completer<void>();
@@ -637,6 +793,7 @@ Future<Map<String, Uint8List>> _inputs(String support) async {
     _require(bytes.length > 512 * 1024 && bytes.length < 8 * 1024 * 1024,
       'staged WebP input size violates the fixed test bounds');
     result[kind] = bytes;
+    if (_partialOnly && kind == 'animated') _animatedPrefix(bytes, 2, extendDuration: true);
   }
   return result;
 }
@@ -681,6 +838,7 @@ final class _HeldInput {
   bool progressive = false;
   int sent = 0;
   Timer? keepAlive;
+  int? prefixLength;
 }
 
 final class _Origin {
@@ -724,14 +882,15 @@ final class _Origin {
         socket.listen((_) {}, onDone: closed, onError: (Object _) => closed());
         socket.add(ascii.encode('HTTP/1.1 200 OK\r\nContent-Type: image/webp\r\n'
           'Content-Length: ${output.length}\r\nConnection: close\r\n\r\n'));
-        input.sent = input.progressive ? 16 * 1024 : 4096;
+        input.sent = input.prefixLength ?? (input.progressive ? 16 * 1024 : 4096);
         socket.add(output.sublist(0, input.sent));
         await socket.flush();
         input.headers.complete();
         if (input.progressive) {
+          final maximum = input.sent + 48 * 1024;
           input.keepAlive = Timer.periodic(const Duration(seconds: 1), (_) {
             // Server output pacing keeps actual TCP alive, below a complete frame.
-            if (input.sent >= 64 * 1024 || input.peerClosed.isCompleted) {
+            if (input.sent >= maximum || input.peerClosed.isCompleted) {
               input.keepAlive?.cancel();
               return;
             }

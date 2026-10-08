@@ -25,8 +25,11 @@ def main():
     parser.add_argument('--sdk-root', type=Path, default=Path(
         os.environ.get('ANDROID_SDK_ROOT', str(Path.home() / 'android-sdk'))))
     parser.add_argument('--timeout', type=int, default=180)
-    parser.add_argument('--transition-only', action='store_true',
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--transition-only', action='store_true',
         help='Run the build with ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY=true')
+    mode.add_argument('--partial-only', action='store_true',
+        help='Run the build with ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY=true')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     record = {'fixture_source_sha256': hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
@@ -175,16 +178,17 @@ def main():
                     if rows[-1]['case'] == 'complete':
                         if rows[-1]['status'] != 'passed':
                             raise RuntimeError('Dart body fixture failed: ' + str(rows[-1]))
-                        expected_count = 1 if args.transition_only else 6
-                        if len(rows) != (4 if args.transition_only else 7) or rows[-1]['cases'] != expected_count:
+                        expected_count = 1 if args.transition_only else (2 if args.partial_only else 6)
+                        if len(rows) != (4 if args.transition_only else 3 if args.partial_only else 7) or rows[-1]['cases'] != expected_count:
                             raise RuntimeError('Incomplete Dart Pipeline case count')
                         expected = ({'transition-awaiting-drag', 'transition-awaiting-reverse',
                             'transition-zero-current'} if args.transition_only else
+                            {'partial-first-presentation', 'partial-cold-reentry'} if args.partial_only else
                             {f'{plane}-{case}' for plane in ('static', 'animated')
                                 for case in ('first-download', 'cold-READY', 'route-cancellation')})
                         if {row['case'] for row in rows[:-1]} != expected:
                             raise RuntimeError('Missing or duplicated Pipeline case')
-                        if rows[-1]['actual_HTTP_requests'] != (2 if args.transition_only else 4):
+                        if rows[-1]['actual_HTTP_requests'] != (2 if args.transition_only or args.partial_only else 4):
                             raise RuntimeError('Cold READY reopened origin or lost cancellation input')
                         record['device_cases_passed'] = True
                         break
