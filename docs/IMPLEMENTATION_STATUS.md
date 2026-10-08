@@ -210,11 +210,11 @@
 ## 3. 验证矩阵
 | 检查项 | 状态 | 说明 |
 |---|---|---|
-| repository / documentation / Dart 静态门禁 | Verified-static | source-first预检helper与CLI提示统一，既有回归先失败后通过；.log留5个必要原件；已完成验收及撤回方案的51个文件直接删除，结论保持。Perfetto成功/两类失败均清理临时文件且失败保留旧输出 |
+| repository / documentation / Dart 静态门禁 | Verified-static | source-first预检helper与CLI提示统一，既有回归先失败后通过；.log仅5个必要原件，完成采集/旧崩溃日志及临时目录直接删除，私有缓存同规则，当前XML/日志覆盖复用。Perfetto成功/失败均清理临时文件且失败保留旧输出 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 全门禁2334/Rust22/27suite/analyzer、三ABI Debug/JNI与六普通包通过，3个既有quarantine跳过；native112通过，vendor测试用临时SDK34/ASM9.9兼容JDK25，生产不变。Release67e4e4d0/PID4416；物理输入/性能未验 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 本轮全门禁2334/Rust22/27suite/analyzer、三ABI Debug/JNI通过，3个既有quarantine跳过；复用同生产输入native112及六普通包，vendor临时SDK34/ASM9.9兼容JDK25。Release67e4e4d0/PID14195/Home；物理输入/性能未验 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device33/toolchain6/superseded2/partial34/pending37。051/061与110–112保持；062普通往返/三处同字节已验，真实mutable alias开放。025原生Mihon URL比较及原详情41章无重复已验，未确认迁移。原加载/物理输入/最终显示开放。
+  当前112项：device35/toolchain6/superseded2/partial34/pending35。058/059真实JM封面/13头像及EH371预览中9裁剪项已验，均单监听/分role。051/061与110–112保持；062真实mutable alias、025确认迁移、原加载/物理输入/最终显示开放。

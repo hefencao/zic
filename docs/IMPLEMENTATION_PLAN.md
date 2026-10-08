@@ -66,11 +66,6 @@
 - 绅士漫画：先取得保留自定义响应/镜像/压缩语义的请求级证明，再验证cover/page直连与 `sourceMediaProtocolMismatch` fallback；不得扩大标准client白名单或改设置使验收通过。
 - Venera：连续修改镜像/设置和完成 Web登录，确认 active source/session不被 replacement；安装超过8个混合外部插件，确认生产32-session上限下不会因第9个开始静默消失。
 
-## P0：详情Artwork API与重复解码设备闭环
-
-- 真机打开含大量预览/评论头像的详情页，确认普通 artwork每项只有一个 provider listener；裁剪/尺寸测量项只有一个显式 ImageStream listener，build/layout与 decode不因加载占位再挂第二个 Image。
-- 对 cover/preview/avatar分别导出 gateway role/cache key，确认详情 loader显式透传 role且不会全部误写入 cover namespace。
-
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
 - 在同一 Mihon漫画真实raw alias或标题/简介/thumbnail/memo变化后，补browse/details/history canonical namespace稳定性；062已验普通JM往返、简介补全及三处同字节命中，保持这些分量。
