@@ -1,5 +1,101 @@
 part of 'source_device_acceptance.dart';
 
+// Actual Activity/WebView capture lifecycle; the user's single handoff file is
+// restored byte-for-byte in finally. No source, library or artifact store opens.
+Future<void> _probeBrowserCancellation() async {
+  final support = await getStartupApplicationSupportPath();
+  if (support == null) throw StateError('browser support path missing');
+  final snapshot = File('$support/zic_network_browser_snapshot.json');
+  final previous = await snapshot.exists() ? await snapshot.readAsBytes() : null;
+  _results = File('$support/zic-source-browser-lifecycle-results.json');
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final held = <HttpResponse>[];
+  final started = <String, Completer<void>>{
+    for (final name in <String>['cancel', 'interrupt']) name: Completer<void>(),
+  };
+  server.listen((request) async {
+    if (request.uri.path == '/ready') {
+      request.response.headers.contentType = ContentType.html;
+      request.response.write('<!doctype html><title>Snapshot fixture ready</title>'
+          '<script>document.cookie="zic_browser_fixture=present; Path=/";'
+          'localStorage.setItem("zic_browser_fixture","present");</script>'
+          '<p>Browser snapshot ready</p>');
+      await request.response.close();
+    } else {
+      held.add(request.response);
+      final signal = started[request.uri.path.substring(1)];
+      if (signal != null && !signal.isCompleted) signal.complete();
+      // No response headers/document: Back or Activity interruption occurs
+      // before any completed page capture is possible.
+    }
+  });
+  const bridge = AndroidNetworkBridge();
+  final ready = Uri.parse('http://127.0.0.1:${server.port}/ready');
+  var passed = true;
+  try {
+    await bridge.openBrowser(ready, cloudflareVerification: true);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    final baseline = jsonDecode(await snapshot.readAsString()) as Map<String, dynamic>;
+    if (baseline['title'] != 'Snapshot fixture ready' ||
+        !(baseline['cookieHeader'] as String).contains('zic_browser_fixture=present') ||
+        baseline['localStorage'] != '{"zic_browser_fixture":"present"}' ||
+        (baseline['userAgent'] as String).isEmpty ||
+        (baseline['updatedAt'] as num) <= 0) {
+      throw StateError('real completed WebView capture missing');
+    }
+    await _record(<String, Object?>{'source': 'browser', 'step': 'completed-capture',
+      'status': 'passed', 'actual_WebView_cookie_storage_and_provider_UA': true});
+    for (final action in <String>['cancel', 'interrupt']) {
+      final pending = bridge.openBrowser(ready.replace(path: '/$action'),
+          cloudflareVerification: true).then<Object?>((_) => null,
+          onError: (Object error) => error);
+      await started[action]!.future.timeout(const Duration(seconds: 20));
+      final atBegin = jsonDecode(await snapshot.readAsString()) as Map<String, dynamic>;
+      const fields = <String>['currentUrl', 'title', 'cookieHeader', 'localStorage',
+        'userAgent', 'updatedAt'];
+      await _record(<String, Object?>{'source': 'browser', 'step': 'awaiting-$action',
+        'status': 'ready', 'response_document_finished': false,
+        'changed_fields_before_action': fields.where((key) => atBegin[key] != baseline[key]).toList()});
+      final result = await pending.timeout(const Duration(seconds: 30));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final after = jsonDecode(await snapshot.readAsString()) as Map<String, dynamic>;
+      final changed = fields.where((key) => after[key] != baseline[key]).toList();
+      final unchanged = changed.isEmpty;
+      passed = passed && unchanged && result != null;
+      await _record(<String, Object?>{'source': 'browser', 'step': action,
+        'status': unchanged && result != null ? 'passed' : 'failed',
+        'snapshot_fields_and_revision_unchanged': unchanged,
+        'changed_fields_after_action': changed,
+        'revision_delta_millis': (after['updatedAt'] as num) - (baseline['updatedAt'] as num),
+        'revision_advanced': after['updatedAt'] != baseline['updatedAt'],
+        'browser_completed_successfully': result == null});
+      // Keep the two cancellation inputs independent even on the old defect.
+      await snapshot.writeAsString(jsonEncode(baseline), flush: true);
+    }
+  } on Object catch (error) {
+    passed = false;
+    await _record(<String, Object?>{'source': 'browser', 'step': 'failure',
+      'status': 'failed', 'errorType': error.runtimeType.toString()});
+  } finally {
+    for (final response in held) {
+      await response.close().catchError((Object _) {});
+    }
+    await server.close(force: true);
+    if (previous != null) {
+      await snapshot.writeAsBytes(previous, flush: true);
+    } else if (await snapshot.exists()) {
+      await snapshot.delete();
+    }
+    final restored = previous == null ? !await snapshot.exists() :
+        jsonEncode(await snapshot.readAsBytes()) == jsonEncode(previous);
+    await _record(<String, Object?>{'source': 'browser', 'step': 'complete',
+      'status': passed && restored ? 'passed' : 'failed',
+      'original_snapshot_restored_exactly': restored,
+      'user_library_or_artifact_index_opened': false,
+      'source_runtime_activated': false, 'HTTP_server_and_responses_closed': true});
+  }
+}
+
 Future<void> _probeFilterOverrides(
   FilterableBrowsableComicSource source,
   String sourceId,

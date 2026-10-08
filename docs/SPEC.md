@@ -1062,6 +1062,10 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `document.readyState=complete`、WebView progress=100以及连续稳定窗口内无可见 Turnstile/challenge form/running容器/`cf-chl-*`/challenge iframe或典型验证中间态，
   才可完成当前 Cookie/UA snapshot handoff；不得把“必须生成新的 `cf_clearance`”作为唯一成功条件。
   已有同站点/同 UA snapshot在新页面成功 capture前 MUST 保留，空 Cookie capture MUST NOT破坏已有非空 handoff。
+  每次导航开始 MUST撤销 capture readiness；立即取消或 Activity销毁 MUST NOT以未完成页面推进已有效 snapshot revision。
+  普通页面 capture MUST属于当前加载完成的 URL；验证页面另须满足上述稳定窗口，迟到 localStorage回调 MUST NOT更新其它导航的 snapshot。
+  验证探针 MUST按实际Boolean ready/challenge协议读取；无效结果 MUST保持未完成验证，不能以字符串比较阻塞加载完成的页面。
+  成功回执 MUST等待当前localStorage capture与Cookie/UA一次提交；浏览器结束后的销毁及迟到回调 MUST NOT补写snapshot revision或污染下一次handoff。
 - Cloudflare 验证浏览器 MUST 使用当前 Android WebView provider 的真实 User-Agent，MUST NOT用插件/OkHttp 的静态 UA覆盖验证 WebView。
   Cookie、localStorage 与真实 WebView UA MUST 属于同一 snapshot revision；
   Mihon runtime消费该 snapshot时必须让同站点 OkHttp请求采用同一 snapshot UA，并同步导入其 Cookie。

@@ -20,6 +20,7 @@ class NetworkBrowserActivity : Activity() {
     private var verificationPageResolved: Boolean? = null
     private var navigationGeneration = 0
     private var challengeFreeSinceUptimeMillis: Long? = null
+    private var captureReadyUrl: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,11 +70,17 @@ class NetworkBrowserActivity : Activity() {
                     navigationGeneration += 1
                     verificationPageResolved = null
                     challengeFreeSinceUptimeMillis = null
+                    captureReadyUrl = null
                 }
 
                 override fun onPageFinished(view: WebView, currentUrl: String) {
-                    captureSnapshot(view, currentUrl)
-                    if (!cloudflareVerification) return
+                    if (!cloudflareVerification) {
+                        if (view.url == currentUrl && view.progress == 100) {
+                            captureReadyUrl = currentUrl
+                            captureSnapshot(view, currentUrl)
+                        }
+                        return
+                    }
                     if (!sameSiteWithRequestedUrl(currentUrl)) {
                         verificationPageResolved = null
                         challengeFreeSinceUptimeMillis = null
@@ -154,7 +161,7 @@ class NetworkBrowserActivity : Activity() {
                         return@evaluateJavascript
                     }
                     verificationPageResolved = true
-                    captureSnapshot(view, currentUrl)
+                    captureReadyUrl = currentUrl
                     completeAndFinish()
                 }
             },
@@ -166,7 +173,7 @@ class NetworkBrowserActivity : Activity() {
         runCatching {
             val value = JSONArray(raw)
             BrowserVerificationState(
-                ready = value.optString(0) == "complete",
+                ready = value.optBoolean(0, false),
                 challengeVisible = value.optBoolean(1, true),
             )
         }.getOrDefault(
@@ -186,23 +193,30 @@ class NetworkBrowserActivity : Activity() {
         finish()
     }
 
-    private fun captureSnapshot(view: WebView, currentUrl: String): String? {
+    private fun captureSnapshot(
+        view: WebView,
+        currentUrl: String,
+        onCaptured: ((Boolean) -> Unit)? = null,
+    ) {
+        // Back/destruction can happen before the new document completes.
+        // Preserve the prior same-site/UA handoff until this navigation is ready.
+        if (captureReadyUrl != currentUrl || view.url != currentUrl) {
+            onCaptured?.invoke(false)
+            return
+        }
+        val generation = navigationGeneration
         val manager = CookieManager.getInstance()
         val requestedUrl = intent.getStringExtra(EXTRA_URL).orEmpty()
-        val cookieHeader = mergeCookieHeaders(
-            manager.getCookie(requestedUrl),
-            manager.getCookie(currentUrl),
-        )
-        NetworkBrowserSnapshotStore.update(
-            context = this,
-            currentUrl = currentUrl,
-            title = view.title,
-            cookieHeader = cookieHeader,
-            userAgent = view.settings.userAgentString,
-        )
         view.evaluateJavascript(
             "JSON.stringify(Object.assign({}, window.localStorage))",
         ) { rawValue ->
+            if (isFinishing || isDestroyed) return@evaluateJavascript
+            if (generation != navigationGeneration ||
+                captureReadyUrl != currentUrl || view.url != currentUrl
+            ) {
+                onCaptured?.invoke(false)
+                return@evaluateJavascript
+            }
             val localStorage = runCatching {
                 JSONArray("[$rawValue]").optString(0).takeIf(String::isNotBlank)
             }.getOrNull()
@@ -217,8 +231,8 @@ class NetworkBrowserActivity : Activity() {
                 localStorageJson = localStorage,
                 userAgent = view.settings.userAgentString,
             )
+            onCaptured?.invoke(true)
         }
-        return cookieHeader
     }
 
     @Suppress("DEPRECATION")
@@ -233,29 +247,40 @@ class NetworkBrowserActivity : Activity() {
     private fun completeAndFinish() {
         if (completing) return
         if (::webView.isInitialized) {
-            val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
-            currentUrl.takeIf(String::isNotBlank)?.let { url ->
-                captureSnapshot(webView, url)
-            }
             if (cloudflareVerification && verificationPageResolved != true) {
                 failAndFinish("Cloudflare verification page is still active")
                 return
             }
-            CookieManager.getInstance().flush()
         } else if (cloudflareVerification) {
             failAndFinish("Cloudflare verification browser did not initialize")
             return
         }
         completing = true
-        setResult(RESULT_OK)
-        finish()
+        fun finishCapture(captured: Boolean) {
+            if (cloudflareVerification && !captured) {
+                setResult(
+                    RESULT_FIRST_USER,
+                    Intent().putExtra(EXTRA_ERROR, "Verification page changed during capture"),
+                )
+            } else {
+                CookieManager.getInstance().flush()
+                setResult(RESULT_OK)
+            }
+            finish()
+        }
+        if (::webView.isInitialized) {
+            val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
+            captureSnapshot(webView, currentUrl, ::finishCapture)
+        } else {
+            finishCapture(true)
+        }
     }
 
     override fun onDestroy() {
         verificationHandler.removeCallbacksAndMessages(null)
         if (::webView.isInitialized) {
             val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
-            if (currentUrl.isNotBlank()) {
+            if (!completing && currentUrl.isNotBlank()) {
                 captureSnapshot(webView, currentUrl)
             }
             CookieManager.getInstance().flush()

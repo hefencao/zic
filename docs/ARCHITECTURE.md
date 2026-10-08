@@ -2387,6 +2387,10 @@ URL选择仍属于 source/request plan。宿主直连前同步投影当前 sourc
 Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览器 session。
 验证模式下 `NetworkBrowserActivity` 不得把插件/OkHttp 的静态 UA 写入 WebView；
 WebView 使用当前 Android WebView provider 的真实 UA，并把该 UA 与同站点 Cookie/localStorage 写入同一 snapshot revision。
+`NetworkBrowserActivity` 在每次导航开始时撤销 capture readiness；普通页面完成加载后才允许 capture，验证页面另须通过原同站点、完整加载及无 challenge 的稳定窗口。
+验证探针的 ready/challenge 结果均为 Boolean，Kotlin 按同一类型读取；无效结果继续保守等待。
+立即返回或 Activity 销毁不能把未完成页面写为新 handoff；迟到 localStorage 回调必须仍属于相同导航和已完成 URL，不能更新后续导航的 snapshot。
+成功回执等待 localStorage capture，与 Cookie/UA 在原 snapshot store 一次提交；已结束 Activity 的销毁和异步回调不再补写 revision，避免污染下一次浏览器 handoff。
 Mihon runtime 读取 snapshot 时不再要求它等于启动前的静态 UA，而是在 OkHttp application interceptor 中对同站点请求逐请求采用 snapshot UA；
 CookieJar 同步导入同一 revision 的 Cookie。
 这样避免 `cf_clearance` 来自真实 WebView、HTTP 请求却继续声明另一浏览器/平台所产生的 Cloudflare 指纹不一致。

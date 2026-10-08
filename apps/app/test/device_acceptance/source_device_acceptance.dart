@@ -8,6 +8,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/material.dart';
+import 'package:network_bridge/network_bridge.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:storage_bridge/storage_bridge.dart';
@@ -34,6 +35,7 @@ const _filterUi = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_FILTER_UI');
 const _contractsOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_CONTRACTS_ONLY');
 const _exportProbePayload = String.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_EXPORT_PAYLOAD');
 const _metadataOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_METADATA_ONLY');
+const _browserOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_BROWSER_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -52,6 +54,10 @@ Future<void> main() async {
   ));
   await waitForFirstFlutterUiDisplayed();
   await attachAndroidPlugin('network_bridge');
+  if (_browserOnly) {
+    await _probeBrowserCancellation();
+    return;
+  }
   await attachAndroidPlugin('plugin_host_bridge');
   if (_metadataOnly) {
     await _probeMetadataFailure();
