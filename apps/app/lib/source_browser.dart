@@ -406,6 +406,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   int _artworkRetryRevision = 0;
   final Map<String, Future<EncodedResourceSource>> _cardCoverFutures =
       <String, Future<EncodedResourceSource>>{};
+  final Map<String, Future<EncodedResourceSource>> _cardCoverSourceFailures =
+      <String, Future<EncodedResourceSource>>{};
   final Map<String, Future<EncodedResourceSource>> _cardCoverDecodeFailures =
       <String, Future<EncodedResourceSource>>{};
   final Set<String> _cardCoverRefreshIntents = <String>{};
@@ -592,6 +594,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   @override
   void dispose() {
     _cardCoverFutures.clear();
+    _cardCoverSourceFailures.clear();
     _cardCoverDecodeFailures.clear();
     _cardCoverRefreshIntents.clear();
     _scroll.dispose();
@@ -1048,8 +1051,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final identity = _sourceCoverIdentity(source, comic);
     final existing = _cardCoverFutures[identity];
     if (existing != null) return existing;
-    final future = _loadSourceCardCoverUncached(source, comic, uri, identity,
-      forceRefresh: _cardCoverRefreshIntents.remove(identity));
+    late final Future<EncodedResourceSource> future;
+    future = _loadSourceCardCoverUncached(source, comic, uri, identity,
+      forceRefresh: _cardCoverRefreshIntents.remove(identity)).catchError(
+        (Object error, StackTrace stackTrace) {
+          if (mounted && identical(_cardCoverFutures[identity], future)) {
+            _cardCoverSourceFailures[identity] = future;
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        },
+      );
     _cardCoverFutures[identity] = future;
     return future;
   }
@@ -1107,10 +1118,17 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final identities = _cardCoverFutures.keys
         .where((identity) => identity.startsWith(prefix)).toList();
     for (final identity in identities) {
-      if (identical(_cardCoverDecodeFailures[identity], _cardCoverFutures[identity])) {
+      final future = _cardCoverFutures[identity];
+      final decodeFailed = identical(_cardCoverDecodeFailures[identity], future);
+      if (!decodeFailed && !identical(_cardCoverSourceFailures[identity], future)) {
+        continue;
+      }
+      // Catalog refresh retries observed failures, not healthy or pending artwork.
+      if (decodeFailed) {
         _cardCoverRefreshIntents.add(identity);
       }
       _cardCoverFutures.remove(identity);
+      _cardCoverSourceFailures.remove(identity);
       _cardCoverDecodeFailures.remove(identity);
     }
   }

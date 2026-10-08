@@ -235,6 +235,8 @@ completed_plan_markers = {
     "SWG-PLAN-092": "若 current 仍断粮，只在 NetLane ranking",
     "SWG-PLAN-103": "103当前8源选定分页保持",
     "SWG-PLAN-073": "对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断",
+    "SWG-PLAN-027": "对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表",
+    "SWG-PLAN-028": "记录 `source-cover:<sourceId>\\0<canonicalComicId>`",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
 for row in requirements:

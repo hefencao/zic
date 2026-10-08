@@ -1265,6 +1265,8 @@ void main() {
     );
     var queryRevision = 0;
     var coverLoads = 0;
+    final initialCover = Completer<EncodedResourceSource>();
+    final trace = MemoryTraceSink();
     String? openedComicId;
     late StateSetter updateHost;
 
@@ -1280,8 +1282,10 @@ void main() {
                 onSourceSelected: (_) {},
                 queryRevision: queryRevision,
                 requestedQuery: '',
+                traceSink: trace,
                 loadCover: (_, __, ___, {bool forceRefresh = false}) async {
                   coverLoads++;
+                  if (coverLoads == 1) return initialCover.future;
                   return MemoryEncodedResourceSource(_tinyPng());
                 },
                 onOpenComic: (_, comic) async {
@@ -1299,6 +1303,15 @@ void main() {
       find.byKey(sourceComicCardKey(source.sourceId, 'stable-comic')),
     );
     expect(coverLoads, 1);
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.descendant(of: find.byKey(comicSourcePullRefreshKey),
+        matching: find.byType(RefreshIndicator)),
+    );
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(coverLoads, 1, reason: 'Catalog refresh keeps the pending artwork Future');
+    initialCover.complete(MemoryEncodedResourceSource(_tinyPng()));
+    await tester.pumpAndSettle();
 
     final owner = find.byKey(
       const ValueKey<String>(
@@ -1307,6 +1320,9 @@ void main() {
     );
     final image = find.descendant(of: owner, matching: find.byType(Image));
     await _pumpUntilFound(tester, image);
+    await tester.runAsync(() => precacheImage(
+      tester.widget<Image>(image).image, tester.element(image)));
+    await tester.pumpAndSettle();
     final originalElement = tester.element(owner);
     final originalImageState = tester.state(image);
     source.browseComicIdOverride = '${source.sourceId}-raw-alias';
@@ -1317,6 +1333,14 @@ void main() {
     await _pumpUntilFound(tester, image);
     expect(tester.element(owner), same(originalElement));
     expect(tester.state(image), same(originalImageState));
+    unawaited(refresh.show());
+    await tester.pumpAndSettle();
+    expect(coverLoads, 1, reason: 'Catalog refresh keeps healthy artwork');
+    expect(tester.state(image), same(originalImageState));
+    expect(trace.events.where((event) =>
+      event.payload['stage'] == 'cover-load-start'), hasLength(1));
+    expect(trace.events.where((event) =>
+      event.payload['stage'] == 'cover-first-frame'), hasLength(1));
     await tester.tap(find.byKey(sourceComicCardKey(source.sourceId, 'stable-comic')));
     await tester.pump();
     expect(openedComicId, source.browseComicIdOverride);
@@ -1581,14 +1605,18 @@ void main() {
       );
     }
     final trace = MemoryTraceSink();
+    final coverLoads = <String, int>{};
     await tester.pumpWidget(MaterialApp(home: Scaffold(
       body: ComicSourcesPage(
         sources: <BrowsableComicSource>[source], activeSourceId: sourceId,
         onSourceSelected: (_) {}, traceSink: trace,
-        loadCover: (_, comic, uri, {bool forceRefresh = false}) => gateway.loadArtworkSource(
-          cache: cache, sourceId: sourceId, comicId: comic.comicId, uri: uri,
-          forceRefresh: forceRefresh,
-        ),
+        loadCover: (_, comic, uri, {bool forceRefresh = false}) {
+          coverLoads.update(comic.comicId, (count) => count + 1, ifAbsent: () => 1);
+          return gateway.loadArtworkSource(
+            cache: cache, sourceId: sourceId, comicId: comic.comicId, uri: uri,
+            forceRefresh: forceRefresh,
+          );
+        },
         onOpenComic: (_, __) async {},
       ),
     )));
@@ -1603,6 +1631,7 @@ void main() {
     unawaited(refresh.show());
     await tester.pumpAndSettle();
     expect(source.loadedResources, <Uri>[brokenUri]);
+    expect(coverLoads, <String, int>{'broken': 2, 'healthy': 1});
     final repaired = await readCachedComicImageSource(
       cache: cache, sourceId: sourceId, comicId: 'broken',
       imageIdentity: brokenUri.toString(),
@@ -1613,6 +1642,7 @@ void main() {
     unawaited(refresh.show());
     await tester.pumpAndSettle();
     expect(source.loadedResources, <Uri>[brokenUri]);
+    expect(coverLoads, <String, int>{'broken': 2, 'healthy': 1});
     expect(tester.takeException(), isNull);
   });
 
@@ -1650,7 +1680,7 @@ void main() {
     );
     unawaited(refresh.show());
     await tester.pumpAndSettle();
-    expect(calls[other.sourceId], 2);
+    expect(calls[other.sourceId], 1);
     update(() => activeSourceId = failed.sourceId);
     await tester.pumpAndSettle();
     expect(calls[failed.sourceId], 1);

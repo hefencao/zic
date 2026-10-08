@@ -581,6 +581,8 @@ schema v1新增 `useFilters` 可缺省兼容但未知字段仍拒绝。Filter不
 不得压缩或重建 catalog 网格，固定搜索浮层和底部来源栏保持独立 repaint boundary。键盘 inset 的递减由浮层自身观察并释放搜索焦点，但保留搜索面板，使下一次返回只关闭面板且不得重新请求 IME。
 普通搜索历史的嵌套滚动复用页面已有收起处理；扩展搜索选项列表仍可滚动选择，上方手柄继续独立控制选项展开。
 browse projection revision 只属于 metadata，不能作为整页 artwork reload token；
+`ComicSourcesPage` 的来源刷新只退休该来源当前 Future 身份上已观察的 source/decode 失败，保留健康和 pending 封面 Future；
+source失败沿原 loader重试，decode失败才转成既有一次性 gateway精确刷新。迟到失败只记入仍对应的 Future，不触发自动请求。
 source card 的 Sliver child 与内部交互祖先 key 都使用来源确认的 canonical comic identity，raw locator变化不得重置封面 State。`sourceComicCardKey` 接受 canonical identity；点击命令仍读取当前 summary 的 raw locator。
 固定大小的 catalog page 仍使用显式上一页/下一页，pager 位于内容滚动尾部。
 列表由 catalog response cache先行投影，但 cache只能服务**当前精确 UI 请求**，不得用“最近 projection”改写 section/query/filter默认状态；

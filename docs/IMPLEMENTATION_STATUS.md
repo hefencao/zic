@@ -45,7 +45,7 @@
 - ADR0397证据保持；融合locator候选76312组等价，但真机288校验仍2592次所选分配，已撤回并恢复原642/Release。保留Unicode/损坏编码2合同测试；候选Profile74/Release99缓存、0下载失败与六静置slider/首尾通过。原加载/固定顿挫、整体GC/输入延迟/最终显示开放。
 - ADR0406 Accepted：HTTP响应Cookie保留domain/name/path、有效期/Secure，镜像抑制限定请求domain/path。15契约/真机9断言通过；浏览器属性及同名重叠未知镜像开放。0403/0405异常分类/BOM保持；Reader/NetLane/URI/revision不变，原19/20加载开放。
 - 同一扩展 bytecode 的 Injekt请求为`Application`+`Json`；host按Mihon `AppBindings`注入`Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把`Json`纳入common-runtime完整性预检。
-- APK识别失败由metadata inspector保留package/key/declared+normalized ABI/resolved entry上下文，缺失值显式标注；仅公有安装元数据经原message/scan/插件错误区投影，不改识别或激活。073真实APK先失败后3/3通过，native86及全门禁/六普通APK通过。
+- APK失败保留公有package/key/ABI/entry诊断，073真机先失败后3/3通过。Source Browse刷新仅重试当前Future身份的source/decode失败，健康/pending不退休；027/028先失败回归及普通Release真机通过，刷新重复load/首帧12→0。Reader/缓存/调度不变。
 - Mihon 新生成的 opaque page locator 现在统一携带稳定 chapter/page replay 坐标；host-direct plan 另带显式 `directPlanReplay`，
   因此过期签名 URL/旧 page plan 可沿既有一次性 source recovery 重取 page list。runtime-transform locator仍使用payload-bound v3：`mihon-runtime-transform-v3:<payload-sha256>`并保留producer payload authority。
   升级前持久化但缺 replay 坐标的普通 `mihon:resource:` locator 会在 Home source-compat gate 判为 legacy 并先刷新 source page list，
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh required2342/Rust22/27suite/analyzer、三ABI Debug/JNI与六普通APK通过；native86新跑、27复用，3既有quarantine跳过。Release aa3e04d0/Home；连续手势/延迟/最终显示开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh required2342/Rust22/27suite/analyzer、三ABI Debug/JNI与六普通APK通过；native86新跑、27复用，3既有quarantine跳过。Release 7ed25237/Home；连续手势/延迟/最终显示开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device48/toolchain10/superseded2/partial32/pending20，52条未完成记录。009真机饱和5/6、demanded停驻/同response恢复及cold durable零网络/副本已收口；010只余退出竞速/破坏性分支，wire013/DNS089/性能独立开放。通过场景停止。
+  当前112项：device50/toolchain10/superseded2/partial30/pending20，50条未完成记录。009真机饱和5/6、demanded停驻/同response恢复及cold durable零网络/副本已收口；010只余退出竞速/破坏性分支，wire013/DNS089/性能独立开放。通过场景停止。

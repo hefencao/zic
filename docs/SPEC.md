@@ -2252,6 +2252,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    Presentation MUST 保持稳定占位，只有显式来源刷新、资源 revision或稳定 identity变化才允许重新加载。
    漫画源显式刷新 MUST 将当前来源已观察的 decode失败作为一次性精确 artwork刷新命令传至 gateway，
    在原 canonical cache key 上重新获取；MUST NOT清空健康封面或其它来源缓存。
+   catalog刷新 MUST保留健康和仍在等待的封面 Future及既有Image State；只重试同来源当前 Future的已观察 source/decode失败，不能因刷新metadata重新获取全部封面。
    迟到的旧 Future 回调 MUST NOT污染当前刷新意图，旧 Image State的错误 MUST NOT被归给不同 provider的新资源。
 2. 实际预览行含横图时 MUST 最多 2 项，纯竖图行 MUST 最多 3 项；为满足该规则 MAY 在相邻三个候选内做一次最小局部重排，并受用户设置的更小上限约束；不得用额外间隔消耗剩余宽度。
 3. 详情与漫画源下拉刷新 MUST 共用同一个组件拥有 edge trigger、位移、刷新进度和成功/失败反馈；结果图标 MUST 与刷新指示器使用同一落点。

@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device48/toolchain10/superseded2/partial32/pending20，52条未完成记录。009饱和5/6、demanded停驻/同response恢复与cold durable零网络/副本收口；010只余退出竞速/破坏性分支，wire013/DNS089/性能开放。Release aa3e04d0/Home。
+- 当前112项：device50/toolchain10/superseded2/partial30/pending20，50条未完成记录。009饱和5/6、demanded停驻/同response恢复与cold durable零网络/副本收口；010只余退出竞速/破坏性分支，wire013/DNS089/性能开放。Release 7ed25237/Home。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -10,9 +10,9 @@
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
 - fresh required2342/27suite/analyzer/Rust22、三ABI Debug/JNI和六普通APK通过；native86新跑、27复用。.log仅6必要原件，完成导出已清理。自动锁屏吞首次触摸已确认；ADB亮屏不证明解锁，现永不自动锁屏，导航无效先核对Keyguard/fresh XML。
-- 073真实APK候选拒绝先失败：原错误丢metadata上下文。修复仅在metadata inspector错误路径保留package/key/declared+normalized ABI/resolved entry，沿原scan/error message供复制；不改候选、加载或source激活。实际APK后3/3、native86与全门禁/六普通APK通过；012已验分支停止。
+- 073错误上下文真机3/3及全门禁已收口。027/028新trace在catalog changed=false前重复获取12张健康封面；修复仅使Source Browse显式刷新重试当前Future的source/decode失败，保留健康/pending。已有回归先失败后通过；Release trace127events/重复load及首帧12→0，已收口。不改Reader/缓存/调度。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- EH139强刷plan2.233s（origin POST2.044s）/host0.680s，首帧sourceWait1.830s；resolver仍warm。334/308续传已验范围保持。设备无dnsresolver服务，日志无可归属异常不证明健康；089默认DNS退出未验。Release aa3e04d0/Home。
+- EH139强刷plan2.233s（origin POST2.044s）/host0.680s，首帧sourceWait1.830s；resolver仍warm。334/308续传已验范围保持。设备无dnsresolver服务，日志无可归属异常不证明健康；089默认DNS退出未验。Release 7ed25237/Home。
 - 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。

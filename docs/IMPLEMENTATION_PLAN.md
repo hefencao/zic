@@ -22,11 +22,6 @@
   `metadataCommitted` 后无需目标源在线，只继续旧 source cleanup；journal phase不得触发Home projection revision。真实来源/普通入口证据须与隔离事务phase-boundary及callback内部中断证据分别登记。
 - 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
-## P0：Source Browse 封面 owner 与筛选入口真机闭环
-
-- 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
-- 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
-
 ## P0：Artwork 生命周期与更新语义真机闭环
 
 - 使用原始报障 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
