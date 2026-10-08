@@ -643,6 +643,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   Mihon 设备发现只覆盖作为系统共享 APK安装的扩展，合并 `getInstalledPackages`、
   `getInstalledApplications` 与已知仓库 package name的精确 `getPackageInfo`；
   每个候选的 manifest、metadata、签名、ABI与 entry失败必须返回诊断，不得静默丢弃。Mihon App私有 `filesDir` 中的扩展不能跨 App读取，必须从 ZIC 仓库独立安装。
+  metadata inspector在候选拒绝及已解析APK校验失败时保留package、metadata键名、declared/normalized ABI与resolved entry文本；
+  缺失或无法解析的值明确标为missing，诊断不导出其它metadata值，也不改变候选/加载校验或激活来源。
+  原失败message经既有MethodChannel/scan投影到插件页可复制错误区，UI不另查APK或反推ABI。
   APK 候选按扩展 feature 或标准 package prefix识别；
   entry/ABI meta-data随后从 manifest原值或字符串资源解析，多个 entry class可用逗号、分号或换行分隔。
   隔离 runtime 的公共网络 ABI只要求 `AndroidCookieJar` 等稳定适配器，`AndroidBrowserCookieSession` 属于 network bridge内部实现，

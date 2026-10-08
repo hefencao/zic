@@ -150,6 +150,28 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun keepsPublicMetadataContextWhenAnApkIsRejected() {
+        val message = mihonMetadataFailureMessage(
+            reason = "Mihon extension entry class is invalid",
+            packageName = "eu.kanade.tachiyomi.extension.zh.fixture",
+            metadataKeys = setOf("tachiyomi.extension.class", "tachiyomix.extensionLib"),
+            declaredExtensionLib = "1.6.0",
+            extensionLib = "1.6",
+            entryClasses = "not a class",
+        )
+        assertTrue(message.startsWith("Mihon extension entry class is invalid\n"))
+        assertTrue(message.contains("package=eu.kanade.tachiyomi.extension.zh.fixture"))
+        assertTrue(message.contains("metadataKeys=[tachiyomi.extension.class, tachiyomix.extensionLib]"))
+        assertTrue(message.contains("declaredExtensionLib=1.6.0\nextensionLib=1.6"))
+        assertTrue(message.contains("entryClasses=not a class"))
+        val missing = mihonMetadataFailureMessage("missing ABI", "fixture", emptySet(),
+            null, null, null)
+        assertTrue(missing.contains("metadataKeys=[]"))
+        assertTrue(missing.contains("declaredExtensionLib=<missing>\nextensionLib=<missing>"))
+        assertTrue(missing.endsWith("entryClasses=<missing>"))
+    }
+
+    @Test
     fun defersImageResolutionWhenTheExtensionReturnsOnlyAPageUrl() {
         assertTrue(shouldDeferMihonPageImage(null))
         assertTrue(shouldDeferMihonPageImage(""))

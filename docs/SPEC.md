@@ -1119,6 +1119,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   多个 entry class MUST 支持逗号、分号或换行分隔。
   候选识别 MAY 使用标准 extension feature/package prefix，但加载前仍 MUST 完成 package、signer、version、ABI 与 entry class 校验。
 - Android 上 Mihon 共享扩展发现 MUST 至少合并系统包枚举与已知 package name精确探测；单个 APK 识别失败 MUST 保留 package、阶段和错误信息，不得被转换为空列表。
+  对已获得PackageInfo的识别失败，错误 MUST保留metadata键名、声明/解析ABI及resolved entry class文本，缺失/解析失败明确标注；
+  诊断 MUST可从既有错误区复制，MUST NOT导出其它metadata值、放宽识别校验或为诊断激活来源。
   系统包可见性受限时 MUST 向用户显示诊断。Mihon 私有 App目录不属于可访问的系统扩展边界，UI MUST 引导用户从 ZIC仓库安装，而不得声称已读取该目录。
 - Production external-plugin runtime MUST use an explicit bounded active-session safety ceiling large enough for mixed installed sources;
   current composition sets 32.

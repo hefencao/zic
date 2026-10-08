@@ -72,7 +72,6 @@
 - 已激活插件连续执行 WebView验证、设置修改和同包更新；故意让 replacement activation失败，旧插件必须继续出现在 activeSources并可请求。
 - 使用直接字符串和 `@string/...` metadata 的真实 Mihon APK分别验证 extensionLib、单入口和多入口 class解析。
 - 记录真实插件重启后Cookie snapshot reset与首个request时序，确认reset先发生；五个插件restart后可读与static common-runtime预检不替代该设备条件。
-- 对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断，不能静默表现为“未检测到”。
 
 ## P0：身份、同源更新与验证设备闭环
 

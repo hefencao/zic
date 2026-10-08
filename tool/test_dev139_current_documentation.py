@@ -234,6 +234,7 @@ completed_plan_markers = {
     "SWG-PLAN-053": "继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace",
     "SWG-PLAN-092": "若 current 仍断粮，只在 NetLane ranking",
     "SWG-PLAN-103": "103当前8源选定分页保持",
+    "SWG-PLAN-073": "对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
 for row in requirements:

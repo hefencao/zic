@@ -182,8 +182,12 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         packageName = packageName,
                         displayName = packageName,
                         stage = "candidate",
-                        error = IllegalArgumentException(
-                            "Installed package does not declare tachiyomi.extension",
+                        error = metadataFailure(
+                            info,
+                            info.applicationInfo?.sourceDir.orEmpty(),
+                            IllegalArgumentException(
+                                "Installed package does not declare tachiyomi.extension",
+                            ),
                         ),
                     )
                 }
@@ -352,7 +356,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun inspectMihonPackage(
         info: PackageInfo,
         apkPath: String,
-    ): Map<String, Any> {
+    ): Map<String, Any> = try {
         require(File(apkPath).isFile) { "APK file does not exist" }
         val applicationInfo = requireNotNull(info.applicationInfo) {
             "APK application metadata is missing"
@@ -382,7 +386,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             ?: throw IllegalArgumentException(
                 "APK must have exactly one current signer; found ${signers.size}",
             )
-        return buildMap {
+        buildMap {
             put("packageName", info.packageName)
             put("signerSha256", sha256(signer.toByteArray()))
             put("versionCode", versionCode(info))
@@ -395,6 +399,33 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             declaredExtensionLib?.let { put("declaredExtensionLib", it) }
             put("entryClasses", entryClasses)
         }
+    } catch (error: IllegalArgumentException) {
+        throw metadataFailure(info, apkPath, error)
+    }
+
+    private fun metadataFailure(
+        info: PackageInfo,
+        apkPath: String,
+        error: IllegalArgumentException,
+    ): IllegalArgumentException {
+        val metadata = info.applicationInfo?.metaData
+        val declared = runCatching {
+            metadataText(info, apkPath, metadata, EXTENSION_LIB_KEYS)
+        }.getOrNull()
+        val entries = runCatching {
+            metadataText(info, apkPath, metadata, ENTRY_CLASS_KEYS)
+        }.getOrNull()
+        return IllegalArgumentException(
+            mihonMetadataFailureMessage(
+                reason = error.mihonScanMessage(),
+                packageName = info.packageName,
+                metadataKeys = metadata?.keySet().orEmpty(),
+                declaredExtensionLib = declared,
+                extensionLib = normalizeMihonExtensionLib(declared, info.versionName),
+                entryClasses = entries,
+            ),
+            error,
+        )
     }
 
     @Suppress("DEPRECATION")
@@ -577,6 +608,18 @@ private fun mihonScanFailure(
 
 private fun metadataValue(metadata: Bundle?, keys: List<String>): Any? =
     keys.firstNotNullOfOrNull { key -> metadata?.get(key) }
+
+internal fun mihonMetadataFailureMessage(
+    reason: String,
+    packageName: String,
+    metadataKeys: Set<String>,
+    declaredExtensionLib: String?,
+    extensionLib: String?,
+    entryClasses: String?,
+): String = "$reason\npackage=$packageName\nmetadataKeys=${metadataKeys.sorted()}" +
+    "\ndeclaredExtensionLib=${declaredExtensionLib ?: "<missing>"}" +
+    "\nextensionLib=${extensionLib ?: "<missing>"}" +
+    "\nentryClasses=${entryClasses ?: "<missing>"}"
 
 internal fun parseMihonEntryClasses(
     packageName: String,

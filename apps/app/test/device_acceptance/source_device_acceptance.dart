@@ -33,6 +33,7 @@ const _extraMihonPlugin = String.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_MIHON_PL
 const _filterUi = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_FILTER_UI');
 const _contractsOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_CONTRACTS_ONLY');
 const _exportProbePayload = String.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_EXPORT_PAYLOAD');
+const _metadataOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_METADATA_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -52,7 +53,42 @@ Future<void> main() async {
   await waitForFirstFlutterUiDisplayed();
   await attachAndroidPlugin('network_bridge');
   await attachAndroidPlugin('plugin_host_bridge');
+  if (_metadataOnly) {
+    await _probeMetadataFailure();
+    return;
+  }
   await _run();
+}
+
+Future<void> _probeMetadataFailure() async {
+  final userRoot = await getDefaultZicStorageRoot(
+    applicationSupportPath: getStartupApplicationSupportPath,
+  );
+  final probeRoot = Directory('$userRoot/source-acceptance-2026-10-01');
+  await probeRoot.create(recursive: true);
+  _results = File('${probeRoot.path}/results.json');
+  final scan = await const AndroidMihonApkMetadataReader().scanInstalled(
+    knownPackageNames: const <String>['dev.zic.zic'],
+  );
+  final failure = scan.failures.singleWhere((f) => f.packageName == 'dev.zic.zic');
+  await _record(<String, Object?>{
+    'source': failure.packageName, 'step': 'metadata-failure-observation',
+    'status': 'passed', 'result': <String, Object?>{
+      'stage': failure.stage, 'errorType': failure.errorType, 'message': failure.message,
+    },
+  });
+  final passed = await _step<bool>('registry', 'metadata-failure-context', () async {
+    if (failure.stage != 'candidate' || scan.extensions.any((e) => e.packageName == 'dev.zic.zic') ||
+        !<String>['package=dev.zic.zic', 'metadataKeys=', 'declaredExtensionLib=',
+          'extensionLib=', 'entryClasses='].every(failure.message.contains)) {
+      throw StateError('Rejected APK lost package/metadata/ABI/entry diagnostics');
+    }
+    return true;
+  }, (_) => <String, Object?>{'public_metadata_only': true, 'unrecognized_APK_rejected': true});
+  await _record(<String, Object?>{
+    'source': 'registry', 'step': 'complete', 'status': passed == true ? 'passed' : 'failed',
+    'user_library_or_artifact_index_opened': false, 'source_runtime_activated': false,
+  });
 }
 
 Future<void> _record(Map<String, Object?> event) async {
