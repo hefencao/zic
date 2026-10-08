@@ -10,9 +10,9 @@
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
 - fresh required2342/27suite/analyzer/Rust22、三ABI Debug/JNI通过；六普通Profile/Release与native112复用同输入。.log仅6必要原件，完成导出已清理。自动锁屏吞首次触摸已确认；ADB亮屏不证明解锁，现永不自动锁屏，导航无效先核对Keyguard/fresh XML。
-- 原EH139–142：139等prefix首帧6.278s，140/141的4.223/5.006s chunk gap含显式停驻；暖页复测自动呈现，未证明cold/已就绪停摆。014关闭；0399/0401–0405/JM标题及标签已验范围保持，原19/20、性能与浏览器/未知镜像开放。
+- 原EH139–142：139等prefix首帧6.278s；140/141的4.223/5.006s gap含显式停驻。顶部强刷139新代0字节约5.343s呈现，2s加载/20s有图，无额外手势；131ms属强刷前。014保持，原预下载/19–20及性能开放。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- EH334续传plan4.822s（origin POST4.062s）/host1.791s，邻居gate等4.811–6.309s；308已有3.942MB partial，149.627ms首帧与2/20s截图吻合，均非cold。089 DNS退出仍未验；VPN/tun0 DNS172.19.0.2无可绑定错误；不由progress gap改DNS/调度。
+- EH139强刷plan2.233s（origin POST2.044s）/host0.680s，首帧sourceWait1.830s；resolver仍warm。334/308续传已验范围保持。设备无dnsresolver服务，日志无可归属异常不证明健康；089默认DNS退出未验。Release ce59d78d/PID26049/Home。
 - 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
