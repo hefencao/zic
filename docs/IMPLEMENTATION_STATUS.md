@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh required2342/Rust22/27suite/analyzer、三ABI Debug/JNI与六普通APK通过；native86新跑、27复用，3既有quarantine跳过。Release 7ed25237/Home；连续手势/延迟/最终显示开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device52/toolchain11/superseded2/partial27/pending20，47条未完成记录。021取消/048全仓入口/062实际Mihon namespace按原条件收口；009及027/028保持。010退出竞速、wire013/DNS089/性能独立开放；不得扩大已验范围或重复测。
+  当前112项：device54/toolchain11/superseded2/partial27/pending18，45条未完成记录。011/098真机B exact复用且A无副本、晚到proof保留2 owner/fresh择优join已收口；021/048/062及009/027/028保持。010退出竞速、wire013/DNS089/性能独立开放；不得扩大已验范围或重复测。

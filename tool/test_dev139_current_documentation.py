@@ -239,6 +239,8 @@ completed_plan_markers = {
     "SWG-PLAN-021": "Venera current pressure经requestId取消现有isolated Dart rhttp请求",
     "SWG-PLAN-048": "048的全仓入口/所有权门禁与既有cache/gateway fixtures保持",
     "SWG-PLAN-062": "在同一 Mihon漫画真实raw alias或标题/简介/thumbnail/memo变化后",
+    "SWG-PLAN-011": "后续真机验证chapter B与Reader A共享physical transfer",
+    "SWG-PLAN-098": "dev.228后真机验证改为直接统计",
     "SWG-PLAN-028": "记录 `source-cover:<sourceId>\\0<canonicalComicId>`",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")

@@ -110,6 +110,20 @@ playable evidence or altering the production NetLane or budgets. This mode does
 not prove a blocked retention-exit race, destructive preemption or historical
 real-origin timing acceleration.
 
+For shared physical transfer/exact durable authority, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_ALIAS_ONLY=true` and `--alias-only`.
+The existing production reader-scope consumer starts an actual source HTTP
+response; the chapter service's B command must join it before releasing the
+test-owned server output. Only B acquires required exact durable bytes, verified
+against the complete origin; A gets no extra durable artifact or HTTP request.
+The second case starts two actual demanded owners before contributing equivalence.
+Late proof must preserve both owners; a fresh equivalent selects a preferred
+promoted owner without a third request. The retired ambiguous-rejection/takeover
+marker is not a current contract. Three TCP peers and all service/source owners
+must exit. This tests physical/exact ownership with test-contributed byte
+equivalence, without claiming Reader UI, native frames or real source-version
+discovery. Previously accepted native/frame cases are skipped.
+
 This proves selected canonical onResponse/file and ordinary streaming/native
 WebP paths, including the selected unsealed-prefix transition and cold reentry.
 It does not prove Mihon clients, real origins, every partial error branch,

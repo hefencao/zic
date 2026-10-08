@@ -35,6 +35,7 @@ const _partialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY')
 const _partialFailuresOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY');
 const _partialMetadataOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY');
 const _capacityOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY');
+const _aliasOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_ALIAS_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -63,7 +64,7 @@ Future<void> main() async {
   _Composition? current;
   try {
     _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly,
-      _capacityOnly]
+      _capacityOnly, _aliasOnly]
       .where((enabled) => enabled).length <= 1, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
@@ -118,11 +119,13 @@ Future<void> main() async {
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
     if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly ||
-        _capacityOnly) {
+        _capacityOnly || _aliasOnly) {
       if (_transitionOnly) {
         await _transitionCase(root.path, origin, pool, source, wire);
       } else if (_capacityOnly) {
         await _capacityCase(root.path, origin, pool, source);
+      } else if (_aliasOnly) {
+        await _aliasCases(root.path, origin, pool, source);
       } else {
         await _partialCase(root.path, origin, pool, source, wire,
           failures: _partialFailuresOnly || _partialMetadataOnly);
@@ -147,7 +150,8 @@ Future<void> main() async {
         'test_inputs_removed': !Directory('$support/zic-source-native-webp-inputs').existsSync(),
         'real_origin_or_final_display_performance_proven': false,
       });
-      _status(_transitionOnly ? '拖动首帧验收通过' : 'partial重入验收通过');
+      _status(_transitionOnly ? '拖动首帧验收通过' :
+        _aliasOnly ? '共享传输验收通过' : 'partial重入验收通过');
       return;
     }
     for (final plane in <String>['static', 'animated']) {
@@ -720,6 +724,131 @@ Future<void> _partialFailures(String path, ImportedChapterRecord record,
         await _unmount();
         await completion?.dispose();
         await composition.close();
+      }
+    }
+  }
+}
+
+Future<void> _aliasCases(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source) async {
+  for (final lateProof in <bool>[false, true]) {
+    final label = lateProof ? 'alias-late-proof' : 'alias-required-exact';
+    final coordinator = DownloadResourceCoordinator();
+    final trace = MemoryTraceSink();
+    final service = await PersistentChapterDownloadService.open('$directory/$label',
+      transferNet: coordinator.networkLane, localReadScheduler: coordinator.localReadScheduler,
+      speculativeEncodedReadBudget: coordinator.speculativeEncodedReadBudget, traceSink: trace);
+    final records = <ImportedChapterRecord>[
+      for (final suffix in <String>['a', 'b', 'c'])
+        _chapter('$label-$suffix', origin.uri('/static/partial-$label-$suffix')),
+    ];
+    final ids = records.map((record) {
+      final manifest = record.toManifest();
+      return readerPageDownloadId(manifest, manifest.pages.single);
+    }).toList();
+    final inputs = <_HeldInput>[
+      origin.hold(ids[0].canonicalUri.path),
+      if (lateProof) origin.hold(ids[1].canonicalUri.path),
+    ];
+    final loaders = <Uri, LoaderTransportSource>{};
+    for (final id in ids) {
+      loaders[id.canonicalUri] = LoaderTransportSource(
+        openControlledResponse: pool.controlledLoaderFor(source, id.canonicalUri),
+        selfBoundedOpen: pool.selfBoundsOpenFor(source, id.canonicalUri),
+        revision: id.sourceRevision);
+    }
+    final transport = LoaderTransport(loaders);
+    service.setChapterResourceAccess(ChapterResourceAccess(
+      openControlledResponse: (_, uri, {range, validators, control}) =>
+        pool.controlledLoaderFor(source, uri)(range: range, validators: validators, control: control),
+    ));
+    final reader = service.transferRuntime.attachConsumer(scopeId: 'reader-$label',
+      transportFor: (_) => transport, consumerTraceSink: trace, localPhysicalTraceSink: trace);
+    final runtime = service.transferRuntime;
+    final initialRequests = origin.requests.length;
+    var closed = false;
+    try {
+      final demands = <DownloadId, TransferDemand>{
+        ids[0]: const TransferDemand(priority: 1000, reason: 'reader-current'),
+        if (lateProof) ids[1]: const TransferDemand(priority: 900, reason: 'reader-transition'),
+      };
+      reader.replaceDemands(label, 1, demands);
+      await Future.wait(inputs.map((input) => input.headers.future))
+        .timeout(const Duration(seconds: 20));
+      final physical = ids.take(lateProof ? 2 : 1).map(runtime.findSession).toList();
+      _require(physical.every((session) => session != null && session.demanded),
+        'actual reader-scope transfer did not own its response');
+      final epoch = physical[0]!.epoch;
+      service.artifactCacheManager.linkEquivalent(first: ids[0], second: ids[1]);
+      if (!lateProof) {
+        final chapter = service.download(ImportedLibraryEntry(chapter: records[1]));
+        await _until(() => runtime.owner.claimCount(ids[1]) == 2,
+          'chapter B did not join the actual reader-scope transfer A');
+        _require(runtime.registry.sessions.length == 1 &&
+          identical(runtime.findSession(ids[1]), physical[0]) && physical[0]!.epoch == epoch,
+          'equivalent acquire created another physical owner or rotated the epoch');
+        await origin.release(ids[0].canonicalUri.path);
+        await Future.wait<void>(<Future<void>>[reader.idle(), chapter])
+          .timeout(const Duration(seconds: 30));
+        final record = await service.artifactStore.index.get(ids[1].key);
+        final bytes = await service.readPage(ImportedLibraryEntry(chapter: records[1]), 0);
+        final expected = origin.bytesFor('static');
+        _require(record?.state == CacheState.ready && record!.pinned &&
+          bytes.length == expected.length &&
+          bytes.asMap().entries.every((e) => e.value == expected[e.key]),
+          'required B exact durable bytes are incomplete or changed');
+        _require(await service.artifactStore.openArtifactStream(ids[0]) == null &&
+          await service.artifactStore.index.get(ids[0].key) == null,
+          'chapter B command created an unnecessary reader-A durable artifact');
+        _require(trace.events.any((e) => e.payload['action'] == 'stored-required-exact-alias') &&
+          trace.events.any((e) => e.payload['stage'] == 'verified-transfer-acquire-alias' &&
+            e.payload['action'] == 'joined-existing-physical'), 'shared exact/physical trace missing');
+      } else {
+        // Proof cannot redirect an exact session that already has demand.
+        reader.replaceDemands(label, 2, demands);
+        _require(runtime.registry.sessions.length == 2 &&
+          identical(runtime.findSession(ids[0]), physical[0]) &&
+          identical(runtime.findSession(ids[1]), physical[1]) &&
+          !identical(physical[0], physical[1]), 'late proof merged existing demanded owners');
+        await Future.wait(ids.take(2).map((id) => origin.release(id.canonicalUri.path)));
+        await reader.idle().timeout(const Duration(seconds: 30));
+        service.artifactCacheManager.linkEquivalent(first: ids[0], second: ids[2]);
+        service.artifactCacheManager.linkEquivalent(first: ids[1], second: ids[2]);
+        demands[ids[2]] = const TransferDemand(priority: 500, reason: 'reader-neighbor');
+        reader.replaceDemands(label, 3, demands);
+        await reader.idle().timeout(const Duration(seconds: 30));
+        _require(runtime.registry.sessions.length == 2 &&
+          physical.any((session) => identical(session, runtime.findSession(ids[2]))) &&
+          trace.events.any((e) => e.payload['stage'] == 'verified-transfer-acquire-alias' &&
+            e.payload['candidateOwners'] == 2 && e.payload['physicalState'] == 'promoted' &&
+            e.payload['selection'] == 'preferred-existing-owner'),
+          'fresh equivalent did not select a preferred existing owner');
+      }
+      _require(origin.requests.length - initialRequests == (lateProof ? 2 : 1) &&
+        trace.events.every((e) => e.kind != TraceEventKind.taskFailed &&
+          e.payload['stage'] != 'verified-equivalent-promotion-takeover'),
+        'equivalence reopened the source, failed or restored a late takeover');
+      await Future.wait(inputs.map((input) => input.peerClosed.future))
+        .timeout(const Duration(seconds: 10));
+      await reader.dispose();
+      await service.close();
+      closed = true;
+      _require(runtime.disposed && runtime.registry.sessions.isEmpty &&
+        coordinator.networkLane.isIdle, 'shared physical owners did not exit');
+      await _record(<String, Object?>{
+        'case': label, 'status': 'passed', 'actual_HTTP_requests': lateProof ? 2 : 1,
+        'trace_summary': _captureTrace(label, trace),
+        'actual_TCP_peers_closed': inputs.length, 'transfer_service_closed': true,
+        'user_library_opened': false, 'test_contributed_equivalence': true,
+        'required_B_exact_readable_A_not_persisted': !lateProof,
+        'existing_demanded_owners_preserved_fresh_alias_selected': lateProof,
+        'UI_or_native_frame_acceptance_claimed': false,
+      });
+    } finally {
+      if (!closed) {
+        _captureTrace('$label-failed', trace);
+        await reader.dispose();
+        await service.close();
       }
     }
   }

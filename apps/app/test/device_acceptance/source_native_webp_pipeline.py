@@ -36,6 +36,8 @@ def main():
         help='Run the build with ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY=true')
     mode.add_argument('--capacity-only', action='store_true',
         help='Run the build with ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY=true')
+    mode.add_argument('--alias-only', action='store_true',
+        help='Run the build with ZIC_SOURCE_NATIVE_WEBP_ALIAS_ONLY=true')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     record = {'fixture_source_sha256': hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
@@ -185,7 +187,7 @@ def main():
                     if rows[-1]['case'] == 'complete':
                         if rows[-1]['status'] != 'passed':
                             raise RuntimeError('Dart body fixture failed: ' + str(rows[-1]))
-                        expected_count = (1 if args.transition_only or args.partial_metadata_only or args.capacity_only else 2 if args.partial_only
+                        expected_count = (1 if args.transition_only or args.partial_metadata_only or args.capacity_only else 2 if args.partial_only or args.alias_only
                             else 4 if args.partial_failures_only else 6)
                         expected_rows = 4 if args.transition_only else expected_count + 1
                         if len(rows) != expected_rows or rows[-1]['cases'] != expected_count:
@@ -195,6 +197,7 @@ def main():
                             {'partial-first-presentation', 'partial-cold-reentry'} if args.partial_only else
                             {'partial-network-metadata'} if args.partial_metadata_only else
                             {'capacity'} if args.capacity_only else
+                            {'alias-required-exact', 'alias-late-proof'} if args.alias_only else
                             {'partial-range-EOF', 'partial-range-mismatch', 'partial-full-body-EOF',
                                 'partial-network-metadata'} if args.partial_failures_only else
                             {f'{plane}-{case}' for plane in ('static', 'animated')
@@ -202,6 +205,7 @@ def main():
                         if {row['case'] for row in rows[:-1]} != expected:
                             raise RuntimeError('Missing or duplicated Pipeline case')
                         expected_requests = (7 if args.capacity_only else
+                            3 if args.alias_only else
                             2 if args.transition_only or args.partial_only or args.partial_metadata_only else
                             5 if args.partial_failures_only else 4)
                         if rows[-1]['actual_HTTP_requests'] != expected_requests:
