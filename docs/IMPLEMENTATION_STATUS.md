@@ -210,11 +210,11 @@
 ## 3. 验证矩阵
 | 检查项 | 状态 | 说明 |
 |---|---|---|
-| repository / documentation / Dart 静态门禁 | Verified-static | 当前文档/所有权门禁重跑；.log仅5必要原件，完成trace/helper及时删除，私有缓存同规则；当前XML/日志按用途覆盖。共享临时目录仅删本任务明确路径，Runner退出码须结合实际结果 |
+| repository / documentation / Dart 静态门禁 | Verified-static | 当前文档/所有权门禁重跑；.log仅6必要原件，完成trace/helper及时删除，私有缓存同规则；当前XML/日志按用途覆盖。共享临时目录仅删本任务明确路径，Runner退出码须结合实际结果 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 状态/测试规则复用同输入的2342/Rust22/27suite/analyzer、三ABI Debug/JNI/Profile/Release及native112；3个既有quarantine跳过。Release ce59d78d/PID17681；普通导航已按误触保护流程通过，连续手势/输入延迟/最终显示开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh required2342/Rust22/27suite/analyzer、三ABI Debug/JNI通过；六普通Profile/Release与native112复用同输入，3既有quarantine跳过。Release ce59d78d/PID23733/Home；自动锁屏已关闭，连续手势/延迟/最终显示开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device36/toolchain7/superseded2/partial35/pending32。008八页miss/prepare保持；103当前8源分类与选定分页已验，未验热门/category/语言仍partial。34浏览均完成，1张冷封面网络reset无此前缓存命中证据；两临时启用源已恢复。导出及时清理；原19/20、cold partial、性能及真实alias/迁移开放。
+  当前112项：device37/toolchain7/superseded2/partial34/pending32。014真实EH warm3+1/阶段已验；139等prefix首帧6.278s，140/141长gap含pacing，暖页复测通过而cold加载开放。ZIC经VPN DNS172.19.0.2，无可绑定DNS错误；progress是Dart交付观测。008/103已验分量保持，原19/20、真实alias/迁移及性能开放。

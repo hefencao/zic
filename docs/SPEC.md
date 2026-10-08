@@ -1529,8 +1529,8 @@ mounted teardown MAY异步请求release，detached prewarm MUST等待该物理re
 GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NOT在旧fetch未完成时发起第二fetch，loading→ready MUST NOT改变媒体子树identity或重建codec。
 实际首帧回报后才可满足该watermark并释放下一张speculative fallback，新的current/transition MAY抢占等待中的后台request。
 真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。
-纵排 dragging/scrolling/settling 期间，任何非 current/transition 且不在真实 viewport 的 speculative static page MUST defer UploadDemand，
-即使其稳定role为 immediate next/next2/previous；其 DecodeDemand MUST保持既有窗口语义，idle后 MAY恢复stable-role static warming。
+纵排 dragging/scrolling/settling 期间，非 current/transition、既不在真实 viewport 也不在既有2/1 deadline窗口的 far/near native speculative static page MUST defer UploadDemand；已就绪local-static与已分类external-static保留现有例外。
+既有2/1中的 next/next2/previous一帧 MAY提前UploadLane/present且 MUST retain；DecodeDemand MUST保持既有窗口语义，idle后 MAY恢复stable-role static warming。
 
 ## 4. 网络调度
 
@@ -1708,6 +1708,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   rhttp response 的HTTP version与匿名 remote-IP hash MAY作为每response一次的低开销诊断随`sourceRead`输出；
   高频receive-progress/raw-body diagnostics MAY在bridge边界记录event/gap/byte统计，
   但普通product/release MUST默认关闭`onReceiveProgress`注册，只有non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS`诊断构建 MAY启用。
+  该progress是限频的Dart stream交付观测，MUST NOT当作独立socket接收时间；正文gap/streamMicros包含consumer pacing与permit停驻，归因网络前 MUST对齐这些区间。
   所有这些字段 MUST observation-only，MUST NOT驱动NetLane、Reader、retry、cache或chunk framing；
   不得仅因current吞吐较低就新增第二个bandwidth scheduler。
   generic 6s transport-open watchdog MAY仅在当前URI的transport显式实现`SelfBoundedOpenTransport`且返回true时省略；

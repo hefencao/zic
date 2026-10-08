@@ -710,10 +710,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   chapter/revision drift, or a no-change failed carrier is fail-closed instead of becoming a retry or content-migration owner.
   The post-first-frame metadata/version task may obtain a fresh source chapter snapshot for version/reuse analysis,
   but it is observation-only for `pages[]`:it must not persist or replace Reader transport carriers.
-  Whole-chapter carrier mutation remains owned by explicit source refresh / legacy-locator migration.
-  Stale-carrier recovery may consume a whole fresh source snapshot when the source API requires it,
-  but persists only the matched failed page back into the previous chapter;
-  unrelated exact locators remain unchanged, and sourceRevision/identity drift is fail-closed.
+  Whole-chapter carrier mutation remains owned by App composition's explicit source refresh,
+  legacy-locator migration and the bounded terminal source recovery above.
   A `PipelineReaderSessionHost` chapter is immutable across every input consumed by the session,
   including page URI, dimensions, byte length, content-kind/animation hints and checksum facts.
   Rebuilding the host is necessary but not sufficient for reuse safety:
@@ -2321,6 +2319,8 @@ Presentation 不得自行构造 HTTP client。
   pure `downloads` 的 Dart HttpClient只作为非Flutter/test默认。
   两者都关闭自动redirect，只有无 Cookie状态变化且直接返回编码媒体时才有资格把字节交给 Pipeline，且平台 transport必须观察同一个 `TaskControl`。
   rhttp持续传输观测只允许通过`ByteResponseReadDiagnostics`在stream结束/取消时snapshot receive-progress与raw-body cadence；
+  当前rhttp的receive-progress由Dart响应stream的onData回调产生并限频20ms，不是独立socket/Rust接收时钟。
+  consumerPacing及body-read permit停驻会影响这些间隔；共同长gap不能单独证明源/CDN慢，需先对齐实际读取与停驻区间。
   HTTP version和匿名endpoint hash仅用于trace。
   该seam不得提供pause/resume、bandwidth quota或priority，也不得进入Reader/Pipeline/session policy；
   Venera source 的图片正文还有一层独立于transport retry的source semantic contract；
@@ -2410,7 +2410,7 @@ physical DownloadSession 的trace identity跟随physical owner token而不是偶
 `decodeRefill` 按 role / stage / source-wake 分桶，并保留 first/last、count 与关键 timing/source revision 的 min/max。
 该合并只属于导出观测，不改变运行时事件或策略；错误、retry、writer rejection、resume/source read、session retain/reuse 和生命周期边缘不得因导出压缩丢失。
 overlapping total 不得与子阶段重复参与 dominant 归因。production rhttp 的HTTP version与匿名endpoint hash属于每response低开销观测；
-高频native receive-progress只允许non-product或显式诊断构建启用，且不得改变transport cadence或成为调度输入。
+高频Dart stream receive-progress只允许non-product或显式诊断构建启用，且不得改变transport cadence或成为调度输入。
 完整关闭遵循依赖逆序：停止新 demand，关闭 upload/decode/download，释放 frame/output/texture，
 关闭 runtime scheduler与 workspace，最后由 App 关闭其创建的平台 facade。外部注入 capability 不由消费方关闭。
 ## 14. 静态门禁
