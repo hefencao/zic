@@ -107,5 +107,3 @@
 - dev.228后真机验证改为直接统计`verified-transfer-acquire-alias`的join/rejection及physical state；不得再期待`verified-equivalent-promotion-takeover`。若同一强等价页仍出现独立重复physical owner，先区分“alias前已各自创建”“ambiguous existing owners”“proof尚未恢复”三类，再决定是否扩展TransferKey coverage，不恢复artifact promotion observer。
 - dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
-## P1：漫画源、过滤与详情预览设备闭环
-- 103当前8源选定分页保持；新增JM explore/category与Mihon JM/Pixiv(en)/紳士漫畫/Junmeitu热门已验。只补肉漫屋实际popular分页或source返回exhaustion及禁用next；内置MangaDex不声明热门，当前Pixiv仅en，不为不存在section/语言新增待办。

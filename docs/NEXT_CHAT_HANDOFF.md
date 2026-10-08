@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device45/toolchain10/superseded2/partial33/pending22，55条未完成记录。012四故障、029筛选合同、053/092条件诊断收口；019/085–087及008/101保持。009饱和lease、wire013/DNS089与性能开放。Release ce59d78d/PID3018/Home。
+- 当前112项：device46/toolchain10/superseded2/partial32/pending22，54条未完成记录。103当前8源section分页、012四故障、029筛选及053/092诊断收口；009饱和lease、wire013/DNS089和性能开放。Release ce59d78d/PID3018/Home。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序

@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | required2342/Rust22/27suite/analyzer、三ABI Debug/JNI已通过；六普通Profile/Release与native112复用同输入，3既有quarantine跳过。Release ce59d78d/PID3018/Home；连续手势/延迟/最终显示开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device45/toolchain10/superseded2/partial33/pending22，55条未完成记录。012四故障分支、029原schema/default、053/092诊断边界已收口；019/085–087拖动及008/101冷partial保持。009饱和lease、wire013/DNS089及性能独立开放；通过场景停止。
+  当前112项：device46/toolchain10/superseded2/partial32/pending22，54条未完成记录。103当前8源section分页、012四故障、029原schema/default及053/092诊断边界已收口；009饱和lease、wire013/DNS089及性能独立开放。通过场景停止；不虚构不存在section/语言。

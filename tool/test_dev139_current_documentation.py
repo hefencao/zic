@@ -232,6 +232,7 @@ completed_plan_markers = {
     "SWG-PLAN-101": "已有partial动画重入必须从frame0立即播放",
     "SWG-PLAN-053": "继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace",
     "SWG-PLAN-092": "若 current 仍断粮，只在 NetLane ranking",
+    "SWG-PLAN-103": "103当前8源选定分页保持",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
 for row in requirements:
