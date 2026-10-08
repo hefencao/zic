@@ -51,8 +51,8 @@ forbid(
 )
 require(
     source,
-    'final rawCached = remembered == null',
-    'only explicit in-session state may use exact cached projection',
+    'final rawCached = cache?.peekBrowsePage(',
+    'exact current request cache without requiring a visit snapshot',
 )
 require(
     source,
@@ -73,6 +73,7 @@ for token in (
     "expect(find.byKey(comicSourceFilterActionKey), findsNothing);",
     "tester.widget<ChoiceChip>(\n        find.byKey(comicSourceCategoryKey('latest')),",
     "expect(native.lastBrowseSection, 'latest');",
+    'target section discovery retires an unresolved browse cache ',
 ):
     require(source_test, token, 'source browser widget contract')
 

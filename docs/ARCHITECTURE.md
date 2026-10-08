@@ -584,7 +584,7 @@ browse projection revision 只属于 metadata，不能作为整页 artwork reloa
 source card 的 Sliver child 与内部交互祖先 key 都使用来源确认的 canonical comic identity，raw locator变化不得重置封面 State。`sourceComicCardKey` 接受 canonical identity；点击命令仍读取当前 summary 的 raw locator。
 固定大小的 catalog page 仍使用显式上一页/下一页，pager 位于内容滚动尾部。
 列表由 catalog response cache先行投影，但 cache只能服务**当前精确 UI 请求**，不得用“最近 projection”改写 section/query/filter默认状态；
-source切换时 projection owner先原子切换到目标 source，旧 source内容没有展示资格。后台 refresh只有在稳定字段发生变化时才更新 Presentation；
+`ComicSourcesPage`切换时先原子绑定目标 source并按当前请求读取精确缓存；没有访问状态快照也不跳过该读取，miss直接投影目标 loading/error，旧 source内容没有展示资格。schema到达后若section/filter改变请求，原`requestChanged`分支清除失配投影，再读取新请求精确缓存。旧请求的迟到失败受原generation fence约束。后台 refresh只有在稳定字段发生变化时才更新 Presentation；
 边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
 详情页与漫画源页的统一刷新由 `AppPullToRefresh` 拥有 edge trigger、72 px位移、进行中状态与成功/失败结果图标；页面不得叠加第二套刷新状态。

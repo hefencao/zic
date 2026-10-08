@@ -670,6 +670,174 @@ void main() {
     expect(native.browseQueries.last, '漫画');
   });
 
+  for (final (cached, retireBeforeFailure) in <(bool, bool)>[
+    (false, false), (true, false), (false, true), (true, true),
+  ]) {
+    testWidgets('source switch first frame uses target '
+        '${cached ? 'cache' : 'loading'} before '
+        '${retireBeforeFailure ? 'retired' : 'current'} target failure',
+        (tester) async {
+      final original = _FixtureSource('mihon:fixture-original', 'Original');
+      final gate = Completer<void>();
+      final rawTarget = _FixtureSource('venera:fixture-target', 'Target',
+        browseGate: gate,
+        browseError: const Failure(code: ErrorCode.network,
+          message: 'target offline'),
+      );
+      final cache = ResourceCacheManager();
+      addTearDown(() async {
+        if (!gate.isCompleted) gate.complete();
+        await tester.pump();
+        final closing = cache.close();
+        await tester.pump();
+        await closing;
+      });
+      final seed = CachedBrowsableComicSource(
+        source: _FixtureSource(rawTarget.sourceId, 'Target'), cache: cache,
+      );
+      await seed.browse(query: cached ? '' : 'another-request');
+      final target = CachedBrowsableComicSource(source: rawTarget, cache: cache);
+      expect(target.peekBrowsePage(), cached ? isNotNull : isNull);
+      var activeSourceId = original.sourceId;
+      late StateSetter update;
+      final trace = DebugTraceLog();
+      await tester.pumpWidget(MaterialApp(home: StatefulBuilder(
+        builder: (_, setState) {
+          update = setState;
+          return Scaffold(body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[original, target],
+            activeSourceId: activeSourceId, onSourceSelected: (_) {},
+            traceSink: trace,
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ));
+        },
+      )));
+      final originalCard = find.byKey(sourceComicCardKey(
+        original.sourceId, '${original.sourceId}-comic'));
+      final targetCard = find.byKey(sourceComicCardKey(
+        target.sourceId, '${target.sourceId}-comic'));
+      await _pumpUntilFound(tester, originalCard);
+      update(() => activeSourceId = target.sourceId);
+      await tester.pump();
+      expect(originalCard, findsNothing);
+      expect(targetCard, cached ? findsOneWidget : findsNothing);
+      expect(find.byKey(comicSourceLoadingKey),
+        cached ? findsNothing : findsOneWidget);
+      if (retireBeforeFailure) {
+        update(() => activeSourceId = original.sourceId);
+        await _pumpUntilFound(tester, originalCard);
+      }
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(originalCard, retireBeforeFailure ? findsOneWidget : findsNothing);
+      expect(targetCard,
+        cached && !retireBeforeFailure ? findsOneWidget : findsNothing);
+      expect(trace.events.any((event) =>
+        event.payload['stage'] == 'browse-failed' &&
+        event.sessionId == 'source-browser:${target.sourceId}'),
+        !retireBeforeFailure);
+      if (retireBeforeFailure) {
+        expect(find.byKey(comicSourceErrorKey), findsNothing);
+      }
+      // A failed forced refresh invalidates the response cache; subsequent
+      // switches must show target loading/error rather than retain old cards.
+      expect(target.peekBrowsePage(), isNull);
+      update(() => activeSourceId = original.sourceId);
+      await tester.pumpAndSettle();
+      expect(originalCard, findsOneWidget);
+      expect(targetCard, findsNothing);
+      for (var round = 0; round < 2; round++) {
+        update(() => activeSourceId = target.sourceId);
+        await tester.pump();
+        expect(originalCard, findsNothing);
+        expect(targetCard, findsNothing);
+        expect(find.byKey(comicSourceLoadingKey), findsOneWidget);
+        await tester.pumpAndSettle();
+        expect(originalCard, findsNothing);
+        expect(targetCard, findsNothing);
+        expect(find.byKey(comicSourceErrorKey), findsOneWidget);
+        update(() => activeSourceId = original.sourceId);
+        await tester.pumpAndSettle();
+        expect(originalCard, findsOneWidget);
+        expect(targetCard, findsNothing);
+        expect(find.byKey(comicSourceErrorKey), findsNothing);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final cacheDefaultSection in <bool>[false, true]) {
+    testWidgets('target section discovery retires an unresolved browse cache '
+        '${cacheDefaultSection ? 'with' : 'without'} exact default cache',
+        (tester) async {
+      final original = _FixtureSource('mihon:fixture-section-original', 'Old');
+      const sections = <SourceBrowseSection>[
+        SourceBrowseSection(sectionId: 'popular', label: '热门'),
+        SourceBrowseSection(sectionId: 'latest', label: '最新'),
+      ];
+      final gate = Completer<void>();
+      final cache = ResourceCacheManager();
+      addTearDown(() async {
+        if (!gate.isCompleted) gate.complete();
+        await tester.pump();
+        final closing = cache.close();
+        await tester.pump();
+        await closing;
+      });
+      final rawTarget = _FixtureSource('venera:fixture-sections', 'Target',
+        browseSections: sections, browseGate: gate,
+        browseError: const Failure(code: ErrorCode.network, message: 'offline'),
+      );
+      final seedSource = _FixtureSource(rawTarget.sourceId, 'Target',
+        browseSections: sections)..browseComicIdOverride = 'unresolved-comic';
+      final seed = CachedBrowsableComicSource(source: seedSource, cache: cache);
+      await seed.browse();
+      if (cacheDefaultSection) {
+        seedSource.browseComicIdOverride = 'latest-comic';
+        await seed.browseSection('latest');
+      }
+      final target = CachedBrowsableComicSource(source: rawTarget, cache: cache);
+      var activeSourceId = original.sourceId;
+      late StateSetter update;
+      await tester.pumpWidget(MaterialApp(home: StatefulBuilder(
+        builder: (_, setState) {
+          update = setState;
+          return Scaffold(body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[original, target],
+            activeSourceId: activeSourceId, onSourceSelected: (_) {},
+            loadCover: (_, __, ___, {bool forceRefresh = false}) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ));
+        },
+      )));
+      final originalCard = find.byKey(sourceComicCardKey(
+        original.sourceId, original._comicId));
+      final unresolved = find.byKey(sourceComicCardKey(
+        target.sourceId, 'unresolved-comic'));
+      final latest = find.byKey(sourceComicCardKey(target.sourceId, 'latest-comic'));
+      await _pumpUntilFound(tester, originalCard);
+      update(() => activeSourceId = target.sourceId);
+      await tester.pump();
+      expect(originalCard, findsNothing);
+      await tester.pump();
+      expect(rawTarget.lastBrowseSection, 'latest');
+      expect(unresolved, findsNothing);
+      expect(latest, cacheDefaultSection ? findsOneWidget : findsNothing);
+      expect(find.byKey(comicSourceLoadingKey),
+        cacheDefaultSection ? findsNothing : findsOneWidget);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(unresolved, findsNothing);
+      expect(latest, cacheDefaultSection ? findsOneWidget : findsNothing);
+      expect(find.byKey(comicSourceErrorKey),
+        cacheDefaultSection ? findsNothing : findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('unrelated source activation preserves pending browse',
       (tester) async {
     final gate = Completer<void>();

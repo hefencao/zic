@@ -23,9 +23,9 @@
   },
   "requirement_summary": {
     "partial": 34,
-    "verified_device": 35,
+    "verified_device": 36,
     "superseded": 2,
-    "pending": 34,
+    "pending": 33,
     "verified_toolchain": 7
   },
   "requirements": [
@@ -106,7 +106,7 @@
     {"id": "SWG-PLAN-075", "status": "partial", "current_contract": "Controlled same/cross-source transaction and five phase-boundary plus three callback-internal actual process kills pass300 checks through real isolated SQLite/physical files. Exact title+sequence candidates independently validate target native identity; sequence-only gets no state/artifact. Existing target progress and source offline retention survive partial replay.", "remaining_acceptance": ["Ordinary real-source confirmed same/cross-source migration, exact vs sequence-only state and artifact outcomes; controlled kill/callback cases remain accepted."], "evidence_reproducibility": "available_references"},
     {"id": "SWG-PLAN-076", "status": "pending", "current_contract": "在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-077", "status": "partial", "current_contract": "The host preserves complete source-owned chapter models and exact IDs, uses current ABI capabilities and does not deduplicate chapters by URL/title.", "remaining_acceptance": ["Original Roumanwu80 and JM complete single-SChapter upgrade samples; current ABI/complete-object contracts remain accepted."], "evidence_reproducibility": "available_references"},
-    {"id": "SWG-PLAN-078", "status": "pending", "current_contract": "在 Venera/Mihon 多次切换且目标请求失败时，确认页面在同一帧切换为目标缓存或目标 loading/error，绝不显示旧 source 卡片。", "evidence_reproducibility": "no_recorded_acceptance"},
+    {"id": "SWG-PLAN-078", "status": "verified_device", "current_contract": "ComicSourcesPage synchronously binds the target source and reads its exact current-request cache without requiring a UI visit snapshot. Schema-driven section/filter request changes retire mismatched content in the existing requestChanged branch. Two failed-first boundaries and six widget cases verify exact/mismatched cache, current/retired late failure, round trips and UI-ordered default-section cache/miss. Ordinary minified Release ce59d78d/PID17681 on M2007J1SC SDK36 completes three Mihon Roumanwu/Venera E-Hentai offline round trips: six real network failures, target cache retained in the first pair and target error without stale cards in the next four; online recovery returns12/24 items. Existing source/cache/generation owners remain. Accessibility route actions do not verify physical touch, device same-frame latency or final-display performance.", "evidence_reproducibility": "current_code_tests_and_summary; completed_device_trace_cleaned"},
     {"id": "SWG-PLAN-079", "status": "pending", "current_contract": "对禁漫天堂执行强制刷新，确认只有真实 Cloudflare challenge 产生 `sourceVerificationRequired`；普通 403/timeout/解析错误保持原分类，主/兼容 interceptor 行为一致。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-080", "status": "pending", "current_contract": "完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。", "evidence_reproducibility": "no_recorded_acceptance"},
     {"id": "SWG-PLAN-081", "status": "pending", "current_contract": "验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。", "evidence_reproducibility": "no_recorded_acceptance"},
@@ -146,8 +146,8 @@
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
-    "sha256": "67e4e4d0e524df5b73faea61d114987ba4099dce5a42684df746bfc9d2c26366",
-    "app_pid": 14195,
+    "sha256": "ce59d78d7c7c356ac8261085d64b3091d3d83b370d9caf3449a2eb6740e0d600",
+    "app_pid": 17681,
     "ordinary_release": true,
     "normal_minified_release": true,
     "app_foreground": "home"
@@ -155,18 +155,18 @@
   "validation": {
     "command": "bash tool/check.sh --require-toolchains",
     "exit_code": 0,
-    "dart_flutter_tests": 2336,
+    "dart_flutter_tests": 2342,
     "analyzers": 27,
     "Rust_tests": 22,
     "Android_native_tests": 112,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Reuse native112 and all3 ordinary Profile/minified Release packages verified against unchanged production inputs in d895d864; none is newly rerun or rebuilt here. Fresh three-ABI Debug and JNI symbol/build-ID checks pass. Last observed ordinary Release67e4e4d0/PID14195/Home remains the installation record; no device action this change.",
+    "ordinary_package_acceptance": "Fresh required gate2342/27 suites/27 analyzers/Rust22/three-ABI Debug and all3 JNI checks pass. Fresh ordinary Profile and minified Release builds pass on all3 ABIs; arm64 Profile1cf7367d and Release ce59d78d use the current Dart production inputs and unchanged source-built JNI. Release installed on the recorded device. Native112 is reused only against unchanged Kotlin/native inputs in d895d864.",
     "Android_native_tests_scope": "Reuse prior native gate112 against identical production inputs: plugin_host_bridge85, app3, local_media_bridge7 and vendor file_selector_android17. The vendor Robolectric4.12.1/Mockito fixture needs test-only SDK34, cached ASM9.9 and net.bytebuddy.experimental=true under JDK25; a temporary init script limits these to its unit-test runtime and is deleted. Production SDK, dependencies and Gradle files are unchanged. All available native tasks complete; unchanged tasks may be Gradle up-to-date.",
-    "scope": "Fresh required gate passes in310.4s:2336 Dart-Flutter tests/27 suites/27 analyzers/Rust22/three-ABI Debug and repository/docs/ownership/platform contracts, with3 existing quarantined skips. All3 JNI checks pass again; native112 and six ordinary packages reuse d895d864 production-input validation. Two Gateway fixtures plus two rejected raw-bypass mutations close045 at the application transport-injection boundary. Linux rhttp execution is unverified: its librhttp.so is absent in the host test environment. No production changes; original19/20, mutable aliases/confirmed migration, physical input, GC and final display remain open.",
-    "artifact_retention": ".log retains4 original reported traces and1 necessary source APK (11,137,690 bytes), without relocation. After reference/consumer review, delete30 completed private captures/results (24,459,994 bytes); accepted summaries and tracked historical records remain, not their duplicate raw output. Keep minimum open-issue inputs, including32 current-production GC files; overwrite current validation/XML, reuse build outputs and clean temporary helpers/probes on success or failure. No new audit, trace, snapshot or cleanup manifest.",
-    "device_fixture": "This change uses the existing executable Gateway test with a controlled SourceResourceDirectTransport and bounded producer latch; no socket, fixed delay, ADB or device capture. Existing058/059 real artwork/listener acceptance and025 ordinary native-alias/history acceptance retain their recorded scopes.",
-    "input_delivery": "No device input in this change. Retain the prior exact accessibility-route conclusions without extending them to physical touch or performance; those criteria remain open."
+    "scope": "Fresh required gate passes in307.0s:2342 Dart-Flutter tests/27 suites/27 analyzers/Rust22/three-ABI Debug and repository/docs/ownership/platform contracts, with3 existing quarantined skips. All3 JNI checks and six ordinary packages pass. Six source-switch/schema regressions and three real-source offline round trips close078 at the recorded widget/accessibility-device scope. Native112 retains its unchanged Kotlin/native scope; original19/20, mutable aliases/migration, physical input, GC and final display remain open.",
+    "artifact_retention": ".log retains4 original reported traces and1 necessary source APK (11,137,690 bytes), without relocation. Reference/consumer review removed30 completed private captures/results (24,459,994 bytes); accepted summaries and tracked historical records remain. Keep minimum open-issue inputs, including32 current-production GC files; overwrite current validation/XML and reuse build outputs. Completed078 exports and temporary host/device helper are cleaned after analysis. No new audit, snapshot or cleanup manifest; temporary probes clean up on success or failure.",
+    "device_fixture": "Fixed device_visual operator uses exact current accessibility nodes on the ordinary Release. Three Roumanwu/E-Hentai offline round trips produce six actual browse-failed/network events, first-pair cacheRetained=true and later four false; each target owns its displayed cards/error. Online recovery completes12/24 items. Network restored to airplane0/wifi1/mobile_data0; Home/PID17681, no forward. Existing058/059 and025 accepted scopes remain.",
+    "input_delivery": "Semantic accessibility actions exercise ordinary routes and source requests. Physical touch, device same-frame latency and final display are not verified; test-runner startup/dependency errors do not establish production defects."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",

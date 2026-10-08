@@ -503,16 +503,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cache = source is CachedSourceBrowseProjection
         ? source as CachedSourceBrowseProjection
         : null;
-    final rawCached = remembered == null
-        ? null
-        : cache?.peekBrowsePage(
-            sectionId: _requestSectionId,
-            query: _query,
-            offset: _pageOffset,
-            limit: _pageSize,
-            filterState: _filterState,
-            useFilters: _filterViewActive,
-          );
+    final rawCached = cache?.peekBrowsePage(
+      sectionId: _requestSectionId,
+      query: _query,
+      offset: _pageOffset,
+      limit: _pageSize,
+      filterState: _filterState,
+      useFilters: _filterViewActive,
+    );
     final cached = rawCached == null
         ? null
         : _canonicalSourceBrowsePage(source, rawCached);
@@ -681,6 +679,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       if (requestChanged) {
         _pageOffset = 0;
         _resetBrowseCoordinates();
+        // The restored page belongs to the request before schema discovery.
+        // _reload may retain content only while that request stays unchanged.
+        _items = const <SourceComicSummary>[];
+        _hasMore = false;
+        _nextOffset = 0;
       }
     });
     return _reload(

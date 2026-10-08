@@ -1050,6 +1050,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner切换为目标 source；
   普通 browse 的当前 source binding 未变时，无关 source 列表增删/重排 MUST NOT重新加载或重置 section/page；聚合 source 集变化 MUST继续退休旧聚合请求。
   MUST只使用**当前 Presentation request identity**的目标精确缓存直接投影，没有精确缓存时显示目标 loading/error并按当前 section/query/filter请求加载。
+  未保存目标 source的UI访问状态 MUST NOT阻止读取该精确缓存；不同请求缓存不得用于首帧。schema改变section/filter请求时 MUST退休失配投影；旧请求的迟到失败不得改写当前source投影。
   Catalog可保留目标最近 projection作为诊断/内部 cache事实，但 MUST NOT用它反向改写 UI默认 section/query/filter。
   旧 source页面不得因目标请求失败继续可见。
 - 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MAY 自动进入一次目标 source验证。
