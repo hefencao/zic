@@ -1066,6 +1066,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   普通页面 capture MUST属于当前加载完成的 URL；验证页面另须满足上述稳定窗口，迟到 localStorage回调 MUST NOT更新其它导航的 snapshot。
   验证探针 MUST按实际Boolean ready/challenge协议读取；无效结果 MUST保持未完成验证，不能以字符串比较阻塞加载完成的页面。
   成功回执 MUST等待当前localStorage capture与Cookie/UA一次提交；浏览器结束后的销毁及迟到回调 MUST NOT补写snapshot revision或污染下一次handoff。
+- 可见来源浏览器及登录 snapshot MUST只有`network_bridge`一个 owner；插件宿主 MUST通过共享网络边界使用它，MUST NOT保留独立登录 Activity/store。
 - Cloudflare 验证浏览器 MUST 使用当前 Android WebView provider 的真实 User-Agent，MUST NOT用插件/OkHttp 的静态 UA覆盖验证 WebView。
   Cookie、localStorage 与真实 WebView UA MUST 属于同一 snapshot revision；
   Mihon runtime消费该 snapshot时必须让同站点 OkHttp请求采用同一 snapshot UA，并同步导入其 Cookie。

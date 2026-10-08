@@ -27,6 +27,10 @@ def forbid(relative: str, *tokens: str) -> None:
 
 
 def main() -> int:
+    for name in ('MihonLoginActivity', 'ExternalLoginSnapshotStore'):
+        legacy = ROOT / f'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/{name}.kt'
+        if legacy.exists():
+            raise SystemExit(f'plugin_host_bridge retains obsolete browser ownership: {name}')
     require(
         'apps/app/lib/comic_details.dart',
         'typedef ComicDetailsSourceWebViewOpener = Future<void> Function({Uri? verificationUri});',

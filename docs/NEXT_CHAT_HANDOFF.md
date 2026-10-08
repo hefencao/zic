@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- 浏览器仅修Activity capture生命周期；11项Kotlin回归、081真机、fresh required2342与六普通APK/JNI通过。.log仅6必要原件，完成结果精确清理；自动锁屏吞首次触摸已确认，ADB亮屏不证明解锁，现永不自动锁屏。
+- 浏览器11项回归/081真机及fresh required2342/六普通APK通过。plugin host旧登录声明已清理，fresh所有权/平台门禁、native86/三ABI包通过；Release字节相同，不重复装机。.log仅6必要原件，完成结果精确清理；自动锁屏吞首次触摸已确认，ADB亮屏不证明解锁，现永不自动锁屏。
 - 073错误上下文真机3/3及全门禁已收口。027/028新trace在catalog changed=false前重复获取12张健康封面；修复仅使Source Browse显式刷新重试当前Future的source/decode失败，保留健康/pending。已有回归先失败后通过；Release trace127events/重复load及首帧12→0，已收口。不改Reader/缓存/调度。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
 - EH139强刷plan2.233s（origin POST2.044s）/host0.680s，首帧sourceWait1.830s；resolver仍warm。334/308续传已验范围保持。设备无dnsresolver服务，日志无可归属异常不证明健康；089默认DNS退出未验。Release 3baf5c68/PID5807/Home。
