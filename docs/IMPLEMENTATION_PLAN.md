@@ -13,7 +13,7 @@
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
-- 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
+- 017已验的来源请求/gate/host-open分段保持；继续用持续传输字段`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
 - 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 ## P0：Current 首帧 policy/execution 真机闭环
 
@@ -48,7 +48,7 @@
 
 - 在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。
 - 对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper必须在Pipeline前切回source client，正常无状态媒体保持host streaming。非媒体正文按当前typed semantic recovery有界处理，不因protocol mismatch强制runtime重放。
-- 全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。
+- 048的全仓入口/所有权门禁与既有cache/gateway fixtures保持；继续用实际来源trace覆盖metadata/artwork经 `ResourceCacheManager`、Reader正文经page-body API进入DownloadSession/artifact，补齐各入口与runtime生命周期观察。
 - 继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown；真实WNACG1.6受控GET/redirect的正文、原生呈现、冷READY和取消边界见source-mihon-client-pipeline审计。完整输入/canonical整块物化、live stream/backpressure及分配另验，保持原body/cache/NetLane/retry owner。
 
 
