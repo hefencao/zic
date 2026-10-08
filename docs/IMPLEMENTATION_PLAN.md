@@ -3,13 +3,10 @@
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282首次新OutputFrame的native呈现成本与快滑最终composition验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。首次frame独立测blit/schedule/frame timing，余下顿挫只按fresh证据定位首次visible/current frame与SurfaceProducer/compositor，不重改已验geometry/anchor或窗口。
 - P0：按dev.280 scroll-stable geometry的现行合同补真机视觉验收：保留painted extent；允许视口之外forward ratio预备、reverse prefix原子anchor校正及slider真实visible ratio采用。物理观察只用已布局geometry，剩余ratio在idle latest-wins提交。已验组件见ADR0330/0361与loading审计；不得恢复active全冻结或逐ratio jumpTo。
-- P0：dev.273真实WNACG八页local miss/prepare已观察（6.594–27.177ms，median14.803ms），不是与历史87ms的同条件加速比较。剩余：证明exact+verified-equivalent miss不materialize durable-store `DownloadSession`；真实cold partial应`local-hydration-ready`且`committedLength>0`，在provider `downloadStarted`前发布可消费prefix。local bytes只由`ArtifactCacheReadScheduler`调度；若真实hit后仍无首帧，冻结下载层并转查Decode→Upload→presentation generation。
 - P0：009选定可播放/0已解码帧的同response停驻恢复保持；剩余验饱和normal transport leases<=5/current-only handoff<=6、durable artifact local body释放两者。source request-plan/gate/host相对dev.270只在同输入下比较，不以普通停驻证明pressure行为。
-- P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
+- P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证demanded parked不走inactive eviction，但真实lease饱和时允许统一rank+40 margin回收；artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
-## P0：Partial authority 单调性真机闭环
-- 已验实际unsealed native prefix取消及cold handoff保留1.32MB原字节；继续Range probe/full-body catch-up的EOF/mismatch与network metadata损坏分支，只失败attempt或丢网络知识，旧partial/Ingress保持。DownloadSession/DecodeSession/NetLane、5+1、7/3、2/1及7/5/3/2冻结。
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
@@ -30,7 +27,6 @@
 
 - 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
 - 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
-- Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner：非空时分类栏按“最新 → 热门 → 筛选”显示，空列表不发明入口；bridge完整支持官方 8 类 Filter及插件自定义子类，筛选面板以类型化 `filterState`回传 Text/Sort等状态。首次默认 section仍由当前展示排序第一项决定，catalog cache不得恢复导航默认值。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
 
@@ -53,7 +49,6 @@
 ## P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
 - 冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。
-- 继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 
@@ -103,7 +98,6 @@
 ## P0：远程 Animated WebP 连续性
 
 - 对比raw transport chunk、DownloadJob首批16KiB/后续64KiB聚合、source revision、decode batch、holder depth、deadline和present cadence；原transport/ingress/decode owner保持，holder不成为network gate。
-- 若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。
 - 真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。
 
 ## P0：后台重入生命周期
@@ -114,4 +108,4 @@
 - dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
 ## P1：漫画源、过滤与详情预览设备闭环
-- 当前8源的分类顺序与选定分页已验：WNACG/EH、Mihon JM/Pixiv en/Junmeitu、MangaDex及Venera JM單本完成1→2→1，肉漫屋真实到底禁用分页、EH watched为空且完成。继续未验热门分页、JM explore0/最新A漫/同人及其它语言；只读筛选面板不算应用筛选，连续手势/性能另验。103保留partial。
+- 103当前8源选定分页保持；新增JM explore/category与Mihon JM/Pixiv(en)/紳士漫畫/Junmeitu热门已验。只补肉漫屋实际popular分页或source返回exhaustion及禁用next；内置MangaDex不声明热门，当前Pixiv仅en，不为不存在section/语言新增待办。

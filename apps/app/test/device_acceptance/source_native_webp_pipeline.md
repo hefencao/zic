@@ -71,6 +71,24 @@ so first-frame playback must use local hydration before network admission.
 Both physical cancellations must preserve the exact, nonshrinking playable
 prefix. EOF/mismatch variants, real origins and performance are separate.
 
+For the independent partial error branches, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY=true` and
+`--partial-failures-only`. A playable native prefix is staged once, then each
+new composition uses an entityless source GET and receives an actual Range206
+premature EOF, overlap mismatch,
+HTTP200 catch-up premature EOF, or malformed network-only sidecar metadata.
+An existing explicit-completion consumer forces the network attempt to finish;
+it does not change Reader policy or the default NetLane. Attempt failures must
+retire actual TCP/lane work while the old prefix keeps presenting, with no epoch
+reset, source disable or durable byte loss. Corrupt network knowledge must be
+discarded without invalidating body/owner/checkpoint proof. Complete HTTP200
+CRC mismatch is intentionally excluded from these preserve-prefix cases:
+current Spec permits a bounded clean-generation restart after that proof.
+To run only the metadata branch, build with
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY=true` and pass
+`--partial-metadata-only`. Resolve the sidecar through the current durable index
+after physical retirement; the departed warm spool is not its storage owner.
+
 This proves selected canonical onResponse/file and ordinary streaming/native
 WebP paths, including the selected unsealed-prefix transition and cold reentry.
 It does not prove Mihon clients, real origins, every partial error branch,

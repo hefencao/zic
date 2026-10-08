@@ -13,6 +13,9 @@ import 'package:local_media_ui/local_media_ui.dart';
 import 'package:pipeline_native/pipeline_native.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+// Test-only explicit completion demand; the production transfer owner schedules it.
+// ignore: depend_on_referenced_packages
+import 'package:sessions/sessions.dart';
 // Test-only inspection of durable authority; no new application dependency.
 // ignore: depend_on_referenced_packages
 import 'package:storage/storage.dart';
@@ -29,6 +32,8 @@ const _post = 'native-webp-fixture-post';
 const _sourceUa = 'SourceNativeWebpFixture/1';
 const _transitionOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY');
 const _partialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY');
+const _partialFailuresOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY');
+const _partialMetadataOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY');
 final _events = <Map<String, Object?>>[];
 final _traces = <Map<String, Object?>>[];
 final _clock = Stopwatch()..start();
@@ -56,15 +61,17 @@ Future<void> main() async {
   ExternalPluginResourceTransportPool? pool;
   _Composition? current;
   try {
-    _require(!_transitionOnly || !_partialOnly, 'fixture modes are mutually exclusive');
+    _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly]
+      .where((enabled) => enabled).length <= 1, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
       "class SourceNativeWebpPipelineFixture extends ComicSource {name='Fixture';"
       "key='$_key';version='1';url='https://fixture.invalid';"
       "explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];"
-      "comic={onThumbnailLoad:(uri)=>({method:'POST',"
+      "comic={onThumbnailLoad:(uri)=>({method:uri.includes('/partial-range-')?'GET':'POST',"
       "headers:{Cookie:'acceptance=present','User-Agent':'$_sourceUa'},"
-      "data:'$_post',...((uri.includes('/transition-')||uri.includes('/partial-'))?{}:"
+      "data:uri.includes('/partial-range-')?'':'$_post',"
+      "...((uri.includes('/transition-')||uri.includes('/partial-'))?{}:"
       "{onResponse:async(input)=>input})})};}",
     );
     final plugin = ExternalComicPluginCatalogEntry(
@@ -106,24 +113,28 @@ Future<void> main() async {
       directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
-    if (_transitionOnly || _partialOnly) {
+    if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly) {
       if (_transitionOnly) {
         await _transitionCase(root.path, origin, pool, source, wire);
       } else {
-        await _partialCase(root.path, origin, pool, source, wire);
+        await _partialCase(root.path, origin, pool, source, wire,
+          failures: _partialFailuresOnly || _partialMetadataOnly);
       }
       await session.close();
       session = null;
       pool.close();
       pool = null;
+      final originRequestsForMode = origin.requests.length;
       await origin.close();
       origin = null;
       await Directory('$support/zic-source-native-webp-inputs').delete(recursive: true);
       await root.delete(recursive: true);
       await _record(<String, Object?>{
-        'case': 'complete', 'status': 'passed', 'cases': _transitionOnly ? 1 : 2,
+        'case': 'complete', 'status': 'passed',
+        'cases': _transitionOnly || _partialMetadataOnly ? 1 : _partialFailuresOnly ? 4 : 2,
         'production_modified': false, 'host_pid': pid, 'source_pid': sourcePid,
-        'actual_HTTP_requests': 2, 'test_root_removed': !root.existsSync(),
+        'actual_HTTP_requests': originRequestsForMode,
+        'test_root_removed': !root.existsSync(),
         'all_test_compositions_and_source_session_closed': true,
         'test_inputs_removed': !Directory('$support/zic-source-native-webp-inputs').existsSync(),
         'real_origin_or_final_display_performance_proven': false,
@@ -459,8 +470,8 @@ Future<void> _transitionCase(String directory, _Origin origin,
 
 Future<void> _partialCase(String directory, _Origin origin,
     ExternalPluginResourceTransportPool pool, BrowsableComicSource source,
-    _Wire wire) async {
-  final uri = origin.uri('/animated/partial-current');
+    _Wire wire, {bool failures = false}) async {
+  final uri = origin.uri(failures ? '/animated/partial-range-current' : '/animated/partial-current');
   final playableLength = _animatedPrefix(origin.bytesFor('animated'), 2);
   final held = origin.hold(uri.path)..progressive = true
     ..prefixLength = playableLength + 64 * 1024;
@@ -506,6 +517,11 @@ Future<void> _partialCase(String directory, _Origin origin,
     await warm.close();
     active = null;
     await held.peerClosed.future.timeout(const Duration(seconds: 20));
+    if (failures) {
+      await _partialFailures(path, record, id, committedBeforeCancel,
+        origin, pool, source);
+      return;
+    }
     await _record(<String, Object?>{
       'case': 'partial-first-presentation', 'status': 'passed',
       'exact_and_verified_equivalent_miss_no_store_session': true,
@@ -578,6 +594,125 @@ Future<void> _partialCase(String directory, _Origin origin,
       _captureTrace('partial-failed-case', active.trace);
       await _unmount();
       await active.close();
+    }
+  }
+}
+
+Future<void> _partialFailures(String path, ImportedChapterRecord record,
+    DownloadId id, int prefixLength, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source) async {
+  final faults = _partialMetadataOnly ? <String>['network-metadata'] :
+    <String>['range-EOF', 'range-mismatch', 'full-body-EOF', 'network-metadata'];
+  for (final fault in faults) {
+    final uri = id.canonicalUri;
+    if (fault == 'network-metadata') {
+      final proof = await PersistentDownloadArtifactStore.open(path);
+      try {
+        // Physical retirement checkpoints into the durable owner's path;
+        // the departed warm session's temporary spool no longer exists.
+        final stored = await proof.index.get(id.key);
+        _require(stored?.id == id && stored?.state == CacheState.partial &&
+          stored?.bytes == prefixLength, 'network metadata target has no durable prefix proof');
+        final file = File('${stored!.path}.meta');
+        final meta = Map<String, Object?>.from(jsonDecode(await file.readAsString()) as Map);
+        // Corrupt only network acceleration, keeping body/owner/checkpoint proof.
+        meta['validators'] = <String>['invalid-network-type'];
+        meta['totalLength'] = 'invalid-network-length';
+        await file.writeAsString(jsonEncode(meta), flush: true);
+      } finally {
+        await proof.close();
+      }
+    }
+    final input = _HeldInput()..progressive = true..prefixLength = 4096
+      ..fault = fault == 'network-metadata' ? null : fault;
+    origin.held[uri.path] = input;
+    final composition = await _Composition.open(path);
+    DownloadTransferConsumer? completion;
+    try {
+      final before = await composition.store.openPartialDownload(id);
+      _require(before?.length == prefixLength,
+        'previous attempt changed the durable playable prefix');
+      if (fault == 'network-metadata') {
+        _require(before!.totalLength == null && !before.validators.canResume,
+          'malformed network metadata was retained as resume knowledge');
+      }
+      final loader = _ObservedLoader(pool.controlledLoaderFor(source, uri),
+        selfBoundedOpen: pool.selfBoundsOpenFor(source, uri));
+      if (fault != 'network-metadata') {
+        final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(openControlledResponse: loader.open,
+            selfBoundedOpen: loader.selfBoundedOpen, revision: id.sourceRevision),
+        });
+        completion = composition.runtime.attachConsumer(
+          scopeId: 'fixture-required-$fault', transportFor: (_) => transport,
+          consumerTraceSink: composition.trace, retry: const RetryPolicy(maxAttempts: 1));
+        completion.replaceDemands('fixture-$fault', 1, <DownloadId, TransferDemand>{
+          id: const TransferDemand(priority: 1000, reason: 'explicit-completion',
+            completionIntent: TransferCompletionIntent.required),
+        });
+      }
+      await _present(record, composition, loader);
+      await input.headers.future.timeout(const Duration(seconds: 20));
+      await _until(() => composition.trace.events.any((e) =>
+        e.kind == TraceEventKind.animationLoop && e.payload['partialPrefix'] == true),
+        'old native prefix did not loop before the fault');
+      final physical = composition.runtime.findSession(id)!;
+      final epoch = physical.snapshot.epoch;
+      final presentedBeforeFault = composition.trace.events.where((e) =>
+        e.kind == TraceEventKind.framePresented).length;
+      if (fault != 'network-metadata') {
+        await origin.finishFault(uri.path);
+        await _until(() => physical.snapshot.state == DownloadState.failed &&
+          composition.lane.isIdle, 'fault did not retire its actual network attempt');
+        _require(physical.snapshot.failure != null &&
+          (fault != 'range-mismatch' || physical.snapshot.failure!.code == ErrorCode.resumeRejected),
+          'overlap mismatch did not keep its typed rejection');
+        await _until(() => composition.trace.events.where((e) =>
+          e.kind == TraceEventKind.framePresented).length > presentedBeforeFault,
+          'network failure stopped playback of the retained native prefix');
+      }
+      _require(physical.snapshot.epoch == epoch && physical.committedLength == prefixLength &&
+        physical.snapshot.state != DownloadState.sealed &&
+        physical.snapshot.state != DownloadState.promoted && loader.opens == 1 &&
+        composition.trace.events.every((e) => e.kind != TraceEventKind.sourceDisabled &&
+          !(e.kind == TraceEventKind.resumeRestarted &&
+            e.payload['strategy'] == 'confirmed-full-body-mismatch-clean-restart')),
+        'ordinary fault reset or disabled authoritative partial/Ingress');
+      _captureTrace('partial-$fault', composition.trace);
+      await _unmount();
+      await completion?.dispose();
+      completion = null;
+      await composition.close();
+      await input.peerClosed.future.timeout(const Duration(seconds: 20));
+      final proof = await PersistentDownloadArtifactStore.open(path);
+      try {
+        final after = await proof.openPartialDownload(id);
+        _require(after?.length == prefixLength, 'fault shrank the stored prefix');
+        final bytes = BytesBuilder(copy: false);
+        await for (final chunk in after!.open(start: 0)) { bytes.add(chunk); }
+        final actual = bytes.takeBytes();
+        final expected = origin.bytesFor('animated');
+        _require(actual.length == prefixLength && actual.asMap().entries.every((e) =>
+          e.value == expected[e.key]), 'fault corrupted authoritative prefix bytes');
+      } finally {
+        await proof.close();
+      }
+      await _record(<String, Object?>{
+        'case': 'partial-$fault', 'status': 'passed',
+        'actual_HTTP_requests': 1, 'old_native_prefix_played_and_looped': true,
+        'physical_epoch_preserved': true, 'prefix_bytes': prefixLength,
+        'exact_durable_prefix_preserved': true, 'source_disabled': false,
+        'network_failure_only': fault != 'network-metadata',
+        'malformed_network_knowledge_discarded': fault == 'network-metadata',
+        'actual_TCP_peer_closed': true, 'composition_exit': composition.exitProof,
+      });
+    } finally {
+      if (composition.exitProof == null) {
+        _captureTrace('partial-$fault-failed', composition.trace);
+        await _unmount();
+        await completion?.dispose();
+        await composition.close();
+      }
     }
   }
 }
@@ -793,7 +928,9 @@ Future<Map<String, Uint8List>> _inputs(String support) async {
     _require(bytes.length > 512 * 1024 && bytes.length < 8 * 1024 * 1024,
       'staged WebP input size violates the fixed test bounds');
     result[kind] = bytes;
-    if (_partialOnly && kind == 'animated') _animatedPrefix(bytes, 2, extendDuration: true);
+    if ((_partialOnly || _partialFailuresOnly || _partialMetadataOnly) && kind == 'animated') {
+      _animatedPrefix(bytes, 2, extendDuration: true);
+    }
   }
   return result;
 }
@@ -839,6 +976,8 @@ final class _HeldInput {
   int sent = 0;
   Timer? keepAlive;
   int? prefixLength;
+  String? fault;
+  Uint8List? faultBody;
 }
 
 final class _Origin {
@@ -865,6 +1004,7 @@ final class _Origin {
       final body = await utf8.decoder.bind(request).join();
       requests.add(<String, Object?>{
         'path': request.uri.path,
+        'range': request.headers.value('range'),
         'method_POST': request.method == 'POST',
         'nonempty_Cookie_preserved': request.headers.value('cookie') == 'acceptance=present',
         'source_UA_preserved': request.headers.value('user-agent') == _sourceUa,
@@ -880,10 +1020,26 @@ final class _Origin {
           }
         }
         socket.listen((_) {}, onDone: closed, onError: (Object _) => closed());
-        socket.add(ascii.encode('HTTP/1.1 200 OK\r\nContent-Type: image/webp\r\n'
-          'Content-Length: ${output.length}\r\nConnection: close\r\n\r\n'));
+        var responseBody = output;
+        var status = '200 OK';
+        var contentRange = '';
+        if (input.fault?.startsWith('range-') == true) {
+          final range = request.headers.value('range');
+          final match = RegExp(r'^bytes=(\d+)-').firstMatch(range ?? '');
+          _require(match != null, 'entityless GET source did not send its overlap Range');
+          final start = int.parse(match!.group(1)!);
+          _require(start > 0 && start + 64 * 1024 <= output.length,
+            'source did not preserve the actual overlap Range');
+          responseBody = Uint8List.fromList(output.sublist(start, start + 64 * 1024));
+          if (input.fault == 'range-mismatch') responseBody[responseBody.length - 1] ^= 255;
+          status = '206 Partial Content';
+          contentRange = 'Content-Range: bytes $start-${start + responseBody.length - 1}/${output.length}\r\n';
+        }
+        input.faultBody = responseBody;
+        socket.add(ascii.encode('HTTP/1.1 $status\r\nContent-Type: image/webp\r\n'
+          '${contentRange}Content-Length: ${responseBody.length}\r\nConnection: close\r\n\r\n'));
         input.sent = input.prefixLength ?? (input.progressive ? 16 * 1024 : 4096);
-        socket.add(output.sublist(0, input.sent));
+        socket.add(responseBody.sublist(0, input.sent));
         await socket.flush();
         input.headers.complete();
         if (input.progressive) {
@@ -894,7 +1050,7 @@ final class _Origin {
               input.keepAlive?.cancel();
               return;
             }
-            socket.add(output.sublist(input.sent, input.sent + 1024));
+            socket.add(responseBody.sublist(input.sent, input.sent + 1024));
             input.sent += 1024;
           });
         }
@@ -916,6 +1072,18 @@ final class _Origin {
     final socket = input.socket!;
     socket.add(bytesFor(path.split('/')[1]).sublist(input.sent));
     await socket.flush();
+    await socket.close();
+  }
+
+  Future<void> finishFault(String path) async {
+    final input = held[path]!;
+    input.keepAlive?.cancel();
+    final socket = input.socket!;
+    if (input.fault == 'range-mismatch') {
+      socket.add(input.faultBody!.sublist(input.sent));
+      await socket.flush();
+    }
+    // EOF closes the real TCP body early; no production Future is replaced.
     await socket.close();
   }
 

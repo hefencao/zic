@@ -225,6 +225,19 @@ for row in requirements:
         raise SystemExit(f"{row['id']} hides remaining acceptance")
     if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
         raise SystemExit(f"{row['id']} hides pending acceptance")
+completed_plan_markers = {
+    "SWG-PLAN-008": "证明exact+verified-equivalent miss不materialize durable-store",
+    "SWG-PLAN-012": "继续Range probe/full-body catch-up的EOF/mismatch",
+    "SWG-PLAN-029": "Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner",
+    "SWG-PLAN-101": "已有partial动画重入必须从frame0立即播放",
+    "SWG-PLAN-053": "继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace",
+    "SWG-PLAN-092": "若 current 仍断粮，只在 NetLane ranking",
+}
+plan = read("docs/IMPLEMENTATION_PLAN.md")
+for row in requirements:
+    marker = completed_plan_markers.get(row["id"])
+    if marker and row["status"] in {"verified_device", "verified_toolchain", "superseded"} and marker in plan:
+        raise SystemExit(f"{row['id']} leaves completed acceptance in the active Plan")
 rejected = archived_governance["supplemental_acceptance"]["mihon-locator-fused-decoding-2026-10-05"]
 for path in (
     "docs/archive/audits/reader_media_runtime_state_audit.json",
