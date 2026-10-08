@@ -248,6 +248,9 @@ completed_plan_markers = {
     "SWG-PLAN-063": "在source暂不可用时补真机`mihon:resource:` durable封面命中",
     "SWG-PLAN-066": "在插件runtime激活失败时重启App，验证durable封面命中",
     "SWG-PLAN-082": "让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias",
+    "SWG-PLAN-091": "对比raw transport chunk、DownloadJob首批16KiB/后续64KiB聚合",
+    "SWG-PLAN-018": "同时复测短时N→N+1→N与跨session跳页",
+    "SWG-PLAN-093": "真机连续快速前后翻页验证 VibeVenera retained-receiving语义",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
 for row in requirements:

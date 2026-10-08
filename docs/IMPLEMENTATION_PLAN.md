@@ -3,11 +3,10 @@
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282首次新OutputFrame的native呈现成本与快滑最终composition验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。首次frame独立测blit/schedule/frame timing，余下顿挫只按fresh证据定位首次visible/current frame与SurfaceProducer/compositor，不重改已验geometry/anchor或窗口。
 - P0：按dev.280 scroll-stable geometry的现行合同补真机视觉验收：保留painted extent；允许视口之外forward ratio预备、reverse prefix原子anchor校正及slider真实visible ratio采用。物理观察只用已布局geometry，剩余ratio在idle latest-wins提交。已验组件见ADR0330/0361与loading审计；不得恢复active全冻结或逐ratio jumpTo。
-- P0：010剩余只验body-read破坏性抢占、inactive/ranked parked lease回收，以及retention物理退出期间current live-response reacquire。`downloadPreempted`/`downloadEvicted`分别记录；不能先释放未退出lease。009已验5/6、demanded停驻、同response恢复及cold durable零网络/副本，不重复或再扩大预算。
+- P0：010剩余只验body-read破坏性抢占及retention物理退出期间current live-response reacquire。fresh EH已验ranked/inactive parked回收；`downloadPreempted`/`downloadEvicted`分别记录，不先释放未退出lease。009容量/停驻/同response/cold durable保持，不重复或扩大预算。
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
-- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 ## P0：Current 首帧 policy/execution 真机闭环
 
 - network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
@@ -73,11 +72,6 @@
 ## P0：Venera requestId 物理取消闭环
 
 - 验证当前Venera isolated rhttp默认系统DNS等待中的requestId取消及物理退出，不恢复旧native owner。当前VPN不允许ZIC旁路；独立测试包/TestNetwork也未收到DNS包且解析成功对照未完成，仍未验，不以HTTP Future结束替代。Network4/Cookie8已验正文保持。
-
-## P0：远程 Animated WebP 连续性
-
-- 对比raw transport chunk、DownloadJob首批16KiB/后续64KiB聚合、source revision、decode batch、holder depth、deadline和present cadence；原transport/ingress/decode owner保持，holder不成为network gate。
-- 真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。
 
 ## P0：后台重入生命周期
 
