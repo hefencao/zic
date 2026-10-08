@@ -2392,6 +2392,7 @@ WebView 使用当前 Android WebView provider 的真实 UA，并把该 UA 与同
 验证探针的 ready/challenge 结果均为 Boolean，Kotlin 按同一类型读取；无效结果继续保守等待。
 立即返回或 Activity 销毁不能把未完成页面写为新 handoff；迟到 localStorage 回调必须仍属于相同导航和已完成 URL，不能更新后续导航的 snapshot。
 成功回执等待 localStorage capture，与 Cookie/UA 在原 snapshot store 一次提交；已结束 Activity 的销毁和异步回调不再补写 revision，避免污染下一次浏览器 handoff。
+Android 13+ 的系统返回通过 Activity-owned `OnBackInvokedCallback`，较旧系统通过 `onBackPressed`，共同调用原 WebView 历史导航/完成入口；销毁时撤销回调。已完成普通页返回成功回执，仍等当前 capture 提交；未完成验证保持失败，不能由系统默认关闭绕过此裁决。
 Mihon runtime 读取 snapshot 时不再要求它等于启动前的静态 UA，而是在 OkHttp application interceptor 中对同站点请求逐请求采用 snapshot UA；
 CookieJar 同步导入同一 revision 的 Cookie。
 这样避免 `cf_clearance` 来自真实 WebView、HTTP 请求却继续声明另一浏览器/平台所产生的 Cloudflare 指纹不一致。

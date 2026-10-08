@@ -31,8 +31,6 @@
 
 ## P0：网络 UA / client / cache ownership 真机闭环
 
-- 在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。
-- 对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper必须在Pipeline前切回source client，正常无状态媒体保持host streaming。非媒体正文按当前typed semantic recovery有界处理，不因protocol mismatch强制runtime重放。
 - 继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown；真实WNACG1.6受控GET/redirect的正文、原生呈现、冷READY和取消边界见source-mihon-client-pipeline审计。完整输入/canonical整块物化、live stream/backpressure及分配另验，保持原body/cache/NetLane/retry owner。
 
 

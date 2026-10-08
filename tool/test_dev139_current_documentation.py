@@ -242,6 +242,8 @@ completed_plan_markers = {
     "SWG-PLAN-011": "后续真机验证chapter B与Reader A共享physical transfer",
     "SWG-PLAN-098": "dev.228后真机验证改为直接统计",
     "SWG-PLAN-028": "记录 `source-cover:<sourceId>\\0<canonicalComicId>`",
+    "SWG-PLAN-046": "在设置中切换自定义 User-Agent后分别验证通用 HTTP",
+    "SWG-PLAN-047": "对 Mihon/Venera source记录 host replay / source-owned fallback原因",
     "SWG-PLAN-081": "验证打开浏览器后立即取消/Activity中断不会擦除",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")

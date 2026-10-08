@@ -2,6 +2,7 @@ package dev.zic.network
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,6 +11,8 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import org.json.JSONArray
 
 class NetworkBrowserActivity : Activity() {
@@ -21,6 +24,7 @@ class NetworkBrowserActivity : Activity() {
     private var navigationGeneration = 0
     private var challengeFreeSinceUptimeMillis: Long? = null
     private var captureReadyUrl: String? = null
+    private var systemBackCallback: OnBackInvokedCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +47,14 @@ class NetworkBrowserActivity : Activity() {
             // Snapshot begin must use the effective WebView UA. For Cloudflare
             // that UA is only known after the real WebView has been created.
             createBrowser(url, requestedUserAgent)
+            if (Build.VERSION.SDK_INT >= 33) {
+                val callback = OnBackInvokedCallback { handleBackNavigation() }
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    callback,
+                )
+                systemBackCallback = callback
+            }
         }.onFailure { error ->
             failAndFinish(error.message ?: error.javaClass.simpleName)
         }
@@ -237,6 +249,10 @@ class NetworkBrowserActivity : Activity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        handleBackNavigation()
+    }
+
+    private fun handleBackNavigation() {
         if (::webView.isInitialized && webView.canGoBack()) {
             webView.goBack()
         } else {
@@ -277,6 +293,10 @@ class NetworkBrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            systemBackCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+            systemBackCallback = null
+        }
         verificationHandler.removeCallbacksAndMessages(null)
         if (::webView.isInitialized) {
             val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()

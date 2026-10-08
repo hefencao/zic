@@ -10,6 +10,72 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt'
 
 
+def verify_network_helper_priorities(compiler, java, libraries, work):
+    dependencies = work / 'NetworkDependencies.kt'
+    dependencies.write_text('''package dev.zic.network
+import android.content.Context
+import okhttp3.Dns
+import okhttp3.HttpUrl
+import okhttp3.Interceptor
+class FallbackDns : Dns {
+    override fun lookup(hostname: String) = Dns.SYSTEM.lookup(hostname)
+}
+class AndroidCloudflareInterceptor(context: Context, provider: () -> String,
+    hasClearance: (HttpUrl) -> Boolean) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain) = chain.proceed(chain.request())
+}
+''')
+    harness = work / 'UserAgentPriority.kt'
+    harness.write_text('''import android.content.Context
+import android.webkit.CookieManager
+import dev.zic.network.AndroidBrowserCookieSession
+import dev.zic.network.BrowserCookieSnapshot
+import eu.kanade.tachiyomi.network.NetworkHelper
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.Protocol
+import okhttp3.ResponseBody.Companion.toResponseBody
+
+fun main() {
+    val helper = NetworkHelper(Context())
+    CookieManager.current.header = null
+    val client = helper.client.newBuilder().addInterceptor { chain ->
+        val request = chain.request()
+        Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+            .code(200).message("OK").body("".toResponseBody()).build()
+    }.build()
+    fun actual(browser: String?, source: String?): String? {
+        AndroidBrowserCookieSession.snapshot = browser?.let {
+            BrowserCookieSnapshot(emptyMap(), it, System.currentTimeMillis())
+        }
+        val request = Request.Builder().url("https://example.invalid/image")
+        if (source != null) request.header("User-Agent", source)
+        return client.newCall(request.build()).execute().use {
+            it.request.header("User-Agent")
+        }
+    }
+    check(actual(null, null) == helper.defaultUserAgentProvider())
+    check(actual(null, "SourceOwnedUA") == "SourceOwnedUA")
+    check(actual("BrowserUA/one", "GlobalUA/one") == "BrowserUA/one")
+    check(actual("BrowserUA/two", "GlobalUA/two") == "BrowserUA/two")
+    check(actual("BrowserUA/two", "SourceOwnedUA") == "BrowserUA/two")
+    println("Mihon NetworkHelper actual OkHttp UA priority: 5/5")
+}
+''')
+    common = ROOT / 'packages/plugin_host_bridge/android/src/mihonRuntimeCommon/kotlin/eu/kanade/tachiyomi/network/interceptor'
+    for abi in ('mihonRuntime14', 'mihonRuntime16'):
+        runtime = ROOT / f'packages/plugin_host_bridge/android/src/{abi}/kotlin/eu/kanade/tachiyomi/network/RuntimeNetwork.kt'
+        output = work / f'{abi}-ua.jar'
+        sources = [SOURCE, dependencies, harness, work / 'Context.kt',
+            work / 'CookieManager.kt', work / 'BrowserSession.kt']
+        sources.extend(common / f'{name}.kt' for name in
+            ('UncaughtExceptionInterceptor', 'UserAgentInterceptor', 'CloudflareInterceptor'))
+        subprocess.run([compiler, '-cp', os.pathsep.join(libraries),
+            *map(str, sources), str(runtime), '-include-runtime', '-d', str(output)], check=True)
+        subprocess.run([java, '-cp', os.pathsep.join([str(output), *libraries]),
+            'UserAgentPriorityKt'], check=True)
+
+
 def main():
     compiler = shutil.which('kotlinc')
     java = shutil.which('java')
@@ -49,6 +115,7 @@ object AndroidBrowserCookieSession {
     fun readCookies(context: Context, url: String, expectedUserAgent: String?): BrowserCookieSnapshot? = snapshot
 }
 ''')
+        verify_network_helper_priorities(compiler, java, libraries, work)
         (work / 'Smoke.kt').write_text('''import android.content.Context
 import android.webkit.CookieManager
 import dev.zic.network.AndroidBrowserCookieSession

@@ -9,11 +9,16 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/material.dart';
 import 'package:network_bridge/network_bridge.dart';
+import 'package:pipeline/pipeline.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:transport/transport.dart';
 
 import 'package:zic/debug_trace_export.dart';
+import 'package:zic/app_preferences.dart';
+import 'package:zic/app_settings_screen.dart';
+import 'package:zic/local_media_composition.dart';
 import 'package:zic/app_runtime.dart' as app_runtime;
 import 'package:zic/main.dart' as app_entrypoint;
 import 'package:zic/startup_platform.dart';
@@ -36,6 +41,7 @@ const _contractsOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_CONTRACTS_ONL
 const _exportProbePayload = String.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_EXPORT_PAYLOAD');
 const _metadataOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_METADATA_ONLY');
 const _browserOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_BROWSER_ONLY');
+const _userAgentOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_USER_AGENT_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -54,6 +60,10 @@ Future<void> main() async {
   ));
   await waitForFirstFlutterUiDisplayed();
   await attachAndroidPlugin('network_bridge');
+  if (_userAgentOnly) {
+    await _probeNetworkUserAgent();
+    return;
+  }
   if (_browserOnly) {
     await _probeBrowserCancellation();
     return;

@@ -21,6 +21,13 @@ def main() -> int:
         'android/content/Context.java': '''package android.content; public class Context { public java.io.File getFilesDir(){ return new java.io.File("."); } }''',
         'android/content/Intent.java': '''package android.content; public class Intent { private final java.util.Map<String,Object> values=new java.util.HashMap<>(); public Intent(){} public String getStringExtra(String k){return (String)values.get(k);} public boolean getBooleanExtra(String k,boolean d){return values.containsKey(k)?(Boolean)values.get(k):d;} public Intent putExtra(String k,String v){values.put(k,v);return this;} public Intent putExtra(String k,boolean v){values.put(k,v);return this;} }''',
         'android/os/Bundle.java': '''package android.os; public class Bundle {}''',
+        'android/os/Build.java': '''package android.os; public class Build { public static class VERSION { public static int SDK_INT=36; } }''',
+        'android/window/OnBackInvokedCallback.java': '''package android.window; public interface OnBackInvokedCallback { void onBackInvoked(); }''',
+        'android/window/OnBackInvokedDispatcher.java': '''package android.window; public class OnBackInvokedDispatcher {
+ public static final int PRIORITY_DEFAULT=0; public OnBackInvokedCallback callback;
+ public void registerOnBackInvokedCallback(int priority,OnBackInvokedCallback next){callback=next;}
+ public void unregisterOnBackInvokedCallback(OnBackInvokedCallback previous){if(callback==previous)callback=null;}
+ public void invoke(){if(callback==null)throw new AssertionError("system Back has no browser callback");callback.onBackInvoked();} }''',
         'android/os/Looper.java': '''package android.os; public class Looper { public static Looper getMainLooper(){ return new Looper(); } }''',
         'android/os/Handler.java': '''package android.os; public class Handler { public Handler(Looper l){} public boolean postDelayed(Runnable r,long d){ return true; } public void removeCallbacksAndMessages(Object token){} }''',
         'android/os/SystemClock.java': '''package android.os; public class SystemClock { public static long uptimeMillis(){ return 0L; } }''',
@@ -38,9 +45,10 @@ def main() -> int:
  public void loadUrl(String u){url=u;progress=0;client.onPageStarted(this,u,null);} public String getUrl(){return url;} public int getProgress(){return progress;}
  public void finishPage(){progress=100;client.onPageFinished(this,url);} public void evaluateJavascript(String s,ValueCallback<String> c){if(deferJavascript)callbacks.add(c);else c.onReceiveValue("[true,false]");}
  public void deliverJavascript(){for(ValueCallback<String> c:callbacks)c.onReceiveValue("[true,false]");callbacks.clear();}
- public String getTitle(){return "title";} public boolean canGoBack(){return false;} public void goBack(){} public void stopLoading(){} public void destroy(){} }''',
+ public boolean history=false; public int historyBacks=0;
+ public String getTitle(){return "title";} public boolean canGoBack(){return history;} public void goBack(){historyBacks++;} public void stopLoading(){} public void destroy(){} }''',
         'android/webkit/CookieManager.java': '''package android.webkit; public class CookieManager { private static final CookieManager I=new CookieManager(); public static CookieManager getInstance(){return I;} public void setAcceptCookie(boolean v){} public void setAcceptThirdPartyCookies(WebView v,boolean a){} public String getCookie(String u){return "session=x";} public void flush(){} }''',
-        'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context { public static final int RESULT_CANCELED=0, RESULT_OK=-1, RESULT_FIRST_USER=1; private final android.content.Intent intent=new android.content.Intent(); private boolean finishing=false,destroyed=false; protected void onCreate(android.os.Bundle b){} public android.content.Intent getIntent(){return intent;} public void setResult(int r){} public void setResult(int r,android.content.Intent i){} public void setContentView(Object v){} public void finish(){finishing=true;} public boolean isFinishing(){return finishing;} public boolean isDestroyed(){return destroyed;} public void onBackPressed(){} protected void onDestroy(){destroyed=true;} }''',
+        'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context { public static final int RESULT_CANCELED=0, RESULT_OK=-1, RESULT_FIRST_USER=1; private final android.content.Intent intent=new android.content.Intent(); private boolean finishing=false,destroyed=false; public int resultCode=RESULT_CANCELED; private final android.window.OnBackInvokedDispatcher back=new android.window.OnBackInvokedDispatcher(); public android.window.OnBackInvokedDispatcher getOnBackInvokedDispatcher(){return back;} protected void onCreate(android.os.Bundle b){} public android.content.Intent getIntent(){return intent;} public void setResult(int r){resultCode=r;} public void setResult(int r,android.content.Intent i){resultCode=r;} public void setContentView(Object v){} public void finish(){finishing=true;} public boolean isFinishing(){return finishing;} public boolean isDestroyed(){return destroyed;} public void onBackPressed(){} protected void onDestroy(){destroyed=true;} }''',
         'org/json/JSONArray.java': '''package org.json; public class JSONArray {
  private final String[] values; public JSONArray(String s){if(!s.startsWith("[")||!s.endsWith("]"))throw new IllegalArgumentException();values=s.substring(1,s.length()-1).split(",");}
  public String optString(int i){return i<values.length?values[i].trim():"";} public boolean optBoolean(int i,boolean d){if(i>=values.length)return d;String v=values[i].trim();return v.equals("true")?true:v.equals("false")?false:d;} }''',
@@ -122,7 +130,37 @@ fun main() {
  android.webkit.WebView.last.deliverJavascript()
  check(closing.isFinishing) { "complete capture did not release browser result" }
  destroy(closing)
+ val systemBack = create()
+ android.webkit.WebView.last.finishPage()
+ android.webkit.WebView.last.deferJavascript = true
+ systemBack.onBackInvokedDispatcher.invoke()
+ check(!systemBack.isFinishing) { "system Back skipped pending snapshot capture" }
+ android.webkit.WebView.last.deliverJavascript()
+ check(systemBack.isFinishing && systemBack.resultCode == android.app.Activity.RESULT_OK) {
+  "completed ordinary system Back returned cancellation"
+ }
+ destroy(systemBack)
+ check(systemBack.onBackInvokedDispatcher.callback == null) { "destroyed browser retained Back callback" }
+ val history = create()
+ val historyView = android.webkit.WebView.last
+ historyView.history = true
+ history.onBackInvokedDispatcher.invoke()
+ check(!history.isFinishing && historyView.historyBacks == 1) { "system Back skipped WebView history" }
+ destroy(history)
+ val unresolved = create(true)
+ unresolved.onBackInvokedDispatcher.invoke()
+ check(unresolved.isFinishing && unresolved.resultCode == android.app.Activity.RESULT_FIRST_USER &&
+  NetworkBrowserSnapshotStore.captures == 0) { "system Back accepted unresolved verification" }
+ destroy(unresolved)
+ android.os.Build.VERSION.SDK_INT = 32
+ val legacy = create()
+ check(legacy.onBackInvokedDispatcher.callback == null) { "legacy Activity used unsupported Back API" }
+ android.webkit.WebView.last.finishPage()
+ legacy.onBackPressed()
+ check(legacy.isFinishing && legacy.resultCode == android.app.Activity.RESULT_OK) { "legacy Back completion regressed" }
+ destroy(legacy)
  println("browser capture lifecycle: 7 cases and 4 probe states passed")
+ println("browser system Back: 4 cases passed")
 }
 '''
 
