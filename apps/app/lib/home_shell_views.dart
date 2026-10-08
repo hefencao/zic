@@ -1,6 +1,16 @@
 part of 'home_shell.dart';
 
 extension _HomeShellViews on _HomeShellState {
+  Widget _buildSourceAwareCover({Key? key, required TransitionBuilder builder}) =>
+      StreamBuilder<void>(
+        key: key,
+        stream: _externalSources.sourceProjectionChanges,
+        builder: (context, _) => AnimatedBuilder(
+          animation: _librarySession.downloadProjectionChanges,
+          builder: builder,
+        ),
+      );
+
   List<LibraryComic> _selectedManagedComics() => _libraryComics
       .where((comic) => _shelfManagement.isSelected(comic.identity))
       .toList(growable: false);
@@ -312,11 +322,14 @@ extension _HomeShellViews on _HomeShellState {
             comic.comicId,
           );
           final presentationIdentity = presentationIdentities[index];
+          final startupTelemetry = telemetryOwners == null ||
+                  telemetryOwners.add(presentationIdentity)
+              ? widget.startupTelemetry
+              : null;
           return SizedBox(
             key: ValueKey<String>(presentationIdentity),
             width: ComicCoverCard.cardWidth,
-            child: AnimatedBuilder(
-              animation: _librarySession.downloadProjectionChanges,
+            child: _buildSourceAwareCover(
               builder: (context, _) => ComicCoverCard(
                 interactionKey: resume == null
                     ? ValueKey<String>('comic-entry:${comic.identity}')
@@ -335,10 +348,7 @@ extension _HomeShellViews on _HomeShellState {
                 telemetryIdentity: presentationIdentity,
                 coverSource: _coverSourceLoaderForComic(comic),
                 sourceAvailable: _coverSourceAvailableForComic(comic),
-                startupTelemetry: telemetryOwners == null ||
-                        telemetryOwners.add(presentationIdentity)
-                    ? widget.startupTelemetry
-                    : null,
+                startupTelemetry: startupTelemetry,
                 downloadProgress: _downloadProgressForComic(comic),
                 onTap: () => unawaited(_openComic(comic)),
                 onLongPress: () => unawaited(_openComicDetails(comic)),
@@ -866,9 +876,8 @@ extension _HomeShellViews on _HomeShellState {
   Widget _buildGalleryTile(LibraryComic comic) {
     final selected = _shelfManagement.isSelected(comic.identity);
     final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
-    final card = AnimatedBuilder(
+    final card = _buildSourceAwareCover(
       key: ValueKey<String>('library-cover:$coverIdentity'),
-      animation: _librarySession.downloadProjectionChanges,
       builder: (context, _) => ComicCoverCard(
         interactionKey: comicCoverKey(comic.sourceId, comic.comicId),
         comic: comic,
@@ -1007,9 +1016,8 @@ extension _HomeShellViews on _HomeShellState {
   Widget _buildShelfList(List<LibraryComic> comics) {
     Widget item(LibraryComic comic, int index) {
       final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
-      return AnimatedBuilder(
+      return _buildSourceAwareCover(
         key: ValueKey<String>('library-list:$coverIdentity'),
-        animation: _librarySession.downloadProjectionChanges,
         builder: (context, _) => ShelfListTile(
           comic: comic,
           preference: _preferenceForComic(comic),

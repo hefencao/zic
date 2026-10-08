@@ -215,6 +215,11 @@ chapter composition、artifact cache 和 whole-comic queue；强制打开或 ado
 杜绝空 responseLoaders 导致的非本地协议回退错误；controller loader/adoption、exact-source handoff gate、
 `sourceChanges` subscription、projection refresh single-flight 与 activation retry 都由该 lifecycle owner 持有，
 直接注入的 deferred controller 在没有 loader 时不会被 generic publish 路径升级成全插件 `ready` barrier。
+Home 更新/历史、书架画廊/列表的封面子树消费同一 `sourceProjectionChanges` 窄信号，重新读取 current source availability；
+既有 source-failed 封面仅在 unavailable→available 时重建资源 Future，健康和 pending 封面保留原请求与 canonical State。
+来源发布不使整个 Home library projection 失效；卡片仍只提交 gateway 请求，不持 runtime/retry/network 状态。
+`ComicCoverCard` 的 canonical 封面与按 raw comic/resume chapter 定位的点击层为同级节点；
+当前点击 key 和命令可随投影更新，不能以其替换封面的祖先并销毁健康或 pending artwork State。
 lifecycle close 必须同步封闭新 refresh/adoption 并 join 并发 close；
 已经进入 Home projection callback 的 current refresh 必须完整返回后 close 才完成，
 但尚在 optional controller loader/ready 阶段且尚未进入 projection callback 的 work 不属于 teardown barrier。

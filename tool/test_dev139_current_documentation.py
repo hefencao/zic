@@ -245,6 +245,9 @@ completed_plan_markers = {
     "SWG-PLAN-046": "在设置中切换自定义 User-Agent后分别验证通用 HTTP",
     "SWG-PLAN-047": "对 Mihon/Venera source记录 host replay / source-owned fallback原因",
     "SWG-PLAN-081": "验证打开浏览器后立即取消/Activity中断不会擦除",
+    "SWG-PLAN-063": "在source暂不可用时补真机`mihon:resource:` durable封面命中",
+    "SWG-PLAN-066": "在插件runtime激活失败时重启App，验证durable封面命中",
+    "SWG-PLAN-082": "让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias",
 }
 plan = read("docs/IMPLEMENTATION_PLAN.md")
 for row in requirements:

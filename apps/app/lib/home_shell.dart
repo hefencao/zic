@@ -768,9 +768,9 @@ final class _HomeShellState extends State<HomeShell> {
   }
 
   void _refreshSourcePagePresentation() {
-    // Home cover loaders observe the source projection directly. Rebuilding
-    // the Home tree for source-only publication would recreate pending cover
-    // widgets. Only the visible source page needs an explicit refresh.
+    // Mounted cover subtrees consume the narrow source signal and re-read
+    // availability without invalidating Home's library projection. Only the
+    // visible source page needs an explicit refresh here.
     if (mounted && _navigationIndex == 2) {
       setState(() {});
     }

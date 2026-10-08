@@ -365,6 +365,11 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；
   source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，
   不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；
+  Home/历史和书架画廊/列表封面 MUST 在卡片局部消费既有来源投影信号并重读 current source availability。
+  先前 source-failed 的封面在 unavailable→available 时 MAY 重新提交 gateway 请求；健康和 pending 封面 MUST 保留原 Future/canonical State，
+  来源发布 MUST NOT 为此重建整个 Home library projection 或建立独立 retry/network 状态。
+  Home/书架封面 State MUST 独立于当前 raw comic/resume chapter 的点击 key；
+  alias、章节或 enrichment 更新 MUST 保留同一 canonical artwork，点击命令与交互 key MUST 仍采用当前 raw 身份。
   来源列表 Sliver 重新挂载 MUST NOT重新发起同一稳定 canonical card 已失败的来源请求。
   来源 card 的内部交互祖先 key MUST 与 Sliver 使用相同的来源 canonical identity；raw locator 更新不得销毁现有封面 State。
   `sourceComicCardKey` MUST 使用 canonical identity，点击/来源请求 MUST 继续使用当前 raw locator，不能用 presentation key 改写请求身份。
@@ -373,7 +378,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   上一页 MUST 使用已接纳的实际访问坐标，序号按访问路径展示；不得用请求limit推算反向坐标。
   来源view恢复 MUST 保留请求分区内的页码/路径且缓存恢复同样归并；section/filter分区改变 MUST 重置为0。
   访问路径 MUST 限于UI导航意图，随query/filter/section/page0重置；不得成为source/runtime/cache/transport cursor authority。
-  只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
+  来源列表只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - Venera JavaScript `Image` compatibility MUST match the reference runtime rather than Android drawing defaults.
   `Image.fillImageRangeAt(x,y,image,srcX,srcY,width,height)` MUST accept `width==0` or `height==0` as a no-op because source transforms may intentionally emit empty slices;
   negative size or any non-empty source/target overrun MUST fail.

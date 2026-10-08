@@ -102,71 +102,77 @@ final class ComicCoverCard extends StatelessWidget {
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            key: interactionKey,
-            onTap: onTap,
-            onLongPress: onLongPress,
-            child: AspectRatio(
-              aspectRatio: coverAspectRatio,
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  _CoverImage(
-                    cacheIdentity: coverIdentity,
-                    telemetryIdentity: telemetryIdentity ?? coverIdentity,
-                    sourceAvailable: sourceAvailable,
-                    loader: coverSource,
-                    placeholderLoader: coverPlaceholderSource,
-                    startupTelemetry: startupTelemetry,
-                  ),
-                  if (downloadProgress != null)
-                    _DownloadWatermark(progress: downloadProgress!),
-                  const Align(
-                    alignment: Alignment.bottomCenter,
-                    child: _CoverTitleGradient(),
-                  ),
-                  Positioned(
-                    left: 8,
-                    right: 8,
-                    bottom: 8,
-                    child: Text(
-                      comic.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        height: 1.12,
-                        fontWeight: FontWeight.w700,
-                        shadows: <Shadow>[
-                          Shadow(blurRadius: 3, color: Colors.black),
-                        ],
+          child: AspectRatio(
+            aspectRatio: coverAspectRatio,
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                _CoverImage(
+                  cacheIdentity: coverIdentity,
+                  telemetryIdentity: telemetryIdentity ?? coverIdentity,
+                  sourceAvailable: sourceAvailable,
+                  loader: coverSource,
+                  placeholderLoader: coverPlaceholderSource,
+                  startupTelemetry: startupTelemetry,
+                ),
+                // Navigation identity may change while canonical artwork stays.
+                InkWell(
+                  key: interactionKey,
+                  onTap: onTap,
+                  onLongPress: onLongPress,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      if (downloadProgress != null)
+                        _DownloadWatermark(progress: downloadProgress!),
+                      const Align(
+                        alignment: Alignment.bottomCenter,
+                        child: _CoverTitleGradient(),
                       ),
-                    ),
-                  ),
-                  if (preference.liked || preference.collected)
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.62),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(5),
-                          child: Icon(
-                            preference.collected
-                                ? Icons.bookmark
-                                : Icons.favorite,
+                      Positioned(
+                        left: 8,
+                        right: 8,
+                        bottom: 8,
+                        child: Text(
+                          comic.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
                             color: Colors.white,
-                            size: 16,
+                            fontSize: 13,
+                            height: 1.12,
+                            fontWeight: FontWeight.w700,
+                            shadows: <Shadow>[
+                              Shadow(blurRadius: 3, color: Colors.black),
+                            ],
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
+                      if (preference.liked || preference.collected)
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.62),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(5),
+                              child: Icon(
+                                preference.collected
+                                    ? Icons.bookmark
+                                    : Icons.favorite,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),

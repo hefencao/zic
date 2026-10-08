@@ -3,10 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
+import 'package:plugin_host/plugin_host.dart';
+import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
 // Test-only access to the existing durable response store.
@@ -19,6 +20,7 @@ import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_pull_to_refresh.dart';
 import 'package:zic/app_settings_screen.dart';
+import 'package:zic/artwork_placeholder.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_export.dart';
@@ -26,9 +28,11 @@ import 'package:zic/home_library_session.dart';
 import 'package:zic/home_shell.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/local_media_composition.dart';
+import 'package:zic/main.dart' as app_entrypoint;
 import 'package:zic/misc_page.dart';
 import 'package:zic/source_browser.dart';
 import 'package:zic/source_resource_gateway.dart';
+import 'package:zic/startup_platform.dart';
 
 // Explicit device entrypoint: production Home/details/Reader/storage owners with a
 // controlled source and a fresh temporary SQLite database. It never opens the
@@ -50,6 +54,12 @@ late ResourceCacheCoordinator _cache;
 final _startup = HomeStartupTelemetry(clock: const SystemClock(), sink: _trace);
 // The explicit device build needs two launches, separated by force-stop.
 const _processCold = bool.fromEnvironment('ZIC_HOME_ARTWORK_PROCESS_COLD');
+const _sourceUnavailable = bool.fromEnvironment('ZIC_HOME_ARTWORK_SOURCE_UNAVAILABLE');
+const _combinedArtwork = bool.fromEnvironment('ZIC_HOME_ARTWORK_COMBINED');
+
+@pragma('vm:entry-point')
+Future<void> zicExternalPluginRuntimeServiceMain() =>
+    app_entrypoint.zicExternalPluginRuntimeServiceMain();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,6 +67,10 @@ Future<void> main() async {
     body: Center(child: Text('准备隔离首页更新验收')),
   )));
   await _frames(2);
+  if (_sourceUnavailable) {
+    await _sourceUnavailableArtwork();
+    return;
+  }
   if (_processCold) {
     await _processColdArtwork();
     return;
@@ -73,6 +87,11 @@ Future<void> main() async {
     _queue = WholeComicDownloadQueue(downloads: _downloads);
     _cache = ResourceCacheCoordinator();
     resourcesReady = true;
+    if (_combinedArtwork) {
+      await _combinedArtworkChecks(root);
+      completed = true;
+      return;
+    }
     await _seed();
     await _mount();
     _check('four-cases-only-shelved-update-visible',
@@ -346,6 +365,225 @@ Future<void> _processColdArtwork() async {
   }
 }
 
+Future<void> _sourceUnavailableArtwork() async {
+  // Two actual processes share only this fixture-owned directory. The source's
+  // real Android runtime holds/fails init at loopback; cache owners are unchanged.
+  const key = 'home_artwork_unavailable_fixture';
+  const pluginId = 'venera:home-artwork-unavailable-fixture';
+  const sourceId = 'venera:$key';
+  const opaqueSourceId = 'mihon:home-artwork-unavailable-fixture';
+  final root = Directory('${Directory.systemTemp.path}/zic-home-artwork-unavailable');
+  final marker = File('${root.path}/prepared.json');
+  Map<String, Object?>? prepared;
+  ExternalPluginController? controller;
+  HttpServer? origin;
+  final releaseActivation = Completer<void>();
+  var originPort = 0;
+  var activationRequests = 0;
+  var imageRequests = 0;
+  var recovering = false;
+  var resourcesReady = false;
+  var completed = false;
+  var keepForRestart = false;
+  try {
+    if (await marker.exists()) {
+      prepared = (jsonDecode(await marker.readAsString()) as Map).cast<String, Object?>();
+      if (prepared['schema'] != 1) throw StateError('Unknown fixture preparation');
+      _checks.addAll((prepared['checks'] as List).map(
+        (check) => (check as Map).cast<String, Object?>()));
+    } else {
+      if (await root.exists()) await root.delete(recursive: true);
+      await root.create(recursive: true);
+    }
+    origin = await HttpServer.bind(InternetAddress.loopbackIPv4,
+      prepared?['port'] as int? ?? 0);
+    originPort = origin.port;
+    final base = 'http://127.0.0.1:$originPort';
+    origin.listen((request) async {
+      if (request.uri.path == '/activate') {
+        activationRequests++;
+        if (!recovering) await releaseActivation.future;
+        request.response.write(recovering ? 'ready' : 'unavailable');
+      } else {
+        imageRequests++;
+        request.response.headers.contentType = ContentType('image', 'png');
+        request.response.add(_source.png);
+      }
+      await request.response.close();
+    });
+    _store = await openImportedLibraryStore('${root.path}/library');
+    _downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => throw StateError('No Reader transport in fixture'),
+    );
+    _queue = WholeComicDownloadQueue(downloads: _downloads);
+    _cache = ResourceCacheCoordinator(responses: ResourceCacheManager(
+      byteStore: FileResourceCacheByteStore('${root.path}/artwork-cache')));
+    resourcesReady = true;
+    if (prepared == null) {
+      for (final item in <({String source, String id, String locator})>[
+        (source: sourceId, id: 'http-hit', locator: '$base/hit.png'),
+        (source: opaqueSourceId, id: 'opaque-hit', locator: 'mihon:resource:fixture-cover'),
+        (source: sourceId, id: 'http-miss', locator: '$base/miss.png'),
+      ]) {
+        await _store.upsertSavedComic(SavedComicRecord(
+          sourceId: item.source, comicId: item.id, title: item.id,
+          coverSourceId: item.locator, authors: const <String>[],
+          readingDirection: ReadingDirection.ltr,
+        ));
+        await _store.upsertChapter(ImportedChapterRecord(
+          directoryId: item.id, displayName: 'History', sourceId: item.source,
+          comicId: item.id, comicTitle: item.id, chapterId: '${item.id}:chapter',
+          sourceRevision: 'r1', pages: const <ImportedPageRecord>[
+            ImportedPageRecord(displayName: 'page', sourceId: 'fixture:page',
+              pageId: 'page', contentKindHint: ContentKindHint.png),
+          ],
+        ));
+        await _store.saveProgress(ReadingProgress(
+          sourceId: item.source, comicId: item.id, chapterId: '${item.id}:chapter',
+          pageIndex: 0, subPageOffset: 0, readerMode: ReaderMode.paged,
+          updatedAt: _signal,
+        ));
+        if (item.id.endsWith('-hit')) {
+          await loadCachedComicImageSource(cache: _cache.responses,
+            sourceId: item.source, comicId: item.id, imageIdentity: item.locator,
+            revision: comicArtworkCacheSchemaRevision, awaitPersistence: true,
+            retention: ResourceCacheRetention.retained, loader: () async => _source.png);
+        }
+      }
+      final pluginRoot = await Directory('${root.path}/external_plugins').create();
+      final payload = await File('${pluginRoot.path}/fixture.js').writeAsString(
+        "class HomeArtworkUnavailableFixture extends ComicSource {name='Fixture';"
+        "key='$key';version='1';url='https://fixture.invalid';"
+        "async init(){const r=await Network.get('$base/activate',{'cache-time':'no'});"
+        "if(r.body!=='ready')throw new Error('fixture activation unavailable')}"
+        "explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];}",
+        flush: true,
+      );
+      final plugin = ExternalComicPluginCatalogEntry(
+        format: ExternalComicPluginFormat.veneraJavaScript,
+        pluginId: pluginId, name: 'Fixture', version: '1',
+        entrypoint: Uri.parse('https://fixture.invalid/fixture.js'),
+        sources: const <ExternalComicPluginSource>[
+          ExternalComicPluginSource(sourceId: sourceId, externalId: key,
+            name: 'Fixture', language: 'en'),
+        ],
+      );
+      final inspection = await VeneraJavaScriptInspector(
+        payloads: CallbackExternalPluginPayloadLoader((_) async =>
+          ExternalPluginPayloadFile(path: payload.path, byteLength: await payload.length())),
+      ).inspect(plugin);
+      await File('${pluginRoot.path}/installed.json').writeAsString(jsonEncode({
+        'version': 1, 'plugins': [{
+          'plugin': {'format': plugin.format.name, 'pluginId': pluginId, 'name': 'Fixture',
+            'version': '1', 'entrypoint': plugin.entrypoint.toString(), 'sources': [
+              {'sourceId': sourceId, 'externalId': key, 'name': 'Fixture', 'language': 'en'},
+            ]},
+          'payloadPath': payload.path, 'payloadSha256': inspection.payloadSha256,
+          'repositoryOrigin': 'https://fixture.invalid', 'sourceKey': key,
+          'sourceIds': [sourceId],
+        }],
+      }), flush: true);
+      _check('unavailable-fixture-persists-two-covers-and-trusted-runtime',
+        (await (_cache.responses.byteStore! as FileResourceCacheByteStore).inspect())
+          .retainedEntries == 2);
+      keepForRestart = true;
+    } else {
+      _check('unavailable-artwork-reopens-in-another-process', prepared['processId'] != pid);
+      await waitForFirstFlutterUiDisplayed();
+      await attachAndroidPlugin('network_bridge');
+      await attachAndroidPlugin('plugin_host_bridge');
+      controller = await ExternalPluginController.openDeferred(root.path,
+        discoverDeviceMihonExtensions: false, deferRuntimeActivation: true);
+      await _mount(sources: const <BrowsableComicSource>[], externalPlugins: controller);
+      int events(TraceEventKind kind, String source, String id) =>
+        _trace.exportEvents.where((event) => event.kind == kind &&
+          event.identityHash == 'home-history:$source\u0000$id').length;
+      int frames(String source, String id) => events(TraceEventKind.homeCoverFirstFrame, source, id);
+      await _wait(() => activationRequests == 1 && frames(sourceId, 'http-hit') == 1 &&
+        frames(opaqueSourceId, 'opaque-hit') == 1, maxFrames: 1800);
+      _check('cold-http-and-opaque-durable-hits-paint-while-source-init-waits',
+        _cache.responses.stats.persistentHits == 2 && controller.activeSources.isEmpty &&
+        imageRequests == 0 && frames(sourceId, 'http-miss') == 0);
+      _check('durable-miss-keeps-original-readiness-pending-without-local-file-fallback',
+        events(TraceEventKind.homeCoverRequested, sourceId, 'http-miss') == 1 &&
+        events(TraceEventKind.homeCoverSourceFailed, sourceId, 'http-miss') == 0);
+      releaseActivation.complete();
+      await _wait(() => controller!.activationFailures.containsKey(pluginId) &&
+        events(TraceEventKind.homeCoverSourceFailed, sourceId, 'http-miss') == 1,
+        maxFrames: 1800);
+      _check('actual-runtime-init-failure-preserves-painted-durable-covers',
+        controller.activeSources.isEmpty && controller.canRetryActivation(pluginId) &&
+        frames(sourceId, 'http-hit') == 1 && frames(opaqueSourceId, 'opaque-hit') == 1 &&
+        imageRequests == 0);
+      final failure = _trace.exportEvents.singleWhere((event) =>
+        event.kind == TraceEventKind.homeCoverSourceFailed &&
+        event.identityHash == 'home-history:$sourceId\u0000http-miss');
+      _check('unavailable-miss-reports-source-readiness-failure',
+        failure.payload['errorType'] == 'StateError' &&
+        controller.activationFailures[pluginId] is ExternalPluginActivationException &&
+        (controller.activationFailures[pluginId]! as ExternalPluginActivationException)
+          .denials.contains(ExternalPluginDenial.activationFailed));
+      recovering = true;
+      await controller.retryActivation(pluginId);
+      _check('explicit-runtime-retry-activates-the-original-source',
+        activationRequests == 2 && controller.activeSources.length == 1 &&
+        !controller.activationFailures.containsKey(pluginId));
+      bool missPainted() {
+        final card = _element((element) => element.widget is ComicCoverCard &&
+          (element.widget as ComicCoverCard).comic.comicId == 'http-miss');
+        return card != null && _element((element) => element.widget is RawImage &&
+          (element.widget as RawImage).image != null, within: card) != null;
+      }
+      await _wait(missPainted, maxFrames: 1800);
+      _check('explicit-runtime-recovery-loads-only-durable-miss',
+        missPainted() && _card('http-miss')!.sourceAvailable &&
+        activationRequests == 2 && imageRequests == 1 &&
+        !controller.activationFailures.containsKey(pluginId) &&
+        controller.activeSources.length == 1 &&
+        events(TraceEventKind.homeCoverRequested, sourceId, 'http-miss') == 2 &&
+        frames(sourceId, 'http-miss') == 1 &&
+        frames(sourceId, 'http-hit') == 1 && frames(opaqueSourceId, 'opaque-hit') == 1 &&
+        events(TraceEventKind.homeCoverRequested, sourceId, 'http-hit') == 1 &&
+        events(TraceEventKind.homeCoverRequested, opaqueSourceId, 'opaque-hit') == 1);
+    }
+    completed = true;
+  } on Object catch (error, stack) {
+    _checks.add({'step': 'source-unavailable-fixture', 'status': 'failed',
+      'error': error.toString(), 'stack': stack.toString(),
+      'activationRequests': activationRequests, 'imageRequests': imageRequests,
+      'activeSources': controller?.activeSources.map((source) => source.sourceId).toList(),
+      'missSourceAvailable': _card('http-miss')?.sourceAvailable,
+    });
+  } finally {
+    if (!releaseActivation.isCompleted) releaseActivation.complete();
+    try {
+      if (resourcesReady) {
+        await _unmount();
+        await controller?.close();
+        await _queue.close();
+        await _downloads.close();
+        await _cache.close();
+        await _store.close();
+      }
+    } on Object catch (error) {
+      completed = false;
+      _checks.add({'step': 'source-unavailable-close', 'status': 'failed',
+        'error': error.toString()});
+    } finally {
+      await origin?.close(force: true);
+      if (completed && keepForRestart) {
+        await marker.writeAsString(jsonEncode({'schema': 1, 'processId': pid,
+          'port': originPort, 'checks': _checks}), flush: true);
+      } else if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    }
+    await _exportResult(completed: completed && !keepForRestart, root: root,
+      phase: completed && keepForRestart ? 'prepared' : 'complete',
+      preparedProcessId: prepared?['processId'] as int?);
+  }
+}
+
 Future<void> _downloadCompletionChecks(Directory root) async {
   await _unmount();
   final previousDownloads = _downloads;
@@ -450,6 +688,138 @@ Future<void> _downloadCompletionChecks(Directory root) async {
     _downloads = previousDownloads;
     _queue = previousQueue;
   }
+}
+
+Future<void> _combinedArtworkChecks(Directory root) async {
+  const canonical = 'https://fixture.invalid/comic/42';
+  String raw(int revision) => 'mihon:manga:${base64UrlEncode(utf8.encode(
+    jsonEncode({'url': canonical, 'title': 'Snapshot $revision'})))}';
+  final source = _CombinedArtworkSource()..artworkMode = true;
+  final handoff = HomeServiceHandoff();
+  final previous = _store;
+  ImportedLibraryStore? next;
+  final resume = _ArtworkResumeProbe();
+  Future<void> seed(ImportedLibraryStore store, int revision) async {
+    final comicId = raw(revision);
+    await store.upsertSavedComic(SavedComicRecord.fromManifest(
+      source.manifest(comicId), canonicalComicId: canonical,
+      sourceUpdateAt: _signal,
+    ).copyWith(coverSourceId: 'https://fixture.invalid/cover.png?token=$revision'));
+    await store.saveComicPreference(ComicPreference.defaults(
+      sourceId: source.sourceId, comicId: comicId, sourceKind: ComicSourceKind.remote,
+    ).copyWith(inShelf: true));
+    for (var index = 0; index < 2; index++) {
+      await store.upsertChapter(ImportedChapterRecord(
+        directoryId: '$comicId:$index', displayName: 'Chapter $index',
+        sourceId: source.sourceId, comicId: comicId, comicTitle: 'Snapshot $revision',
+        chapterId: '$comicId:chapter-$index', sequence: index, sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(displayName: 'page', sourceId: 'fixture:page',
+            pageId: 'page', contentKindHint: ContentKindHint.png),
+        ],
+      ));
+    }
+    await store.saveProgress(ReadingProgress(sourceId: source.sourceId,
+      comicId: comicId, chapterId: '$comicId:chapter-${revision - 1}',
+      pageIndex: 0, subPageOffset: 0, readerMode: ReaderMode.paged,
+      updatedAt: _signal.add(Duration(days: revision))));
+  }
+  void publish(ImportedLibraryStore store) => handoff.updateServices(
+    libraryStore: store, chapterDownloads: _downloads, downloadComposition: null,
+    wholeComicDownloads: _queue, cacheCoordinator: _cache, externalPlugins: null,
+    externalPluginLoader: null, platformEnvironmentLoader: null,
+    ensureCoreServices: null, storageRoot: root.path,
+    persistHomeProjectionSnapshot: false,
+  );
+  Map<String, Element> artwork() {
+    final cards = _elements((element) => element.widget is ComicCoverCard &&
+      (element.widget as ComicCoverCard).coverIdentity == '${source.sourceId}\u0000$canonical');
+    final images = <String, Element>{};
+    for (final card in cards) {
+      final image = _element((element) => element.widget is StableArtworkImage, within: card);
+      if (image != null) {
+        images[(card.widget as ComicCoverCard).telemetryIdentity ??
+          (card.widget as ComicCoverCard).coverIdentity] = image;
+      }
+    }
+    return images;
+  }
+  try {
+    await seed(previous, 1);
+    publish(previous);
+    await _mount(sources: <BrowsableComicSource>[source], serviceHandoff: handoff);
+    await _wait(() => artwork().length == 2);
+    _selectNavigation(1);
+    await _wait(() => artwork().length == 3);
+    _selectNavigation(0);
+    await _wait(() => _trace.exportEvents.where((event) =>
+      event.kind == TraceEventKind.homeCoverFirstFrame &&
+      event.identityHash?.endsWith('\u0000$canonical') == true).length == 3);
+    final owners = artwork();
+    final homeOwner = _homeKey.currentState;
+    _check('one-canonical-comic-is-painted-in-updates-shelf-and-history',
+      owners.length == 3 && _updates().length == 1 &&
+      source.resourceLoads.values.fold<int>(0, (sum, value) => sum + value) == 1);
+    next = await openImportedLibraryStore('${root.path}/combined-next-library');
+    await seed(next, 2);
+    _store = next;
+    publish(next);
+    // Inactive navigation pages keep their last child until selected again.
+    await _wait(() => _elements((element) => element.widget is ComicCoverCard &&
+      (element.widget as ComicCoverCard).comic.comicId == raw(2)).length == 2);
+    _selectNavigation(1);
+    await _wait(() => _elements((element) => element.widget is ComicCoverCard &&
+      (element.widget as ComicCoverCard).comic.comicId == raw(2)).length == 3);
+    _selectNavigation(0);
+    await _frames(25);
+    bool sameOwners() {
+      final current = artwork();
+      return current.length == owners.length && owners.entries.every((entry) =>
+        identical(entry.value, current[entry.key]));
+    }
+    _check('raw-mihon-alias-resume-and-enrichment-preserve-canonical-artwork-owners',
+      identical(homeOwner, _homeKey.currentState) && sameOwners() &&
+      _elements((element) => element.widget is ComicCoverCard &&
+        (element.widget as ComicCoverCard).comic.resumeChapter?.chapter.chapterId ==
+          '${raw(2)}:chapter-1').length == 3 &&
+      source.resourceLoads.values.fold<int>(0, (sum, value) => sum + value) == 1);
+    WidgetsBinding.instance.addObserver(resume);
+    ScaffoldMessenger.of(_homeKey.currentContext!).showSnackBar(const SnackBar(
+      content: Text('组合封面验收：请切后台后返回'), duration: Duration(minutes: 2),
+    ));
+    await resume.returned.future.timeout(const Duration(seconds: 90));
+    await _frames(25);
+    _check('actual-background-resume-keeps-all-three-artwork-owners',
+      resume.paused && identical(homeOwner, _homeKey.currentState) && sameOwners() &&
+      source.resourceLoads.values.fold<int>(0, (sum, value) => sum + value) == 1);
+  } finally {
+    WidgetsBinding.instance.removeObserver(resume);
+    await _unmount();
+    handoff.dispose();
+    if (!identical(previous, _store)) await previous.close();
+    // The main fixture owns _store and its shared cache/download owners.
+    if (next != null && !identical(next, _store)) await next.close();
+  }
+}
+
+final class _ArtworkResumeProbe extends WidgetsBindingObserver {
+  final returned = Completer<void>();
+  bool paused = false;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) paused = true;
+    if (paused && state == AppLifecycleState.resumed && !returned.isCompleted) {
+      returned.complete();
+    }
+  }
+}
+
+final class _CombinedArtworkSource extends _UpdateSource
+    implements CanonicalComicIdentitySource {
+  @override
+  String get sourceId => 'mihon:home-combined-artwork-fixture';
+  @override
+  String canonicalComicIdentity(String comicId) => 'https://fixture.invalid/comic/42';
 }
 
 bool _completionIcon(String id, IconData data, Color color) {
@@ -884,13 +1254,17 @@ Future<void> _seed() async {
   ));
 }
 
-Future<void> _mount({List<BrowsableComicSource>? sources}) async {
+Future<void> _mount({List<BrowsableComicSource>? sources,
+    ExternalPluginController? externalPlugins, HomeServiceHandoff? serviceHandoff}) async {
   runApp(App(
-    libraryStore: _store, chapterDownloads: _downloads, wholeComicDownloads: _queue,
+    libraryStore: serviceHandoff == null ? _store : null,
+    chapterDownloads: _downloads, wholeComicDownloads: _queue,
     comicSources: sources ?? <BrowsableComicSource>[_source], cacheCoordinator: _cache,
     persistHomeProjectionSnapshot: false, persistMissingPreferences: false,
     homeKey: _homeKey, preferences: _preferences, debugTrace: _trace,
     startupTelemetry: _startup,
+    externalPlugins: externalPlugins,
+    serviceHandoff: serviceHandoff,
   ));
   await _wait(() => _element((element) =>
     element.widget.key == homeUpdatesSectionKey) != null);
@@ -908,8 +1282,8 @@ Future<void> _frames(int count) async {
   }
 }
 
-Future<void> _wait(bool Function() predicate) async {
-  for (var index = 0; index < 240; index++) {
+Future<void> _wait(bool Function() predicate, {int maxFrames = 240}) async {
+  for (var index = 0; index < maxFrames; index++) {
     if (predicate()) return;
     await _frames(1);
   }
@@ -984,7 +1358,7 @@ final class _UpdateSource implements BrowsableComicSource {
   String get sourceId => _sourceId;
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
-    sourceId: _sourceId, name: '隔离首页更新源', language: 'Test',
+    sourceId: sourceId, name: '隔离首页更新源', language: 'Test',
     website: Uri.https('fixture.invalid', '/'),
   );
   ComicManifest manifest(String id) => ComicManifest(

@@ -1668,6 +1668,62 @@ void main() {
     expect(loadCount, 2);
   });
 
+  testWidgets('canonical cover survives changing navigation keys while pending and painted',
+      (tester) async {
+    final chapter = _chapter(name: '稳定封面');
+    final comic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+    );
+    final source = Completer<EncodedResourceSource>();
+    var loads = 0;
+    var tapped = 0;
+    var longPressed = 0;
+    Widget card(int navigation) => MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 150,
+          child: ComicCoverCard(
+            key: const ValueKey<String>('canonical-card'),
+            interactionKey: ValueKey<String>('raw-chapter-$navigation'),
+            comic: comic,
+            preference: ComicPreference.defaults(
+              sourceId: chapter.sourceId, comicId: chapter.comicId,
+            ),
+            coverIdentity: 'source/canonical-comic',
+            coverSource: () {
+              loads++;
+              return source.future;
+            },
+            onTap: () => tapped = navigation,
+            onLongPress: () => longPressed = navigation,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(card(1));
+    await tester.pump();
+    await tester.pumpWidget(card(2));
+    await tester.pump();
+    expect(loads, 1, reason: 'A new navigation target must preserve pending artwork');
+    expect(find.byKey(const ValueKey<String>('raw-chapter-1')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('raw-chapter-2')));
+    expect(tapped, 2);
+    source.complete(MemoryEncodedResourceSource(_tinyPng()));
+    await tester.pumpAndSettle();
+    final image = tester.element(find.byType(StableArtworkImage));
+    final decodedImage = tester.state(find.byType(Image));
+    await tester.pumpWidget(card(3));
+    await tester.pumpAndSettle();
+    expect(loads, 1, reason: 'A new raw alias or resume chapter must preserve painted artwork');
+    expect(tester.element(find.byType(StableArtworkImage)), same(image));
+    expect(tester.state(find.byType(Image)), same(decodedImage));
+    expect(find.byKey(const ValueKey<String>('raw-chapter-2')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('raw-chapter-3')));
+    await tester.longPress(find.byKey(const ValueKey<String>('raw-chapter-3')));
+    expect(tapped, 3);
+    expect(longPressed, 3);
+  });
+
   testWidgets('pending cover keeps the telemetry owner across rebuilds',
       (tester) async {
     final chapter = _chapter(name: '慢封面诊断');
