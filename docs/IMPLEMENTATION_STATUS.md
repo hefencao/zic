@@ -34,7 +34,7 @@
 - ADR0389 Provisional：旧版缺边先失败，9 owner与2235/Rust22/三ABI通过。普通Release3e65ae94/PID23850匹配51文件，正确Mihon/下载、5静置slider/4首尾跨章含历史覆盖通过；119完整章不变。真实predecessor/提醒输入、原加载与性能开放。
 - 自动缓存 projection 进一步收口为 durable inventory only：Reader hot/source-resident session 不再被误计为缓存；本地 `content://` 图册普通读取保持 source-backed、零 artifact write，不会因 Reader session retention 再生成自动缓存项或正文副本。
 - 书架管理/批量选择的 managing、batch 与 source-aware identity selection 已收口到纯 Dart `HomeShelfManagement`；删除/移动/归档等真实 mutation 和 dialog 仍留在 UI/既有 owner。
-- 显式版本查看的originComicId/preparation Future由HomeVersionReuseLifecycle持有，UI start/finally finish，Reader查同一token。099冷Reader不等查询、authority先于acquire及存活推广已验；Profile78d1f283又验A→B→A冷partial/64KiB overlap/URI ETag/完整呈现。仅真实EH proof/更新开放。
+- 版本查看origin/preparation Future归HomeVersionReuseLifecycle，Reader查同token。099冷Reader/先于acquire/推广及A→B→A冷partial/overlap/URI ETag保持已验。普通EH snapshot已有106区间proof；真实目标authority与023动作开放。Ani完整图56节点/46终点，禁止据日期/序号补head。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
@@ -59,7 +59,7 @@
   source setting mutation 会同步失效该 source 的 retained fresh/replay state；旧/跨 payload 持久 locator 由 Reader/下载入口强制刷新后再消费。
   Android network/Mihon runtime 的 `FallbackDns` 不再强制 IPv4 优先；系统非空 DNS 结果保持原顺序，public fallback 仅在系统失败/空时启动，并同时查询 A/AAAA。
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
-- 迁移统一入口保留版本发现/原Future，复选来源聚合可编辑搜索与封面/标题，原生ID收高级单源入口；退出拒绝迟到面板，禁用来源可访问确认版本。024实际JM与075/恢复已验；Profile1f663194实际EH确认后旧raw/canonical离架、目标在架，两个可见详情书架按钮正确，025收口；搜索结果/手势、023更新提醒和099仍另验。
+- 迁移统一入口/来源药丸/可编辑聚合封面标题/高级单源ID保持；迟到面板拒绝、禁用来源确认版本保留。024实际JM、075恢复与025真实EH旧raw/canonical离架/目标在架已验。普通Profile227ab457标题路由按原文聚合成功，当前EH未返回在架旧版，未点击更新；023/040/074及099真实目标开放。
 ### 渲染与几何 (Pipeline & Reader View)
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2364/27suite/analyzer、Rust22/全门禁/三ABI Debug/JNI；fixture Profile/严格分析通过。普通Profile/Release/native115复用同输入；Release3dbc12fb/PID25960/Home。024/025及099冷/推广/跨provider partial已验；3既有quarantine，真实来源/性能开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 2364/27suite/analyzer、Rust22/全门禁/三ABI Debug/JNI保持；arm64 main Profile227ab457新构建，未改生产。Release3dbc12fb/PID28421/Home恢复；普通三ABI/native115复用同输入。024/025及099冷/推广/跨provider partial保持；3既有quarantine，真实来源/性能开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device74/toolchain11/superseded2/partial19/pending6，25条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。

@@ -8,7 +8,7 @@
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
-- 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
+- 验实际 `sourceUpdateAt` 书架卡片的右上更新标识与左上书架标识分离。版本动作仅在实际搜索返回在架旧版且来源关系证明唯一 latest head 时验：直接打开该 raw successor、目标仍未入架。当前 EH 标题聚合结果未返回旧版，Ani 完整图56节点/46终点；不能按日期、generation或5条saved子图补造head，不重复该不满足前提的版本动作。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
 
@@ -53,5 +53,5 @@
 
 - 验证真实来源revision/carrier更新后不复用旧Reader session，并证明各代独立退休。保留当前两项idle exact-key LRU与两分钟TTL；Reader退休不销毁composition共享transfer/cache authority。
 ## P0：版本等价与纵向性能真机闭环
-- 版本复用剩余验收：099普通冷Reader不等查询、`version-reuse-authority-ready`先于acquire与存活期间`canonicalDirect`推广复用保持；A→B→A durable inactive跨provider partial、本地native首帧/loop、两次64KiB overlap、URI ETag与完整字节/呈现/退出也已通过，停止重复。仅验真实E-Hentai版本proof/mapping与旧版successor的`!`（共用023）。
+- 099冷Reader、`version-reuse-authority-ready`先于acquire、存活推广及A→B→A冷partial/native loop/64KiB overlap/URI ETag保持已验。当前普通EH snapshot已有106条带区间proof的mapping；复用这些实际输入核对目标章节revision/pageCount与canonical authority/acquire，停止重复受控场景或重造proof。旧版successor的`!`仅共用023的真实前提；当前46终点不证明唯一最新版。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
