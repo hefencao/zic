@@ -1,5 +1,13 @@
 part of 'source_device_acceptance.dart';
 
+// A title search may return the source's public title slug after the gallery
+// number. This identifies only the probe input; native models stay unchanged.
+bool _isLiveProbeJmGallery(Uri? uri) {
+  final segments = uri?.pathSegments;
+  return segments != null && segments.length >= 2 && segments.length <= 3 &&
+      segments[0] == 'album' && segments[1] == '1441640';
+}
+
 // Actual installed sources, declared version/native input and Home/details
 // confirmation controls. All mutations belong to a fresh temporary SQLite.
 // Read the existing declared direction only; seed fresh live manifests and test
@@ -80,12 +88,12 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
       // locator/model; a browser address is not necessarily its SManga URL.
       final web = source as ComicWebUriSource;
       final known = snapshot.savedComics.where((comic) => comic.sourceId == source.sourceId &&
-        web.resolveComicWebUri(comic.comicId)?.path == '/album/1441640').firstOrNull;
+        _isLiveProbeJmGallery(web.resolveComicWebUri(comic.comicId))).firstOrNull;
       String? originId = known?.comicId;
       if (originId == null) {
         final page = await source.browse(query: '1441640', limit: 12);
         originId = page.items.where((comic) =>
-          web.resolveComicWebUri(comic.comicId)?.path == '/album/1441640').firstOrNull?.comicId;
+          _isLiveProbeJmGallery(web.resolveComicWebUri(comic.comicId))).firstOrNull?.comicId;
       }
       if (originId == null) throw StateError('actual shared JM gallery locator input missing');
       available = await source.loadComic(originId);
@@ -99,8 +107,7 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
         'returned_web_paths': <String?>[for (final comic in targetPage.items)
           targetWeb.resolveComicWebUri(comic.comicId)?.path]});
       final nativeTargetId = targetPage.items.where((comic) =>
-        const <String>['/album/1441640', '/album/1441640/']
-          .contains(targetWeb.resolveComicWebUri(comic.comicId)?.path)).firstOrNull?.comicId;
+        _isLiveProbeJmGallery(targetWeb.resolveComicWebUri(comic.comicId))).firstOrNull?.comicId;
       if (nativeTargetId == null) throw StateError('actual shared JM target locator input missing');
       final target = await targetSource.loadComic(nativeTargetId);
       if (target.comic.sourceId != targetSource.sourceId || target.comic.comicId != nativeTargetId) {
@@ -196,18 +203,27 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
         : 'Home history long press -> details -> migration -> confirmed same-source version -> migrate -> risk acknowledgement -> confirm'});
     final watch = Stopwatch()..start();
     String? selectedId;
-    while (watch.elapsed < const Duration(minutes: 8)) {
+    var targetObservationRecorded = false;
+    while (watch.elapsed < const Duration(minutes: 12)) {
       final old = await store.getSavedComic(source.sourceId, origin.comic.comicId);
       if (crossSource || old == null) {
         // URL and keyword searches can return different complete models for
         // the same gallery. Verify the exact model selected by the ordinary UI.
+        final observedTargets = crossSource ? (await store.listSavedComics()).where(
+          (comic) => comic.sourceId == targetSource.sourceId).toList() : <SavedComicRecord>[];
         final eligibleIds = crossSource ? <String>[
-          for (final comic in await store.listSavedComics())
-            if (comic.sourceId == targetSource.sourceId &&
-                const <String>['/album/1441640', '/album/1441640/'].contains(
-                  (targetSource as ComicWebUriSource).resolveComicWebUri(comic.comicId)?.path))
+          for (final comic in observedTargets)
+            if (_isLiveProbeJmGallery(
+                  (targetSource as ComicWebUriSource).resolveComicWebUri(comic.comicId)))
               comic.comicId,
         ] : declaredIds;
+        if (!targetObservationRecorded && observedTargets.isNotEmpty) {
+          targetObservationRecorded = true;
+          await _record(<String, Object?>{'step': 'target-metadata-observed', 'status': 'observed',
+            'elapsed_micros': watch.elapsedMicroseconds, 'eligible_targets': eligibleIds.length,
+            'returned_web_paths': <String?>[for (final comic in observedTargets)
+              (targetSource as ComicWebUriSource).resolveComicWebUri(comic.comicId)?.path]});
+        }
         for (final id in eligibleIds) {
           final next = await store.getSavedComic(targetSource.sourceId, id);
           final preference = await store.getComicPreference(targetSource.sourceId, id);
@@ -217,7 +233,27 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
       if (selectedId != null) break;
       await Future<void>.delayed(const Duration(seconds: 1));
     }
-    if (selectedId == null) throw StateError('ordinary source-declared migration was not confirmed');
+    if (selectedId == null) {
+      final targets = (await store.listSavedComics()).where(
+        (comic) => comic.sourceId == targetSource.sourceId).toList();
+      final targetObservations = <Map<String, Object?>>[];
+      for (final comic in targets) {
+        final preference = await store.getComicPreference(comic.sourceId, comic.comicId);
+        targetObservations.add(<String, Object?>{
+          'title': comic.title,
+          'web_uri': (targetSource as ComicWebUriSource).resolveComicWebUri(comic.comicId)?.toString(),
+          'in_shelf': preference?.inShelf, 'liked': preference?.liked,
+          'collected': preference?.collected,
+        });
+      }
+      await _record(<String, Object?>{'step': 'migration-confirmation-observation', 'status': 'unverified',
+        'elapsed_micros': watch.elapsedMicroseconds, 'saved_target_records': targetObservations,
+        'pending_journal_phases': <String>[
+          for (final journal in await (store as SourceMigrationJournalStore).listPendingSourceMigrations())
+            journal.phase.name,
+        ]});
+      throw StateError('ordinary source-declared migration was not confirmed');
+    }
     final target = await targetSource.loadComic(selectedId);
     if (target.comic.sourceId != targetSource.sourceId || target.comic.comicId != selectedId) {
       throw StateError('actual selected target identity mismatch');
@@ -253,9 +289,11 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
         relation.successorComicId == target.comic.comicId)) {
       throw StateError('ordinary source-declared relation not retained');
     }
-    if (crossSource && (relations.isNotEmpty || preference?.acknowledgedVersionComicId != null ||
+    // First admission acknowledges this target, never a foreign source version.
+    if (crossSource && (relations.isNotEmpty ||
+        preference?.acknowledgedVersionComicId != target.comic.comicId ||
         (await store.get(source.sourceId, chapter.chapter.chapterId))?.progress?.pageIndex != progress.pageIndex)) {
-      throw StateError('cross-source migration changed origin state or invented a version relation');
+      throw StateError('cross-source migration changed origin state, invented a relation or lost target admission acknowledgement');
     }
     for (final original in originalPayloads.entries) {
       if (!_probeBytesEqual(original.value, await original.key.readAsBytes())) {

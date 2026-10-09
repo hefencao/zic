@@ -9,8 +9,6 @@
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
-- 完成重整后跨源聚合搜索的真实确认迁移：以来源返回的封面/标题选候选，核对目标原生身份/整本偏好、原metadata/进度保留及journal收尾。JM两源1441640实际原生输入已可读取；旧测试因IME改写手输内部模型而由用户停止，未提交/确认。实际EH同源确认及exact状态/清理/relation/journal保持已验。
-  保留已验schema11五phase/三callback内部实际进程中断恢复：`metadataCommitted`后无需目标在线，只继续旧source cleanup；journal phase不触发Home projection revision。
 - 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
