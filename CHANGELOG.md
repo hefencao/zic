@@ -2987,6 +2987,8 @@
 
 # Changelog
 
+- Reconcile two stale governance cross-references:024 no longer leaves accepted canonical099 open,and053 preserves accepted063/066/082 while retaining the original pressure batch037. Requirement IDs/statuses and production inputs are unchanged;stop completed scenarios instead of changing code from obsolete pending text.
+
 - Fix compact Home focus leaking placeholder page URIs into version proof. Hydrate only compact focus through the existing library owner, recheck cancellation and stop when the real manifest is missing; preserve refreshed carriers and physical generations/prefixes. Three branches fail before the fix; four regressions pass including refreshed-carrier preservation. Fresh2368 tests/27 suites, analyzers, Rust22, repository/platform gates and three-ABI Debug/Profile/minifiedRelease/JNI pass. Ordinary Release499ee89d verifies actual EH371-to424 View and Reader80: canonical authority precedes acquisition,13,394,740 local bytes need no network admission, stationary image and zero failures. Close099 without reopening controlled acceptances; latest-update action remains023. Correct stale carrier-first wording in existing Spec/Architecture sections and strengthen the local gate; completed099 must leave the active Plan.
 
 - Reconcile Venera cancellation acceptance with the current isolated rhttp executor instead of the retired native URLConnection/DNS-fallback implementation. Reuse hash-checked Network4/Cookie8 device evidence for held-body cancellation, complete bodies and header/Cookie semantics; retain real system-DNS cancellation and actual-origin latency as unverified. Preserve production inputs and frozen112 requirements while updating the four current state projections.
