@@ -42,6 +42,7 @@ const _exportProbePayload = String.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_EXPORT
 const _metadataOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_METADATA_ONLY');
 const _browserOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_BROWSER_ONLY');
 const _userAgentOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_USER_AGENT_ONLY');
+const _pluginLifecycleOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_PLUGIN_LIFECYCLE_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -71,6 +72,10 @@ Future<void> main() async {
   await attachAndroidPlugin('plugin_host_bridge');
   if (_metadataOnly) {
     await _probeMetadataFailure();
+    return;
+  }
+  if (_pluginLifecycleOnly) {
+    await _probePluginLifecycle();
     return;
   }
   await _run();

@@ -42,7 +42,6 @@
 ## P0：Mihon 插件识别设备闭环
 
 - 绅士漫画：补非空Cookie/POST的真实request-plan覆盖，并验证保留自定义client语义的host直连可读正文；现有GET/Referer/UA/null-body和runtime解码不能替代这些条件。
-- 已激活插件连续执行 WebView验证、设置修改和同包更新；故意让 replacement activation失败，旧插件必须继续出现在 activeSources并可请求。
 - 只补真实 Mihon APK 的 `@string/...` metadata 与多入口 class解析，核对资源解析、extensionLib及每个class；已验direct单入口/Factory不重跑，也不能代替这两个真实输入。
 
 ## P0：身份、同源更新与验证设备闭环

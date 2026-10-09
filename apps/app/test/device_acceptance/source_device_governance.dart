@@ -1,5 +1,188 @@
 part of 'source_device_acceptance.dart';
 
+// Same-package transactions use the actual installed APK and production
+// controller. Only the approved candidate copy is damaged for the rejection;
+// no user manifest/payload/library/index is mutated.
+Future<void> _probePluginLifecycle() async {
+  final support = (await getStartupApplicationSupportPath())!;
+  final userRoot = await getDefaultZicStorageRoot(
+    applicationSupportPath: getStartupApplicationSupportPath,
+  );
+  _results = File('$support/zic-plugin-lifecycle-results.json');
+  await _results.writeAsString('[]', flush: true);
+  final manifestFile = File('$userRoot/external_plugins/installed.json');
+  final originalManifest = await manifestFile.readAsBytes();
+  final manifest = jsonDecode(utf8.decode(originalManifest)) as Map<String, dynamic>;
+  const package = 'eu.kanade.tachiyomi.extension.zh.wnacg';
+  final record = (manifest['plugins'] as List).cast<Map<String, dynamic>>()
+      .singleWhere((row) => row['packageName'] == package);
+  final originalPayload = File(record['payloadPath'] as String);
+  final originalBytes = await originalPayload.readAsBytes();
+  final snapshot = File('$support/zic_network_browser_snapshot.json');
+  final originalSnapshot = await snapshot.exists() ? await snapshot.readAsBytes() : null;
+  final root = await Directory(support).createTemp('zic-plugin-lifecycle-');
+  final payloadRoot = Directory('${root.path}/external_plugins');
+  late File copied;
+  ExternalPluginController? controller;
+  ConfigurableComicSource? settings;
+  ComicSourceSetting? period;
+  var passed = false;
+  try {
+    await payloadRoot.create();
+    copied = await originalPayload.copy('${payloadRoot.path}/wnacg.apk');
+    record['payloadPath'] = copied.path;
+    manifest['plugins'] = <Map<String, dynamic>>[record];
+    await File('${payloadRoot.path}/installed.json').writeAsString(jsonEncode(manifest), flush: true);
+    controller = await ExternalPluginController.openDeferred(root.path,
+      discoverDeviceMihonExtensions: false, deferRuntimeActivation: true);
+    await controller.ready;
+    if (controller.activationFailures.isNotEmpty || controller.activeSources.length != 1) {
+      throw StateError('actual WNACG activation failed');
+    }
+    final source = controller.activeSources.single;
+    final pluginId = controller.ownerOfSource(source.sourceId)!;
+    bool originalActive() => identical(source, controller!.activeSources.single);
+    final sample = await source.browse();
+    if (sample.items.isEmpty) throw StateError('no actual initial comic input for lifecycle acceptance');
+    final comicId = sample.items.first.comicId;
+    final initialPlan = await (source as ResolvableComicResourceSource)
+        .resolveResource(sample.items.first.coverUri!);
+    final sourceUserAgent = initialPlan.headers.entries.singleWhere(
+      (entry) => entry.key.toLowerCase() == 'user-agent').value;
+    final browserRequest = (source as ComicWebViewRequestSource)
+        .webViewRequest(source.descriptor.website);
+    if (browserRequest.userAgent != sourceUserAgent) {
+      throw StateError('ordinary browser does not use the actual source request UA');
+    }
+    Future<int> readable(BrowsableComicSource current) async {
+      final comic = await current.loadComic(comicId);
+      if (comic.comic.comicId != comicId || comic.comic.title.isEmpty || comic.chapters.isEmpty) {
+        throw StateError('actual known comic is no longer readable');
+      }
+      return comic.chapters.length;
+    }
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'actual-known-input',
+      'status': 'passed', 'browse_items': sample.items.length,
+      'known_comic_chapters': await readable(source)});
+    final browserOpenedAt = DateTime.now().millisecondsSinceEpoch;
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'awaiting-source-browser',
+      'status': 'ready', 'actual_source_origin': true, 'verification_mode': false,
+      'browser_UA_matches_actual_source_request': true});
+    await const AndroidNetworkBridge().openBrowser(browserRequest.url,
+      userAgent: browserRequest.userAgent);
+    final captured = jsonDecode(await snapshot.readAsString()) as Map<String, dynamic>;
+    if (captured['requestedUrl'] != source.descriptor.website.toString() ||
+        captured['userAgent'] != browserRequest.userAgent ||
+        (captured['updatedAt'] as num? ?? 0) < browserOpenedAt || !originalActive()) {
+      throw StateError('completed source WebView capture or original session missing');
+    }
+    // A live list may legitimately be empty. Record it separately; continued
+    // readability is proven by the exact known comic, not a nonempty list.
+    final afterBrowser = await source.browse();
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'post-browser-list-observation',
+      'status': 'observed', 'browse_items': afterBrowser.items.length,
+      'has_more': afterBrowser.hasMore, 'original_source_preserved': originalActive()});
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'source-browser',
+      'status': 'passed', 'snapshot_completed_with_source_UA': true,
+      'original_source_preserved': true, 'known_comic_chapters': await readable(source),
+      'genuine_Cloudflare_challenge_or_account_login_proven': false});
+
+    settings = source as ConfigurableComicSource;
+    period = (await settings.loadSettings()).singleWhere(
+      (item) => item.key == '__zic_request_period_seconds' && !item.sensitive);
+    final previous = int.parse(period.value as String);
+    final next = previous == 3600 ? 3599 : previous + 1;
+    await settings.updateSetting(period.key, next.toString());
+    if ((await settings.loadSettings()).singleWhere((item) => item.key == period!.key).value !=
+        next.toString() || !originalActive()) {
+      throw StateError('setting mutation replaced original source or lost value');
+    }
+    await settings.updateSetting(period.key, period.value);
+    if ((await settings.loadSettings()).singleWhere((item) => item.key == period!.key).value !=
+        period.value || !originalActive()) {
+      throw StateError('setting restoration replaced source or lost original value');
+    }
+    settings = null;
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'settings',
+      'status': 'passed', 'setting_key': period.key, 'mutations': 2,
+      'original_source_preserved': true, 'original_setting_restored': true});
+
+    await controller.refreshDeviceMihonExtensions();
+    final extension = controller.deviceMihonExtensions.singleWhere((item) => item.packageName == package);
+    final durable = File('${payloadRoot.path}/installed.json');
+    final beforeRejected = await durable.readAsBytes();
+    final rejected = await controller.inspectInstalledMihon(extension);
+    final candidate = File(rejected.inspection.payloadPath!);
+    await candidate.writeAsBytes(<int>[...await candidate.readAsBytes(), 0], flush: true);
+    Object? rejection;
+    try { await controller.approveAndActivate(rejected); }
+    on Object catch (error) { rejection = error; }
+    if (rejection == null || !originalActive() || !await copied.exists() || await candidate.exists() ||
+        controller.installed.single.payloadPath != copied.path ||
+        !_probeBytesEqual(beforeRejected, await durable.readAsBytes())) {
+      throw StateError('failed same-package candidate retired old source or damaged durable record');
+    }
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'failed-same-package',
+      'status': 'passed', 'approved_candidate_failed': true,
+      'failure_diagnostics': _failureDiagnostics(rejection),
+      'original_source_and_record_preserved': true, 'candidate_removed': true,
+      'known_comic_chapters': await readable(source)});
+
+    final preview = await controller.inspectInstalledMihon(extension);
+    final replacement = await controller.approveAndActivate(preview);
+    if (replacement.length != 1 || identical(replacement.single, source) ||
+        !identical(controller.activeSources.single, replacement.single) || await copied.exists() ||
+        controller.installed.single.packageName != package ||
+        controller.installed.single.payloadPath != preview.inspection.payloadPath) {
+      throw StateError('successful same-package transaction did not publish the validated replacement');
+    }
+    await _record(<String, Object?>{'source': source.sourceId, 'step': 'successful-same-package',
+      'status': 'passed', 'pluginId': pluginId, 'packageName': package,
+      'version': extension.versionName, 'versionCode': extension.versionCode,
+      'extensionLib': extension.extensionLib, 'same_package_reinstall_transaction': true,
+      'genuine_version_upgrade': false, 'old_payload_retired': true,
+      'known_comic_chapters': await readable(replacement.single)});
+    passed = true;
+  } on Object catch (error) {
+    await _record(<String, Object?>{'step': 'failure', 'status': 'failed',
+      'diagnostics': _failureDiagnostics(error)});
+  } finally {
+    var cleanupSucceeded = true;
+    Future<void> clean(String step, Future<void> Function() action) async {
+      try { await action(); }
+      on Object catch (error) {
+        cleanupSucceeded = false;
+        await _record(<String, Object?>{'step': step, 'status': 'failed',
+          'diagnostics': _failureDiagnostics(error)});
+      }
+    }
+    if (settings != null && period != null) {
+      await clean('restore-setting', () => settings!.updateSetting(period!.key, period.value));
+    }
+    await clean('close-controller', () async { await controller?.close(); });
+    await clean('restore-snapshot', () async {
+      if (originalSnapshot == null) {
+        if (await snapshot.exists()) await snapshot.delete();
+      } else { await snapshot.writeAsBytes(originalSnapshot, flush: true); }
+    });
+    var snapshotRestored = false;
+    var installedUnchanged = false;
+    await clean('verify-original-files', () async {
+      snapshotRestored = originalSnapshot == null ? !await snapshot.exists() :
+          _probeBytesEqual(originalSnapshot, await snapshot.readAsBytes());
+      installedUnchanged = _probeBytesEqual(originalManifest, await manifestFile.readAsBytes()) &&
+          _probeBytesEqual(originalBytes, await originalPayload.readAsBytes());
+    });
+    await clean('remove-root', () async { await root.delete(recursive: true); });
+    await _record(<String, Object?>{'step': 'complete',
+      'status': passed && cleanupSucceeded && snapshotRestored && installedUnchanged ? 'passed' : 'failed',
+      'original_snapshot_restored_exactly': snapshotRestored,
+      'user_installed_files_unchanged': installedUnchanged,
+      'user_library_or_artifact_index_opened': false,
+      'cleanup_succeeded': cleanupSucceeded, 'temporary_directory_removed': !await root.exists()});
+  }
+}
+
 // Two real Settings mutations exercise retained production network objects.
 // Only the loopback repository's self-signed TLS is trusted in this test zone.
 Future<void> _probeNetworkUserAgent() async {

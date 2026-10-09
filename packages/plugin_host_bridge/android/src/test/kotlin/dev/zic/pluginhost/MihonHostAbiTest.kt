@@ -9,6 +9,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MihonHostAbiTest {
+    private class SourceHeaders(private val values: Map<String, String>) {
+        fun names(): Set<String> = values.keys
+        fun get(name: String): String? = values[name]
+    }
+    private class HeaderSource(val headers: SourceHeaders)
+
+    @Test
+    fun ordinaryBrowserUsesTheSourceHeaderInsteadOfTheMobileFallback() {
+        val source = HeaderSource(SourceHeaders(mapOf("user-agent" to "SourceDesktopBrowser/1")))
+
+        assertEquals("SourceDesktopBrowser/1", mihonSourceBrowserUserAgent(source))
+    }
+
+    @Test
+    fun ordinaryBrowserFallsBackOnlyWhenSourceUaIsUnavailable() {
+        val fallback = mihonSourceBrowserUserAgent(Any())
+        assertTrue(fallback.contains("Mobile"))
+        assertEquals(fallback, mihonSourceBrowserUserAgent(HeaderSource(SourceHeaders(emptyMap()))))
+        assertEquals(fallback, mihonSourceBrowserUserAgent(HeaderSource(SourceHeaders(
+            mapOf("User-Agent" to " ")))))
+    }
+
     @Test
     fun reportsMissingClassesForTheSelectedLoaderOnly() {
         val missing = setOf("androidx.preference.Preference", "rx.Observable")

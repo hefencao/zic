@@ -1713,7 +1713,7 @@ internal class MihonRuntimeDriver private constructor(
                         "website" to normalizeWebsite(baseUrl),
                         "supportsSearch" to true,
                         "supportsResourceBodyDelivery" to true,
-                        "browserUserAgent" to MIHON_BROWSER_USER_AGENT,
+                        "browserUserAgent" to mihonSourceBrowserUserAgent(source),
                         "contentRatings" to listOf("safe", "suggestive"),
                     )
                 }
@@ -1810,6 +1810,12 @@ private data class MihonComicCatalog(
     val chapters: List<Any>,
     val chapterFailure: Throwable?,
 )
+
+internal fun mihonSourceBrowserUserAgent(source: Any): String =
+    source.readValue("headers", "getHeaders").stringHeaders()
+        .entries.firstOrNull { (name, value) ->
+            name.equals("User-Agent", ignoreCase = true) && value.isNotBlank()
+        }?.value ?: MIHON_BROWSER_USER_AGENT
 
 private const val MIHON_BROWSER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +

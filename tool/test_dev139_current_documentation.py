@@ -226,6 +226,7 @@ for row in requirements:
     if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
         raise SystemExit(f"{row['id']} hides pending acceptance")
 completed_plan_markers = {
+    "SWG-PLAN-070": "已激活插件连续执行 WebView验证、设置修改和同包更新",
     "SWG-PLAN-072": "记录真实插件重启后Cookie snapshot reset与首个request时序",
     "SWG-PLAN-052": "冷启动直接激活 `venera:ehentai`",
     "SWG-PLAN-008": "证明exact+verified-equivalent miss不materialize durable-store",
