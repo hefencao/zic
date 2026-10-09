@@ -43,6 +43,7 @@ const _metadataOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_METADATA_ONLY'
 const _browserOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_BROWSER_ONLY');
 const _userAgentOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_USER_AGENT_ONLY');
 const _pluginLifecycleOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_PLUGIN_LIFECYCLE_ONLY');
+const _cleartextMediaOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_CLEARTEXT_MEDIA_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -76,6 +77,10 @@ Future<void> main() async {
   }
   if (_pluginLifecycleOnly) {
     await _probePluginLifecycle();
+    return;
+  }
+  if (_cleartextMediaOnly) {
+    await _probeCleartextMedia();
     return;
   }
   await _run();

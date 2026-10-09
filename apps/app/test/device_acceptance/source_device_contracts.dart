@@ -1,5 +1,105 @@
 part of 'source_device_acceptance.dart';
 
+// Inspect the actual source plan before executing its unmodified media path.
+// Cleartext capability is domain-independent; retain old-host matching only as
+// an observation, never as an eligibility gate or a reason to rewrite a URL.
+Future<void> _probeCleartextMedia() async {
+  final support = (await getStartupApplicationSupportPath())!;
+  final userRoot = await getDefaultZicStorageRoot(
+    applicationSupportPath: getStartupApplicationSupportPath,
+  );
+  _results = File('$support/zic-source-acceptance-results.json');
+  await _results.writeAsString('[]', flush: true);
+  final originalManifest = File('$userRoot/external_plugins/installed.json');
+  final manifestBytes = await originalManifest.readAsBytes();
+  final manifest = jsonDecode(utf8.decode(manifestBytes)) as Map<String, dynamic>;
+  final record = (manifest['plugins'] as List).cast<Map<String, dynamic>>().singleWhere(
+    (row) => row['packageName'] == 'eu.kanade.tachiyomi.extension.zh.wnacg');
+  final originalPayload = File(record['payloadPath'] as String);
+  final payloadBytes = await originalPayload.readAsBytes();
+  final root = await Directory(support).createTemp('zic-source-cleartext-');
+  final coordinator = DownloadResourceCoordinator();
+  final transport = ExternalPluginResourceTransportPool(
+    directTransport: RhttpSourceResourceDirectTransport(preparePlatform: prepareRhttpPlatform),
+  );
+  ExternalPluginController? controller;
+  var outcome = 'unverified';
+  try {
+    final payloadRoot = await Directory('${root.path}/external_plugins').create();
+    record['payloadPath'] = (await originalPayload.copy('${payloadRoot.path}/wnacg.apk')).path;
+    manifest['plugins'] = <Map<String, dynamic>>[record];
+    await File('${payloadRoot.path}/installed.json').writeAsString(jsonEncode(manifest), flush: true);
+    controller = await ExternalPluginController.openDeferred(root.path,
+      discoverDeviceMihonExtensions: false, deferRuntimeActivation: true);
+    await controller.ready;
+    final source = controller.activeSources.singleWhere(
+      (item) => item.sourceId == 'mihon:6551136894818591762');
+    final browse = await source.browse();
+    if (browse.items.isEmpty) {
+      await _record(<String, Object?>{'step': 'input', 'status': 'unverified',
+        'reason': 'current list has no media sample'});
+      return;
+    }
+    final sample = browse.items.first;
+    final comic = await source.loadComic(sample.comicId);
+    if (sample.coverUri == null || comic.chapters.isEmpty) { return; }
+    final chapter = await source.loadChapter(comic.chapters.first.chapterId);
+    if (chapter.pages.isEmpty) { return; }
+    final locators = <String, Uri>{'cover': sample.coverUri!, 'page': chapter.pages.first.uri};
+    final plans = <String, ComicResourceRequest>{};
+    for (final entry in locators.entries) {
+      final plan = await _withProbeControl(coordinator, (control) =>
+        (source as ControlledResolvableComicResourceSource)
+            .resolveResourceControlled(entry.value, control: control));
+      plans[entry.key] = plan;
+      await _record(<String, Object?>{'step': '${entry.key}-origin', 'status': 'observed',
+        'scheme': plan.uri.scheme,
+        'matches_original_host_family': RegExp(r'^img[^.]*\.wnimg[^.]*\.ru$')
+            .hasMatch(plan.uri.host.toLowerCase()),
+        'requires_runtime_transform': plan.requiresRuntimeTransform});
+    }
+    if (plans.values.any((plan) => plan.uri.scheme != 'http')) {
+      await _record(<String, Object?>{'step': 'input', 'status': 'unverified',
+        'reason': 'current sample does not provide both real cleartext origins'});
+      return;
+    }
+    for (final entry in locators.entries) {
+      final media = await _readMedia(source, entry.value, transport, coordinator);
+      if ((media['bytes'] as int) <= 0 || (media['width'] as int) <= 0 ||
+          (media['height'] as int) <= 0) { throw StateError('source media is not renderable'); }
+      await _record(<String, Object?>{'step': '${entry.key}-media', 'status': 'passed',
+        ...media, 'actual_unmodified_cleartext_plan': true});
+    }
+    outcome = 'passed';
+  } on Object catch (error) {
+    outcome = 'failed';
+    await _record(<String, Object?>{'step': 'failure', 'status': 'failed',
+      'diagnostics': _failureDiagnostics(error)});
+  } finally {
+    var clean = true;
+    for (final action in <Future<void> Function()>[
+      () async { coordinator.networkLane.cancelAll(); await coordinator.networkLane.idle(); },
+      () async { transport.close(); },
+      () async { await controller?.close(); },
+      () async { await root.delete(recursive: true); },
+    ]) {
+      try { await action(); }
+      on Object catch (error) {
+        clean = false;
+        await _record(<String, Object?>{'step': 'cleanup', 'status': 'failed',
+          'diagnostics': _failureDiagnostics(error)});
+      }
+    }
+    final originalsUnchanged = _probeBytesEqual(manifestBytes, await originalManifest.readAsBytes()) &&
+        _probeBytesEqual(payloadBytes, await originalPayload.readAsBytes());
+    await _record(<String, Object?>{'step': 'complete',
+      'status': clean && originalsUnchanged ? outcome : 'failed',
+      'user_installed_files_unchanged': originalsUnchanged,
+      'user_library_or_artifact_index_opened': false,
+      'cleanup_succeeded': clean, 'temporary_directory_removed': !await root.exists()});
+  }
+}
+
 // Opt-in contract probes use the existing isolated controller and NetLane.
 // Source model/header/body values remain in memory; output contains assertions
 // and public installation metadata only. No user catalog/cache index is opened.

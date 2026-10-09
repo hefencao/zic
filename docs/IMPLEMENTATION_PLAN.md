@@ -19,10 +19,6 @@
 - 普通主入口用来源实际确认的同源successor验证Home版本更新筛选；以home-update-shelf-admission审计中的当前筛选/metadata/progress合同为基线，不因父项partial改写已验行为。
 - 普通主入口验证真实来源版本首次入架确认既有chapter/version通知、后续successor仍可提醒；隔离来源验收不得代替真实版本发现流程（ADR0383 Provisional）。
 
-## P0：WNACG HTTP 媒体与终止失败真机闭环
-
-- 用 `mihon:6551136894818591762` 重新打开 WNACG 列表、详情和 Reader，确认 `http://img*.wnimg*.ru/...` 封面与正文由原 source request成功返回；不得新增域名白名单、URL改写或第二 transport。
-
 ## P0：网络 UA / client / cache ownership 真机闭环
 
 - 继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown；真实WNACG1.6受控GET/redirect的正文、原生呈现、冷READY和取消边界见source-mihon-client-pipeline审计。完整输入/canonical整块物化、live stream/backpressure及分配另验，保持原body/cache/NetLane/retry owner。
