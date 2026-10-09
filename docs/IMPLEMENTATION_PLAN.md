@@ -6,10 +6,6 @@
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
-## P0：Current 首帧 policy/execution 真机闭环
-
-- network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
-
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。

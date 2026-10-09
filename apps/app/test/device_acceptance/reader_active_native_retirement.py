@@ -23,6 +23,7 @@ def main():
     p.add_argument('--ordinary-apk', required=True, type=Path)
     p.add_argument('--input', required=True, type=Path)
     p.add_argument('--input-sha256', required=True)
+    p.add_argument('--handoff-only', action='store_true')
     p.add_argument('--out', required=True, type=Path)
     p.add_argument('--sdk-root', type=Path, default=Path(os.environ.get(
         'ANDROID_SDK_ROOT', str(Path.home() / 'android-sdk'))))
@@ -49,7 +50,8 @@ def main():
         r = subprocess.run(command, text=True, capture_output=True, timeout=180)
         record['commands'].append({'command': command, 'begin_ns': start,
             'end_ns': time.time_ns(), 'exit_code': r.returncode,
-            'stdout': r.stdout, 'stderr': r.stderr})
+            'stdout': r.stdout[-4096:], 'stderr': r.stderr[-4096:],
+            'stdout_chars': len(r.stdout), 'stderr_chars': len(r.stderr)})
         save()
         if required and r.returncode:
             raise RuntimeError('Command failed: ' + str(command[:5]))
@@ -89,6 +91,16 @@ def main():
         if r.returncode or r.stdout or actual != args.input_sha256:
             raise RuntimeError('Private staged input differs')
         record['staged_input_sha256'] = actual
+        if args.handoff_only:
+            current = SOURCE.parent / 'fixtures/source_native_webp/static.webp'
+            shell = 'run-as ' + shlex.quote(PACKAGE) + ' sh -c ' + shlex.quote(
+                'cat > files/inputs/static.webp')
+            r = subprocess.run(['adb', '-s', args.serial, 'shell', '-T', shell],
+                input=current.read_bytes(), capture_output=True, timeout=45)
+            actual = adb('shell', 'run-as', PACKAGE, 'sha256sum',
+                'files/inputs/static.webp').stdout.split()[0]
+            if r.returncode or r.stdout or actual != sha(current):
+                raise RuntimeError('Current handoff input differs')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/dev.zic.zic.MainActivity')
         record['fixture_pid'] = adb('shell', 'pidof', PACKAGE).stdout.strip()
         start = time.monotonic()
@@ -106,8 +118,9 @@ def main():
                     last_count = len(rows)
                     print('Device cases:', len(rows), rows[-1]['case'], rows[-1]['status'], flush=True)
                 if rows[-1]['case'] == 'complete':
-                    expected_cases = {'drain', 'rapid-reentry', 'complete'}
-                    if len(rows) != 3 or {x['case'] for x in rows} != expected_cases or any(
+                    expected_cases = {'current-handoff', 'complete'} if args.handoff_only else {
+                        'drain', 'rapid-reentry', 'complete'}
+                    if len(rows) != len(expected_cases) or {x['case'] for x in rows} != expected_cases or any(
                             x['status'] != 'passed' for x in rows):
                         raise RuntimeError('Native decode acceptance failed; inspect device-results.json')
                     record['device_cases_passed'] = True
@@ -121,8 +134,9 @@ def main():
                 r = adb('exec-out', 'run-as', PACKAGE, 'cat', REMOTE + suffix, required=False)
                 target = args.out / ('device-results.json' if not suffix else suffix[1:])
                 target.write_text(r.stdout)
-            (args.out / 'device.log').write_text(adb('logcat', '-d', '-t', '2000',
-                required=False).stdout)
+            if not record.get('device_cases_passed', False):
+                (args.out / 'device.log').write_text(adb('logcat', '-d', '-t', '2000',
+                    required=False).stdout)
         finally:
             if installed:
                 adb('shell', 'am', 'force-stop', PACKAGE, required=False)
@@ -136,7 +150,7 @@ def main():
             save()
     if not record['test_package_absent'] or not record['user_apk_unchanged']:
         raise RuntimeError('Package cleanup or ordinary APK verification failed')
-    print('Two active native decode cases passed; test package removed; ordinary APK unchanged.',
+    print('Requested native cases passed; test package removed; ordinary APK unchanged.',
         flush=True)
 
 

@@ -1,7 +1,7 @@
 # Active native decode Reader retirement acceptance
 
-Back up user data before and after this acceptance. The entry opens only its
-private input in `dev.zic.activenativeretirement`; it does not open user stores.
+The entry opens only its private input in `dev.zic.activenativeretirement`;
+it does not open user stores or require another user-data backup for this case.
 The runner verifies the installed ordinary APK, installs a separate test
 package, collects results, uninstalls it and returns to the ordinary Home.
 
@@ -60,3 +60,19 @@ This covers active native decode retirement for the supplied input and exact
 warm session. Active upload, real source revision/carrier replacement, GPU/fence
 retirement, Android background loss, original19/20 loading, input latency and
 final physical display performance still require separate evidence.
+
+For the remaining high-resolution current handoff, build the same entry with
+`-Pdart-defines=WklDX05BVElWRV9DVVJSRU5UX0hBTkRPRkZfT05MWT10cnVl` and run
+with `--handoff-only`. This mode does not repeat the two accepted route cases.
+It uses the existing small static fixture for pages0/6 and symlinks one sealed
+large input for the background pages, without duplicating the large body.
+The actual mounted ReaderController requests page6 while page1 native decode
+is active. Current frame0 must reach native Texture and the real first-frame
+callback before that old task returns. One Rust internal phase must prove
+old physical execution at both the navigation command and current first frame;
+the cancelled cursor/source remain alive and retire only after its original
+Future completes. No observer changes a Future, control, queue or capacity.
+This measures owner execution and application presentation, not finger latency
+or final physical display.
+Command observations are bounded samples; successful cases do not collect
+logcat. Keep the scoped conclusion and remove completed private inputs/results.

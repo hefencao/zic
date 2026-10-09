@@ -16,6 +16,9 @@ import 'package:local_media_ui/local_media_ui.dart';
 import 'package:media/media.dart';
 import 'package:pipeline_native/pipeline_native.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
+// Test-only navigation through the actual mounted Reader's public command.
+// ignore: depend_on_referenced_packages
+import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/startup_platform.dart';
@@ -26,7 +29,9 @@ final _wire = <Map<String, Object?>>[];
 final _decodes = <_DecodeObservation>[];
 final _cursors = <_CursorObservation>[];
 final _uploads = <Map<String, Object?>>[];
+final _firstFrames = <Map<String, Object?>>[];
 final _trace = _Trace();
+const _handoffOnly = bool.fromEnvironment('ZIC_NATIVE_CURRENT_HANDOFF_ONLY');
 late String _output;
 PipelineReaderSession? _mounted;
 Completer<_DecodeObservation>? _selected;
@@ -139,21 +144,23 @@ final class _Uploader implements FrameUploader {
 }
 
 final class _CursorObservation {
-  _CursorObservation(this.native, this.source, this.view);
+  _CursorObservation(this.native, this.source, this.view, this.id);
   final NativeCursor native;
   final NativeSource source;
   final int view;
+  final DecodeId id;
   int? disposeBegin;
   int? disposeEnd;
-  Map<String, Object?> json() => <String, Object?>{'view':view,
+  Map<String, Object?> json() => <String, Object?>{'view':view,'page_id':id.download.content.pageId,
     'dispose_begin_us':disposeBegin,'dispose_end_us':disposeEnd,
     'native_cursor_disposed':native.disposed,'native_source_disposed':source.disposed};
 }
 
 final class _DecodeObservation {
-  _DecodeObservation(this.cursor, this.control): begin = _clock.elapsedMicroseconds, view = _view;
+  _DecodeObservation(this.cursor, this.control, this.executionClass): begin = _clock.elapsedMicroseconds, view = _view;
   final _CursorObservation cursor;
   final TaskControl? control;
+  final DecodeExecutionClass executionClass;
   final int begin;
   final int view;
   int? end;
@@ -175,7 +182,8 @@ final class _DecodeObservation {
       nativeInnerMaxMicros > 0 && end != null &&
       end! - nativeInnerMaxMicros + 1000 < at &&
       at < begin + nativeInnerMaxMicros - 1000;
-  Map<String, Object?> json() => <String, Object?>{'view':view,'begin_us':begin,'end_us':end,
+  Map<String, Object?> json() => <String, Object?>{'view':view,'page_id':cursor.id.download.content.pageId,
+    'execution_class':executionClass.name,'begin_us':begin,'end_us':end,
     'cancelled_observed_us':cancelledObserved,'cancelled':control?.cancelled,
     'step':step?.kind.name,'frame_index':frameIndex,
     'frame_disposed':step?.frame?.disposed,'native_decode_us':nativeMicros,
@@ -190,7 +198,7 @@ final class _CursorFactory implements CursorFactory {
   @override
   CursorBinding create({required DecodeId id, required EncodedSource source, required int epoch}) {
     final binding = delegate.create(id:id,source:source,epoch:epoch);
-    final row = _CursorObservation(binding.frames as NativeCursor,source as NativeSource,_view);
+    final row = _CursorObservation(binding.frames as NativeCursor,source as NativeSource,_view,id);
     _cursors.add(row);
     return CursorBinding(frames:_Cursor(binding.frames as PrioritizableScheduledFrameCursor,row),loop:binding.loop);
   }
@@ -208,7 +216,7 @@ final class _Cursor implements PrioritizableScheduledFrameCursor {
   DecodePriorityPromotion promotePendingDecodeToCurrent() => delegate.promotePendingDecodeToCurrent();
   @override
   Future<CursorStep> decodeNextScheduled(DecodeExecutionClass kind, {TaskControl? control}) {
-    final row = _DecodeObservation(observation,control);
+    final row = _DecodeObservation(observation,control,kind);
     _decodes.add(row);
     final future = delegate.decodeNextScheduled(kind,control:control);
     control?.whenCancelled.then<void>((_) { row.cancelledObserved = _clock.elapsedMicroseconds; });
@@ -242,7 +250,8 @@ final class _Cursor implements PrioritizableScheduledFrameCursor {
     }, onError:(Object error, StackTrace stack) {
       row.end = _clock.elapsedMicroseconds; row.failure = error.toString();
     });
-    if (_selected != null && !_selected!.isCompleted) {
+    if (_selected != null && !_selected!.isCompleted && (!_handoffOnly ||
+        (observation.id.download.content.pageId == 'page-1' && kind == DecodeExecutionClass.nonCurrent))) {
       Timer(const Duration(milliseconds:120), () {
         if (_selected == null || _selected!.isCompleted || !row.pending || control?.cancelled == true ||
             observation.source.disposed || !observation.source.sealed) {
@@ -283,7 +292,10 @@ Future<void> main() async {
   try {
     final input = File('$support/inputs/decode-4096.webp');
     _require(await input.exists(), 'natural decode input missing');
-    for (final mode in <String>['drain','rapid-reentry']) {
+    if (_handoffOnly) {
+      await _currentHandoff(support!, input, factory, presentation);
+    }
+    for (final mode in _handoffOnly ? <String>[] : <String>['drain','rapid-reentry']) {
       final record = ImportedChapterRecord(directoryId:'native-active:$mode',displayName:mode,
         sourceId:'local-folder',comicId:'native-active',chapterId:mode,sourceRevision:'native-active-r1',
         pages:<ImportedPageRecord>[ImportedPageRecord(displayName:'input.webp',sourceId:input.uri.toString(),
@@ -368,7 +380,7 @@ Future<void> main() async {
       'original native work or returned frames remain after composition drain');
     passed = true;
     await _record(<String, Object?>{'case':'complete','status':'passed','host_pid':pid,
-      'native_decode_cases':2,'production_modified':false,'user_stores_opened':false,
+      'native_decode_cases':_handoffOnly ? 1 : 2,'production_modified':false,'user_stores_opened':false,
       'active_upload_retirement_proven':false,'source_revision_retirement_proven':false,
       'final_physical_display_performance_proven':false});
   } on Object catch (error, stack) {
@@ -382,6 +394,81 @@ Future<void> main() async {
     await native.shutdownComposition();
     raster.clearPresentationRasters();
   }
+}
+
+Future<void> _currentHandoff(String support, File large,
+    PipelineReaderSessionFactory factory, PipelineStaticPresentation presentation) async {
+  final small = File('$support/inputs/static.webp');
+  _require(await small.exists(), 'current handoff static input missing');
+  final pages = <ImportedPageRecord>[];
+  for (var i = 0; i < 7; i++) {
+    final input = i == 0 || i == 6 ? small : large;
+    final path = '$support/inputs/page-$i.webp';
+    await Link(path).create(input.path);
+    pages.add(ImportedPageRecord(displayName:'page-$i.webp',sourceId:Uri.file(path).toString(),
+      pageId:'page-$i',mediaFormat:'webp',contentKindHint:ContentKindHint.webp,
+      byteLength:await input.length()));
+  }
+  final record = ImportedChapterRecord(directoryId:'native-current-handoff',displayName:'Current handoff',
+    sourceId:'local-folder',comicId:'native-current-handoff',chapterId:'handoff',
+    sourceRevision:'native-current-r1',pages:pages);
+  final first = Completer<void>();
+  _view++;
+  _selected = Completer<_DecodeObservation>();
+  _mount(record,factory,presentation,first);
+  await first.future.timeout(const Duration(seconds:45));
+  final active = await _selected!.future.timeout(const Duration(seconds:45));
+  _selected = null;
+  final reader = _readerController();
+  final requestedAt = _clock.elapsedMicroseconds;
+  _require(active.pending && active.control?.cancelled == false && reader.currentIndex == 0,
+    'high-resolution non-current work was not active at the actual Reader command');
+  reader.requestPage(6);
+  await _wait(() => reader.currentIndex == 6 && _firstFrames.any((r) =>
+    r['view'] == _view && r['page_id'] == 'page-6'));
+  final presentedAt = _firstFrames.firstWhere((r) =>
+    r['view'] == _view && r['page_id'] == 'page-6')['observed_us'] as int;
+  final pendingAtPresentation = active.pending;
+  final sourceAliveAtPresentation = !active.cursor.source.disposed;
+  final cursorAliveAtPresentation = !active.cursor.native.disposed;
+  _require(pendingAtPresentation && sourceAliveAtPresentation && cursorAliveAtPresentation,
+    'current presentation waited for old high-resolution task exit');
+  final current = _decodes.firstWhere((r) => r.view == _view &&
+    r.cursor.id.download.content.pageId == 'page-6' && r.step?.kind == CursorStepKind.frame);
+  _require(current.executionClass == DecodeExecutionClass.current &&
+    current.control?.priority == 1000 && current.frameIndex == 0 && _textures().isNotEmpty,
+    'current page did not traverse actual current native decode and Texture presentation');
+  await _wait(() => !active.pending && active.cursor.disposeEnd != null);
+  _require(active.physicallyCovers(requestedAt) && active.physicallyCovers(presentedAt),
+    'Rust internal timing does not prove old native execution through the current handoff');
+  _require(active.control?.cancelled == true && active.cursor.disposeBegin! >= active.end! &&
+    active.cursor.native.disposed && active.step?.frame?.disposed != false,
+    'cancelled native work or late frame retired before original physical completion');
+  _require(_trace.memory.events.every((e) => e.kind != TraceEventKind.taskFailed),
+    'production task failure during current handoff');
+  _status('Current handoff 验收');
+  await _frames(2);
+  await factory.disposeRetainedSessions();
+  await _record(<String, Object?>{'case':'current-handoff','status':'passed',
+    'selected_decode':active.json(),'current_decode':current.json(),
+    'reader_request_us':requestedAt,'current_first_frame_us':presentedAt,
+    'current_request_to_first_frame_us':presentedAt-requestedAt,
+    'original_native_execution_at_request_and_current_presentation':true,
+    'original_resources_alive_at_current_presentation':true,
+    'original_cursor_retired_after_physical_completion':true,
+    'production_modified':false,'physical_display_or_touch_latency_proven':false});
+}
+
+ReaderController _readerController() {
+  final controllers = <ReaderController>{};
+  void visit(Element e) {
+    if (e.widget is ReaderView) controllers.add((e.widget as ReaderView).controller);
+    e.visitChildElements(visit);
+  }
+  final root = WidgetsBinding.instance.rootElement;
+  if (root != null) visit(root);
+  _require(controllers.length == 1, 'mounted Reader controller is not unique');
+  return controllers.single;
 }
 
 void _mount(ImportedChapterRecord record, PipelineReaderSessionFactory factory,
@@ -400,7 +487,12 @@ void _mount(ImportedChapterRecord record, PipelineReaderSessionFactory factory,
           pageStream:runtime.pageStream,pageOutput:runtime.pageOutput,staticPresentation:presentation,
           onPlaybackCapabilityChanged:runtime.reportPlaybackCapability,
           onDimensionsChanged:(size) => runtime.reportDimensions(size.width.round(),size.height.round()),
-          onFirstFrame:() { reportFirstFrame(); if (!first.isCompleted) first.complete(); },
+          onFirstFrame:() {
+            reportFirstFrame();
+            _firstFrames.add(<String, Object?>{'view':_view,'page_id':asset.pageId,
+              'observed_us':_clock.elapsedMicroseconds});
+            if (!first.isCompleted) first.complete();
+          },
           traceClock:runtime.clock,traceSink:runtime.traceSink,traceSessionId:runtime.sessionId,
           demandRevision:runtime.demandRevision,downloadIdentity:runtime.pageStream.identity,
           playback:runtime.playback,fit:runtime.mediaFit));
@@ -428,7 +520,7 @@ Future<void> _record(Map<String, Object?> event) async {
   await File('$_output.trace.jsonl').writeAsString('${_trace.memory.events.map((e) => jsonEncode(e.toJson())).join('\n')}\n',flush:true);
   await File('$_output.observers.json').writeAsString(jsonEncode(<String, Object?>{
     'decodes':_decodes.map((r) => r.json()).toList(),'cursors':_cursors.map((c) => c.json()).toList(),
-    'uploads':_uploads,'wire':_wire}),flush:true);
+    'uploads':_uploads,'wire':_wire,'first_frames':_firstFrames}),flush:true);
   await File(_output).writeAsString(jsonEncode(_events),flush:true);
 }
 void _require(bool condition, String message) { if (!condition) throw StateError(message); }
