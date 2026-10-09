@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device69/toolchain11/superseded2/partial23/pending7，30条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
+- 当前112项：device71/toolchain11/superseded2/partial21/pending7，28条未完成记录。039四类Home筛选/049正文载体收口；首次入架、client变体及性能独立开放。052/020/TTL/LRU已验保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -12,7 +12,7 @@
 - Home修复仅卡片source signal/点击key祖先；健康/pending artwork保留State，失败随来源恢复。32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2359/27suite/analyzer/Rust22及三ABI Debug/Profile/minifiedRelease/JNI通过；38 decode/55关联已验，native88新跑/27同输入复用。
 - 073/027/028/072已验保持。070收口：普通浏览器descriptor改用source headers UA，旧mobile投影先失败；真实WNACG浏览器/两次设置/失败与成功同包事务通过，原文件与快照恢复。041真实HTTP封面/正文原路径解码无重试，旧域名仅观察；challenge/升级/DNS/原加载另验。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。d6b6d903/PID28367/Home；097真实代际及016/049其余开放。
+- rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。d6b6d903/PID28367/Home；097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。

@@ -226,6 +226,8 @@ for row in requirements:
     if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
         raise SystemExit(f"{row['id']} hides pending acceptance")
 completed_plan_markers = {
+    "SWG-PLAN-039": "普通主入口用来源实际确认的同源successor验证Home版本更新筛选",
+    "SWG-PLAN-049": "继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown",
     "SWG-PLAN-041": "http://img*.wnimg*.ru/...",
     "SWG-PLAN-070": "已激活插件连续执行 WebView验证、设置修改和同包更新",
     "SWG-PLAN-072": "记录真实插件重启后Cookie snapshot reset与首个request时序",

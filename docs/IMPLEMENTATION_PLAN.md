@@ -16,16 +16,11 @@
 ## P0：Artwork 生命周期与更新语义真机闭环
 
 - 使用原始报障 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
-- 普通主入口用来源实际确认的同源successor验证Home版本更新筛选；以home-update-shelf-admission审计中的当前筛选/metadata/progress合同为基线，不因父项partial改写已验行为。
 - 普通主入口验证真实来源版本首次入架确认既有chapter/version通知、后续successor仍可提醒；隔离来源验收不得代替真实版本发现流程（ADR0383 Provisional）。
-
-## P0：网络 UA / client / cache ownership 真机闭环
-
-- 继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown；真实WNACG1.6受控GET/redirect的正文、原生呈现、冷READY和取消边界见source-mihon-client-pipeline审计。完整输入/canonical整块物化、live stream/backpressure及分配另验，保持原body/cache/NetLane/retry owner。
-
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 
+- 原19/20偶发缓存加载/重下、其它真实client/ABI/拦截器/POST/包装/重定向、partial/live媒体及完整输入/canonical分配仍独立待验；049协商正文载体已收口，不宣称live streaming或零分配，也不重跑已验生命周期。
 - Roumanwu：复取历史exact 80章真机样本，核对raw SManga与升级/旧durable manifest刷新路径；不得用当前42章样本或JVM80对象合同替代原样本验收，见source-contract-acceptance审计。
 - 禁漫天堂：升级后确认durable details/chapter cache revision触发真实刷新；历史单个完整 `SChapter` 分支仍需保留原对象并采集trace，不以当前350章或无durable cache的fresh探针替代。Cloudflare不调整。
 - 绅士漫画：先取得保留自定义响应/镜像/压缩语义的请求级证明，再验证cover/page直连与 `sourceMediaProtocolMismatch` fallback；不得扩大标准client白名单或改设置使验收通过。
