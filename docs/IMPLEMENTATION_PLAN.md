@@ -9,7 +9,6 @@
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
-- 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
 

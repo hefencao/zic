@@ -59,7 +59,7 @@
   source setting mutation 会同步失效该 source 的 retained fresh/replay state；旧/跨 payload 持久 locator 由 Reader/下载入口强制刷新后再消费。
   Android network/Mihon runtime 的 `FallbackDns` 不再强制 IPv4 优先；系统非空 DNS 结果保持原顺序，public fallback 仅在系统失败/空时启动，并同时查询 A/AAAA。
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
-- 迁移统一入口保留版本发现/原Future，复选来源聚合可编辑搜索与封面/标题，原生ID收高级单源入口；退出拒绝迟到面板，禁用来源仍可访问确认版本且不启用。Release3dbc12fb入口已验；Profilead9222ad实际JM跨源0exact/1sequence、原记录/目标偏好/自身ACK/journal通过，024收口；EH及075保持，alias/mapping开放。
+- 迁移统一入口保留版本发现/原Future，复选来源聚合可编辑搜索与封面/标题，原生ID收高级单源入口；退出拒绝迟到面板，禁用来源可访问确认版本。024实际JM与075/恢复已验；Profile1f663194实际EH确认后旧raw/canonical离架、目标在架，两个可见详情书架按钮正确，025收口；搜索结果/手势、023更新提醒和099仍另验。
 ### 渲染与几何 (Pipeline & Reader View)
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2364/27 suites/analyzers/Rust22、全门禁及三ABI Debug通过；普通三ABI Profile/minifiedRelease/JNI/native115复用同输入。Release3dbc12fb/PID22713/Home，实际JM跨源确认/024通过；EH/WNACG070/041保持；3既有quarantine；alias/性能独立开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2364/27 suites/analyzers/Rust22、全门禁及三ABI Debug通过；live-fixture三ABI Profile与严格分析通过；普通Profile/minifiedRelease/native115复用同输入。Release3dbc12fb/PID29367/Home；024/025通过；3既有quarantine；提醒/性能另验 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device73/toolchain11/superseded2/partial19/pending7，26条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
+  当前112项：device74/toolchain11/superseded2/partial18/pending7，25条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。

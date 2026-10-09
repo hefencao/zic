@@ -226,6 +226,7 @@ for row in requirements:
     if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
         raise SystemExit(f"{row['id']} hides pending acceptance")
 completed_plan_markers = {
+    "SWG-PLAN-025": "真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名",
     "SWG-PLAN-039": "普通主入口用来源实际确认的同源successor验证Home版本更新筛选",
     "SWG-PLAN-049": "继续验其它transport/partial动画、真实origin/其它Mihon客户端与teardown",
     "SWG-PLAN-041": "http://img*.wnimg*.ru/...",

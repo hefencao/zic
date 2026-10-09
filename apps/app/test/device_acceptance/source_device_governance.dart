@@ -8,6 +8,108 @@ bool _isLiveProbeJmGallery(Uri? uri) {
       segments[0] == 'album' && segments[1] == '1441640';
 }
 
+Element? _liveProbeElement(bool Function(Element) matches, {Element? within}) {
+  final found = <Element>[];
+  void visit(Element element) {
+    if (matches(element)) found.add(element);
+    element.visitChildren(visit);
+  }
+  visit(within ?? WidgetsBinding.instance.rootElement!);
+  if (found.length > 1) throw StateError('ambiguous live UI target');
+  return found.firstOrNull;
+}
+
+Future<void> _waitForLiveProbeUi(String step, bool Function() ready) async {
+  final watch = Stopwatch()..start();
+  while (watch.elapsed < const Duration(seconds: 60)) {
+    await WidgetsBinding.instance.endOfFrame;
+    if (ready()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  throw StateError('live UI did not settle: $step');
+}
+
+SourceComicSummary _liveProbeSummary(Comic comic, {String? comicId}) =>
+    SourceComicSummary(sourceId: comic.sourceId, comicId: comicId ?? comic.comicId,
+      title: comic.title, authors: comic.authors, tags: comic.tags,
+      coverUri: comic.coverUri, description: comic.description);
+
+Future<void> _probeLiveReplacedShelfUi(BrowsableComicSource source,
+    Comic origin, Comic target, HomeProjectionSnapshot snapshot) async {
+  final identity = source as CanonicalComicIdentitySource;
+  final oldCanonical = identity.canonicalComicIdentity(origin.comicId);
+  final targetCanonical = identity.canonicalComicIdentity(target.comicId);
+  if (oldCanonical == targetCanonical) {
+    throw StateError('declared versions unexpectedly share canonical identity');
+  }
+  final oldAliases = <String>{origin.comicId,
+    for (final saved in snapshot.savedComics)
+      if (saved.sourceId == source.sourceId &&
+          identity.canonicalComicIdentity(saved.comicId) == oldCanonical)
+        saved.comicId,
+  };
+  final navigation = _liveProbeElement((e) => e.widget is NavigationBar)!;
+  Navigator.of(navigation).popUntil((route) => route.isFirst);
+  await _waitForLiveProbeUi('Home navigation', () =>
+    ModalRoute.of(navigation)?.isCurrent == true);
+  (_liveProbeElement((e) => e.widget is NavigationBar)!.widget as NavigationBar)
+    .onDestinationSelected!(2);
+  await _waitForLiveProbeUi('source shelf projection', () {
+    final page = _liveProbeElement((e) => e.widget is ComicSourcesPage)?.widget as ComicSourcesPage?;
+    return page?.isInShelf != null &&
+      !page!.isInShelf!(source, _liveProbeSummary(origin)) &&
+      page.isInShelf!(source, _liveProbeSummary(target));
+  });
+  final browser = _liveProbeElement((e) => e.widget is ComicSourcesPage)!.widget as ComicSourcesPage;
+  // Canonical strings are read-only projection queries, never native locators
+  // for loadComic or commands. Raw aliases come from the actual saved input.
+  for (final id in <String>{...oldAliases, oldCanonical}) {
+    if (browser.isInShelf!(source, _liveProbeSummary(origin, comicId: id))) {
+      throw StateError('old raw/canonical source UI query remains in shelf');
+    }
+  }
+  if (!browser.isInShelf!(source, _liveProbeSummary(target, comicId: targetCanonical))) {
+    throw StateError('target canonical source UI query lost shelf state');
+  }
+  for (final comic in <Comic>[origin, target]) {
+    final selected = comic.comicId == target.comicId;
+    // Invoke the mounted production browser callback with the exact model
+    // returned by the live source; do not fabricate browse results or relations.
+    final opening = browser.onOpenComic(source, _liveProbeSummary(comic));
+    Element? detail;
+    await _waitForLiveProbeUi('exact details shelf action', () {
+      detail = _liveProbeElement((e) =>
+        ModalRoute.of(e)?.isCurrent == true &&
+        ((e.widget is details.RemoteComicDetailsScreen &&
+          (e.widget as details.RemoteComicDetailsScreen).summary.comicId == comic.comicId) ||
+        (e.widget is details.LocalComicDetailsScreen &&
+          (e.widget as details.LocalComicDetailsScreen).comic.comicId == comic.comicId)));
+      if (detail == null) return false;
+      final action = _liveProbeElement((e) => e.widget.key == details.comicDetailsShelfKey, within: detail);
+      final button = action == null ? null : _liveProbeElement((e) => e.widget is IconButton, within: action)
+        ?.widget as IconButton?;
+      return button?.isSelected == selected &&
+        button?.tooltip == (selected ? '移出书架' : '加入书架');
+    });
+    final action = _liveProbeElement((e) => e.widget.key == details.comicDetailsShelfKey, within: detail)!;
+    await Scrollable.ensureVisible(action);
+    await WidgetsBinding.instance.endOfFrame;
+    final box = action.findRenderObject() as RenderBox;
+    if (!box.attached || !box.hasSize ||
+        !(box.localToGlobal(Offset.zero) & box.size).overlaps(Offset.zero & MediaQuery.sizeOf(action))) {
+      throw StateError('exact details shelf action is not visible');
+    }
+    Navigator.of(detail!).pop();
+    await opening;
+  }
+  await _record(<String, Object?>{'step': 'ordinary-live-replaced-shelf-ui', 'status': 'passed',
+    'source': source.sourceId, 'old_raw_aliases_checked': oldAliases.length,
+    'old_raw_and_canonical_queries_off_shelf': true, 'target_raw_and_canonical_queries_in_shelf': true,
+    'old_details_shelf_selected': false, 'target_details_shelf_selected': true,
+    'source_native_models_unchanged': true, 'mounted_production_callbacks_used': true,
+    'physical_gesture_or_source_search_results_proven': false});
+}
+
 // Actual installed sources, declared version/native input and Home/details
 // confirmation controls. All mutations belong to a fresh temporary SQLite.
 // Read the existing declared direction only; seed fresh live manifests and test
@@ -309,6 +411,11 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
       (crossSource ? 'no_cross_source_version_relation' : 'source_declared_relation_retained'): true,
       'durable_journal_drained': true, 'user_source_payload_unchanged': true,
       'cross_source_confirmation_proven': crossSource, 'media_artifact_reuse_proven': false});
+    if (!crossSource) {
+      await _record(<String, Object?>{'step': 'checking-replaced-shelf-ui', 'status': 'ready',
+        'source': source.sourceId, 'operator_action': 'none; mounted production callbacks check old and target details'});
+      await _probeLiveReplacedShelfUi(source, origin.comic, target.comic, snapshot);
+    }
     passed = true;
   } on Object catch (error) {
     await _record(<String, Object?>{'step': 'failure', 'status': 'failed',

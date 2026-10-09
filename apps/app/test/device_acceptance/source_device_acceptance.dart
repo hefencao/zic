@@ -19,9 +19,11 @@ import 'package:transport/transport.dart';
 import 'package:zic/debug_trace_export.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_settings_screen.dart';
+import 'package:zic/comic_details.dart' as details;
 import 'package:zic/local_media_composition.dart';
 import 'package:zic/app_runtime.dart' as app_runtime;
 import 'package:zic/main.dart' as app_entrypoint;
+import 'package:zic/source_browser.dart';
 import 'package:zic/startup_platform.dart';
 
 part 'source_device_governance.dart';
