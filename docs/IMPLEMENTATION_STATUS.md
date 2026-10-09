@@ -171,7 +171,7 @@
   RMR-022/023已闭合：opaque grant内部绑定DecodeId、UI只见cache/state/ack；唯一PipelinePresentationRasterCache未变，mounted/detached共用owner adapter。focused 33/33+16/16、dev.77/80/114及最终`--require-toolchains` 172.55s均通过，无新增Reader owner。
   release-native Profile06-32-20 authoritative Home1.283s、Reader first-frame、taskFailed0及multi-MiB Direct adopted-physical通过；该轮无可复现SAF partial，SAF读取次数/取消边界仅以fake-SAF回归验收。
   RMR-031闭合基线：Reader73/73、Home11/11、DownloadSession90/90、retention35/35、Kotlin与required-toolchain gate、三ABI debug/Profile、Rust22/22通过；RMR-032全仓/设备复验已通过；扩展Plan验收仍进行中。
-  TTL4/LRU、used texture、active decode/prepare退出保持。pending present退出/重入与prepare原Future期间重入1/12已验，另11时窗未覆盖。新demand可持旧活跃cursor，最后退出才退休；631事件/0失败/0重读。实际CPU blit/GPU、真实代际开放。125完整payload/67read保持；19话APK/1.6.22provenance保持。
+  TTL4/LRU、used texture、active decode/prepare及pending present退出/重入保持；prepare原Future重入1/12时窗已验，另11未覆盖。631事件/0失败/0重读；005复用020 current新frame blit3087us/schedule1313us/deadline0，快滑视觉/GPU/真实代际仍开放。125完整payload/67read及19话原APK/1.6.22 provenance保持。
   之后fresh Profile继续把“逻辑next比current晚”定位到local preparation的operation-cap tie：三页真实visible时current1000与两侧transition900已经同级，
   但严格max2会让第二个900按stable claim顺序多等约3.7–15.4ms。ADR 0334不全局扩容，而只给同Reader/revision、三者均`localOnly + viewportVisible`的cohort一个第三operation handoff；
   `DownloadDemand.viewportVisible`现直接来自Reader observation而非role推断。修复前13-26-45 matched fast-forward样本`next-current`中位约+18.21ms；

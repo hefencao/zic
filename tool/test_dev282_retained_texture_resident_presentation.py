@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard dev.282 retained Android texture resident presentation ownership."""
 from pathlib import Path
+import json
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,7 +96,17 @@ for path in (
 require('docs/ARCHITECTURE.md', 'platformResident', 'OutputFrame identity', 'SurfaceProducer')
 require('docs/SPEC.md', 'platformResident', 'RGBA Surface copy')
 require('docs/IMPLEMENTATION_STATUS.md', 'presentationIdentity', 'resident surface', 'SurfaceProducer')
-require('docs/IMPLEMENTATION_PLAN.md', 'dev.282', 'platformResident', '首次新OutputFrame')
+# First-new-output cost is accepted through the real020 current handoff. The
+# current state retains that scope; Plan contains only final visual composition.
+state = json.loads(text('docs/IMPLEMENTATION_STATE.json'))
+current = next(row for row in state['requirements'] if row['id'] == 'SWG-PLAN-005')
+req(current['status'] in ('partial', 'verified_device'), '005 lost its accepted first-output scope')
+for marker in ('accepted020', 'platform blit', 'schedule', 'deadline miss'):
+    req(marker in current['current_contract'], f'005 first-output cost scope missing: {marker}')
+if current['status'] == 'partial':
+    req(any('composition' in remaining for remaining in current['remaining_acceptance']),
+        '005 hides remaining final composition')
+    require('docs/IMPLEMENTATION_PLAN.md', 'dev.282', 'platformResident', 'composition')
 require('CHANGELOG.md', '0.31.0-dev.282', 'resident')
 
 print('PASS: dev.282 retained Android texture resident presentation')
