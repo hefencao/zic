@@ -3508,6 +3508,8 @@ final class _SourceManagementScreenState
     ValueChanged<bool>? onToggleOverride,
   }) {
     final preference = _preference(source);
+    final onChanged =
+        onToggleOverride ?? (value) => unawaited(_toggle(source, value));
     final originIcon = Icon(
       source.sourceId.startsWith('mihon:')
           ? Icons.extension_outlined
@@ -3515,12 +3517,17 @@ final class _SourceManagementScreenState
               ? Icons.javascript_outlined
               : Icons.public,
     );
-    return SwitchListTile(
+    // Settings and language actions need their own semantics, rather than
+    // being merged into the enabled switch's single action.
+    return ListTile(
       key: ValueKey<String>('source-manager:${source.sourceId}'),
       contentPadding: EdgeInsets.fromLTRB(nested ? 40 : 16, 0, 12, 0),
-      value: preference.enabled,
-      onChanged: onToggleOverride ?? (value) => unawaited(_toggle(source, value)),
-      secondary: Row(
+      onTap: () => onChanged(!preference.enabled),
+      trailing: Semantics(
+        label: source.descriptor.name,
+        child: Switch(value: preference.enabled, onChanged: onChanged),
+      ),
+      leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           // The expandable family icon keeps the exact same 24px footprint as

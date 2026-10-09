@@ -684,6 +684,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `readVeneraJavaScript/saveVeneraJavaScript` 把编辑内容写入新 revision payload、
   重新经过受限元数据检查并以新摘要固定后走与安装相同的 approveAndActivate 事务替换会话，检查或激活失败时旧 payload 保持权威。
   插件管理中的版本与Mihon ABI只从既有安装记录/设备扫描元数据投影；设备扩展的长包名与版本ABI分行布局，失败态仍保留已知安装信息。来源主列表只投影来源名称、语言及站点，不查询安装记录；UI不扫描或镜像元数据。
+  来源管理行由 `ListTile` 组合独立启用开关、应用级“源设置”和 runtime“来源属性与登录”按钮，分别复用既有偏好与设置回调；各操作保留独立语义节点，行标题点击仍切换启用状态。
   来源管理页是单一未分类的可拖动排序列表（`_buildManagementEntries/_managementList`）：
   Mihon 同扩展多语言变体按 `mihonSourceGroupKey` 折叠为一行，行代表 = 最近启用变体（`ComicSourcePreference.lastEnabledAt`），
   点击行首插件图标展开其余变体，`_enableMihonVariant` 在启用时自动停用同族其它变体；

@@ -1779,6 +1779,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   来源独立下载目录默认跟随全局目录，只决定该 source 新下载 artifact 的写入位置。
   既有文件 MUST 保留在原位置并通过索引 locator 继续可读，per-source 切换不要求迁移。
   原可配置来源设置/登录入口 MUST 作为“来源属性与登录”使用属性列表/属性页语义图标，不得与应用级源设置共用齿轮语义。
+  启用开关、源设置及来源属性/登录 MUST 各自暴露独立可操作的语义节点；打开任一设置入口 MUST NOT 同时切换来源启用状态。
 - 历史缓存冲突信任 MUST 以 source tri-state（inherit/strict/trust）覆盖 application global default。
   旧 plugin-scoped override MAY 只作兼容读取；进入该插件任一源设置时，MUST 将旧值展开到当前全部已知 source IDs，
   保留已有显式 source override。只有 installed-plugin authority 能证明该插件 source 集完整时 MAY 退役 plugin override；

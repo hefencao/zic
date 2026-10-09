@@ -44,7 +44,7 @@
 - ADR0396 Accepted：public显式失效忽略仅touch的recency变化，保留新binding保护与trim/其它完整record比较；受控先失败修复，全门禁/三ABI通过。普通Release单次显式重载仅1预期下载，冷重入11缓存/0重下；未宣称真机强制了touch竞态。
 - 浏览器成功等Cookie/storage/UA一次提交，081保持。Android13+返回现共用history/完成并销毁撤销，15回归通过；046真机两次设置/10断言及四次普通返回通过，Mihon两ABI的10优先级断言通过，047按原client/semantic标准收口。
 - ADR0406 Accepted：HTTP响应Cookie保留domain/name/path、有效期/Secure，镜像抑制限定请求domain/path。15契约/真机9断言通过；浏览器属性及同名重叠未知镜像开放。0403/0405异常分类/BOM保持；Reader/NetLane/URI/revision不变，原19/20加载开放。
-- Mihon `AppBindings`保持payload `Application`与`Json { ignoreUnknownKeys=true; explicitNulls=false }`；NetworkHelper用宿主context读快照，072首请求已验。普通网页UA采用source headers；070浏览器/设置/失败与成功同包事务通过，真实challenge/升级仍开放。
+- Mihon AppBindings保留payload Application/Json，NetworkHelper读宿主快照，072已验；普通网页UA采用source headers，070同包事务已验。来源管理用ListTile保持启用、源设置、属性登录独立语义与既有回调；真实challenge/升级开放。
 - APK失败保留公有package/key/ABI/entry诊断，073真机先失败后3/3通过。Source Browse刷新仅重试当前Future身份的source/decode失败，健康/pending不退休；027/028先失败回归及普通Release真机通过，刷新重复load/首帧12→0。Reader/缓存/调度不变。
 - Mihon 新生成的 opaque page locator 现在统一携带稳定 chapter/page replay 坐标；host-direct plan 另带显式 `directPlanReplay`，
   因此过期签名 URL/旧 page plan 可沿既有一次性 source recovery 重取 page list。runtime-transform locator仍使用payload-bound v3：`mihon-runtime-transform-v3:<payload-sha256>`并保留producer payload authority。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2359/27 suites/analyzers/Rust22、全门禁/三ABI Debug通过；EH真实同源控件/隔离库验收通过。普通三ABI Profile/minifiedRelease/JNI及native88+27复用相同输入；WNACG070/041保持；3既有quarantine；Release d6b6d903/PID31813/Home |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2360/27 suites/analyzers/Rust22、全门禁/三ABI Debug通过；EH真实同源控件/隔离库验收通过。普通三ABI Profile/minifiedRelease/JNI及native88+27复用相同输入；WNACG070/041保持；3既有quarantine；Release 98dc6501/PID32629/Home |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device72/toolchain11/superseded2/partial20/pending7，27条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。

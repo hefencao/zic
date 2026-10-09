@@ -164,10 +164,13 @@ void main() {
     await _tapVisible(tester, find.byKey(comicSourceManageKey));
     await _pumpUntilFound(tester, find.byKey(sourceManagementScreenKey));
     expect(find.byKey(sourceManagementScreenKey), findsOneWidget);
-    expect(find.byType(SwitchListTile), findsNWidgets(2));
+    expect(find.byType(Switch), findsNWidgets(2));
 
-    await tester.tap(find.byType(SwitchListTile).at(1));
-    await tester.pump();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('source-manager:fixture-b')),
+    );
+    await tester.pumpAndSettle();
     final stored = await store.listSourcePreferences();
     expect(
       stored.singleWhere((item) => item.sourceId == 'fixture-b').enabled,
@@ -268,6 +271,56 @@ void main() {
       preferences.sourceAdaptiveWebtoonConfidenceFor(source.sourceId),
       0.2,
     );
+  });
+
+  testWidgets('source management exposes settings and toggle as independent actions',
+      (tester) async {
+    final source = _ConfigurableFixtureSource('mihon:settings-actions', '操作来源');
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    final semantics = tester.ensureSemantics();
+    try {
+      final changes = <ComicSourcePreference>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SourceManagementScreen(
+            sources: <BrowsableComicSource>[source],
+            preferences: const <String, ComicSourcePreference>{},
+            onPreferenceChanged: (value) async { changes.add(value); },
+            appPreferences: preferences,
+          ),
+        ),
+      );
+      final settings = tester.getSemantics(find.byKey(sourceSettingsEntryKey(source.sourceId)));
+      final properties = tester.getSemantics(find.byKey(sourcePropertiesEntryKey(source.sourceId)));
+      expect(settings.getSemanticsData().tooltip, '源设置');
+      expect(properties.getSemanticsData().tooltip, '来源属性与登录');
+      expect(settings.id, isNot(properties.id));
+      expect(settings.flagsCollection.isButton, isTrue);
+      expect(properties.flagsCollection.isButton, isTrue);
+
+      properties.owner!.performAction(properties.id, ui.SemanticsAction.tap);
+      await tester.pumpAndSettle();
+      expect(find.text('操作来源 属性'), findsOneWidget);
+      expect(source.settingsLoads, 1);
+      expect(changes, isEmpty);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      final settingsAfterReturn = tester.getSemantics(find.byKey(sourceSettingsEntryKey(source.sourceId)));
+      settingsAfterReturn.owner!.performAction(settingsAfterReturn.id, ui.SemanticsAction.tap);
+      await tester.pumpAndSettle();
+      expect(find.text('源设置 · 操作来源'), findsOneWidget);
+      expect(changes, isEmpty);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      final toggle = tester.getSemantics(find.byType(Switch));
+      toggle.owner!.performAction(toggle.id, ui.SemanticsAction.tap);
+      await tester.pumpAndSettle();
+      expect(changes.single.sourceId, source.sourceId);
+      expect(changes.single.enabled, isFalse);
+    } finally {
+      semantics.dispose();
+    }
   });
 
   testWidgets('source cards project shelf membership without owning it',
@@ -4727,6 +4780,22 @@ void main() {
   },
       skip: true); // ZIC-QUARANTINE(Q-003): whole-App retry test bootstrap race;
   // replace with a direct RemoteComicDetailsScreen harness before re-enabling.
+}
+
+final class _ConfigurableFixtureSource extends _FixtureSource
+    implements ConfigurableComicSource {
+  _ConfigurableFixtureSource(super.sourceId, super.name);
+
+  int settingsLoads = 0;
+
+  @override
+  Future<List<ComicSourceSetting>> loadSettings() async {
+    settingsLoads += 1;
+    return const <ComicSourceSetting>[];
+  }
+
+  @override
+  Future<void> updateSetting(String key, Object value) async {}
 }
 
 final class _FixtureSource
