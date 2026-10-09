@@ -9,10 +9,10 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home修复仅卡片source signal/点击key祖先；健康/pending artwork保留State，失败随来源恢复。32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2343/27suite/analyzer/Rust22及三ABI Debug通过；native113复用同输入。
+- Home修复仅卡片source signal/点击key祖先；健康/pending artwork保留State，失败随来源恢复。32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2345/27suite/analyzer/Rust22及三ABI Debug通过；native113复用同输入。
 - 073错误上下文真机3/3及全门禁已收口。027/028新trace在catalog changed=false前重复获取12张健康封面；修复仅使Source Browse显式刷新重试当前Future的source/decode失败，保留健康/pending。已有回归先失败后通过；Release trace127events/重复load及首帧12→0，已收口。不改Reader/缓存/调度。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- 010 pressure-only真机2例/13 HTTP通过：body抢占保留partial，retention旧任务实际退出中current恢复同response；139事件/0 taskFailed，所有peer/owner退出。raw取消错误独立归049调查。Release4dafc146/PID23224/Home恢复，forward为空；018/091/093保持。
+- rhttp共用终止Future，主动typed取消正常结束pending read；DownloadJob先发abort再join订阅/discard。44单测、pressure2例/13HTTP/139事件/0未捕获/0taskFailed通过，全部owner退出。Release84006f31/PID5671/Home/无forward；010保持收口，049其它输入/性能仍开放。
 - 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。

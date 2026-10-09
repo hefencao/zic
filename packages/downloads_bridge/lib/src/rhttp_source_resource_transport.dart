@@ -283,10 +283,41 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
 }) async {
   final iterator = StreamIterator<Uint8List>(source);
   final prefetched = <Uint8List>[];
+  var aborted = false;
+  Future<bool>? pendingRead;
+  Future<bool> readNext() => pendingRead ??= iterator.moveNext().then<bool>(
+        (available) {
+          pendingRead = null;
+          return available;
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          pendingRead = null;
+          // A cancelled async* body must resume normally before it can close.
+          // Keep the typed terminal cancellation out of that abandoned await.
+          if (aborted && error is rhttp.RhttpCancelException) return false;
+          Error.throwWithStackTrace(error, stackTrace);
+        },
+      );
+  Future<void>? abortFuture;
+  Future<void> abortOnce() async {
+    aborted = true;
+    await cancelToken.cancel();
+    try {
+      // Keep the native stream listener until its cancellation/EOF arrives.
+      // Cancelling FRB's idle async* subscription first can strand its exit
+      // Future and throw the later native cancellation outside rhttp's mapper.
+      while (await readNext()) {}
+    } on rhttp.RhttpCancelException {
+      // This is the terminal result of the cancellation requested above.
+    } finally {
+      await iterator.cancel();
+    }
+  }
+  Future<void> abort() => abortFuture ??= abortOnce();
   if (validatePrefix) {
     final prefix = BytesBuilder(copy: false);
     try {
-      while (prefix.length < 16 && await iterator.moveNext()) {
+      while (prefix.length < 16 && await readNext()) {
         _throwIfCancelled(control);
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
@@ -296,13 +327,11 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
       }
       _throwIfCancelled(control);
     } on Object {
-      cancelToken.cancel();
-      await iterator.cancel();
+      await abort();
       rethrow;
     }
     if (!_looksLikeEncodedMediaPrefix(prefix.takeBytes())) {
-      cancelToken.cancel();
-      await iterator.cancel();
+      await abort();
       throw Failure(
         code: ErrorCode.network,
         message: 'source host transport returned non-media bytes for $locator',
@@ -312,14 +341,6 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
         },
       );
     }
-  }
-
-  var aborted = false;
-  Future<void> abort() async {
-    if (aborted) return;
-    aborted = true;
-    cancelToken.cancel();
-    await iterator.cancel();
   }
 
   final taskControl = control;
@@ -338,7 +359,7 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
         if (aborted) return;
         if (chunk.isNotEmpty) yield chunk;
       }
-      while (!aborted && await iterator.moveNext()) {
+      while (!aborted && await readNext()) {
         if (aborted) return;
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;

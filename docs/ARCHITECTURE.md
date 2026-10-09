@@ -2322,6 +2322,9 @@ Presentation 不得自行构造 HTTP client。
 - **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。
 
   生产 Flutter composition由 `downloads_bridge` 注入可取消的 Rust/rhttp streaming transport并复用client/keep-alive；
+  response cleanup持同一个终止Future，control取消/discard共同等待原pending read与native typed取消/EOF后再关闭Dart订阅；主动取消的typed终止结果让原正文正常结束，不向已取消async*传入晚到异常。
+  DownloadJob先启动原response discard，再等待正文订阅取消与该discard完成；正文watchdog沿同一收尾，不等待Dart流退出后才发送底层abort。
+  终止期间收到的正文只丢弃，不写入ingress/cache，也不改变NetLane资格或chunk framing。
   rangeStart=0 的完整/首段response通过媒体前缀校验后保持raw streaming cadence，
   合法206且`Content-Range.start > 0`的中段不得再次要求完整图片magic header，应直接保持raw stream/cancellation/diagnostics；
   不得仅因中段不含文件头而转runtime fallback，也不再建立第二套64/256KiB framing。

@@ -46,6 +46,9 @@ only its last4096 characters and original length, so raw trace/logcat are not
 duplicated into command records. Remove completed captures after recording the
 scoped conclusion. Previous PNG, resolver, Cookie/redirect and body-lifetime
 fixtures stay independent and unchanged.
+The runner reads only the actual fixture host/source PIDs and rejects their
+uncaught exceptions even when Dart case assertions passed. Ordinary restoration
+still completes before reporting this failure.
 
 For the independent zero-frame transition case, build with
 `--dart-define=ZIC_SOURCE_NATIVE_WEBP_TRANSITION_ONLY=true` and pass

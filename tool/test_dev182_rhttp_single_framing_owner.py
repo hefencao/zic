@@ -18,7 +18,7 @@ def forbid(text: str, token: str, label: str) -> None:
 transport = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
 for token in (
     'for (final chunk in prefetched)',
-    'while (!aborted && await iterator.moveNext())',
+    'while (!aborted && await readNext())',
     'yield chunk;',
     'DownloadJob is the single',
 ):

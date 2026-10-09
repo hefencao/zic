@@ -1716,6 +1716,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   rhttp transport MUST NOT再次增加64/256KiB framing；底层packet边界也不得直接放大为数万次artifact/native append。
   scheduler cancellation MUST覆盖response完整生命周期；
   request已返回并开始stream后，consumer/task取消仍 MUST abort底层source/HTTP response。
+  response cleanup MUST共用原终止Future，重复discard与control取消不得提前完成；
+  DownloadJob取消/正文watchdog收尾 MUST先启动原response abort，再join正文订阅与discard，不能让正在等底层输入的Dart流阻止abort发出。
+  发出native取消后 MUST等待原stream的typed取消或EOF，再关闭Dart订阅；主动取消的终止结果 MUST让已取消正文正常退出，不能逃逸为未处理错误或阻塞原任务退休。
   partial artifact append MUST NOT在UI isolate逐chunk执行checksum CPU循环；
   checksum MAY延迟到seal/restore边界计算，但seal/promotion前 MUST成为权威且通过expected checksum验证。
   rhttp response 的HTTP version与匿名 remote-IP hash MAY作为每response一次的低开销诊断随`sourceRead`输出；

@@ -699,6 +699,45 @@ void main() {
     expect(session.state, DownloadState.idle);
   });
 
+  for (final watchdog in <bool>[false, true]) {
+    test('${watchdog ? 'body watchdog' : 'task cancellation'} aborts transport before joining a pending body',
+        () async {
+      final session = createSession();
+      final transport = _AbortDrivenBodyTransport();
+      final cancel = CancelToken();
+      final run = DownloadJob(
+        transport: transport,
+        session: session,
+        readStallTimeout: watchdog
+            ? const Duration(milliseconds: 40)
+            : Duration.zero,
+      ).run(cancel: cancel);
+      final expected = expectLater(
+        run.timeout(const Duration(seconds: 1)),
+        throwsA(isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          watchdog ? ErrorCode.network : ErrorCode.cancelled,
+        )),
+      );
+      try {
+        await transport.reading.future.timeout(const Duration(seconds: 1));
+        if (!watchdog) cancel.cancel();
+        await expected;
+        expect(transport.discards, 1);
+        expect(transport.exited.isCompleted, isTrue);
+        expect(session.state,
+            watchdog ? DownloadState.failed : DownloadState.idle);
+        expect(cancel.cancelled, !watchdog);
+        expect(session.hasWriter, isFalse);
+      } finally {
+        // Release the actual input wait even when the old cleanup order fails.
+        transport.release();
+        await run.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+      }
+    });
+  }
+
   test('cancellation during uncontrolled open discards a late response', () async {
     final session = createSession();
     final transport = _LateOpenTransport();
@@ -2279,6 +2318,45 @@ final class _GatedStagedTransport implements Transport {
       totalLength: bytes.length,
       rangeSupported: true,
       validators: const Validators(etag: 'stale-projection-v1'),
+    );
+  }
+}
+
+final class _AbortDrivenBodyTransport implements Transport {
+  final reading = Completer<void>();
+  final exited = Completer<void>();
+  final _aborted = Completer<void>();
+  var discards = 0;
+
+  void release() {
+    if (!_aborted.isCompleted) _aborted.complete();
+  }
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    Stream<List<int>> body() async* {
+      try {
+        yield <int>[1, 2, 3];
+        reading.complete();
+        await _aborted.future;
+      } finally {
+        exited.complete();
+      }
+    }
+    return ByteResponse(
+      bytes: body(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 6,
+      onDiscard: () async {
+        discards++;
+        release();
+        await exited.future;
+      },
     );
   }
 }

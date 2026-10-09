@@ -225,7 +225,16 @@ def main():
             required=False).stdout
         (args.out / 'trace.jsonl').write_text(trace)
         record['trace_sha256'] = hashlib.sha256(trace.encode()).hexdigest()
-        log = adb('logcat', '-d', '-v', 'threadtime', required=False).stdout
+        log_pids = {record.get('fixture_app_pid')}
+        if record['case_results']:
+            log_pids.add(str(record['case_results'][-1].get('source_pid', '')))
+        log_pids.discard(None)
+        log_pids.discard('')
+        log = '\n'.join(adb('logcat', '-d', '-v', 'threadtime', '--pid', pid,
+            required=False).stdout for pid in sorted(log_pids))
+        record['fixture_log_pids'] = sorted(log_pids)
+        record['fixture_uncaught_errors'] = sum('Unhandled Exception:' in line or
+            'FATAL EXCEPTION:' in line for line in log.splitlines())
         (args.out / 'logcat.txt').write_text(log)
         if changed:
             adb('shell', 'am', 'force-stop', PACKAGE)
@@ -238,6 +247,9 @@ def main():
             record['ordinary_APK_restored'] = True
             record['ordinary_app_pid'] = adb('shell', 'pidof', PACKAGE).stdout.strip()
         save()
+    if record.get('fixture_uncaught_errors'):
+        raise RuntimeError('Fixture owner log contains uncaught errors: ' +
+            str(record['fixture_uncaught_errors']))
     print('Actual source Pipeline cases passed; ordinary APK restored.', flush=True)
 
 

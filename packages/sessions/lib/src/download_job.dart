@@ -1406,14 +1406,17 @@ final class DownloadJob {
     StreamIterator<List<int>> iterator,
     Future<void> Function()? discard,
   ) async {
+    // Start the physical abort before joining an async* body that may still
+    // await it. Join discard after subscription cancellation so a paused
+    // controller's close Future does not prevent that cancellation either.
+    final discarded = _discardAfterAbort(discard);
     try {
       await iterator.cancel();
     } on Object {
       // Iterator cancellation is best-effort cleanup. Preserve the original
-      // body/cancellation/watchdog failure while still attempting response
-      // discard below.
+      // body/cancellation/watchdog failure while joining response discard.
     }
-    await _discardAfterAbort(discard);
+    await discarded;
   }
 
   Future<void> _discardAfterAbort(
