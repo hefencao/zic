@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device63/toolchain11/superseded2/partial26/pending10，36条未完成记录。063/066/082 Home与018/091/093快速往返/连续动画收口；010破坏性抢占/016入场/020高分辨率、wire013/DNS089、真实来源与原加载/显示性能开放。
+- 当前112项：device64/toolchain11/superseded2/partial25/pending10，35条未完成记录。063/066/082 Home与018/091/093快速往返/连续动画收口；016入场/020高分辨率、wire013/DNS089、真实来源与原加载/显示性能开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -12,7 +12,7 @@
 - Home修复仅卡片source signal/点击key祖先；健康/pending artwork保留State，失败随来源恢复。32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2343/27suite/analyzer/Rust22及三ABI Debug通过；native113复用同输入。
 - 073错误上下文真机3/3及全门禁已收口。027/028新trace在catalog changed=false前重复获取12张健康封面；修复仅使Source Browse显式刷新重试当前Future的source/decode失败，保留健康/pending。已有回归先失败后通过；Release trace127events/重复load及首帧12→0，已收口。不改Reader/缓存/调度。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/确认迁移仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- 018/091/093已验范围保持。010 pressure-only初测停在16KiB前缀准备，未触发两项压力断言；测试输入改128KiB/实际非空提交，三ABI Profile/严格analyzer通过，真机待复验。固定代理额度耗尽；runner已恢复Release4dafc146/PID6861/MainActivity，无新forward。
+- 010 pressure-only真机2例/13 HTTP通过：body抢占保留partial，retention旧任务实际退出中current恢复同response；139事件/0 taskFailed，所有peer/owner退出。raw取消错误独立归049调查。Release4dafc146/PID23224/Home恢复，forward为空；018/091/093保持。
 - 0395/0396/0397与JM index3保持。TTL/LRU/used texture/active decode/prepare退出与pending present重入已验。prepare原Future期间重入1/12时窗已验（631事件/0失败/0重读），另11未覆盖；新demand可持旧活跃cursor。实际CPU/GPU开放，真实代际须固定设置/factory；19话原APK/官方1.6.22provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
