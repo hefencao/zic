@@ -71,6 +71,10 @@ for path in ('docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATE.json'):
     require(current, 'version-reuse-authority-ready', 'current canonical authority acceptance')
 forbid(read('docs/SPEC.md'), '注册有界临时in-memory equivalence',
        'current Reader READY-only alias restoration contract')
+architecture = read('docs/ARCHITECTURE.md')
+forbid(architecture, 'targeted `getMany/IN`一次筛出实际READY与indexed partial',
+       'Reader READY-only alias restoration in Architecture')
+require(architecture, 'version-reuse-authority-ready', 'Architecture canonical authority before acquire')
 forbid(
     migration + version_lifecycle,
     'aliases.contains(relation.successorComicId)',

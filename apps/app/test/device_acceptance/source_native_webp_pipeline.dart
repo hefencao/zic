@@ -34,6 +34,7 @@ const _transitionOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_TRANSITION_
 const _partialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_ONLY');
 const _partialFailuresOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY');
 const _partialMetadataOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PARTIAL_METADATA_ONLY');
+const _crossProviderPartialOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_CROSS_PROVIDER_PARTIAL_ONLY');
 const _capacityOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_CAPACITY_ONLY');
 const _aliasOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_ALIAS_ONLY');
 const _pressureOnly = bool.fromEnvironment('ZIC_SOURCE_NATIVE_WEBP_PRESSURE_ONLY');
@@ -65,7 +66,7 @@ Future<void> main() async {
   _Composition? current;
   try {
     _require(<bool>[_transitionOnly, _partialOnly, _partialFailuresOnly, _partialMetadataOnly,
-      _capacityOnly, _aliasOnly, _pressureOnly]
+      _crossProviderPartialOnly, _capacityOnly, _aliasOnly, _pressureOnly]
       .where((enabled) => enabled).length <= 1, 'fixture modes are mutually exclusive');
     origin = await _Origin.start(await _inputs(support!));
     final payload = await File('${root.path}/fixture.js').writeAsString(
@@ -120,7 +121,7 @@ Future<void> main() async {
       defaultUserAgentProvider: () => 'FallbackPipelineFixture/1',
     );
     if (_transitionOnly || _partialOnly || _partialFailuresOnly || _partialMetadataOnly ||
-        _capacityOnly || _aliasOnly || _pressureOnly) {
+        _crossProviderPartialOnly || _capacityOnly || _aliasOnly || _pressureOnly) {
       if (_transitionOnly) {
         await _transitionCase(root.path, origin, pool, source, wire);
       } else if (_capacityOnly) {
@@ -130,6 +131,8 @@ Future<void> main() async {
       } else if (_pressureOnly) {
         await _pressureCase(root.path, origin, pool, source, retention: false);
         await _pressureCase(root.path, origin, pool, source, retention: true);
+      } else if (_crossProviderPartialOnly) {
+        await _crossProviderPartialCase(root.path, origin, pool, source);
       } else {
         await _partialCase(root.path, origin, pool, source, wire,
           failures: _partialFailuresOnly || _partialMetadataOnly);
@@ -146,7 +149,7 @@ Future<void> main() async {
       await _record(<String, Object?>{
         'case': 'complete', 'status': 'passed',
         'cases': _transitionOnly || _partialMetadataOnly || _capacityOnly ? 1 :
-          _partialFailuresOnly ? 4 : 2,
+          _partialFailuresOnly ? 4 : _crossProviderPartialOnly ? 3 : 2,
         'production_modified': false, 'host_pid': pid, 'source_pid': sourcePid,
         'actual_HTTP_requests': originRequestsForMode,
         'test_root_removed': !root.existsSync(),
@@ -610,6 +613,200 @@ Future<void> _partialCase(String directory, _Origin origin,
       _captureTrace('partial-failed-case', active.trace);
       await _unmount();
       await active.close();
+    }
+  }
+}
+
+Future<void> _crossProviderPartialCase(String directory, _Origin origin,
+    ExternalPluginResourceTransportPool pool, BrowsableComicSource source) async {
+  final records = <ImportedChapterRecord>[
+    for (final version in <String>['a', 'b']) ImportedChapterRecord(
+      directoryId: 'fixture:provider-$version', displayName: 'Provider $version',
+      sourceId: 'venera:source_native_webp_pipeline_fixture',
+      comicId: 'fixture-version-$version', chapterId: 'chapter-$version',
+      sourceRevision: 'provider-$version-r1', pages: <ImportedPageRecord>[
+        ImportedPageRecord(displayName: 'page.webp', pageId: 'page-$version',
+          sourceId: origin.uri('/animated/partial-range-provider-$version').toString(),
+          mediaFormat: 'webp', contentKindHint: ContentKindHint.webp),
+      ],
+    ),
+  ];
+  final manifests = records.map((record) => record.toManifest()).toList();
+  final ids = manifests.map((manifest) =>
+    readerPageDownloadId(manifest, manifest.pages.single)).toList();
+  final expected = origin.bytesFor('animated');
+  final playableLength = _animatedPrefix(expected, 2);
+  PhysicalMediaId? previousPhysical;
+  String? backingPath;
+  var previousCommitted = 0;
+  for (var phase = 0; phase < 3; phase++) {
+    final provider = phase == 1 ? 1 : 0;
+    final id = ids[provider];
+    final otherId = ids[1 - provider];
+    final label = phase == 0 ? 'cross-provider-partial-first' :
+      phase == 1 ? 'cross-provider-partial-b' : 'cross-provider-partial-a';
+    final etag = '"provider-${provider == 0 ? 'a' : 'b'}"';
+    final input = _HeldInput()..prefixLength = phase == 0 ? playableLength + 64 * 1024 : 4096
+      ..acceptRange = true..etag = etag;
+    origin.held[id.canonicalUri.path] = input;
+    final composition = await _Composition.open('$directory/cross-provider-partial');
+    DownloadTransferConsumer? completion;
+    try {
+      // Test-contributed byte equivalence uses the production direct authority.
+      // The fixture does not claim live source-version discovery or mapping.
+      composition.runtime.replaceCanonicalMediaAuthorityScope('fixture-partial-providers',
+        <CanonicalMediaChapterAuthority>[
+          for (final manifest in manifests) CanonicalMediaChapterAuthority(
+            manifest: manifest, projection: VersionChapterCanonicalProjection(
+              familyId: const VersionFamilyId('fixture-partial-family'),
+              canonicalChapterId: const CanonicalChapterId('fixture-partial-chapter'),
+              sourceId: manifest.sourceId, comicId: manifest.comicId,
+              chapterId: manifest.chapter.chapterId,
+              sourceRevision: manifest.chapter.sourceRevision, pageCount: 1,
+              intervals: const <CanonicalMediaBindingInterval>[
+                CanonicalMediaBindingInterval(exactStart: 0, exactEndExclusive: 1,
+                  segmentId: CanonicalMediaSegmentId('fixture-partial-segment'), segmentStart: 0),
+              ],
+            ), activeProjectionRanges: const <CanonicalMediaActiveRange>[
+              CanonicalMediaActiveRange(start: 0, endExclusive: 1),
+            ],
+          ),
+        ]);
+      final physicalId = composition.runtime.physicalMediaIdFor(id);
+      final physicalIndex = composition.store.index as PhysicalPartialIndex;
+      _require(!physicalId.isExactFallback &&
+        physicalId == composition.runtime.physicalMediaIdFor(otherId) &&
+        (previousPhysical == null || previousPhysical == physicalId) &&
+        composition.runtime.registry.sessions.isEmpty && composition.cache.memoryEntryCount == 0,
+        'cold provider did not use empty owners and the same canonical physical authority');
+      var prefixLength = 0;
+      if (phase > 0) {
+        final stored = await physicalIndex.getPhysicalPartial(physicalId);
+        final restored = await composition.store.openPhysicalPartialDownload(
+          physicalId: physicalId, requestId: id);
+        _require(stored != null && restored != null &&
+          restored.length >= previousCommitted && restored.length < expected.length &&
+          restored.totalLength == expected.length && restored.validators.isEmpty &&
+          (backingPath == null || backingPath == stored.path),
+          'different provider lost durable prefix or inherited foreign validators');
+        backingPath = stored!.path;
+        prefixLength = restored!.length;
+        final bytes = BytesBuilder(copy: false);
+        await for (final chunk in restored.open(start: 0)) { bytes.add(chunk); }
+        final actual = bytes.takeBytes();
+        _require(actual.length == prefixLength && actual.asMap().entries.every((entry) =>
+          entry.value == expected[entry.key]), 'cross-provider checkpoint changed prefix bytes');
+      }
+      final loader = _ObservedLoader(pool.controlledLoaderFor(source, id.canonicalUri),
+        selfBoundedOpen: pool.selfBoundsOpenFor(source, id.canonicalUri));
+      await _present(records[provider], composition, loader);
+      await input.headers.future.timeout(const Duration(seconds: 20));
+      final session = composition.runtime.findSession(id)!;
+      final epoch = session.epoch;
+      final native = composition.trace.events.firstWhere((event) =>
+        event.kind == TraceEventKind.frameDecoded);
+      _require(session.physicalId == physicalId && loader.opens == 1 &&
+        composition.store.findSession(id) == null && native.payload['frame'] == 0 &&
+        native.payload['sourceSealed'] == false, 'Reader bypassed the native unsealed physical owner');
+      if (phase > 0) {
+        final hydration = composition.trace.events.firstWhere((event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'physical-local-prepare' &&
+          event.payload['action'] == 'local-hydration-ready');
+        final started = composition.trace.events.firstWhere((event) =>
+          event.kind == TraceEventKind.downloadStarted);
+        _require((native.payload['sourceLength'] as num) <= prefixLength &&
+          input.sent == 4096 && hydration.monotonicMicros < started.monotonicMicros &&
+          (started.payload['committedLength'] as num) >= prefixLength &&
+          origin.requests.last['range'] == 'bytes=${prefixLength - 64 * 1024}-' &&
+          origin.requests.last['if_range'] == null,
+          'cold native first frame waited for remote catch-up or sent a foreign strong Range');
+      }
+      await _until(() => composition.trace.events.any((event) =>
+        event.kind == TraceEventKind.animationLoop && event.payload['partialPrefix'] == true),
+        'cross-provider durable prefix did not play its native partial loop');
+      if (phase > 0) {
+        final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+          id.canonicalUri: LoaderTransportSource(openControlledResponse: loader.open,
+            selfBoundedOpen: loader.selfBoundedOpen, revision: id.sourceRevision),
+        });
+        completion = composition.runtime.attachConsumer(scopeId: 'fixture-required-$label',
+          transportFor: (_) => transport, consumerTraceSink: composition.trace,
+          retry: const RetryPolicy(maxAttempts: 1));
+        completion.replaceDemands(label, 1, <DownloadId, TransferDemand>{
+          id: const TransferDemand(priority: 1000, reason: 'explicit-completion',
+            completionIntent: TransferCompletionIntent.required),
+        });
+        if (phase == 1) {
+          await origin.advance(id.canonicalUri.path, 128 * 1024);
+        } else {
+          await origin.release(id.canonicalUri.path);
+        }
+        await _until(() => session.committedLength > prefixLength &&
+          composition.trace.events.any((event) => event.kind == TraceEventKind.resumeAccepted &&
+            event.payload['strategy'] == 'validatorless-range-probe' &&
+            event.payload['resumeProbeAccepted'] == true &&
+            event.payload['duplicatePrefixBytes'] == 64 * 1024),
+          'different-provider206 did not verify its overlap and continue the existing prefix');
+      }
+      _require(session.epoch == epoch && session.resumeValidatorsFor(id.canonicalUri).etag == etag &&
+        session.resumeValidatorsFor(otherId.canonicalUri).isEmpty &&
+        origin.requests.length == phase + 1 && loader.opens == 1 &&
+        composition.trace.events.any((event) => event.kind == TraceEventKind.framePipelineTiming &&
+          event.payload['renderer'] == 'androidTexture') &&
+        composition.trace.events.every((event) => event.kind != TraceEventKind.taskFailed &&
+          event.kind != TraceEventKind.resumeRestarted),
+        'provider validators crossed URI scope or continuity reopened/reset the physical generation');
+      if (phase == 2) {
+        final ready = await composition.ready(id);
+        final actual = await File(ready.path).readAsBytes();
+        final crc = Crc32()..add(actual);
+        _require(ready.id == id && actual.length == expected.length &&
+          crc.hex == ready.checksum && actual.asMap().entries.every((entry) =>
+            entry.value == expected[entry.key]) &&
+          await physicalIndex.getPhysicalPartial(physicalId) == null &&
+          (await composition.store.index.get(otherId.key))?.state != CacheState.ready,
+          'exact promotion changed complete bytes or created an extra provider artifact');
+        // This partial fixture uses600ms frames, unlike the120ms full-body
+        // fixture. Verify the newly available frames, not its eight-in3s rate.
+        await _until(() => <int>[2, 3].every((frame) =>
+          composition.trace.events.any((event) => event.kind == TraceEventKind.framePresented &&
+            event.payload['frame'] == frame)),
+          'completed cross-provider body did not present its remaining native frames');
+        _require(composition.trace.events.every((event) =>
+          event.kind != TraceEventKind.taskFailed && (event.kind != TraceEventKind.retryScheduled ||
+            (event.payload['stage'] == 'decode-prefix' && event.payload['sealed'] == false &&
+              event.payload['sourceLength'] is int && event.payload['nextSourceLength'] is int &&
+              (event.payload['nextSourceLength'] as int) > (event.payload['sourceLength'] as int)))),
+          'completed native body failed or retried outside bounded prefix growth');
+      }
+      previousCommitted = session.committedLength;
+      previousPhysical = physicalId;
+      _captureTrace(label, composition.trace);
+      await _unmount();
+      await completion?.dispose();
+      completion = null;
+      await composition.close();
+      await input.peerClosed.future.timeout(const Duration(seconds: 20));
+      await _record(<String, Object?>{
+        'case': label, 'status': 'passed', 'new_store_cache_transfer_native_owners': true,
+        'same_canonical_physical_authority': true, 'cold_prefix_bytes': prefixLength,
+        'committed_before_exit': previousCommitted, 'provider_ETag': etag,
+        'provider_validators_do_not_cross_URI': true,
+        'unsealed_native_frame_zero_and_partial_loop': true,
+        'local_first_frame_before_remote_continuity': phase > 0,
+        'validatorless_206_overlap_bytes': phase > 0 ? 64 * 1024 : 0,
+        'physical_epoch_preserved': true, 'one_HTTP_request': true,
+        'actual_TCP_peer_closed': true, 'exact_complete_origin_bytes_and_CRC': phase == 2,
+        'composition_exit': composition.exitProof,
+      });
+    } finally {
+      if (composition.exitProof == null) {
+        _captureTrace('$label-failed', composition.trace);
+        await _unmount();
+        await completion?.dispose();
+        await composition.close();
+      }
     }
   }
 }
@@ -1380,7 +1577,8 @@ Future<Map<String, Uint8List>> _inputs(String support) async {
     _require(bytes.length > 512 * 1024 && bytes.length < 8 * 1024 * 1024,
       'staged WebP input size violates the fixed test bounds');
     result[kind] = bytes;
-    if ((_partialOnly || _partialFailuresOnly || _partialMetadataOnly || _capacityOnly) &&
+    if ((_partialOnly || _partialFailuresOnly || _partialMetadataOnly ||
+        _crossProviderPartialOnly || _capacityOnly) &&
         kind == 'animated') {
       _animatedPrefix(bytes, 2, extendDuration: true);
     }
@@ -1429,6 +1627,8 @@ final class _HeldInput {
   int sent = 0;
   Timer? keepAlive;
   int? prefixLength;
+  bool acceptRange = false;
+  String? etag;
   String? fault;
   Uint8List? faultBody;
 }
@@ -1458,6 +1658,7 @@ final class _Origin {
       requests.add(<String, Object?>{
         'path': request.uri.path,
         'range': request.headers.value('range'),
+        'if_range': request.headers.value('if-range'),
         'method_POST': request.method == 'POST',
         'nonempty_Cookie_preserved': request.headers.value('cookie') == 'acceptance=present',
         'source_UA_preserved': request.headers.value('user-agent') == _sourceUa,
@@ -1476,7 +1677,15 @@ final class _Origin {
         var responseBody = output;
         var status = '200 OK';
         var contentRange = '';
-        if (input.fault?.startsWith('range-') == true) {
+        if (input.acceptRange && request.headers.value('range') != null) {
+          final match = RegExp(r'^bytes=(\d+)-$').firstMatch(request.headers.value('range')!);
+          _require(match != null, 'provider request has no exact open-ended Range');
+          final start = int.parse(match!.group(1)!);
+          _require(start > 0 && start < output.length, 'provider Range is outside the encoded body');
+          responseBody = Uint8List.sublistView(output, start);
+          status = '206 Partial Content';
+          contentRange = 'Content-Range: bytes $start-${output.length - 1}/${output.length}\r\n';
+        } else if (input.fault?.startsWith('range-') == true) {
           final range = request.headers.value('range');
           final match = RegExp(r'^bytes=(\d+)-').firstMatch(range ?? '');
           _require(match != null, 'entityless GET source did not send its overlap Range');
@@ -1490,7 +1699,8 @@ final class _Origin {
         }
         input.faultBody = responseBody;
         socket.add(ascii.encode('HTTP/1.1 $status\r\nContent-Type: image/webp\r\n'
-          '${contentRange}Content-Length: ${responseBody.length}\r\nConnection: close\r\n\r\n'));
+          '$contentRange${input.etag == null ? '' : 'ETag: ${input.etag}\r\n'}'
+          'Content-Length: ${responseBody.length}\r\nConnection: close\r\n\r\n'));
         input.sent = input.prefixLength ?? (input.progressive ? 16 * 1024 : 4096);
         socket.add(responseBody.sublist(0, input.sent));
         await socket.flush();
@@ -1523,17 +1733,18 @@ final class _Origin {
     final input = held[path]!;
     input.keepAlive?.cancel();
     final socket = input.socket!;
-    socket.add(bytesFor(path.split('/')[1]).sublist(input.sent));
+    socket.add((input.faultBody ?? bytesFor(path.split('/')[1])).sublist(input.sent));
     await socket.flush();
     await socket.close();
   }
 
   Future<void> advance(String path, int length) async {
     final input = held[path]!;
-    _require(length > input.sent && length < bytesFor(path.split('/')[1]).length,
+    final output = input.faultBody ?? bytesFor(path.split('/')[1]);
+    _require(length > input.sent && length < output.length,
       'capacity server advance must retain an unsealed actual body');
     input.keepAlive?.cancel();
-    input.socket!.add(bytesFor(path.split('/')[1]).sublist(input.sent, length));
+    input.socket!.add(output.sublist(input.sent, length));
     input.sent = length;
     await input.socket!.flush();
   }

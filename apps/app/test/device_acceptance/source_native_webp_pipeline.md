@@ -76,6 +76,24 @@ so first-frame playback must use local hydration before network admission.
 Both physical cancellations must preserve the exact, nonshrinking playable
 prefix. EOF/mismatch variants, real origins and performance are separate.
 
+For different-provider cold partial, use
+`--dart-define=ZIC_SOURCE_NATIVE_WEBP_CROSS_PROVIDER_PARTIAL_ONLY=true` and
+`--cross-provider-partial-only`. Three native Reader entries use distinct
+version/comic/chapter/page/revision/URI identities with test-contributed canonical
+authority: A creates a playable prefix, completely new owners restore it for B,
+then completely new owners restore B's extended checkpoint for A and promote
+the exact complete body. Cold responses initially send only4096bytes; local
+native frame0/partial looping must precede continuity. Each cold GET sends a
+validatorless tail Range; exact206/total/64KiB byte overlap must preserve the
+epoch and append without another HTTP open. Each actual response establishes
+only its own URI's ETag. Canonical checkpoints may discard network acceleration;
+this does not require cold persistence of every provider validator. An existing
+explicit-completion consumer advances the held continuation after local first
+frame, with unchanged scheduling/flow-control policy. Final bytes/CRC, physical
+partial retirement, all three TCP peers and all temporary owners must pass.
+Live-origin version declarations/mapping and final display performance remain
+independent. Previously accepted exact-only cases are skipped.
+
 For the independent partial error branches, use
 `--dart-define=ZIC_SOURCE_NATIVE_WEBP_PARTIAL_FAILURES_ONLY=true` and
 `--partial-failures-only`. A playable native prefix is staged once, then each

@@ -551,20 +551,20 @@ Home选择适配器复用`ComicTitleSearchPage`，以复选药丸筛选已启用
 只有 exact chapter match复制偏好、阅读位置和已读状态。查看路由只使用 `source-version-view` temporary route identity；
 同源替换完成后新 raw locator成为实体并清理旧 alias preference/metadata。
 已确认同源版本或显式迁移的 page-position relation持久化为compact `ComicVersionPageMapping`：
-`successorOffset`在bounded首/中/末anchor证明成功后表示整个两章重叠区的affine page alignment，
+`successorOffset`保留结构candidate与页序默认，正文复用由`verifiedIntervals`逐段授权，未知区域保持gap；
 `verifiedPredecessorPageIndexes`只保存最多3个anchor provenance而不是逐页cache白名单；
 mapping同时绑定predecessor/successor sourceRevision和pageCount，结构事实不连续即不能组合/复用。不存在10分钟周期重验证：
 普通 Reader/后台对当前chapter/revision/count仍匹配且anchor proof非空的mapping直接复用；
 只有用户显式选择查看某个target version时，selected relation才可按持久`intervalProbeVersion`做一次当前interval模型迁移重验，
 并且必须先按`targetComicId`过滤relation，禁止把同漫画全部历史版本同步重验。
-mapping缺失时zic可在Reader首帧后的当前chapter single-flight后台准备最多3个anchor；
+mapping缺失时zic可在Reader首帧后的当前chapter single-flight后台执行最多8个位置的bounded interval proof，先验首/中/末，仅细分offset分歧区域；
 显式version-view preparation可只为selected target在目标physical demand前等待该proof。Reader lookup/miss绝不逐页source验证。
 page-mapping derived write仍只更新authoritative relation+内存baseline，不发布Home broad notify/snapshot。
-Reader冷恢复先batch hydrate当前chapter涉及的唯一历史source chapter，
-再按accepted offset构造aligned exact key集合，调用persistent artifact store的targeted `getMany/IN`一次筛出实际READY与indexed partial；
-同时只读composition runtime现存session，并通过runtime唯一`hasReusableEquivalentPhysicalState` authority判定hot physical是否可join（source-resident非artifact-cache body明确拒绝）。
-只有source侧存在READY/partial/joinable-hot且target exact尚无durable/hot session的pair注册`ArtifactCacheManager` bounded symmetric in-memory equivalence（现有8192上限），
-不注册lazy future-page resolver、不持久化page alias、也不扫描整库。
+Reader冷恢复由`HomeVersionReuseLifecycle`调用`HomeLibrarySession.ensureCanonicalMediaForEntry`，以当前chapter/revision/count匹配的durable relation与hydrated manifest准备compact canonical media scope。
+目标physical acquire前记录`version-reuse-authority-ready`/`canonical-media-direct`，`materializedEquivalenceEdges=0`；普通入口不等待来源版本查询。
+来源已验证的interval直接授权future页的canonical coordinate，不要求该页已有READY/partial，不筛全章cache keys或注册逐页alias。
+相关版本之后promote同一coordinate的正文时，尚未acquire的后续页可直接使用同一physical authority；已创建的独立session不late merge。
+durable READY/partial/hot状态仍由downloads在physical prepare/acquire边界选择，Reader不拥有cache inventory或新的resolver。
 `lookupAuthoritative`/exact write/invalidate和`PersistentDownloadArtifactStore.openArtifactStream`始终exact-only，
 命中fallback必须保留真实source `storageId/generation`。
 显式migration要求target exact durable时仍可通过既有metadata-only `artifact_id` binding零复制materialize，

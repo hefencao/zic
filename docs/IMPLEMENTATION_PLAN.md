@@ -53,5 +53,5 @@
 
 - 验证真实来源revision/carrier更新后不复用旧Reader session，并证明各代独立退休。保留当前两项idle exact-key LRU与两分钟TTL；Reader退休不销毁composition共享transfer/cache authority。
 ## P0：版本等价与纵向性能真机闭环
-- 版本复用剩余验收：099普通冷Reader不等待来源查询、`version-reuse-authority-ready`先于acquire及双Reader存活期间旧版未启动页的`canonicalDirect`推广复用已在隔离Android通过，停止重复。仍验真实E-Hentai版本proof/mapping与旧版successor的`!`（共用023）；durable inactive跨provider partial须验证validatorless overlap、保持各exact provider的ETag，不能用008/012的exact-only结果替代。
+- 版本复用剩余验收：099普通冷Reader不等查询、`version-reuse-authority-ready`先于acquire与存活期间`canonicalDirect`推广复用保持；A→B→A durable inactive跨provider partial、本地native首帧/loop、两次64KiB overlap、URI ETag与完整字节/呈现/退出也已通过，停止重复。仅验真实E-Hentai版本proof/mapping与旧版successor的`!`（共用023）。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。

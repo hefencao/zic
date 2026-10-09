@@ -34,7 +34,7 @@
 - ADR0389 Provisional：旧版缺边先失败，9 owner与2235/Rust22/三ABI通过。普通Release3e65ae94/PID23850匹配51文件，正确Mihon/下载、5静置slider/4首尾跨章含历史覆盖通过；119完整章不变。真实predecessor/提醒输入、原加载与性能开放。
 - 自动缓存 projection 进一步收口为 durable inventory only：Reader hot/source-resident session 不再被误计为缓存；本地 `content://` 图册普通读取保持 source-backed、零 artifact write，不会因 Reader session retention 再生成自动缓存项或正文副本。
 - 书架管理/批量选择的 managing、batch 与 source-aware identity selection 已收口到纯 Dart `HomeShelfManagement`；删除/移动/归档等真实 mutation 和 dialog 仍留在 UI/既有 owner。
-- 显式版本查看的originComicId/preparation Future由HomeVersionReuseLifecycle持有，UI start/finally finish，Reader查同一selected token。099 Profile01f93a6e已验普通冷Reader不等来源查询、authority先于acquire及存活推广后旧80/新82同physical零重下；真实EH与跨provider partial开放。
+- 显式版本查看的originComicId/preparation Future由HomeVersionReuseLifecycle持有，UI start/finally finish，Reader查同一token。099冷Reader不等查询、authority先于acquire及存活推广已验；Profile78d1f283又验A→B→A冷partial/64KiB overlap/URI ETag/完整呈现。仅真实EH proof/更新开放。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2364/27suite/analyzer、Rust22/全门禁/三ABI Debug/JNI；fixture Profile/严格分析通过。普通Profile/Release/native115复用同输入；Release3dbc12fb/PID8643/Home。024/025及099冷/推广已验；3既有quarantine，真实来源/partial/性能开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2364/27suite/analyzer、Rust22/全门禁/三ABI Debug/JNI；fixture Profile/严格分析通过。普通Profile/Release/native115复用同输入；Release3dbc12fb/PID25960/Home。024/025及099冷/推广/跨provider partial已验；3既有quarantine，真实来源/性能开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device74/toolchain11/superseded2/partial19/pending6，25条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
