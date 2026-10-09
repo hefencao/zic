@@ -21,7 +21,7 @@
 - Roumanwu：复取历史exact 80章真机样本，核对raw SManga与升级/旧durable manifest刷新路径；不得用当前42章样本或JVM80对象合同替代原样本验收，见source-contract-acceptance审计。
 - 禁漫天堂：升级后确认durable details/chapter cache revision触发真实刷新；历史单个完整 `SChapter` 分支仍需保留原对象并采集trace，不以当前350章或无durable cache的fresh探针替代。Cloudflare不调整。
 - 绅士漫画：先取得保留自定义响应/镜像/压缩语义的请求级证明，再验证cover/page直连与 `sourceMediaProtocolMismatch` fallback；不得扩大标准client白名单或改设置使验收通过。
-- Venera：仅补镜像应用/重新进入及最终恢复后的原active source/session身份、native ID/closed检查，以及完成Web登录的连续性。JM API1→2→1应用/回读及API2后12有效引用/JM与EH代际已验；普通设置、9插件/原11源和32-session边界不重跑。
+- Venera057仅余完成真实Web登录后的原active source/session连续性。JM API1→2→1应用/重入/恢复已验：原12引用有效、native process/session/runtime ID和未关闭状态保持，JM代际推进/EH不变；镜像、普通设置、9插件/原11源和32-session边界不重跑。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
 
