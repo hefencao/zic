@@ -149,8 +149,9 @@ replay期间consumer通知可暂时隐藏，但publish必须以replay开始前�
 Reader source watch把encoded content classification与native source growth同等视为decode evidence：
 `unknown→fallback/gif/webp`必须立即wake waiting decode，
 尤其fallback/gif不得被`sourceReady=false`或尚未seal的partial prefix阻塞到下一次手势/reconcile。
-DecodeSession 的异步错误回调先校验原 CancelToken、session/demand 与 Reader-local ingress epoch；
-已退休工作以 typed cancellation 退出，不再读取旧 EncodedSource 或发布失败/prefix retry。
+DecodeSession 的异步结果和错误回调先校验原 CancelToken、session/demand、Reader-local ingress epoch及EncodedSource实例identity；
+projection的`isCurrentSource`按底层Ingress实例判断，synchronized replay暂时隐藏可见source不退休同一实例的既有fill。
+已退休工作丢弃晚到frame并以typed cancellation退出，不再读取旧EncodedSource或发布失败/prefix retry。
 此检查在 cursor 真正返回后执行，不提前释放 DecodeLane/native capacity。
 deferred resident range hydration对同一physical `SourceEpoch`的失败是Reader-local终态：
 失败后不得仅因requested length尚未满足就在microtask tail中自递归重放，也不得由role/priority churn重新消费同一失败authority；
@@ -1891,8 +1892,8 @@ transport / artifact stream
   current-bootstrap 暂时门控邻页不得吞掉其 pending source wake；
   `SourceEpoch`的decode authority只属于Reader-local ingress projection，
   不得再由DecodeSession同时读取physical DownloadSession epoch形成第二generation owner；
-  projection在同epoch内rebuild并替换`EncodedSource`实例时，DecodeSession必须释放旧cursor/holder并重新绑定当前source，
-  异步decode期间projection epoch变化属于生命周期cancel而非内容failure，cursor复用必须同时满足projection epoch与source实例identity一致；
+  projection在同epoch内rebuild并替换`EncodedSource`实例时，DecodeSession先释放旧cursor/holder及续帧状态，再检查frame0的prefix floor并重新绑定当前source；同一source增长保留原续帧floor，
+  异步decode期间projection epoch或source实例变化属于生命周期cancel而非内容failure，旧frame不得进入holder；cursor复用必须同时满足projection epoch与source实例identity一致；
 - target canvas 使用 contain 和 `height / width`，不裁切、不使用负位移或页面重叠掩盖接缝。
 
 ## 9. Upload 与 renderer output

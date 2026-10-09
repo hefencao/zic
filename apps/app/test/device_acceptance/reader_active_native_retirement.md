@@ -76,3 +76,27 @@ This measures owner execution and application presentation, not finger latency
 or final physical display.
 Command observations are bounded samples; successful cases do not collect
 logcat. Keep the scoped conclusion and remove completed private inputs/results.
+
+For same-epoch encoded-source replacement, build with
+`-Pdart-defines=WklDX05BVElWRV9TT1VSQ0VfUkVCVUlMRF9PTkxZPXRydWU=` and run
+with `--source-rebuild-only`. This mode exercises the existing DecodeSession and
+DownloadIngressProjection with actual native sources/cursors, without repeating
+Reader route cases. Rebuild the source at epoch0 while its original native
+decode physically runs; neither the original control nor epoch changes. The
+late frame must be disposed with typed cancellation and no failure/prefix retry.
+The original fill/cursor stay pending/alive until that cursor's Future returns.
+The next current fill must bind the replacement and present its frame0 through
+the real native Texture bridge. The same Rust phase timing proves work at the
+replacement command. This is the encoded-source lifecycle criterion, not a
+real external source-revision, network, Reader gesture or display-performance
+acceptance. Inputs/results are private and removed after recording the result.
+
+For a replaced partial source that was waiting for its next frame, build with
+`-Pdart-defines=WklDX05BVElWRV9TT1VSQ0VfUkVCVUlMRF9QUkVGSVhfT05MWT10cnVl`
+and run with `--source-rebuild-prefix-only`, using the existing animated fixture
+as `--input`. The entry takes its complete first ANMF prefix. Native decode
+must produce frame0 then needMoreData; consume the old frame and rebuild the
+same epoch with that identical partial prefix. A new current fill must create
+a fresh cursor and present frame0 with no old continuation floor. Same-source
+growth and per-frame prefix hints keep their original policy. This mode does
+not repeat the accepted in-flight or Reader route cases and needs no new input.

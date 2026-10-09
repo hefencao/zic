@@ -14,12 +14,18 @@ import 'package:local_media_ui/local_media_ui.dart';
 // Test-only transparent observation of the existing native cursor capability.
 // ignore: depend_on_referenced_packages
 import 'package:media/media.dart';
+// Test-only construction of the owner's public decode demand.
+// ignore: depend_on_referenced_packages
+import 'package:pipeline/pipeline.dart';
 import 'package:pipeline_native/pipeline_native.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 // Test-only navigation through the actual mounted Reader's public command.
 // ignore: depend_on_referenced_packages
 import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
+// Test-only exercise of the existing encoded-source lifecycle owner.
+// ignore: depend_on_referenced_packages
+import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/startup_platform.dart';
 
@@ -32,6 +38,8 @@ final _uploads = <Map<String, Object?>>[];
 final _firstFrames = <Map<String, Object?>>[];
 final _trace = _Trace();
 const _handoffOnly = bool.fromEnvironment('ZIC_NATIVE_CURRENT_HANDOFF_ONLY');
+const _sourceRebuildOnly = bool.fromEnvironment('ZIC_NATIVE_SOURCE_REBUILD_ONLY');
+const _sourceRebuildPrefixOnly = bool.fromEnvironment('ZIC_NATIVE_SOURCE_REBUILD_PREFIX_ONLY');
 late String _output;
 PipelineReaderSession? _mounted;
 Completer<_DecodeObservation>? _selected;
@@ -290,12 +298,21 @@ Future<void> main() async {
     externalPresentationPrewarmer:presentation.prewarm,presentationCacheAuthority:presentation.cacheAuthority);
   var passed = false;
   try {
+    _require(<bool>[_handoffOnly,_sourceRebuildOnly,_sourceRebuildPrefixOnly]
+      .where((selected) => selected).length <= 1, 'select one acceptance mode');
     final input = File('$support/inputs/decode-4096.webp');
     _require(await input.exists(), 'natural decode input missing');
     if (_handoffOnly) {
       await _currentHandoff(support!, input, factory, presentation);
     }
-    for (final mode in _handoffOnly ? <String>[] : <String>['drain','rapid-reentry']) {
+    if (_sourceRebuildOnly) {
+      await _sourceRebuild(support!, input, native);
+    }
+    if (_sourceRebuildPrefixOnly) {
+      await _sourceRebuildPrefix(input, native);
+    }
+    for (final mode in _handoffOnly || _sourceRebuildOnly || _sourceRebuildPrefixOnly
+        ? <String>[] : <String>['drain','rapid-reentry']) {
       final record = ImportedChapterRecord(directoryId:'native-active:$mode',displayName:mode,
         sourceId:'local-folder',comicId:'native-active',chapterId:mode,sourceRevision:'native-active-r1',
         pages:<ImportedPageRecord>[ImportedPageRecord(displayName:'input.webp',sourceId:input.uri.toString(),
@@ -380,7 +397,8 @@ Future<void> main() async {
       'original native work or returned frames remain after composition drain');
     passed = true;
     await _record(<String, Object?>{'case':'complete','status':'passed','host_pid':pid,
-      'native_decode_cases':_handoffOnly ? 1 : 2,'production_modified':false,'user_stores_opened':false,
+      'native_decode_cases':_handoffOnly || _sourceRebuildOnly || _sourceRebuildPrefixOnly ? 1 : 2,
+      'production_modified':false,'user_stores_opened':false,
       'active_upload_retirement_proven':false,'source_revision_retirement_proven':false,
       'final_physical_display_performance_proven':false});
   } on Object catch (error, stack) {
@@ -393,6 +411,151 @@ Future<void> main() async {
     await factory.disposeTransferRuntimes();
     await native.shutdownComposition();
     raster.clearPresentationRasters();
+  }
+}
+
+Future<void> _sourceRebuildPrefix(File input, NativePipelineMediaRuntimeFactory native) async {
+  final bytes = await input.readAsBytes();
+  var end = 12;
+  var found = false;
+  while (end + 8 <= bytes.length) {
+    final tag = String.fromCharCodes(bytes.sublist(end,end+4));
+    final length = bytes[end+4] | bytes[end+5] << 8 | bytes[end+6] << 16 | bytes[end+7] << 24;
+    end += 8 + length + (length & 1);
+    if (tag == 'ANMF') { found = true; break; }
+  }
+  _require(found && end < bytes.length, 'input has no leading partial animation frame');
+  final prefix = bytes.sublist(0,end);
+  final runtime = native.create(sessionId:'source-rebuild-prefix',clock:const SystemClock(),traceSink:_trace);
+  final ingress = Ingress(factory:runtime.sources,maxBytes:bytes.length);
+  final projection = DownloadIngressProjection(scopeId:'source-rebuild-prefix',ingress:ingress);
+  final id = DecodeId(download:DownloadId(content:const ContentId(sourceId:'local-file',
+    comicId:'source-rebuild-prefix',chapterId:'same-epoch',pageId:'page-0'),sourceRevision:'prefix-r1',
+    canonicalUri:input.uri),physicalWidth:640,physicalHeight:640,
+    pixelFormat:PixelFormat.rgba8888,renderer:runtime.renderer);
+  final decode = DecodeSession(id:id,ingress:projection,cursors:_CursorFactory(runtime.cursors),
+    clock:const SystemClock(),traceSink:_trace);
+  OutputFrame? output;
+  FrameClaim? claim;
+  try {
+    _view++;
+    await projection.rebuild(epoch:const SourceEpoch(0),chunks:Stream<List<int>>.value(prefix),sealed:false);
+    final original = await decode.fill(demand:const DecodeDemand(role:PageRole.current,priority:1000,
+      targetWatermark:2,reason:'partial-continuation',expirationRevision:1),revision:1,cancel:CancelToken());
+    _require(original.state == DecodeState.waitingSource && original.depth == 1 &&
+      original.requiredSourceLength > prefix.length && !projection.snapshot.sealed,
+      'original native cursor did not wait for the next frame prefix');
+    _require(decode.holder!.consume(0), 'original first frame was not released');
+    final oldSource = projection.source;
+    await projection.rebuild(epoch:const SourceEpoch(0),chunks:Stream<List<int>>.value(prefix),sealed:false);
+    _require(!identical(oldSource,projection.source), 'same-epoch source instance did not change');
+    final replacement = await decode.fill(demand:const DecodeDemand(role:PageRole.current,priority:1000,
+      targetWatermark:1,reason:'partial-replacement-first-frame',expirationRevision:2),
+      revision:2,cancel:CancelToken());
+    _require(replacement.state == DecodeState.ready && replacement.depth == 1 &&
+      replacement.requiredSourceLength == 0 && replacement.failure == null,
+      'old continuation floor blocked replacement frame zero');
+    claim = decode.holder!.claimNext(ClaimKind.upload);
+    _require(claim?.frame.index == 0, 'replacement did not restart at frame zero');
+    output = await runtime.uploader.upload(id:id,frame:claim!.frame);
+    await output.present();
+    runApp(MaterialApp(home:runtime.outputs.project(output).build()));
+    await _frames(2);
+    _require(_textures().length == 1 && _wire.any((r) => r['method'] == 'present' &&
+      r['view'] == _view && r['success'] == true), 'replacement did not present a native Texture');
+    _require(_trace.memory.events.every((e) => e.kind != TraceEventKind.taskFailed), 'task failure');
+    await _record(<String, Object?>{'case':'source-rebuild-prefix','status':'passed',
+      'same_epoch':0,'prefix_bytes':prefix.length,'original_required_bytes':original.requiredSourceLength,
+      'replacement_required_bytes':replacement.requiredSourceLength,'replacement_native_frame0_presented':true,
+      'production_modified':false,'user_stores_opened':false,'real_source_revision_or_final_display_proven':false});
+  } finally {
+    _status('Same-epoch prefix 验收');
+    await _frames(2);
+    output?.dispose();
+    claim?.release();
+    runtime.uploader.release(id);
+    decode.dispose();
+    ingress.dispose();
+    await runtime.close();
+  }
+}
+
+Future<void> _sourceRebuild(String support, File large, NativePipelineMediaRuntimeFactory native) async {
+  final small = File('$support/inputs/static.webp');
+  _require(await small.exists(), 'same-epoch replacement input missing');
+  final runtime = native.create(sessionId:'source-rebuild',clock:const SystemClock(),traceSink:_trace);
+  final ingress = Ingress(factory:runtime.sources,maxBytes:await large.length());
+  final projection = DownloadIngressProjection(scopeId:'source-rebuild',ingress:ingress);
+  final id = DecodeId(download:DownloadId(content:const ContentId(sourceId:'local-file',
+    comicId:'source-rebuild',chapterId:'same-epoch',pageId:'page-0'),sourceRevision:'source-rebuild-r1',
+    canonicalUri:large.uri),physicalWidth:1024,physicalHeight:1024,
+    pixelFormat:PixelFormat.rgba8888,renderer:runtime.renderer);
+  final decode = DecodeSession(id:id,ingress:projection,cursors:_CursorFactory(runtime.cursors),
+    clock:const SystemClock(),traceSink:_trace);
+  OutputFrame? output;
+  FrameClaim? claim;
+  Future<void>? original;
+  Object? retiredError;
+  var settled = false;
+  try {
+    await projection.rebuild(epoch:const SourceEpoch(0),chunks:large.openRead(),sealed:true);
+    _view++;
+    _selected = Completer<_DecodeObservation>();
+    final control = CancelToken();
+    original = decode.fill(demand:const DecodeDemand(role:PageRole.far,priority:320,
+      targetWatermark:1,reason:'same-epoch-original',expirationRevision:1),revision:1,cancel:control)
+      .then<void>((_) {},onError:(Object error) { retiredError = error; })
+      .whenComplete(() { settled = true; });
+    final active = await _selected!.future.timeout(const Duration(seconds:45));
+    _selected = null;
+    final replacementAt = _clock.elapsedMicroseconds;
+    _require(active.pending && !control.cancelled, 'original native operation is not active');
+    await projection.rebuild(epoch:const SourceEpoch(0),chunks:small.openRead(),sealed:true);
+    _require(projection.snapshot.epoch == const SourceEpoch(0) &&
+      !identical(projection.source,active.cursor.source) && active.cursor.source.disposed,
+      'same-epoch rebuild did not replace and retire the original source facade');
+    _require(!settled && active.pending && !active.cursor.native.disposed,
+      'fill or cursor retired before the original operation returned');
+    await original;
+    _require(active.physicallyCovers(replacementAt),
+      'Rust internal timing does not prove native execution at source replacement');
+    _require(retiredError is Failure && (retiredError as Failure).code == ErrorCode.cancelled &&
+      !control.cancelled && active.step?.frame?.disposed == true && decode.snapshot.failure == null,
+      'old same-epoch result was not discarded as lifecycle cancellation');
+    final fresh = await decode.fill(demand:const DecodeDemand(role:PageRole.current,priority:1000,
+      targetWatermark:1,reason:'same-epoch-replacement',expirationRevision:2),revision:2,cancel:CancelToken());
+    _require(fresh.depth == 1 && fresh.failure == null &&
+      active.cursor.disposeBegin != null && active.cursor.disposeBegin! >= active.end!,
+      'replacement did not rebind after original cursor completion');
+    claim = decode.holder!.claimNext(ClaimKind.upload);
+    _require(claim?.frame.index == 0, 'replacement did not decode frame zero');
+    output = await runtime.uploader.upload(id:id,frame:claim!.frame);
+    await output.present();
+    final surface = runtime.outputs.project(output);
+    runApp(MaterialApp(home:surface.build(fit:BoxFit.contain,filterQuality:FilterQuality.low)));
+    await _frames(2);
+    _require(output.renderer == RendererKind.androidTexture && _textures().length == 1 &&
+      _wire.any((r) => r['method'] == 'present' && r['view'] == _view && r['success'] == true),
+      'replacement did not reach actual native Texture presentation');
+    _require(_trace.memory.events.every((e) => e.kind != TraceEventKind.taskFailed),
+      'same-epoch rebuild published a task failure');
+    await _record(<String, Object?>{'case':'source-rebuild','status':'passed',
+      'selected_decode':active.json(),'replacement_us':replacementAt,'same_epoch':0,
+      'original_token_cancelled':control.cancelled,'typed_cancelled':true,
+      'original_native_execution_at_replacement_proven':true,'late_frame_disposed':true,
+      'cursor_retired_after_original_Future':true,'replacement_native_frame0_presented':true,
+      'production_modified':false,'real_source_revision_or_final_display_proven':false});
+  } finally {
+    _selected = null;
+    await original;
+    _status('Same-epoch source 验收');
+    await _frames(2);
+    output?.dispose();
+    claim?.release();
+    runtime.uploader.release(id);
+    decode.dispose();
+    ingress.dispose();
+    await runtime.close();
   }
 }
 

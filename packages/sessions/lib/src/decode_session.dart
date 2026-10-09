@@ -409,6 +409,14 @@ final class DecodeSession {
       _restartCursorWhenHolderEmpty = false;
     }
 
+    // A replacement starts a new cursor at frame zero. Its first frame must
+    // not inherit the old cursor's continuation-only prefix requirement.
+    if (_boundSource != null &&
+        (_epoch != epoch || !identical(_boundSource, source))) {
+      _releaseBinding();
+      _restartCursorWhenHolderEmpty = false;
+    }
+
     final canResumePartialPrefixLoop = _partialPrefixLoopEligible;
     if (!source.sealed) {
       final hinted = prefixHints.minimumBytes(id.download, _nextFrameHintIndex);
@@ -458,14 +466,7 @@ final class DecodeSession {
       var remainingLaneQueueMicros =
           laneQueueMicros < 0 ? 0 : laneQueueMicros;
       while (holder.depth < targetDepth) {
-        cancel.throwIfCancelled();
-        _requireIngressEpoch(epoch);
-        if (_revision != revision) {
-          throw const Failure(
-            code: ErrorCode.cancelled,
-            message: 'decode demand was superseded',
-          );
-        }
+        _requireCurrentFill(cancel, epoch, revision, source);
         final decodeStartedAt = clock.nowMicros();
         final frames = _cursor!.frames;
         final step = frames is ScheduledFrameCursor
@@ -480,14 +481,10 @@ final class DecodeSession {
         final decodeMicros = decodedAtMicros - decodeStartedAt;
         if (cancel.cancelled ||
             ingress.snapshot.epoch != epoch ||
-            _revision != revision) {
+            _disposed || _revision != revision ||
+            !ingress.isCurrentSource(source)) {
           step.frame?.dispose();
-          cancel.throwIfCancelled();
-          _requireIngressEpoch(epoch);
-          throw const Failure(
-            code: ErrorCode.cancelled,
-            message: 'decode demand was superseded',
-          );
+          _requireCurrentFill(cancel, epoch, revision, source);
         }
         switch (step.kind) {
           case CursorStepKind.needMoreData:
@@ -708,7 +705,7 @@ final class DecodeSession {
       _setState(DecodeState.ready);
       return snapshot;
     } on Failure catch (error) {
-      _requireCurrentFill(cancel, epoch, revision);
+      _requireCurrentFill(cancel, epoch, revision, source);
       if (error.code != ErrorCode.cancelled &&
           error.code == ErrorCode.decode &&
           _deferUnsealedInitialDecodeFailure(source)) {
@@ -720,7 +717,7 @@ final class DecodeSession {
       }
       rethrow;
     } on Object catch (error) {
-      _requireCurrentFill(cancel, epoch, revision);
+      _requireCurrentFill(cancel, epoch, revision, source);
       if (_deferUnsealedInitialDecodeFailure(source)) {
         return snapshot;
       }
@@ -736,7 +733,9 @@ final class DecodeSession {
   }
 
 
-  void _requireCurrentFill(CancelToken cancel, SourceEpoch epoch, int revision) {
+  void _requireCurrentFill(
+    CancelToken cancel, SourceEpoch epoch, int revision, EncodedSource source,
+  ) {
     cancel.throwIfCancelled();
     if (_disposed || _revision != revision) {
       throw const Failure(
@@ -745,6 +744,12 @@ final class DecodeSession {
       );
     }
     _requireIngressEpoch(epoch);
+    if (!ingress.isCurrentSource(source)) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'decode ingress source was replaced',
+      );
+    }
   }
 
   bool _deferUnsealedInitialDecodeFailure(EncodedSource source) {

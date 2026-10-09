@@ -78,6 +78,10 @@ final class DownloadIngressProjection {
   EncodedSource? get source =>
       _synchronizedReplayPending ? null : ingress.source;
 
+  /// Checks the backing source's identity even while synchronized replay hides
+  /// it from new bindings. Visibility alone does not retire an in-flight fill.
+  bool isCurrentSource(EncodedSource source) => identical(ingress.source, source);
+
   /// Hides a late-join source while an authoritative physical prefix is being
   /// replayed into it. Decode must not bind to an intermediate source that may
   /// still need a same-epoch catch-up or rebuild before physical attachment.

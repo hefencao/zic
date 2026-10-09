@@ -278,6 +278,47 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('same-epoch rebuild restarts frame zero before the continuation prefix gate',
+      () async {
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 512 * 1024);
+    addTearDown(ingress.dispose);
+    final bytes = 'RIFF....WEBPpayload'.codeUnits;
+    ingress.append(epoch: const SourceEpoch(0), offset: 0, bytes: bytes);
+    final projection = DownloadIngressProjection(
+      scopeId: 'same-epoch-prefix-rebind',
+      ingress: ingress,
+    );
+    final factory = _PartialPrefixCursorFactory(frameCount: 1);
+    final session = DecodeSession(
+      id: _decodeId(_downloadId()), ingress: projection,
+      cursors: factory, clock: _Clock(),
+    );
+    addTearDown(session.dispose);
+    final first = await session.fill(
+      demand: const DecodeDemand(role: PageRole.current, priority: 1000,
+        targetWatermark: 2, reason: 'old-continuation', expirationRevision: 1),
+      revision: 1, cancel: CancelToken(),
+    );
+    expect(first.state, DecodeState.waitingSource);
+    expect(first.depth, 1);
+    expect(first.requiredSourceLength, greaterThan(bytes.length));
+    expect(session.holder!.consume(0), isTrue);
+    await projection.rebuild(
+      epoch: const SourceEpoch(0),
+      chunks: Stream<List<int>>.value(bytes), sealed: false,
+    );
+    final second = await session.fill(
+      demand: const DecodeDemand(role: PageRole.current, priority: 1000,
+        targetWatermark: 1, reason: 'replacement-first-frame', expirationRevision: 2),
+      revision: 2, cancel: CancelToken(),
+    );
+    expect(factory.created, 2,
+        reason: 'the old continuation floor must not block a replacement cursor');
+    expect(second.state, DecodeState.ready);
+    expect(second.depth, 1);
+    expect(session.holder!.frames.single.index, 0);
+  });
+
   test('promotes an already queued native-style decode when page becomes current',
       () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -475,9 +516,11 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  for (final typed in <bool>[false, true]) {
-  for (final retirement in <String>['cancel', 'epoch-reset', 'dispose']) {
-  test('late decode error after $retirement is cancellation typed=$typed',
+  for (final outcome in <String>['untyped-error', 'typed-error', 'frame']) {
+  for (final retirement in outcome == 'frame'
+      ? <String>['source-rebuild']
+      : <String>['cancel', 'epoch-reset', 'source-rebuild', 'dispose']) {
+  test('late decode $outcome after $retirement is cancellation',
       () async {
     final ingress = Ingress(
       factory: _SourceFactory(rejectDisposedReads: true),
@@ -528,6 +571,13 @@ void main() {
       case 'epoch-reset':
         projection.reset(const SourceEpoch(1));
         break;
+      case 'source-rebuild':
+        await projection.rebuild(
+          epoch: const SourceEpoch(0),
+          chunks: Stream<List<int>>.value('RIFF....WEBPreplacement'.codeUnits),
+          sealed: false,
+        );
+        break;
       case 'dispose':
         session.dispose();
         break;
@@ -537,10 +587,16 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(settled, isFalse,
         reason: 'cancelled work must retain capacity until the cursor returns');
-    cursors.cursor.next.completeError(typed
-        ? const Failure(code: ErrorCode.decode, message: 'late native failure')
-        : StateError('late native failure'));
+    final frame = outcome == 'frame' ? _Frame(0, 0) : null;
+    if (frame != null) {
+      cursors.cursor.next.complete(CursorStep.frame(frame));
+    } else {
+      cursors.cursor.next.completeError(outcome == 'typed-error'
+          ? const Failure(code: ErrorCode.decode, message: 'late native failure')
+          : StateError('late native failure'));
+    }
     await result;
+    if (frame != null) expect(frame.disposed, isTrue);
     expect(session.state, stateBefore);
     expect(session.snapshot.failure, isNull);
     expect(trace.events, hasLength(eventCountBefore),
@@ -548,6 +604,52 @@ void main() {
   });
   }
   }
+
+  test('temporarily hidden unchanged ingress source keeps its in-flight frame',
+      () async {
+    final ingress = Ingress(
+      factory: _SourceFactory(rejectDisposedReads: true),
+      maxBytes: 1024,
+    );
+    addTearDown(ingress.dispose);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'hidden-source',
+      ingress: ingress,
+    );
+    final cursors = _DelayedCursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(_downloadId()),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    addTearDown(session.dispose);
+    final fill = session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'existing-bound-source',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    projection.beginSynchronizedReplay();
+    expect(projection.source, isNull);
+    final frame = _Frame(0, 0);
+    cursors.cursor.next.complete(CursorStep.frame(frame));
+    final result = await fill;
+    expect(result.depth, 1);
+    expect(result.failure, isNull);
+    expect(frame.disposed, isFalse);
+    projection.finishSynchronizedReplay();
+  });
 
   test('partial WebP retries only after the learned per-frame prefix', () async {
     final temp = await Directory.systemTemp.createTemp(

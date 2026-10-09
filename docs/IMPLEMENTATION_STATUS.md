@@ -157,7 +157,7 @@
   Profile00-52-07 authoritative Home1.287s、external request/first-frame=33/33、mounted无后续first-frame=0；sourceRead33次/22 identities且5s内重复0，taskFailed/force-reload/artifact-recovery均0。
   decode pending queue的request-level control已独立治理：`DecodeLane CancelToken`经`DecodeSession -> ScheduledFrameCursor -> NativeCursor`原样进入native pool。
   queued cancellation可直接移除pending，动态numeric priority由同一control驱动class内排序，current/nonCurrent仍只表达execution class；role promotion先迁移DecodeLane rank再迁移同一request class。
-  in-flight取消不提前释放worker capacity，source/decode retirement等待lane真实退出（ADR0339）。DecodeSession异步错误先验原cancel/session/demand/ingress epoch，退休回调不读旧source或发失败/prefix retry；六旧码失败/33 decode及全门禁通过，普通Release273实际partial借用后单次强刷/新帧/完整缓存通过且0 taskFailed。
+  in-flight取消不提前释放worker capacity。DecodeSession补same-epoch source实例校验及frame0 gate前退休旧续帧floor，旧帧丢弃/错误typed cancel；隐藏同源fill及有效prefix hint保持。四分支先失败，38 decode/55关联和实际native换源/同prefix重建/新Texture通过，0失败；真实revision/carrier另验。
   Reader/media40保持36 resolved/2 deleted/2 confirmed，下载原13闭合；原112范围保持，Plan074转partial。0385 Accepted：真实E-Hentai新版发现/551页详情/比较预览与三静置slider/四首尾通过，bootstrap/56项、2221/Rust22及三ABI通过；0383首次入架/后续版本提醒、原加载与最终显示仍开放。
   progress旧“pop不等durable”文案已按Accepted ADR0303校正；普通翻页仍8s idle/30s active批量，正常pop先final drain/flush，返回仅targeted投影。旧文档guard同步当前合同，产品/性能长会话验收继续。
   下载治理：下载审计JSON的13项均已闭合。DL-PIPE-001保持共享consumer/NetLane的2-wide滑动窗口；ADR0343保持唯一index，current backup须CRC匹配才恢复，stale intent全CRC，live commit不重扫。SAF真机9组kill/reopen+1组幂等及required-toolchain gate通过；downloads504/504、App383+3既有skip、Rust22/22。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2354/27 suites/analyzers/Rust22、306门禁、三ABI Debug/Profile/JNI通过；普通minifiedRelease/native113复用同生产输入。store170/decode33及普通Release273实际partial强刷/完整缓存通过；3既有quarantine；Release c57c36d7/Home |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2359/27 suites/analyzers/Rust22、306门禁、三ABI Debug/Profile/minifiedRelease/JNI通过；native113同输入复用。store170/decode38/关联55、实际native换源/续帧floor/Texture通过；3既有quarantine；Release b766acf9/PID24186/Home |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device65/toolchain11/superseded2/partial25/pending9，34条未完成记录。020高分辨率current已验：旧native执行中真实Reader切页约68ms新帧，cursor待物理返回才退休，0失败；016入场、真实来源、wire013/DNS089及原加载/输入/最终显示独立开放。
+  当前112项：device65/toolchain11/superseded2/partial26/pending8，34条未完成记录。020高分辨率current已验：旧native执行中真实Reader切页约68ms新帧，cursor待物理返回才退休，0失败；097保留TTL/LRU/退休分量，仅真实代际开放。016/真实来源/wire013/DNS089及原加载/输入/最终显示独立开放。

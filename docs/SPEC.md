@@ -1808,8 +1808,10 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   DecodeSession的generation authority MUST唯一来自当前Reader-local ingress projection；
   MUST NOT同时读取physical DownloadSession epoch进行第二份preflight。
   若projection epoch在异步decode期间变化，旧work MUST按生命周期cancel而非terminal decode failure；
-  异步错误回调 MUST先校验原cancel/session/demand/ingress epoch，再读取source或分类失败；已退休work MUST NOT发布failure或prefix retry，且 MUST等待cursor真正返回再释放原capacity。
-  若projection在同epoch内rebuild并替换`EncodedSource`实例，DecodeSession MUST丢弃绑定旧实例的cursor/holder并从当前source重新创建cursor。
+  异步结果与错误回调 MUST先校验原cancel/session/demand/ingress epoch及EncodedSource实例identity，再读取source或分类失败；已退休work MUST NOT发布failure或prefix retry，且 MUST等待cursor真正返回再释放原capacity。
+  若projection在同epoch内rebuild并替换`EncodedSource`实例，DecodeSession MUST丢弃晚到旧frame及绑定旧实例的cursor/holder，并从当前source重新创建cursor。
+  新实例frame0的prefix检查 MUST在旧cursor续帧状态退休后进行；MUST NOT被旧后续帧的字节下限阻塞。同一实例增长 MUST保留有效的per-frame prefix hint。
+  实例有效性 MUST按底层Ingress identity判断；synchronized replay只暂时隐藏可见source时，MUST NOT取消已绑定同一实例的fill。
   LiveCoordinator MUST NOT把返回`failed/failure`的DecodeSnapshot记为已消费source revision。
   Reader ingress registry的`get(session)` MUST区分physical object generation与Reader encoded generation：
   same DownloadId的新physical session仍属于新的physical object generation；

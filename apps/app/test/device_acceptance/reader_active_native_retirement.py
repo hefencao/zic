@@ -23,7 +23,10 @@ def main():
     p.add_argument('--ordinary-apk', required=True, type=Path)
     p.add_argument('--input', required=True, type=Path)
     p.add_argument('--input-sha256', required=True)
-    p.add_argument('--handoff-only', action='store_true')
+    modes = p.add_mutually_exclusive_group()
+    modes.add_argument('--handoff-only', action='store_true')
+    modes.add_argument('--source-rebuild-only', action='store_true')
+    modes.add_argument('--source-rebuild-prefix-only', action='store_true')
     p.add_argument('--out', required=True, type=Path)
     p.add_argument('--sdk-root', type=Path, default=Path(os.environ.get(
         'ANDROID_SDK_ROOT', str(Path.home() / 'android-sdk'))))
@@ -91,7 +94,7 @@ def main():
         if r.returncode or r.stdout or actual != args.input_sha256:
             raise RuntimeError('Private staged input differs')
         record['staged_input_sha256'] = actual
-        if args.handoff_only:
+        if args.handoff_only or args.source_rebuild_only:
             current = SOURCE.parent / 'fixtures/source_native_webp/static.webp'
             shell = 'run-as ' + shlex.quote(PACKAGE) + ' sh -c ' + shlex.quote(
                 'cat > files/inputs/static.webp')
@@ -100,7 +103,7 @@ def main():
             actual = adb('shell', 'run-as', PACKAGE, 'sha256sum',
                 'files/inputs/static.webp').stdout.split()[0]
             if r.returncode or r.stdout or actual != sha(current):
-                raise RuntimeError('Current handoff input differs')
+                raise RuntimeError('Replacement input differs')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/dev.zic.zic.MainActivity')
         record['fixture_pid'] = adb('shell', 'pidof', PACKAGE).stdout.strip()
         start = time.monotonic()
@@ -118,8 +121,10 @@ def main():
                     last_count = len(rows)
                     print('Device cases:', len(rows), rows[-1]['case'], rows[-1]['status'], flush=True)
                 if rows[-1]['case'] == 'complete':
-                    expected_cases = {'current-handoff', 'complete'} if args.handoff_only else {
-                        'drain', 'rapid-reentry', 'complete'}
+                    expected_cases = ({'current-handoff', 'complete'} if args.handoff_only else
+                        {'source-rebuild', 'complete'} if args.source_rebuild_only else
+                        {'source-rebuild-prefix', 'complete'} if args.source_rebuild_prefix_only else
+                        {'drain', 'rapid-reentry', 'complete'})
                     if len(rows) != len(expected_cases) or {x['case'] for x in rows} != expected_cases or any(
                             x['status'] != 'passed' for x in rows):
                         raise RuntimeError('Native decode acceptance failed; inspect device-results.json')
