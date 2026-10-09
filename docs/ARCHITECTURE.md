@@ -110,6 +110,9 @@ canonical physical 与 exact-fallback unfinished checkpoint 都优先在 downloa
 显式 chapter download 只有在 promoted artifact 已形成后才由 structured placement/mirror owner 写入 SAF 并 pin exact 记录。
 旧 external/SAF partial 收敛到 Direct staging 时，persistent store serializer 必须掌握 prefix/locator proof、
 new authority commit 与 cleanup debt，Reader 或 App route 不得自行搬运。canonical SAF physical partial 在 composition local-prepare 命中时直接由同一 serializer 迁入 App-private Direct transfer staging 后再借给 hot DownloadSession；禁止先经 DownloadSession writer 从0重放整段 SAF prefix。迁移前取消保留旧 SAF authority，迁移提交后 subsequent visit 直接 adoption 同一 Direct spool（ADR 0340）。
+借用 transfer staging 的 session destructive reset 仍经 lending store 的原 serialization 与 replica cleanup debt 撤销 canonical READY；
+仅无其它 exact binding 引用的副本可清理，pinned/shared 正文继续由原 binding 保有。
+已不存在的 canonical READY/partial 记录失效是幂等 no-op；借用保护只拒绝对仍存在记录的外部正文 mutation，不阻止 reset 后的重复失效。
 
 ### `media`
 

@@ -2917,7 +2917,14 @@ final class PersistentDownloadArtifactStore
             await _index.removePhysicalPartial(session.physicalId);
           }
           if (deleteFinalArtifact && !session.physicalId.isExactFallback) {
-            await _index.removePhysicalMediaArtifactBinding(session.physicalId);
+            final record =
+                await _index.getPhysicalMediaArtifact(session.physicalId);
+            if (record != null) {
+              // The original borrower has already reset its hot body. Retire
+              // its canonical READY through this lending owner's cleanup
+              // boundary, preserving replicas still owned by exact bindings.
+              await _invalidatePhysicalArtifactRecord(record);
+            }
           }
           if (removeCacheRecord && session.index != null) {
             await _index.remove(session.id.key);
@@ -3730,49 +3737,57 @@ final class PersistentDownloadArtifactStore
   Future<void> invalidatePhysicalArtifact(PhysicalMediaId id) =>
       _serializePhysicalArtifactMutation(id, () async {
         _requireOpen();
+        final record = await _index.getPhysicalMediaArtifact(id);
+        // The borrowing session's reset may already have retired this row.
+        // No body mutation remains, even while that session retains its lease.
+        if (record == null) return;
         if (_borrowedPhysicalPartialIds.contains(id)) {
           throw const Failure(
             code: ErrorCode.sessionBusy,
             message: 'physical durable body is borrowed by the transfer owner',
           );
         }
-        final record = await _index.getPhysicalMediaArtifact(id);
-        if (record == null) return;
-        final replicas = await _index.listArtifactReplicas(record.artifactId);
-        final debts = <StorageCleanupDebtRecord>[];
-        for (final replica in replicas) {
-          final prepared = await _prepareObsoleteSealedReplicaCleanupDebt(
-            replica: replica,
-            expectedBytes: record.bytes,
-            expectedChecksum: record.checksum,
-            expectedChecksumAlgorithm: record.checksumAlgorithm,
-          );
-          if (!prepared.safeToRetire) {
-            await _forgetStorageCleanupDebts(debts);
-            throw const Failure(
-              code: ErrorCode.policy,
-              message:
-                  'physical artifact cleanup access is not currently provable',
-            );
-          }
-          final debt = prepared.debt;
-          if (debt != null) debts.add(debt);
-        }
-        try {
-          await _index.removePhysicalMediaArtifactBinding(id);
-        } on Object {
-          await _forgetStorageCleanupDebts(debts);
-          rethrow;
-        }
-        _notifyManagementProjectionChanged();
-        if (await _index.getArtifactObject(record.artifactId) != null) {
-          await _forgetStorageCleanupDebts(debts);
-          return;
-        }
-        for (final debt in debts) {
-          await _cleanupObsoleteSourceNow(debt);
-        }
+        await _invalidatePhysicalArtifactRecord(record);
       });
+
+  Future<void> _invalidatePhysicalArtifactRecord(
+    PhysicalMediaArtifactRecord record,
+  ) async {
+    final replicas = await _index.listArtifactReplicas(record.artifactId);
+    final debts = <StorageCleanupDebtRecord>[];
+    for (final replica in replicas) {
+      final prepared = await _prepareObsoleteSealedReplicaCleanupDebt(
+        replica: replica,
+        expectedBytes: record.bytes,
+        expectedChecksum: record.checksum,
+        expectedChecksumAlgorithm: record.checksumAlgorithm,
+      );
+      if (!prepared.safeToRetire) {
+        await _forgetStorageCleanupDebts(debts);
+        throw const Failure(
+          code: ErrorCode.policy,
+          message:
+              'physical artifact cleanup access is not currently provable',
+        );
+      }
+      final debt = prepared.debt;
+      if (debt != null) debts.add(debt);
+    }
+    try {
+      await _index.removePhysicalMediaArtifactBinding(record.id);
+    } on Object {
+      await _forgetStorageCleanupDebts(debts);
+      rethrow;
+    }
+    _notifyManagementProjectionChanged();
+    if (await _index.getArtifactObject(record.artifactId) != null) {
+      await _forgetStorageCleanupDebts(debts);
+      return;
+    }
+    for (final debt in debts) {
+      await _cleanupObsoleteSourceNow(debt);
+    }
+  }
 
   @override
   Future<bool> bindExistingArtifact({
@@ -6202,6 +6217,8 @@ final class PersistentDownloadArtifactStore
       _notifyManagementAfter(
         _serializePhysicalPartialMutation(physicalId, () async {
         _requireOpen();
+        final record = await _index.getPhysicalPartial(physicalId);
+        if (record == null) return;
         if (_borrowedPhysicalPartialIds.contains(physicalId)) {
           throw const Failure(
             code: ErrorCode.sessionBusy,
@@ -6209,8 +6226,6 @@ final class PersistentDownloadArtifactStore
                 'physical durable partial is borrowed by the transfer owner',
           );
         }
-        final record = await _index.getPhysicalPartial(physicalId);
-        if (record == null) return;
         await _removePhysicalPartialRecord(record, deleteBody: true);
       }),
       );

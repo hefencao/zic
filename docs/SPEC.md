@@ -1625,6 +1625,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   若旧 SAF/external exact partial 被 automatic checkpoint 收敛到 Direct staging，
   authority switch MUST先保证新 prefix 不短于旧 authority，并通过 cleanup-debt 机制安全退休旧 locator；失败时不得因迁移而丢失更长旧 prefix。
   persistent canonical SAF physical partial 在 composition local-prepare 命中时 MUST由 persistent store 的同一 per-physical serializer 先迁移为 App-private Direct transfer staging，再把该 mutable spool adoption 给 hot DownloadSession；MUST NOT 经 DownloadSession writer 从0复制 SAF body并把本地 replay 发布成 network receiving。迁移旧 SAF prefix 时 MUST在实际copy中累计obsolete-prefix length+CRC cleanup proof，MUST NOT为hot takeover另做完整pre-copy扫描；新Direct authority提交后旧locator清理由durable cleanup-debt owner异步完成并在删除前重新验证非authority/length/CRC，Reader cancellation MUST NOT等待该清理。scheduler TaskControl MUST贯穿authority switch前的迁移：switch前取消保留旧SAF partial，switch后retry MUST直接使用新Direct authority。详见ADR 0340。
+  借用 staging 的reset MUST经原持久化 owner清理canonical READY及无其它binding引用的副本，不得只删索引而留下旧正文供fresh handoff恢复。
+  已不存在的canonical READY/partial记录 MUST允许幂等失效；存在的借用正文 MUST继续拒绝外部删除，pinned/shared exact正文 MUST保持原有引用保护。
   \n- 若 route 首帧仍绑定 bootstrap services 或 durable handoff 尚在进行，
   同一个下载管理 route MUST 在首帧后 force/await Home core-service handoff，
   adopt 匹配的 chapter-download/whole-comic/cache bindings，重绑 service stream，并立即读取及持续订阅 Home 最新投影。

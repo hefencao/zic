@@ -841,6 +841,121 @@ void main() {
     },
   );
 
+  for (final completed in <bool>[false, true]) {
+  for (final pinned in completed ? <bool>[false, true] : <bool>[false]) {
+  test(
+    'force reload resets borrowed physical staging completed=$completed pinned=$pinned',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-borrowed-physical-reload-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: _MemorySafIo(<String, Uint8List>{}),
+        safTreeUri: 'content://tree/borrowed-physical-reload',
+      );
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      final runtime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: store,
+        net: NetLane(maxActive: 1),
+      );
+      addTearDown(runtime.dispose);
+      final id = _readerArtifactId('borrowed-physical-reload');
+      final physical = PhysicalMediaId.canonical('borrowed-physical-reload');
+      const prefix = <int>[0xff, 0xd8, 0xff, 1, 2, 3];
+      const oldBytes = <int>[...prefix, 4, 5, 0xff, 0xd9];
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        preferDirectStaging: true,
+        entry: PartialDownloadEntry(
+          length: prefix.length,
+          validators: const Validators(),
+          totalLength: oldBytes.length,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(prefix.sublist(start)),
+        ),
+      );
+      runtime.registry.bindPhysicalMedia(id: id, physicalId: physical);
+      final session = runtime.registry.get(id);
+      await runtime.partialDownloadHandoff!.restoreInto(session);
+      expect(session.hasBorrowedPartialBacking, isTrue);
+      expect(session.hasBorrowedDurableSpool, isFalse);
+      if (completed) {
+        final writer = session.acquireWriter();
+        await session.append(writer, prefix.length, oldBytes.sublist(prefix.length));
+        await session.seal(writer, expectedLength: oldBytes.length);
+        await session.promote();
+        expect(await runtime.artifactCacheHandoff!.settleAutomatic(session), isTrue);
+        if (pinned) expect(await store.pinExactRecords(<DownloadId>[id]), 1);
+      }
+      await expectLater(
+        store.invalidatePhysicalPartialDownload(physical),
+        throwsA(isA<Failure>().having(
+          (error) => error.code, 'code', ErrorCode.sessionBusy)),
+      );
+      if (completed) {
+        await expectLater(
+          store.invalidatePhysicalArtifact(physical),
+          throwsA(isA<Failure>().having(
+            (error) => error.code, 'code', ErrorCode.sessionBusy)),
+        );
+      }
+
+      final epochBefore = session.epoch;
+      expect(await runtime.recoverPresentationArtifact(
+        id,
+        reason: 'manual-force-reload',
+        userInitiated: true,
+      ), isTrue);
+      expect(runtime.registry.get(id), same(session));
+      expect(session.epoch.value, epochBefore.value + 1);
+      expect(session.committedLength, 0);
+      expect(cache.requiresFreshSource(id), isTrue);
+      expect(await (store.index as PhysicalPartialIndex)
+          .getPhysicalPartial(physical), isNull);
+      expect(await (store.index as PhysicalMediaArtifactIndex)
+          .getPhysicalMediaArtifact(physical), isNull);
+      // Repeated invalidation has no body to mutate; the lending guard still
+      // protects existing records, as asserted before the physical reset.
+      await store.invalidatePhysicalArtifact(physical);
+      await store.invalidatePhysicalPartialDownload(physical);
+
+      const fresh = <int>[0xff, 0xd8, 0xff, 8, 9, 0xff, 0xd9];
+      final transport = _SharedGateTransport(Uint8List.fromList(fresh))
+        ..release.complete();
+      final trace = MemoryTraceSink();
+      final consumer = runtime.attachConsumer(
+        scopeId: 'borrowed-physical-reload',
+        transportFor: (_) => transport,
+        consumerTraceSink: trace,
+        sharedPhysicalTraceSink: trace,
+      );
+      addTearDown(consumer.dispose);
+      consumer.replaceDemands('reader', 1, <DownloadId, TransferDemand>{
+        id: const TransferDemand(priority: 1000, reason: 'reader-current'),
+      });
+      await consumer.idle().timeout(const Duration(seconds: 5));
+      expect(transport.opens, 1);
+      expect(runtime.registry.get(id), same(session));
+      expect(await session.artifact.readBytes(), fresh);
+      expect(await runtime.artifactCacheHandoff!.settleAutomatic(session), isTrue,
+          reason: '${trace.events.where((event) => event.payload.containsKey('error'))
+              .map((event) => event.payload).toList()}');
+      expect(cache.requiresFreshSource(id), isFalse);
+      expect(trace.events.where((event) => event.kind == TraceEventKind.taskFailed),
+          isEmpty);
+      expect((await store.index.get(id.key))!.pinned, pinned);
+      final exact = await store.openArtifactStream(id);
+      expect(await exact!.readAll!(), pinned ? oldBytes : fresh);
+    },
+  );
+  }
+  }
+
   test(
     'repeated direct transfer checkpoint appends only the new suffix',
     () async {
