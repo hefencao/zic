@@ -5,9 +5,14 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/material.dart';
+import 'package:local_media_ui/local_media_ui.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+// Test-only inspection of the mounted production Reader command surface.
+// ignore: depend_on_referenced_packages
+import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
 // Test-only access to the existing durable response store.
@@ -56,6 +61,7 @@ final _startup = HomeStartupTelemetry(clock: const SystemClock(), sink: _trace);
 const _processCold = bool.fromEnvironment('ZIC_HOME_ARTWORK_PROCESS_COLD');
 const _sourceUnavailable = bool.fromEnvironment('ZIC_HOME_ARTWORK_SOURCE_UNAVAILABLE');
 const _combinedArtwork = bool.fromEnvironment('ZIC_HOME_ARTWORK_COMBINED');
+const _versionReuseOnly = bool.fromEnvironment('ZIC_HOME_VERSION_REUSE_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -67,6 +73,10 @@ Future<void> main() async {
     body: Center(child: Text('准备隔离首页更新验收')),
   )));
   await _frames(2);
+  if (_versionReuseOnly) {
+    await _versionReuseChecks();
+    return;
+  }
   if (_sourceUnavailable) {
     await _sourceUnavailableArtwork();
     return;
@@ -239,8 +249,248 @@ Future<void> main() async {
   }
 }
 
+// The controlled source holds only its own version lookup. Native Reader work,
+// persistent promotion and Home authority publication use the original owners.
+Future<void> _versionReuseChecks() async {
+  await waitForFirstFlutterUiDisplayed();
+  for (final plugin in <String>['network_bridge', 'texture_bridge', 'reader_runtime']) {
+    await attachAndroidPlugin(plugin);
+  }
+  final support = await getStartupApplicationSupportPath();
+  if (support == null) throw StateError('Missing application support path');
+  final input = File('$support/zic-home-version-reuse.webp');
+  Directory? root;
+  HttpServer? origin;
+  PersistentDownloadComposition? composition;
+  ComicSourceResourceGateway? relatedResources;
+  _VersionReuseSource? source;
+  OverlayEntry? relatedReader;
+  var resourcesReady = false;
+  var completed = false;
+  final requests = <String, int>{};
+  Future<void> until(bool Function() predicate, String reason) async {
+    final watch = Stopwatch()..start();
+    while (!predicate()) {
+      if (watch.elapsed > const Duration(seconds: 30)) throw StateError(reason);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+  try {
+    final bytes = await input.readAsBytes();
+    root = await Directory.systemTemp.createTemp('zic-home-version-reuse-');
+    origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    origin.listen((request) async {
+      requests.update(request.uri.path, (n) => n + 1, ifAbsent: () => 1);
+      request.response.headers.contentType = ContentType('image', 'webp');
+      request.response.contentLength = bytes.length;
+      request.response.add(bytes);
+      await request.response.close();
+    });
+    final controlled = source = _VersionReuseSource(origin.port, bytes.length);
+    _store = await openImportedLibraryStore('${root.path}/library');
+    composition = await PersistentDownloadComposition.open('${root.path}/downloads',
+      transferNet: defaultDownloadResourceCoordinator.networkLane,
+      localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
+      storageWriteScheduler: defaultDownloadResourceCoordinator.storageWriteScheduler,
+      speculativeEncodedReadBudget: defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
+      traceSink: _trace);
+    final downloads = composition;
+    _downloads = downloads.chapterDownloads;
+    _queue = WholeComicDownloadQueue(downloads: _downloads);
+    _cache = ResourceCacheCoordinator();
+    resourcesReady = true;
+    for (final id in <String>['reuse-old', 'reuse-new']) {
+      await _store.upsertSavedComic(SavedComicRecord.fromManifest(controlled.manifest(id)));
+      await _store.upsertChapter(controlled.record(id));
+    }
+    await _store.saveProgress(ReadingProgress(sourceId: _sourceId, comicId: 'reuse-old',
+      chapterId: 'reuse-old:chapter', pageIndex: 0, subPageOffset: 0,
+      readerMode: ReaderMode.paged, updatedAt: DateTime.now().toUtc()));
+    await _versions.saveComicVersionRelation(ComicVersionRelation(
+      sourceId: _sourceId, predecessorComicId: 'reuse-old', successorComicId: 'reuse-new',
+      pageMappings: <ComicVersionPageMapping>[
+        ComicVersionPageMapping(predecessorChapterId: 'reuse-old:chapter',
+          successorChapterId: 'reuse-new:chapter', predecessorPageCount: 120,
+          successorPageCount: 122, successorOffset: 2,
+          predecessorSourceRevision: 'reuse-old-r1', successorSourceRevision: 'reuse-new-r1',
+          verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+            VerifiedComicVersionPageInterval(predecessorStart: 0,
+              predecessorEndExclusive: 120, successorOffset: 2),
+          ]),
+      ]));
+    await _mount(sources: <BrowsableComicSource>[controlled], downloadComposition: downloads);
+    await _openDetails('reuse-old');
+    await controlled.findStarted.future.timeout(const Duration(seconds: 30));
+    await _popDetails();
+    _check('version-resolver-held-before-ordinary-reader', !controlled.releaseFind.isCompleted);
+    final oldManifest = controlled.record('reuse-old').toManifest();
+    final newManifest = controlled.record('reuse-new').toManifest();
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[80]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[82]);
+    _check('cold-reader-starts-with-no-artifact-or-physical-session',
+      downloads.transferRuntime.registry.sessions.isEmpty &&
+      downloads.artifactCacheManager.memoryEntryCount == 0 &&
+      await downloads.artifactStore.index.get(oldId.key) == null &&
+      await downloads.artifactStore.index.get(newId.key) == null);
+    _card('reuse-old')!.onTap();
+    await until(() => _trace.exportEvents.any((e) => e.kind == TraceEventKind.firstFrameReady &&
+      e.identityHash == oldManifest.pages[0].assetKey), 'Ordinary Reader first frame missing');
+    final oldElement = _element((e) => e.widget is ImportedImageChapterScreen &&
+      (e.widget as ImportedImageChapterScreen).record.comicId == 'reuse-old')!;
+    final oldScreen = oldElement.widget as ImportedImageChapterScreen;
+    final oldView = _element((e) => e.widget is ReaderView, within: oldElement)!.widget as ReaderView;
+    final readerSession = oldView.controller.sessionId;
+    final physical = downloads.transferRuntime.physicalMediaIdFor(oldId);
+    final events = _trace.exportEvents.toList();
+    final authority = events.firstWhere((e) =>
+      e.payload['stage'] == 'version-reuse-authority-ready');
+    final acquire = events.firstWhere((e) =>
+      e.payload['stage'] == 'physical-media-owner-resolved');
+    _check('cold-reader-authority-precedes-acquire-with-resolver-still-held',
+      !controlled.releaseFind.isCompleted && authority.monotonicMicros <= acquire.monotonicMicros &&
+      authority.payload['restoreMode'] == 'canonical-media-direct' &&
+      authority.payload['acceptedMappings'] == 1 && acquire.payload['canonicalDirect'] == true &&
+      physical.kind == PhysicalMediaIdKind.canonical &&
+      physical == downloads.transferRuntime.physicalMediaIdFor(newId));
+    _check('old-future-page-remains-unacquired',
+      downloads.transferRuntime.registry.findExact(oldId) == null &&
+      downloads.transferRuntime.registry.findExact(newId) == null &&
+      !requests.containsKey('/reuse-old/80.webp'));
+    relatedResources = ComicSourceResourceGateway(
+      sourceForId: (id) => id == _sourceId ? controlled : null,
+      directTransport: RhttpSourceResourceDirectTransport());
+    final firstRelated = Completer<void>();
+    relatedReader = OverlayEntry(builder: (_) => Positioned(
+      left: 16, right: 16, bottom: 16, height: 320,
+      child: Material(child: ImportedImageChapterScreen(
+        record: controlled.record('reuse-new'), pipelineFactory: oldScreen.pipelineFactory,
+        staticPresentation: oldScreen.staticPresentation, traceSink: _trace,
+        responseSources: <String, LocalImageResponseSource>{
+          for (final page in newManifest.pages) page.uri.toString(): LocalImageResponseSource(
+            openControlledResponse: relatedResources!.pageControlledResponseLoaderFor(_sourceId, page.uri),
+            selfBoundedOpen: relatedResources.pageOpenSelfBoundedFor(_sourceId, page.uri)),
+        },
+        initiallyImmersive: false,
+        initialProgress: ReadingProgress(sourceId: _sourceId, comicId: 'reuse-new',
+          chapterId: 'reuse-new:chapter', pageIndex: 82, subPageOffset: 0,
+          readerMode: ReaderMode.paged, updatedAt: DateTime.now().toUtc()),
+        onFirstPresentationFrame: () {
+          if (!firstRelated.isCompleted) firstRelated.complete();
+        },
+      )),
+    ));
+    Overlay.of(oldElement).insert(relatedReader);
+    await firstRelated.future.timeout(const Duration(seconds: 30));
+    CacheRec? ready;
+    final promotionWatch = Stopwatch()..start();
+    while (ready?.state != CacheState.ready) {
+      if (promotionWatch.elapsed > const Duration(seconds: 30)) {
+        throw StateError('Related Reader did not promote its actual body');
+      }
+      ready = await downloads.artifactStore.index.get(newId.key);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    final expectedCrc = Crc32()..add(bytes);
+    final storedCrc = Crc32()..add(await File(ready!.path).readAsBytes());
+    _check('related-reader-promotes-while-old-future-page-is-unacquired',
+      oldElement.mounted && oldView.controller.sessionId == readerSession &&
+      downloads.transferRuntime.owner.consumers.length == 2 &&
+      ready.bytes == bytes.length && ready.checksumAlgorithm == 'crc32' &&
+      ready.checksum == expectedCrc.hex && storedCrc.hex == expectedCrc.hex &&
+      requests['/reuse-new/82.webp'] == 1 &&
+      downloads.transferRuntime.registry.findExact(oldId) == null &&
+      !_trace.exportEvents.any((e) => e.payload['stage'] == 'physical-media-owner-resolved' &&
+        e.payload['pageIndex'] == 80 && e.payload['sourceRevision'] == 'reuse-old-r1') &&
+      !controlled.releaseFind.isCompleted);
+    oldView.controller.requestPage(80);
+    await until(() => _trace.exportEvents.any((e) => e.kind == TraceEventKind.firstFrameReady &&
+      e.identityHash == oldManifest.pages[80].assetKey), 'Old future page did not present');
+    _check('old-future-page-reuses-promoted-canonical-body-with-both-readers-alive',
+      relatedReader.mounted && oldElement.mounted && oldView.controller.sessionId == readerSession &&
+      oldView.controller.currentIndex == 80 &&
+      !requests.containsKey('/reuse-old/80.webp') && requests['/reuse-new/82.webp'] == 1 &&
+      identical(downloads.transferRuntime.findSession(oldId), downloads.transferRuntime.findSession(newId)) &&
+      _trace.exportEvents.any((e) => e.payload['stage'] == 'physical-media-owner-resolved' &&
+        e.payload['pageIndex'] == 80 && e.payload['sourceRevision'] == 'reuse-old-r1' &&
+        e.payload['canonicalDirect'] == true) &&
+      _trace.exportEvents.any((e) => e.kind == TraceEventKind.framePipelineTiming &&
+        e.payload['renderer'] == 'androidTexture') &&
+      _trace.exportEvents.every((e) => e.kind != TraceEventKind.taskFailed));
+    _checks.add(<String, Object?>{'step': 'version-reuse-scope', 'status': 'passed',
+      'originRequests': requests, 'oldPage': 80, 'successorPage': 82,
+      'controlledVersionProof': true, 'canonicalPhysicalOwner': physical.toJson(),
+      'resolverStillHeld': !controlled.releaseFind.isCompleted,
+      'authorityBeforeAcquireMicros': acquire.monotonicMicros - authority.monotonicMicros,
+      'realEHUpdateActionOrCrossVersionPartialProven': false});
+    completed = true;
+  } on Object catch (error, stack) {
+    _checks.add(<String, Object?>{'step': 'version-reuse', 'status': 'failed',
+      'error': error.toString(), 'stack': stack.toString(), 'originRequests': requests});
+  } finally {
+    if (source != null && !source.releaseFind.isCompleted) source.releaseFind.complete();
+    relatedReader?.remove();
+    relatedReader?.dispose();
+    if (resourcesReady) {
+      await _unmount();
+      await shutdownDefaultLocalMediaPipeline();
+      await until(() => defaultDownloadResourceCoordinator.networkLane.isIdle,
+        'Home metadata/network work did not drain');
+      relatedResources?.close();
+      await _queue.close();
+      await composition!.close();
+      await _cache.close();
+      await _store.close();
+    }
+    await origin?.close(force: true);
+    if (root != null && await root.exists()) await root.delete(recursive: true);
+    if (await input.exists()) await input.delete();
+    await _exportResult(completed: completed, root: root,
+      privateResultPath: '$support/zic-home-version-reuse-results.json');
+  }
+}
+
+final class _VersionReuseSource extends _UpdateSource
+    implements ComicVersionSource, ResolvableComicResourceSource {
+  _VersionReuseSource(this.port, this.byteLength);
+  final int port;
+  final int byteLength;
+  final findStarted = Completer<void>();
+  final releaseFind = Completer<void>();
+  @override
+  bool get supportsComicVersions => true;
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    if (!findStarted.isCompleted) findStarted.complete();
+    await releaseFind.future;
+    return const <SourceComicVersion>[];
+  }
+  @override
+  ComicManifest manifest(String id) => ComicManifest(
+    comic: Comic(sourceId: _sourceId, comicId: id, title: id,
+      authors: const <String>[], readingDirection: ReadingDirection.ltr),
+    chapters: <Chapter>[Chapter(chapterId: '$id:chapter', comicId: id,
+      title: id, sequence: 0, pageCount: id == 'reuse-old' ? 120 : 122,
+      sourceRevision: '$id-r1')],
+  );
+  ImportedChapterRecord record(String id) => ImportedChapterRecord.remote(
+    comic: manifest(id).comic, manifest: chapter(id));
+  ChapterManifest chapter(String id) => ChapterManifest(sourceId: _sourceId, comicId: id,
+    chapter: manifest(id).chapters.single, readingDirection: ReadingDirection.ltr,
+    pages: <PageAsset>[
+      for (var index = 0; index < manifest(id).chapters.single.pageCount; index++) PageAsset(
+        pageId: '$id:page-$index', chapterId: '$id:chapter', index: index,
+        uri: Uri.parse('http://127.0.0.1:$port/$id/$index.webp'), width: 640, height: 640,
+        byteLength: byteLength, contentKindHint: ContentKindHint.webp),
+    ],
+  );
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) async => chapter(chapterId.split(':').first);
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) async => ComicResourceRequest(uri: uri);
+}
+
 Future<void> _exportResult({required bool completed, required Directory? root,
-    String phase = 'complete', int? preparedProcessId}) async {
+    String phase = 'complete', int? preparedProcessId, String? privateResultPath}) async {
   final result = <String, Object?>{
     'completed': completed, 'phase': phase, 'processId': pid,
     'preparedProcessId': preparedProcessId,
@@ -252,12 +502,16 @@ Future<void> _exportResult({required bool completed, required Directory? root,
     'trace': _trace.exportEvents.map((event) => event.toJson()).toList(),
     'temporaryRootRemoved': root != null && !await root.exists(),
   };
-  await exportDebugTraceFile(
-    suggestedName: 'zic-home-update-acceptance-'
-        '${DateTime.now().millisecondsSinceEpoch}.json',
-    bytes: Uint8List.fromList(utf8.encode(jsonEncode(result))),
-    relativeDirectory: 'Debug',
-  );
+  if (privateResultPath != null) {
+    await File(privateResultPath).writeAsString(jsonEncode(result), flush: true);
+  } else {
+    await exportDebugTraceFile(
+      suggestedName: 'zic-home-update-acceptance-'
+          '${DateTime.now().millisecondsSinceEpoch}.json',
+      bytes: Uint8List.fromList(utf8.encode(jsonEncode(result))),
+      relativeDirectory: 'Debug',
+    );
+  }
   runApp(MaterialApp(home: Scaffold(body: Center(child: Text(
     phase == 'prepared' ? '隔离缓存已准备，请结束进程后重新启动' :
         completed ? '首页更新隔离验收完成：${_checks.length} 项' : '首页更新隔离验收失败',
@@ -1255,10 +1509,12 @@ Future<void> _seed() async {
 }
 
 Future<void> _mount({List<BrowsableComicSource>? sources,
-    ExternalPluginController? externalPlugins, HomeServiceHandoff? serviceHandoff}) async {
+    ExternalPluginController? externalPlugins, HomeServiceHandoff? serviceHandoff,
+    ChapterDownloadTransferRuntimeProvider? downloadComposition}) async {
   runApp(App(
     libraryStore: serviceHandoff == null ? _store : null,
     chapterDownloads: _downloads, wholeComicDownloads: _queue,
+    downloadComposition: downloadComposition,
     comicSources: sources ?? <BrowsableComicSource>[_source], cacheCoordinator: _cache,
     persistHomeProjectionSnapshot: false, persistMissingPreferences: false,
     homeKey: _homeKey, preferences: _preferences, debugTrace: _trace,
