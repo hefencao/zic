@@ -571,9 +571,9 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
               query, originSourceId: source.sourceId,
               originComicId: comic.comicId,
             )),
-            onMigrateSource: () {
+            onMigrateSource: ({versionState}) {
               final active = _sourceForId(source.sourceId) ?? source;
-              return _openSourceMigrationForSummary(active, comic);
+              return _openSourceMigrationForSummary(active, comic, versionState: versionState);
             },
             loadVersionState: _sourceSupportsVersionEntry(source)
                 ? () {
@@ -759,7 +759,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
               onMigrateSource: resolvedSource == null ||
                       comic.sourceId == 'local-folder'
                   ? null
-                  : () => _openSourceMigration(comic),
+                  : ({versionState}) => _openSourceMigration(comic, versionState: versionState),
               loadVersionState: resolvedSource == null ||
                       !_sourceSupportsVersionEntry(resolvedSource)
                   ? null

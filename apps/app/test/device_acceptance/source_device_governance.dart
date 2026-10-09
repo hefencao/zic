@@ -76,8 +76,8 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
     var successors = <SourceComicVersion>[];
     var persistedInput = false;
     if (crossSource) {
-      // Actual user-reported shared gallery. Pass the original native URL to
-      // Mihon just as the ordinary ID field does; never construct opaque SManga.
+      // Actual user-reported shared gallery. Keep each source's returned
+      // locator/model; a browser address is not necessarily its SManga URL.
       final web = source as ComicWebUriSource;
       final known = snapshot.savedComics.where((comic) => comic.sourceId == source.sourceId &&
         web.resolveComicWebUri(comic.comicId)?.path == '/album/1441640').firstOrNull;
@@ -89,7 +89,19 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
       }
       if (originId == null) throw StateError('actual shared JM gallery locator input missing');
       available = await source.loadComic(originId);
-      const nativeTargetId = 'https://18comic.ink/album/1441640';
+      final targetWeb = targetSource as ComicWebUriSource;
+      // This installed extension explicitly resolves a URL search to SManga;
+      // numeric keyword search does not establish the requested gallery.
+      final targetPage = await targetSource.browse(
+        query: targetSource.descriptor.website.resolve('/album/1441640').toString(), limit: 12);
+      await _record(<String, Object?>{'step': 'actual-cross-source-target-input', 'status': 'observed',
+        'source': targetSource.sourceId, 'returned_items': targetPage.items.length,
+        'returned_web_paths': <String?>[for (final comic in targetPage.items)
+          targetWeb.resolveComicWebUri(comic.comicId)?.path]});
+      final nativeTargetId = targetPage.items.where((comic) =>
+        const <String>['/album/1441640', '/album/1441640/']
+          .contains(targetWeb.resolveComicWebUri(comic.comicId)?.path)).firstOrNull?.comicId;
+      if (nativeTargetId == null) throw StateError('actual shared JM target locator input missing');
       final target = await targetSource.loadComic(nativeTargetId);
       if (target.comic.sourceId != targetSource.sourceId || target.comic.comicId != nativeTargetId) {
         throw StateError('actual native cross-source target identity mismatch');
@@ -162,6 +174,8 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
     final projection = LibraryComic.fromEntries(await store.list(), savedComic: saved);
     await _record(<String, Object?>{'step': crossSource ? 'actual-live-cross-source-input' : 'actual-live-version-input', 'status': 'passed',
       'source': source.sourceId, 'target_source': targetSource.sourceId, 'title': origin.comic.title,
+      if (crossSource) 'target_web_uri': (targetSource as ComicWebUriSource)
+          .resolveComicWebUri(successors.single.comicId)?.toString(),
       'origin_pages': chapter.pages.length,
       if (!crossSource) 'source_declared_successors': successors.length,
       'existing_durable_declaration_used': persistedInput, 'historical_page_proof_copied': false,
@@ -178,14 +192,23 @@ Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
     await _record(<String, Object?>{'step': 'awaiting-ordinary-confirmation', 'status': 'ready',
       'source': source.sourceId, 'title': origin.comic.title,
       'required_UI': crossSource
-        ? 'Home history long press -> details -> target source (second dropdown row) -> native target URL -> comparison -> risk acknowledgement -> confirm'
-        : 'Home history long press -> details -> source-declared version -> migrate -> risk acknowledgement -> confirm'});
+        ? 'Home history long press -> details -> migration -> editable aggregate search -> select actual Mihon cover/title (or source-supported URL search) -> comparison -> risk acknowledgement -> confirm; never type the internal model'
+        : 'Home history long press -> details -> migration -> confirmed same-source version -> migrate -> risk acknowledgement -> confirm'});
     final watch = Stopwatch()..start();
     String? selectedId;
     while (watch.elapsed < const Duration(minutes: 8)) {
       final old = await store.getSavedComic(source.sourceId, origin.comic.comicId);
       if (crossSource || old == null) {
-        for (final id in declaredIds) {
+        // URL and keyword searches can return different complete models for
+        // the same gallery. Verify the exact model selected by the ordinary UI.
+        final eligibleIds = crossSource ? <String>[
+          for (final comic in await store.listSavedComics())
+            if (comic.sourceId == targetSource.sourceId &&
+                const <String>['/album/1441640', '/album/1441640/'].contains(
+                  (targetSource as ComicWebUriSource).resolveComicWebUri(comic.comicId)?.path))
+              comic.comicId,
+        ] : declaredIds;
+        for (final id in eligibleIds) {
           final next = await store.getSavedComic(targetSource.sourceId, id);
           final preference = await store.getComicPreference(targetSource.sourceId, id);
           if (next != null && preference?.inShelf == true) { selectedId = id; break; }

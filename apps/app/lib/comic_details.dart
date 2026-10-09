@@ -507,7 +507,9 @@ typedef ComicDetailsVersionViewer =
 typedef ComicDetailsVersionMigrator =
     Future<void> Function(SourceComicVersion version);
 
-typedef ComicDetailsSourceMigrator = Future<void> Function();
+typedef ComicDetailsSourceMigrator = Future<void> Function({
+  Future<ComicDetailsVersionState>? versionState,
+});
 
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function({Uri? verificationUri});
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();

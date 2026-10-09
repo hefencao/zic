@@ -537,8 +537,14 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 关系发现保留已有首次发现时间与 page-mapping proof；唯一最新版仍由已确认的有向关系决定，未确认分叉保持无唯一 head，不放宽正文复用。
 版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
-不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
+不得用标题 `browse` 推断同源。详情保留版本发现Future及更新提示，统一“迁移漫画源”按钮承载同源版本和跨源操作。
+Home选择适配器复用`ComicTitleSearchPage`，以复选药丸筛选已启用来源，默认聚合搜索；既有external-source投影发布新来源，已有组请求保持。
+可编辑查询交给来源browse，结果按源展示封面与标题；当前精确作品只在UI过滤，候选raw identity原样返回，不展示或解码内部模型。
+原生ID收在高级入口，只允许单个目标来源；选择变化清空输入。选择路由退出完成后才打开比较，取消或未确认比较不提交迁移状态。
+确认版本读取完成时检查选择路由仍为当前页，迟到结果不重开面板；退出选择页不取消既有owner的关系发现。
+搜索只用于候选发现；详情已消费的只读版本Future连同background refresh传给确认版本选择器，不再次发起发现，
 同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
+确认版本入口保留历史详情的访问，不受聚合搜索筛选或来源启用状态限制；禁用来源不进入聚合搜索，也不被入口重新启用。
 通用确认版本列表消费既有只读首显与source-owned background Future，刷新在当前dialog发布、失败保留首显，关闭不取消owner工作；选择保留精确版本对象。relation discoveredAt只表示发现证据，不能投影为来源更新日期；未知日期省略，实际来源日期随刷新发布。
 迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，
 比较卡片展示标题、作者、来源/章节与由Home既有`ComicWebUriSource`能力提供的普通Web地址；缺失地址只省略该行，不解码或展示内部identity。内部identity仍用于封面seed、比较plan和精确事务目标，确认前不写用户状态。
@@ -568,11 +574,11 @@ manual/export adoption消费同一accepted affine mapping但仍必须匹配sourc
 exact partial绑定自己的DownloadId/URI validator；
 跨equivalent前缀恢复必须清空旧validator，physical reuse只在acquire边界发生，artifact commit不得late takeover。
 详情头部先投影已持久化的 successor/predecessor 关系，来源版本发现只在后台校准并更新持久关系。
-正文喜欢、书架、收藏、下载整本保留统一 48×48 `_PreferenceButton` 尺寸与 `filledTonal` 外观，不得因不可见版本槽或整组缩放产生来源间尺寸差异。
-版本入口位于顶部 AppBar 的“迁移漫画源”图标左侧并直接复用该行 `IconButton` 风格；
-无关系时只保留标准 action 宽度的空槽，仅有新版、仅有旧版、新旧并存时分别使用正向、倒置、顺时针90度的感叹号。版本面板在新/旧列表间原地翻转，行标题直接查看详情、行尾迁移图标直接进入既有对比；
-不得显示 opaque comic ID、伪 generation 编号或再弹出版本次级选择菜单。
-持久关系首显后的 source refresh 必须二次发布到当前详情和已打开面板，不得要求退出重进。面板中间的“迁移到当前版本”是真实命令：
+正文喜欢、书架、收藏、下载整本保留统一 48×48 `_PreferenceButton` 尺寸与 `filledTonal` 外观，不因版本提示缩放整组。
+顶部统一“迁移漫画源”action 始终占用标准 `IconButton` 宽度，已确认版本以装饰徽标提示，徽标不覆盖按钮的可访问名称。
+同源版本在迁移页的“已确认同源版本”面板同时提供查看和迁移；独立详情缺少通用迁移回调时仍复用已有新/旧版本面板。
+列表不显示 opaque comic ID 或伪 generation 编号。
+持久关系首显后的 source refresh 必须二次发布到当前详情和已打开面板，不得要求退出重进。独立详情面板中间的“迁移到当前版本”是真实命令：
 只有当前版本存在不同 canonical identity 的 predecessor 时才可用，并直接进入既有迁移对比。
 同源替换在移除旧版本记录前，必须将已验证等价且已持久化的旧页面 artifact 写入目标 exact DownloadId；等价关系仍不是 hard alias/rekey，无法证明等价的字节不得复用。
 

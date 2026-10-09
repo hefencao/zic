@@ -3562,7 +3562,7 @@ void main() {
     );
   });
 
-  testWidgets('details separates same-source version view and migration',
+  testWidgets('details keeps version discovery in unified migration entry',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -3627,55 +3627,36 @@ void main() {
       find.byKey(details.comicDetailsVersionSectionKey),
     );
     expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
-    expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
+    expect(find.byKey(details.comicDetailsVersionActionKey), findsNothing,
+        reason: 'version discovery must share the single migration entry');
     expect(versionLoadStarted.isCompleted, isTrue);
     expect(source.versionLoadCalls, 1,
         reason: 'details version discovery must have one owner');
-    expect(find.byIcon(Icons.error_outline), findsOneWidget);
-    expect(find.byKey(details.comicDetailsVersionViewKey), findsNothing);
-    expect(find.byKey(details.comicDetailsVersionMigrateKey), findsNothing);
-    await _tapVisible(
-      tester,
-      find.byKey(details.comicDetailsVersionActionKey),
-    );
-    await _pumpUntilFound(
-      tester,
-      find.byKey(details.comicDetailsVersionViewKey),
-    );
-    expect(find.byKey(details.comicDetailsVersionMigrateKey), findsOneWidget);
-    expect(find.text('新版本'), findsOneWidget);
+    expect(find.byType(Badge), findsWidgets);
+    await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
+    await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
+    await _tapVisible(tester, find.text('已确认同源版本'));
+    await _pumpUntilFound(tester, find.text('同源版本 · 版本源'));
+    expect(find.widgetWithText(TextButton, '查看'), findsNWidgets(2));
+    expect(find.widgetWithText(FilledButton, '迁移到此版本'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '迁移旧版状态'), findsOneWidget);
     expect(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.text('版本源 漫画'),
-      ),
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('版本源 漫画')),
       findsOneWidget,
     );
-    expect(find.textContaining('更新日期：'), findsNothing,
+    expect(find.text('旧版标题'), findsOneWidget);
+    expect(find.textContaining('2026-08-25'), findsNothing,
         reason: 'relation discovery is not the source version date');
+    expect(find.textContaining('2026-08-20'), findsNothing,
+        reason: 'stored predecessor source dates are unknown too');
     expect(find.text('fixture-version-new-comic'), findsNothing);
     expect(find.textContaining('版本 2'), findsNothing);
-    await tester.tap(find.byIcon(Icons.flip));
-    await tester.pump();
-    expect(find.text('旧版本'), findsOneWidget);
-    expect(find.text('旧版标题'), findsOneWidget);
-    expect(find.textContaining('更新日期：'), findsNothing,
-        reason: 'stored predecessor source dates are unknown too');
-    expect(
-      tester
-          .widget<IconButton>(
-            find.byKey(details.comicDetailsVersionMigrateCurrentKey),
-          )
-          .onPressed,
-      isNotNull,
-    );
-    expect(find.text('有新版本'), findsNothing);
     versionLoadGate.complete();
-    await tester.tap(find.byIcon(Icons.flip));
     await _pumpUntilFound(tester, find.text('新版标题'));
-    expect(find.text('更新日期：2026-08-24'), findsOneWidget);
-    expect(find.text('更新日期：2026-08-25'), findsNothing);
+    expect(find.textContaining('2026-08-24'), findsOneWidget);
+    expect(find.textContaining('2026-08-25'), findsNothing);
     expect(find.text('fixture-version-new-comic'), findsNothing);
+    expect(source.versionLoadCalls, 1);
     expect(
       (await store.listComicVersionSuccessors(sourceId, '$sourceId-comic'))
           .single.discoveredAt,
@@ -3686,6 +3667,96 @@ void main() {
           .single.discoveredAt,
       DateTime.utc(2026, 8, 20),
     );
+  });
+
+  testWidgets('unified migration retains confirmed versions when source browsing is disabled',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-disabled-version';
+    final source = _FixtureSource(sourceId, '版本源', supportsComicVersions: true);
+    await store.saveSourcePreference(
+        ComicSourcePreference.defaults(sourceId: sourceId).copyWith(enabled: false));
+    await store.upsertChapter(ImportedChapterRecord(
+      directoryId: '$sourceId:${source._comicId}', displayName: '第 1 话',
+      sourceId: sourceId, comicId: source._comicId, comicTitle: '版本源 漫画',
+      chapterId: source._chapterId, sourceRevision: 'fixture-r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(displayName: '1.png', sourceId: 'https://example.invalid/page.png',
+            pageId: 'fixture-disabled-page', contentKindHint: ContentKindHint.png),
+      ],
+    ));
+    await store.saveComicPreference(ComicPreference.defaults(
+        sourceId: sourceId, comicId: source._comicId, sourceKind: ComicSourceKind.remote)
+        .copyWith(inShelf: true));
+    await store.saveComicVersionRelation(ComicVersionRelation(
+      sourceId: sourceId, predecessorComicId: source._comicId,
+      successorComicId: 'fixture-disabled-next-comic', predecessorTitle: '版本源 漫画',
+      discoveredAt: DateTime.utc(2026, 8, 25),
+    ));
+    await tester.pumpWidget(App(libraryStore: store,
+        comicSources: <BrowsableComicSource>[source], persistHomeProjectionSnapshot: false));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    final cover = find.byKey(comicCoverKey(sourceId, source._comicId));
+    await _pumpUntilFound(tester, cover);
+    await tester.ensureVisible(cover);
+    await tester.longPress(cover);
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsMigrateKey));
+    await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
+    await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
+    expect(find.byType(FilterChip), findsNothing);
+    await _tapVisible(tester, find.text('已确认同源版本'));
+    await _pumpUntilFound(tester, find.text('同源版本 · 版本源'));
+    expect(find.widgetWithText(TextButton, '查看'), findsOneWidget);
+    expect(source.browseCalls, 0);
+    expect(source.versionLoadCalls, 1);
+    expect((await store.listSourcePreferences()).singleWhere((p) => p.sourceId == sourceId).enabled, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('leaving migration ignores late version UI without cancelling discovery',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-version';
+    final versionLoadStarted = Completer<void>();
+    final versionLoadGate = Completer<void>();
+    final source = _FixtureSource(sourceId, '版本源',
+        supportsComicVersions: true,
+        versionLoadStarted: versionLoadStarted,
+        versionLoadGate: versionLoadGate,
+        comicVersions: const <SourceComicVersion>[
+          SourceComicVersion(sourceId: sourceId, comicId: 'fixture-version-new-comic',
+              title: '新版标题', generation: 2),
+        ]);
+    await tester.pumpWidget(App(libraryStore: store,
+        comicSources: <BrowsableComicSource>[source]));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(tester, find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')));
+    await _tapVisible(tester, find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')));
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsMigrateKey));
+    expect(versionLoadStarted.isCompleted, isTrue);
+    await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
+    await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tapVisible(tester, find.text('已确认同源版本'));
+    final selectionContext = tester.element(find.byKey(comicTitleSearchPageKey));
+    final selectionRoute = ModalRoute.of(selectionContext)!;
+    expect(selectionRoute.isCurrent, isTrue);
+    Navigator.of(selectionContext).pop();
+    await tester.pump();
+    expect(selectionRoute.isCurrent, isFalse);
+    versionLoadGate.complete();
+    await _pumpUntilFound(tester, find.byTooltip('迁移漫画源 · 发现同源更新'));
+    expect(find.text('同源版本 · 版本源'), findsNothing);
+    expect(source.versionLoadCalls, 1);
+    expect((await store.listComicVersionSuccessors(sourceId, '$sourceId-comic')).single.successorComicId,
+        'fixture-version-new-comic');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',

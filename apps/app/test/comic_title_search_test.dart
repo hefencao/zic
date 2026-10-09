@@ -11,6 +11,7 @@ import 'package:zic/app.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/home_shell.dart';
 import 'package:zic/source_browser.dart';
+import 'package:zic/source_migration_compare.dart';
 
 Uint8List _png() => base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
     'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
@@ -34,6 +35,111 @@ Widget _page(List<_Source> sources, {
 ));
 
 void main() {
+  testWidgets('migration aggregates editable candidates and keeps exact selection readonly until confirmation',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final origin = _Source('venera:origin', '禁漫天堂');
+    final target = _Source('mihon:target', '禁漫天堂');
+    final other = _Source('mihon:other', '另一来源');
+    const nativeId = 'mihon:manga:eyJ1cmwiOiIvYWxidW0vNDIifQ==';
+    const query = 'https://source.invalid/album/42';
+    target.handler = (value, offset) async => SourceBrowsePage(
+      items: value == query ? [target.summary('目标漫画', id: nativeId)] : [],
+      offset: offset, hasMore: false,
+    );
+    for (final source in [origin, target, other]) {
+      await store.saveSourcePreference(ComicSourcePreference.defaults(sourceId: source.sourceId));
+    }
+    await tester.pumpWidget(App(libraryStore: store,
+        comicSources: [origin, target, other], persistHomeProjectionSnapshot: false));
+    await _until(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _until(tester, find.byKey(sourceComicCardKey(origin.sourceId, 'book')));
+    await tester.tap(find.byKey(sourceComicCardKey(origin.sourceId, 'book')));
+    await _until(tester, find.byKey(details.comicDetailsMigrateKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    final savedBefore = jsonEncode((await store.listSavedComics()).map((c) => c.toJson()).toList());
+    final preferencesBefore = jsonEncode((await store.listComicPreferences()).map((p) => p.toJson()).toList());
+    await tester.tap(find.byKey(details.comicDetailsMigrateKey));
+    await _until(tester, find.byKey(comicTitleSearchPageKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    expect(find.byType(TextFormField), findsNothing);
+    expect(find.byKey(sourceComicCardKey(origin.sourceId, 'book')), findsNothing);
+    expect(target.requests, [('漫画标题', 0)]);
+    expect(other.requests, [('漫画标题', 0)]);
+    await tester.tap(find.widgetWithText(FilterChip, '另一来源 · Mihon 插件'));
+    await tester.pump();
+    expect(find.byKey(comicTitleSearchGroupKey(other.sourceId)), findsNothing);
+    expect(target.requests, hasLength(1), reason: 'changing selected sources keeps other groups');
+    await tester.enterText(find.byKey(comicTitleSearchInputKey), query);
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    final candidate = find.byKey(sourceComicCardKey(target.sourceId, nativeId));
+    await _until(tester, candidate);
+    await tester.ensureVisible(candidate);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text(nativeId), findsNothing);
+    await tester.tap(candidate);
+    await _until(tester, find.byKey(sourceMigrationComparisonDialogKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(target.loadedComicIds, [nativeId]);
+    expect(find.byKey(comicTitleSearchPageKey), findsNothing);
+    expect(jsonEncode((await store.listSavedComics()).map((c) => c.toJson()).toList()), savedBefore);
+    expect(jsonEncode((await store.listComicPreferences()).map((p) => p.toJson()).toList()), preferencesBefore);
+    expect(await store.getSavedComic(target.sourceId, nativeId), isNull);
+    expect(tester.widget<FilledButton>(find.byKey(sourceMigrationComparisonConfirmKey)).onPressed, isNull);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
+    expect(await store.getSavedComic(target.sourceId, nativeId), isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('migration advanced native input requires one source and clears on selection change',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final origin = _Source('venera:origin', '原来源');
+    final target = _Source('mihon:target', '目标来源');
+    for (final source in [origin, target]) {
+      await store.saveSourcePreference(ComicSourcePreference.defaults(sourceId: source.sourceId));
+    }
+    await tester.pumpWidget(App(libraryStore: store,
+        comicSources: [origin, target], persistHomeProjectionSnapshot: false));
+    await _until(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _until(tester, find.byKey(sourceComicCardKey(origin.sourceId, 'book')));
+    await tester.tap(find.byKey(sourceComicCardKey(origin.sourceId, 'book')));
+    await _until(tester, find.byKey(details.comicDetailsMigrateKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(details.comicDetailsMigrateKey));
+    await _until(tester, find.byKey(comicTitleSearchPageKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('高级：原生 ID'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(TextFormField), findsNothing);
+    await tester.tap(find.widgetWithText(FilterChip, '原来源 · Venera 插件'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextFormField), '/album/42');
+    await tester.tap(find.widgetWithText(FilterChip, '原来源 · Venera 插件'));
+    await tester.pump();
+    expect(find.byType(TextFormField), findsNothing);
+    await tester.tap(find.widgetWithText(FilterChip, '目标来源 · Mihon 插件'));
+    await tester.pump();
+    final field = find.descendant(of: find.byType(TextFormField), matching: find.byType(EditableText));
+    expect(tester.widget<EditableText>(field).controller.text, isEmpty);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, '使用原生 ID')).onPressed, isNull);
+    await tester.pageBack();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
+    expect(target.loadedComicIds, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('source groups complete independently and rebuild without new requests',
       (tester) async {
     final pending = Completer<SourceBrowsePage>();
@@ -226,6 +332,7 @@ final class _Source implements BrowsableComicSource, CanonicalComicIdentitySourc
   final bool searchable;
   Future<SourceBrowsePage> Function(String, int)? handler;
   final List<(String, int)> requests = [];
+  final List<String> loadedComicIds = [];
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
       sourceId: sourceId, name: name, language: 'zh',
@@ -242,10 +349,13 @@ final class _Source implements BrowsableComicSource, CanonicalComicIdentitySourc
   @override
   String canonicalComicIdentity(String id) => id == 'book-alias' ? 'book' : id;
   @override
-  Future<ComicManifest> loadComic(String id) async => ComicManifest(
+  Future<ComicManifest> loadComic(String id) async {
+    loadedComicIds.add(id);
+    return ComicManifest(
       comic: Comic(comicId: id, sourceId: sourceId, title: '漫画标题',
           authors: const [], tags: const ['route-tag'], readingDirection: ReadingDirection.vertical),
       chapters: const []);
+  }
   @override
   Future<ChapterManifest> loadChapter(String id) => throw UnsupportedError('not needed');
   @override

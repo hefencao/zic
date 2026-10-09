@@ -187,11 +187,12 @@ for token in (
     require(architecture + spec, token, 'architecture/specification update')
 
 for token in (
-    "details separates same-source version view and migration",
-    "find.byKey(details.comicDetailsVersionViewKey)",
-    "find.byKey(details.comicDetailsVersionMigrateKey)",
-    "find.text('新版本')",
-    "find.text('有新版本'), findsNothing",
+    "details keeps version discovery in unified migration entry",
+    "find.byKey(details.comicDetailsMigrateKey)",
+    "find.widgetWithText(TextButton, '查看')",
+    "find.widgetWithText(FilledButton, '迁移到此版本')",
+    "find.widgetWithText(FilledButton, '迁移旧版状态')",
+    "expect(source.versionLoadCalls, 1)",
 ):
     require(source_test, token, 'version UI owner test')
 for token in (

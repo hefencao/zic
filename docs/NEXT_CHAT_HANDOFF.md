@@ -9,10 +9,10 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home修复仅卡片source signal/点击key祖先；健康/pending artwork保留State，失败随来源恢复。32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2360/27suite/analyzer/Rust22及三ABI Debug/Profile/minifiedRelease/JNI通过；38 decode/55关联已验，native88新跑/27同输入复用。
-- 073/027/028/072已验保持。070普通网页采用source UA，WNACG浏览器/原地设置/同包事务已验；041真实HTTP媒体已验。来源管理行以ListTile保留启用/源设置/属性登录独立语义；旧SwitchListTile合并按钮，设备XML只见整行开关。challenge/升级/DNS/原加载另验。
+- Home卡片source signal/key祖先及健康/pending artwork State保持；32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2364/27suite/analyzer/Rust22及三ABI Debug/Profile/minifiedRelease/JNI通过；38 decode/55关联保持。native115复用同输入（88在UA边界新跑、27当时复用）。
+- 073/027/028/072及070 source UA/WNACG浏览器/原地设置/同包事务、041真实HTTP媒体保持已验。来源管理ListTile保留启用/源设置/属性登录独立语义，修复旧SwitchListTile按钮合并；迁移目标显示来源名/插件类型，区分同名Mihon/Venera。challenge/升级/DNS/原加载另验。
 - EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/跨源确认/alias仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
-- rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。98dc6501/PID32629/Home；097真实代际及016/client/原加载其余开放。
+- rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。3dbc12fb/PID16607/Home；097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
@@ -52,7 +52,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移exact保持title+sequence/目标native identity。隔离300项/五phase+三callback真kill已验；实际EH Profile用production Home/details控件/隔离SQLite完成44候选/424页/exact1确认，状态/偏好/清理/relation/journal通过。075原exact/sequence-only状态/artifact规则收口；跨源/alias及真实mapping另验。
+- 迁移exact=title+sequence，目标native identity独立校验，075/隔离恢复/EH实际确认已验保持。统一入口保留版本Future，复选来源聚合搜索/封面标题与高级单源ID；退出拒绝迟到面板、禁用来源版本访问回归通过。Release3dbc12fb真机按钮/六源/高级/返回通过，候选未验；JM旧误输已停止，未提交/确认，跨源/alias/mapping开放。
   Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。

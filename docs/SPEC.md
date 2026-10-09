@@ -1018,13 +1018,21 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 详情章节行 MUST 按当前滚动视口及有界缓存范围构建；长目录或 Reader 返回后的进度更新 MUST NOT 要求一次构建、布局全部章节行。完整目录、排序、source/chapter identity、章节操作与最新进度语义 MUST 保持。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，
   不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
-- 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；
-  来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；
+- 详情页 MUST以统一“迁移漫画源”入口承载同源版本及跨源选择；版本发现和更新提示 MUST保留，顶部不再另设同源迁移按钮。
+  来源提供 `ComicVersionSource` 时，“已确认同源版本”候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；
   gallery HTML MUST使用显式HTTP(S) source-document请求，保持来源Cookie/session与调度取消；MUST NOT作为图片进入thumbnail/transform/signature/recovery链。普通图片请求的校验与有界来源恢复 MUST保留。
   来源明确声明的 predecessor 与 successor MUST 经同一版本关系 authority 持久化为 predecessor→current 与 current→successor；MUST拒绝外源、空及自身身份，MUST保留已有发现时间和页面复用证明。MUST NOT按标题、日期或展示序号补造关系；未确认分叉 MUST仍保持 exact。
-  没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
+  不支持版本发现的来源仍 MAY通过通用搜索选择候选；搜索结果不构成已确认关系。候选 MUST对应不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
   旧版和新版都可作为同源迁移目标。
-- 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；
+- 迁移页 MUST显示当前漫画、插件和来源，以复选药丸选择当前或其他已启用来源；目标选项 MUST显示来源名和插件类型，区分同名 Mihon/Venera。
+  搜索 SHOULD默认聚合已启用且可搜索的来源，MUST允许单选/多选与编辑查询，以封面、标题分源展示候选；来源声明支持的链接 MAY原样作为搜索查询，UI不得猜测原生路径或包装模型。
+  来源发布后 MUST通过已有投影更新选择页；筛选或重建 MUST保留其它组已有请求。高级原生ID入口 MUST只针对单个目标来源，切换来源选择 MUST清空输入。
+  候选选择 MUST原样传递来源返回的身份，隐藏当前精确作品及内部opaque ID；退出选择页后才进入比较。搜索、取消和未确认的比较 MUST不写入迁移用户状态。
+  聚合搜索和高级输入只形成显式待确认请求，不证明版本关系；“已确认同源版本”列表仍只消费既有关系authority。
+  相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；
+  历史详情的确认版本入口 MUST保留，不得因来源被禁用或聚合搜索筛选隐藏；入口 MUST NOT自动启用来源或将禁用来源纳入聚合搜索。
+  合并入口 MUST复用详情已消费的只读版本Future及后台刷新，不得仅因打开确认版本面板再次启动发现；来源发现、关系持久化和取消继续归既有owner。
+  版本读取完成时 MUST核对选择路由仍为当前页；退出后迟到结果 MUST NOT重开面板，MUST NOT取消owner已接纳的关系发现。
   跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同`sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；
   目标漫画及章节身份 MUST 在任何持久写入前校验。
   通用同源版本列表 MUST在打开的面板中消费已有来源刷新结果，失败保留已确认首显；关闭面板 MUST NOT取消owner已接纳工作。关系发现时间 MUST NOT冒充来源更新日期，未知来源日期 MUST省略；候选展示 MUST使用来源Web地址，回调 MUST保持精确版本对象。
@@ -2285,11 +2293,11 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    主详情、章节、预览和评论 MUST 按元数据类别增量替换，预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
    详情 route 的首帧 MUST 不依赖下载状态/artifact I/O 或跨版本 page proof，且详情生命周期 MUST NOT仅因存在版本入口而启动page-mapping媒体预热。
    已持久化的同源 successor/predecessor MUST 先于网络发现投影，网络只在后台校准；
-   版本入口 MUST 与“下载整本”保持同行且使用固定占位，无版本关系/加载中不绘制图标，不得迟到插入整块 UI 改变布局。面板 MUST 在同一层切换新/旧版，标题点击直接查看详情，行尾迁移直接进入对比；
+   统一迁移入口 MUST保持标准 action 宽度，加载或关系刷新 MUST NOT迟到插入独立按钮改变布局。同源面板 MUST提供查看和迁移命令；
    列表 MUST 显示可读标题和日期，MUST NOT 显示 opaque ID 或 source 伪 generation。
-   正文喜欢、书架、收藏和下载 MUST 保持统一 48×48 `_PreferenceButton` 尺寸，不得因不可见版本槽整体缩小。
-   版本入口 MUST 位于顶部 AppBar“迁移漫画源”控件左侧并复用标准 `IconButton` 风格；无关系时仅保留标准 action 空槽。
-   缓存首显后的 source refresh MUST 更新当前 route/面板。“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。
+   正文喜欢、书架、收藏和下载 MUST 保持统一 48×48 `_PreferenceButton` 尺寸，不得因版本提示整体缩小。
+   顶部统一迁移入口 MUST复用标准 `IconButton`；版本徽标 MUST为装饰，不得覆盖按钮的可访问名称。
+   缓存首显后的 source refresh MUST 更新当前 route/面板。独立详情面板的“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。
    同源替换对已验证等价的 durable source artifact MUST 物化为目标 exact DownloadId，确保移除旧记录或重启后仍不重新下载；未验证页面 MUST NOT 复用。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。
    漫画输入 MUST接受完整`mihon:manga:`模型或插件原生`SManga.url`；原生输入只提供原文URL与空初始标题，其余元数据/目录仍由source返回。保留的`mihon:`身份 MUST按kind严格校验，不得将损坏或章节/资源identity当原生URL。

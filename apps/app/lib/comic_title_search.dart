@@ -19,6 +19,10 @@ final class ComicTitleSearchPage extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onSearchCommitted,
     this.onPrepareSources,
+    this.title,
+    this.inputLabel = '搜索漫画',
+    this.header,
+    this.isComicVisible,
     super.key,
   });
 
@@ -35,6 +39,10 @@ final class ComicTitleSearchPage extends StatefulWidget {
       {required bool cloudflareVerification})? onOpenSourceWebView;
   final ValueChanged<String>? onSearchCommitted;
   final VoidCallback? onPrepareSources;
+  final String? title;
+  final String inputLabel;
+  final Widget? header;
+  final bool Function(BrowsableComicSource, SourceComicSummary)? isComicVisible;
 
   @override
   State<ComicTitleSearchPage> createState() => _ComicTitleSearchPageState();
@@ -195,6 +203,8 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
         final complete = snapshot.connectionState == ConnectionState.done;
         final page = complete ? snapshot.data?.page : null;
         final failure = complete ? snapshot.data?.failure : null;
+        final items = page?.items.where((comic) =>
+            widget.isComicVisible?.call(source, comic) ?? true).toList();
         return Padding(
           key: comicTitleSearchGroupKey(source.sourceId),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -242,7 +252,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
                       : null,
                   openingWebView: group.verifying,
                 )
-              else if (page == null || page.items.isEmpty)
+              else if (items == null || items.isEmpty)
                 const Padding(padding: EdgeInsets.all(20), child: Text('没有搜索结果'))
               else
                 SizedBox(
@@ -251,10 +261,10 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
                     key: ValueKey<(String, String, int)>((
                       source.sourceId, _query, group.offsets[group.pageIndex])),
                     scrollDirection: Axis.horizontal,
-                    itemCount: page.items.length,
+                    itemCount: items.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
-                      final comic = page.items[index];
+                      final comic = items[index];
                       final active = _active(source);
                       return SizedBox(
                         width: 132,
@@ -289,7 +299,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: comicTitleSearchPageKey,
-      appBar: AppBar(title: Text('聚合搜索：$_query')),
+      appBar: AppBar(title: Text(widget.title ?? '聚合搜索：$_query')),
       body: Column(
         children: <Widget>[
           Padding(
@@ -300,7 +310,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
               textInputAction: TextInputAction.search,
               onSubmitted: _submit,
               decoration: InputDecoration(
-                labelText: '搜索漫画',
+                labelText: widget.inputLabel,
                 suffixIcon: IconButton(tooltip: '搜索',
                     onPressed: () => _submit(_input.text),
                     icon: const Icon(Icons.search)),
@@ -308,9 +318,12 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
             ),
           ),
           Expanded(
-            child: _groups.isEmpty
+            child: _groups.isEmpty && widget.header == null
                 ? const Center(child: Text('没有可搜索的漫画源'))
                 : ListView(children: <Widget>[
+                    if (widget.header != null) widget.header!,
+                    if (_groups.isEmpty)
+                      const Padding(padding: EdgeInsets.all(20), child: Text('没有可搜索的漫画源')),
                     for (final group in _groups) _group(group),
                   ]),
           ),

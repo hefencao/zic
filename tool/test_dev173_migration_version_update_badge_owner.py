@@ -58,7 +58,10 @@ for token in (
     '...refreshed.predecessors,',
     'webUriFor: (version) => _sourceComicWebUri(source, version.comicId)',
     "label: const Text('已确认同源版本')",
-    'final page = await choice.source.browse(query: comic.title, limit: 12);',
+    'ComicTitleSearchPage(',
+    'FilterChip(',
+    'versionState: versionState',
+    'await route.completed;',
     'showSourceMigrationComparison(',
     'ComicSourceMigrationPlan.build(',
 ):
@@ -91,21 +94,24 @@ forbid(
     'migration preference bypass',
 )
 
-# Same-source confirmed relations must not be inferred from title search. The
-# title browse remains only the cross-source branch after the explicit
-# same-source version branch.
-version_branch = migration.index('if (choice.versions)')
-search_branch = migration.index('final page = await choice.source.browse', version_branch)
-if search_branch <= version_branch:
-    raise SystemExit('cross-source title search must follow confirmed same-source branch')
+# Search selects exact candidates; only the source/durable authority supplies
+# confirmed versions. The selector never commits relationships or migration.
+version_ui = migration.split('Future<_SourceMigrationSelection?> _selectConfirmedSourceVersion(', 1)[1]
+version_ui = version_ui.split('Future<_SourceMigrationSelection?> _selectSourceMigrationTarget(', 1)[0]
+forbid(version_ui, '.browse(', 'title-inferred confirmed versions')
+selector = migration.split('Future<_SourceMigrationSelection?> _selectSourceMigrationTarget(', 1)[1]
+selector = selector.split('Future<void> _openSourceMigrationForSummary(', 1)[0]
+require(selector, 'comicId: candidate.comicId', 'exact selected native identity')
+for token in ('ComicVersionRelation(', 'saveComicVersionRelation(', 'executeConfirmed('):
+    forbid(selector, token, 'selection UI write authority')
 
 compat = read('apps/app/lib/home_shell_source_compat.dart')
 for token in (
-    'onMigrateSource: () {',
-    'return _openSourceMigrationForSummary(active, comic);',
+    'onMigrateSource: ({versionState}) {',
+    'return _openSourceMigrationForSummary(active, comic, versionState: versionState);',
     "onMigrateSource: resolvedSource == null ||",
     "comic.sourceId == 'local-folder'",
-    ': () => _openSourceMigration(comic)',
+    ': ({versionState}) => _openSourceMigration(comic, versionState: versionState)',
 ):
     require(compat, token, 'detail migration composition')
 
@@ -116,6 +122,7 @@ for token in (
     'onMigrateSource',
     "tooltip: '迁移漫画源'",
     'Icons.swap_horiz',
+    'await widget.onOpenMigration!(versionState: _state);',
 ):
     require(details, token, 'detail general migration action')
 

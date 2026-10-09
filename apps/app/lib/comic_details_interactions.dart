@@ -166,8 +166,9 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               load: widget.loadVersionState!,
               onView: widget.onViewVersion!,
               onMigrate: widget.onMigrateVersion!,
-            ),
-          if (widget.onMigrateSource != null)
+              onOpenMigration: widget.onMigrateSource,
+            )
+          else if (widget.onMigrateSource != null)
             IconButton(
               key: comicDetailsMigrateKey,
               tooltip: '迁移漫画源',
@@ -295,12 +296,14 @@ final class _ComicDetailsVersionActions extends StatefulWidget {
     required this.load,
     required this.onView,
     required this.onMigrate,
+    this.onOpenMigration,
     super.key,
   });
 
   final ComicDetailsVersionStateLoader load;
   final ComicDetailsVersionViewer onView;
   final ComicDetailsVersionMigrator onMigrate;
+  final ComicDetailsSourceMigrator? onOpenMigration;
 
   @override
   State<_ComicDetailsVersionActions> createState() =>
@@ -367,6 +370,15 @@ final class _ComicDetailsVersionActionsState
     }
   }
 
+  Future<void> _openMigration() async {
+    setState(() => _working = true);
+    try {
+      await widget.onOpenMigration!(versionState: _state);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
   Widget _indicatorIcon(ComicDetailsVersionState state) {
     final hasSuccessors = state.successors.isNotEmpty;
     final hasPredecessors = state.predecessors.isNotEmpty;
@@ -394,21 +406,31 @@ final class _ComicDetailsVersionActionsState
       future: _state,
       builder: (context, snapshot) {
         final state = snapshot.data;
-        if (state == null || state.isEmpty) {
+        final hasVersions = state != null && !state.isEmpty;
+        final unified = widget.onOpenMigration != null;
+        if (!hasVersions && !unified) {
           return const SizedBox.square(dimension: 48);
         }
         return IconButton(
-          key: comicDetailsVersionActionKey,
-          tooltip: _tooltip(state),
+          key: unified ? comicDetailsMigrateKey : comicDetailsVersionActionKey,
+          tooltip: unified
+              ? '迁移漫画源${hasVersions ? ' · ${_tooltip(state)}' : ''}'
+              : _tooltip(state!),
           onPressed: _working
               ? null
-              : () => unawaited(_showVersions()),
+              : () => unawaited(unified ? _openMigration() : _showVersions()),
           icon: _working
               ? const SizedBox.square(
                   dimension: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : _indicatorIcon(state),
+              : unified
+                  ? Badge(
+                      isLabelVisible: hasVersions,
+                      label: const ExcludeSemantics(child: Text('!')),
+                      child: const Icon(Icons.swap_horiz),
+                    )
+                  : _indicatorIcon(state!),
         );
       },
     );

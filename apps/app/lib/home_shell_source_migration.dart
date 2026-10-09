@@ -266,15 +266,18 @@ extension _HomeShellSourceMigration on _HomeShellState {
 
   Future<_SourceMigrationSelection?> _selectConfirmedSourceVersion(
     LibraryComic comic,
-    BrowsableComicSource source,
-  ) async {
+    BrowsableComicSource source, {
+    required BuildContext selectionContext,
+    Future<details.ComicDetailsVersionState>? versionState,
+  }) async {
     try {
-      final state = await _loadSourceVersionState(
+      final state = await (versionState ?? _loadSourceVersionState(
         source,
         comic.title,
         comic.comicId,
-      );
-      if (!mounted) return null;
+      ));
+      if (!mounted || !selectionContext.mounted ||
+          ModalRoute.of(selectionContext)?.isCurrent != true) return null;
       final versions = <SourceComicVersion>[
         ...state.successors,
         ...state.predecessors,
@@ -286,7 +289,7 @@ extension _HomeShellSourceMigration on _HomeShellState {
         return null;
       }
       final selection = await showConfirmedSourceVersionSelection(
-        context: context,
+        context: selectionContext,
         sourceName: source.descriptor.name,
         versions: versions,
         backgroundRefresh: state.backgroundRefresh?.then(
@@ -305,8 +308,9 @@ extension _HomeShellSourceMigration on _HomeShellState {
               viewOnly: selection.viewOnly,
             );
     } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      if (mounted && selectionContext.mounted &&
+          ModalRoute.of(selectionContext)?.isCurrent == true) {
+        ScaffoldMessenger.of(selectionContext).showSnackBar(
           copyableDiagnosticSnackBar('读取同源版本失败：$error'),
         );
       }
@@ -316,208 +320,160 @@ extension _HomeShellSourceMigration on _HomeShellState {
 
   Future<_SourceMigrationSelection?> _selectSourceMigrationTarget(
     LibraryComic comic,
-    List<BrowsableComicSource> targets,
-  ) async {
-    var target = targets.firstWhere(
-      (source) => source.sourceId == comic.sourceId,
-      orElse: () => targets.first,
-    );
-    final currentSource = _sourceForId(comic.sourceId);
+    List<BrowsableComicSource> targets, {
+    Future<details.ComicDetailsVersionState>? versionState,
+  }) async {
+    final selected = targets.map((source) => source.sourceId).toSet();
+    final knownTargets = {...selected};
     var targetComicId = '';
-    final choice = await showDialog<
-        ({BrowsableComicSource source, String? id, bool search, bool versions})>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final sameSource = target.sourceId == comic.sourceId;
-          return AlertDialog(
-            title: const Text('迁移漫画源'),
-            content: SizedBox(
-              width: 460,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Text('当前插件：${_sourcePluginLabel(comic.sourceId)}'),
-                  const SizedBox(height: 4),
-                  Text(
-                    '当前来源：${currentSource?.descriptor.name ?? comic.sourceId}',
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: target.sourceId,
-                    decoration: const InputDecoration(labelText: '目标漫画源'),
-                    items: <DropdownMenuItem<String>>[
-                      for (final source in targets)
-                        DropdownMenuItem<String>(
-                          value: source.sourceId,
-                          child: Text(source.descriptor.name),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setDialogState(() {
-                        target = targets.firstWhere(
-                          (source) => source.sourceId == value,
-                        );
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    onChanged: (value) {
-                      setDialogState(() => targetComicId = value);
-                    },
-                    decoration: InputDecoration(
-                      labelText:
-                          sameSource ? '目标版本 ID（可选）' : '目标漫画 ID（可选）',
-                      helperText: sameSource
-                          ? '同源版本优先使用来源确认关系；也可明确填写插件原生 ID'
-                          : '通常搜索同名作品；仅在搜索不到时手动填写原生 ID',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    sameSource
-                        ? '同源版本关系只接受插件/已存关系确认；迁移仍会先显示章节、偏好和阅读状态对比。'
-                        : '跨来源候选可通过标题搜索发现，但只有你明确选择后才进入迁移对比；不会自动认定为同一作品。',
-                  ),
-                ],
-              ),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
-              ),
-              if (sameSource && _sourceSupportsVersionEntry(target))
-                TextButton.icon(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    (source: target, id: null, search: false, versions: true),
-                  ),
-                  icon: const Icon(Icons.compare_arrows),
-                  label: const Text('已确认同源版本'),
-                )
-              else if (!sameSource && target.descriptor.supportsSearch)
-                TextButton.icon(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    (source: target, id: null, search: true, versions: false),
-                  ),
-                  icon: const Icon(Icons.search),
-                  label: const Text('搜索同名作品'),
-                ),
-              FilledButton(
-                onPressed: targetComicId.trim().isEmpty
-                    ? null
-                    : () => Navigator.pop(
-                          context,
-                          (
-                            source: target,
-                            id: targetComicId.trim(),
-                            search: false,
-                            versions: false,
+    String? inputSourceId;
+    var selectedTarget = false;
+    final route = MaterialPageRoute<_SourceMigrationSelection>(
+      builder: (context) => StreamBuilder<void>(
+        stream: _externalSources.sourceProjectionChanges,
+        builder: (context, _) {
+          final availableTargets = _enabledSources;
+          for (final source in availableTargets) {
+            if (knownTargets.add(source.sourceId)) selected.add(source.sourceId);
+          }
+          final currentSource = _sourceForId(comic.sourceId);
+          return StatefulBuilder(
+            builder: (context, setSelectionState) {
+              final sources = availableTargets.where((source) => selected.contains(source.sourceId)).toList();
+              final single = sources.length == 1 ? sources.single : null;
+              if (inputSourceId != single?.sourceId) {
+                inputSourceId = single?.sourceId;
+                targetComicId = '';
+              }
+              void choose(_SourceMigrationSelection selection) {
+                if (selectedTarget || !context.mounted) return;
+                selectedTarget = true;
+                Navigator.pop(context, selection);
+              }
+              return ComicTitleSearchPage(
+                title: '迁移漫画源',
+                inputLabel: '搜索标题或来源支持的链接',
+                query: comic.title,
+                sources: sources,
+                onPrepareSources: () => unawaited(_externalSources.ensureSourcesPublished()),
+                resolveSource: _sourceForId,
+                loadCover: _loadSourceBrowseCover,
+                onOpenSourceWebView: _openSourceWebView,
+                isComicVisible: (source, candidate) =>
+                    source.sourceId != comic.sourceId || candidate.comicId != comic.comicId,
+                onOpenComic: (source, candidate) async {
+                  if (candidate.sourceId != source.sourceId) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      copyableDiagnosticSnackBar('目标漫画源搜索返回了不匹配的来源身份'),
+                    );
+                    return;
+                  }
+                  choose(_SourceMigrationSelection.request(
+                    source: source, comicId: candidate.comicId,
+                  ));
+                },
+                header: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Text('当前漫画：${comic.title}'),
+                      Text('当前来源：${currentSource?.descriptor.name ?? comic.sourceId} · ${_sourcePluginLabel(comic.sourceId)}'),
+                      const SizedBox(height: 8),
+                      const Text('目标来源（可多选）'),
+                      Wrap(
+                        spacing: 8,
+                        children: <Widget>[
+                          for (final source in availableTargets)
+                            FilterChip(
+                              label: Text('${source.descriptor.name} · ${_sourcePluginLabel(source.sourceId)}'),
+                              selected: selected.contains(source.sourceId),
+                              onSelected: (value) => setSelectionState(() {
+                                if (value) {
+                                  selected.add(source.sourceId);
+                                } else {
+                                  selected.remove(source.sourceId);
+                                }
+                                targetComicId = '';
+                              }),
+                            ),
+                        ],
+                      ),
+                      if (currentSource != null &&
+                          _sourceSupportsVersionEntry(currentSource))
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () async {
+                              final selection = await _selectConfirmedSourceVersion(
+                                comic, currentSource, selectionContext: context,
+                                versionState: versionState,
+                              );
+                              if (selection != null) choose(selection);
+                            },
+                            icon: const Icon(Icons.compare_arrows),
+                            label: const Text('已确认同源版本'),
                           ),
                         ),
-                child: const Text('使用漫画 ID'),
-              ),
-            ],
+                      ExpansionTile(
+                        title: const Text('高级：原生 ID'),
+                        tilePadding: EdgeInsets.zero,
+                        children: <Widget>[
+                          if (single == null)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 12),
+                              child: Text('手填原生 ID 需要只选择一个目标来源'),
+                            )
+                          else ...<Widget>[
+                            TextFormField(
+                              key: ValueKey<String>(single.sourceId),
+                              onChanged: (value) => setSelectionState(() => targetComicId = value),
+                              decoration: const InputDecoration(
+                                labelText: '目标原生 ID',
+                                helperText: '请输入插件接受的原生 ID；网页链接请优先用于搜索',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            FilledButton(
+                              onPressed: targetComicId.trim().isEmpty ||
+                                      (single.sourceId == comic.sourceId && targetComicId.trim() == comic.comicId)
+                                  ? null
+                                  : () => choose(_SourceMigrationSelection.request(
+                                        source: single, comicId: targetComicId.trim(),
+                                      )),
+                              child: const Text('使用原生 ID'),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                        ],
+                      ),
+                      const Text('搜索只发现候选，不会认定同源版本；选择封面后仍需核对漫画、来源和章节，再确认迁移。'),
+                    ],
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
     );
-    if (choice == null || !mounted) return null;
-
-    if (choice.versions) {
-      return _selectConfirmedSourceVersion(comic, choice.source);
-    }
-    if (!choice.search && choice.id != null) {
-      return _SourceMigrationSelection.request(
-        source: choice.source,
-        comicId: choice.id!,
-      );
-    }
-
-    try {
-      final page = await choice.source.browse(query: comic.title, limit: 12);
-      if (!mounted) return null;
-      if (page.items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${choice.source.descriptor.name} 未找到“${comic.title}”；可重试并手动填写漫画 ID',
-            ),
-          ),
-        );
-        return null;
-      }
-      final candidate = await showDialog<SourceComicSummary>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('选择 ${choice.source.descriptor.name} 中的目标作品'),
-          content: SizedBox(
-            width: 520,
-            child: ListView(
-              shrinkWrap: true,
-              children: <Widget>[
-                for (final item in page.items)
-                  ListTile(
-                    onTap: () => Navigator.pop(context, item),
-                    title: Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      <String>[
-                        if (item.authors.isNotEmpty) item.authors.join('、'),
-                        item.comicId,
-                      ].join('\n'),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-          ],
-        ),
-      );
-      if (candidate == null) return null;
-      if (candidate.sourceId != choice.source.sourceId) {
-        throw StateError('目标漫画源搜索返回了不匹配的来源身份');
-      }
-      return _SourceMigrationSelection.request(
-        source: choice.source,
-        comicId: candidate.comicId,
-      );
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          copyableDiagnosticSnackBar('搜索目标漫画失败：$error'),
-        );
-      }
-      return null;
-    }
+    final selection = await Navigator.of(context).push<_SourceMigrationSelection>(route);
+    await route.completed;
+    return selection;
   }
 
   Future<void> _openSourceMigrationForSummary(
     BrowsableComicSource source,
-    SourceComicSummary summary,
-  ) async {
+    SourceComicSummary summary, {
+    Future<details.ComicDetailsVersionState>? versionState,
+  }) async {
     try {
       final comic = await _materializeSourceComic(
         source,
         summary,
         resolveCanonicalAlias: false,
       );
-      if (mounted) await _openSourceMigration(comic);
+      if (mounted) await _openSourceMigration(comic, versionState: versionState);
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -527,9 +483,13 @@ extension _HomeShellSourceMigration on _HomeShellState {
     }
   }
 
-  Future<void> _openSourceMigration(LibraryComic comic) async {
+  Future<void> _openSourceMigration(LibraryComic comic, {
+    Future<details.ComicDetailsVersionState>? versionState,
+  }) async {
     final targets = _enabledSources.toList(growable: false);
-    if (targets.isEmpty) {
+    final currentSource = _sourceForId(comic.sourceId);
+    if (targets.isEmpty &&
+        (currentSource == null || !_sourceSupportsVersionEntry(currentSource))) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('没有已启用漫画源可用于迁移')),
@@ -537,7 +497,7 @@ extension _HomeShellSourceMigration on _HomeShellState {
       }
       return;
     }
-    final selection = await _selectSourceMigrationTarget(comic, targets);
+    final selection = await _selectSourceMigrationTarget(comic, targets, versionState: versionState);
     if (selection == null || !mounted) return;
     final version = selection.version;
     if (version != null) {
