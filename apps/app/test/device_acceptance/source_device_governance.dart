@@ -1,10 +1,12 @@
 part of 'source_device_acceptance.dart';
 
-// Actual installed source, source-declared successor and ordinary Home/details
+// Actual installed sources, declared version/native input and Home/details
 // confirmation controls. All mutations belong to a fresh temporary SQLite.
 // Read the existing declared direction only; seed fresh live manifests and test
-// progress. User library/preferences/artifacts are never copied or opened.
-Future<void> _probeLiveVersionMigration() async {
+// progress. User library/artifact indexes are never copied or opened; App
+// preferences are in memory. Native source settings keep their ordinary
+// package/source namespace, so a temporary payload root is not their sandbox.
+Future<void> _probeLiveVersionMigration({bool crossSource = false}) async {
   final support = (await getStartupApplicationSupportPath())!;
   final userRoot = await getDefaultZicStorageRoot(
     applicationSupportPath: getStartupApplicationSupportPath,
@@ -22,20 +24,35 @@ Future<void> _probeLiveVersionMigration() async {
   MemoryChapterDownloadService? downloads;
   WholeComicDownloadQueue? queue;
   ResourceCacheCoordinator? cache;
+  final originalPayloads = <File, List<int>>{};
   var passed = false;
   try {
     final manifest = jsonDecode(utf8.decode(beforeManifest)) as Map<String, dynamic>;
+    final originSourceId = crossSource ? 'venera:jm' : 'venera:ehentai';
     final records = (manifest['plugins'] as List).cast<Map<String, dynamic>>()
-        .where((row) => (row['sourceIds'] as List? ?? const [])
-            .contains('venera:ehentai')).toList();
-    if (records.length != 1) throw StateError('actual installed EH source input missing');
-    final record = records.single;
-    final original = File(record['payloadPath'] as String);
-    final payload = await original.readAsBytes();
+        .where((row) => (row['sourceIds'] as List? ?? const []).contains(originSourceId) ||
+          ((row['plugin'] as Map)['sources'] as List).any((item) =>
+            (item as Map)['sourceId'] == originSourceId) ||
+          ((row['plugin'] as Map)['format'] == 'veneraJavaScript' &&
+            row['sourceKey'] == originSourceId.substring('venera:'.length)) ||
+          (crossSource && (row['plugin'] as Map)['format'] == 'mihonExtension' &&
+            row['packageName'] == 'eu.kanade.tachiyomi.extension.zh.jinmantiantang')).toList();
+    if (records.length != (crossSource ? 2 : 1)) {
+      await _record(<String, Object?>{'step': 'migration-source-input-observation', 'status': 'unverified',
+        'selected_records': records.length,
+        'installed': <Object?>[for (final row in (manifest['plugins'] as List).cast<Map<String, dynamic>>())
+          <String, Object?>{'name': (row['plugin'] as Map)['name'], 'package': row['packageName'],
+            'source_key': row['sourceKey'], 'known_source_ids': row['sourceIds']}]});
+      throw StateError('actual installed migration source inputs missing');
+    }
     final payloadRoot = Directory('${root.path}/external_plugins');
     await payloadRoot.create();
-    record['payloadPath'] = (await original.copy(
-      '${payloadRoot.path}/${original.uri.pathSegments.last}')).path;
+    for (final record in records) {
+      final original = File(record['payloadPath'] as String);
+      originalPayloads[original] = await original.readAsBytes();
+      record['payloadPath'] = (await original.copy(
+        '${payloadRoot.path}/${original.uri.pathSegments.last}')).path;
+    }
     manifest['plugins'] = records;
     await File('${payloadRoot.path}/installed.json')
         .writeAsString(jsonEncode(manifest), flush: true);
@@ -43,7 +60,9 @@ Future<void> _probeLiveVersionMigration() async {
       discoverDeviceMihonExtensions: false, deferRuntimeActivation: true);
     await controller.ready;
     final source = controller.activeSources.singleWhere(
-      (item) => item.sourceId == 'venera:ehentai');
+      (item) => item.sourceId == originSourceId);
+    final targetSource = crossSource ? controller.activeSources.singleWhere(
+      (item) => item.sourceId.startsWith('mihon:') && item.descriptor.name == '禁漫天堂') : source;
     final snapshot = await HomeProjectionSnapshotStore.atPath(projectionFile.path).read();
     final candidates = snapshot!.savedComics.where((comic) =>
       comic.sourceId == source.sourceId && comic.title.contains('Ani Collections')).toList();
@@ -52,13 +71,35 @@ Future<void> _probeLiveVersionMigration() async {
         (relation) => relation.sourceId == source.sourceId && relation.predecessorComicId == id);
       return (predecessor(b.comicId) ? 1 : 0) - (predecessor(a.comicId) ? 1 : 0);
     });
-    if (candidates.isEmpty) throw StateError('existing actual Ani locator input missing');
+    if (!crossSource && candidates.isEmpty) throw StateError('existing actual Ani locator input missing');
     ComicManifest? available;
     var successors = <SourceComicVersion>[];
     var persistedInput = false;
+    if (crossSource) {
+      // Actual user-reported shared gallery. Pass the original native URL to
+      // Mihon just as the ordinary ID field does; never construct opaque SManga.
+      final web = source as ComicWebUriSource;
+      final known = snapshot.savedComics.where((comic) => comic.sourceId == source.sourceId &&
+        web.resolveComicWebUri(comic.comicId)?.path == '/album/1441640').firstOrNull;
+      String? originId = known?.comicId;
+      if (originId == null) {
+        final page = await source.browse(query: '1441640', limit: 12);
+        originId = page.items.where((comic) =>
+          web.resolveComicWebUri(comic.comicId)?.path == '/album/1441640').firstOrNull?.comicId;
+      }
+      if (originId == null) throw StateError('actual shared JM gallery locator input missing');
+      available = await source.loadComic(originId);
+      const nativeTargetId = 'https://18comic.ink/album/1441640';
+      final target = await targetSource.loadComic(nativeTargetId);
+      if (target.comic.sourceId != targetSource.sourceId || target.comic.comicId != nativeTargetId) {
+        throw StateError('actual native cross-source target identity mismatch');
+      }
+      successors = <SourceComicVersion>[SourceComicVersion(sourceId: targetSource.sourceId,
+        comicId: target.comic.comicId, title: target.comic.title, generation: 0)];
+    }
     // Explicit migration permits a choice among source-declared versions.
     // A unique latest head is a separate update-action criterion, not this gate.
-    for (final candidate in candidates.take(2)) {
+    for (final candidate in crossSource ? <SavedComicRecord>[] : candidates.take(2)) {
       final comic = await source.loadComic(candidate.comicId);
       final versions = await (source as ComicVersionSource).findComicVersions(comic.comic.comicId);
       successors = versions.where((version) => !version.isPredecessor &&
@@ -84,7 +125,7 @@ Future<void> _probeLiveVersionMigration() async {
       }
       if (successors.isNotEmpty) { available = comic; break; }
     }
-    if (available == null) throw StateError('no source-declared successor in available actual Ani inputs');
+    if (available == null) throw StateError('no actual declared/native migration input');
     final origin = available;
     final declaredIds = successors.map((version) => version.comicId).toSet();
     if (origin.chapters.isEmpty) throw StateError('actual source returned no chapter input');
@@ -119,30 +160,34 @@ Future<void> _probeLiveVersionMigration() async {
       comicId: origin.comic.comicId, sourceKind: ComicSourceKind.remote)
       .copyWith(inShelf: true, liked: true, collected: true));
     final projection = LibraryComic.fromEntries(await store.list(), savedComic: saved);
-    await _record(<String, Object?>{'step': 'actual-live-version-input', 'status': 'passed',
-      'source': source.sourceId, 'title': origin.comic.title,
-      'origin_pages': chapter.pages.length, 'source_declared_successors': successors.length,
+    await _record(<String, Object?>{'step': crossSource ? 'actual-live-cross-source-input' : 'actual-live-version-input', 'status': 'passed',
+      'source': source.sourceId, 'target_source': targetSource.sourceId, 'title': origin.comic.title,
+      'origin_pages': chapter.pages.length,
+      if (!crossSource) 'source_declared_successors': successors.length,
       'existing_durable_declaration_used': persistedInput, 'historical_page_proof_copied': false,
       'source_or_target_manifest_modified': false});
     downloads = MemoryChapterDownloadService(pageLoader: (_, _) async =>
       throw StateError('This metadata/UI acceptance must not download page bodies'));
     queue = WholeComicDownloadQueue(downloads: downloads);
     cache = ResourceCacheCoordinator();
-    runApp(app_runtime.createApp(libraryStore: store, comicSources: <BrowsableComicSource>[source],
+    runApp(app_runtime.createApp(libraryStore: store,
+      comicSources: <BrowsableComicSource>[source, if (crossSource) targetSource],
       chapterDownloads: downloads, wholeComicDownloads: queue, cacheCoordinator: cache,
       persistHomeProjectionSnapshot: false, persistMissingPreferences: false,
       preferences: AppPreferencesController(), storageRoot: root.path));
     await _record(<String, Object?>{'step': 'awaiting-ordinary-confirmation', 'status': 'ready',
       'source': source.sourceId, 'title': origin.comic.title,
-      'required_UI': 'Home history long press -> details -> source-declared version -> migrate -> risk acknowledgement -> confirm'});
+      'required_UI': crossSource
+        ? 'Home history long press -> details -> target source (second dropdown row) -> native target URL -> comparison -> risk acknowledgement -> confirm'
+        : 'Home history long press -> details -> source-declared version -> migrate -> risk acknowledgement -> confirm'});
     final watch = Stopwatch()..start();
     String? selectedId;
     while (watch.elapsed < const Duration(minutes: 8)) {
       final old = await store.getSavedComic(source.sourceId, origin.comic.comicId);
-      if (old == null) {
+      if (crossSource || old == null) {
         for (final id in declaredIds) {
-          final next = await store.getSavedComic(source.sourceId, id);
-          final preference = await store.getComicPreference(source.sourceId, id);
+          final next = await store.getSavedComic(targetSource.sourceId, id);
+          final preference = await store.getComicPreference(targetSource.sourceId, id);
           if (next != null && preference?.inShelf == true) { selectedId = id; break; }
         }
       }
@@ -150,24 +195,25 @@ Future<void> _probeLiveVersionMigration() async {
       await Future<void>.delayed(const Duration(seconds: 1));
     }
     if (selectedId == null) throw StateError('ordinary source-declared migration was not confirmed');
-    final target = await source.loadComic(selectedId);
-    if (target.comic.sourceId != source.sourceId || target.comic.comicId != selectedId) {
+    final target = await targetSource.loadComic(selectedId);
+    if (target.comic.sourceId != targetSource.sourceId || target.comic.comicId != selectedId) {
       throw StateError('actual selected target identity mismatch');
     }
     final plan = ComicSourceMigrationPlan.build(source: projection, target: target);
-    final next = await store.getSavedComic(source.sourceId, target.comic.comicId);
-    final preference = await store.getComicPreference(source.sourceId, target.comic.comicId);
+    final next = await store.getSavedComic(targetSource.sourceId, target.comic.comicId);
+    final preference = await store.getComicPreference(targetSource.sourceId, target.comic.comicId);
     final oldPreference = await store.getComicPreference(source.sourceId, origin.comic.comicId);
     if (next == null || preference?.inShelf != true || preference?.liked != true ||
-        preference?.collected != true || oldPreference?.inShelf == true ||
-        await store.getSavedComic(source.sourceId, origin.comic.comicId) != null ||
-        await store.get(source.sourceId, chapter.chapter.chapterId) != null ||
+        preference?.collected != true ||
+        (oldPreference?.inShelf == true) != crossSource ||
+        (await store.getSavedComic(source.sourceId, origin.comic.comicId) != null) != crossSource ||
+        (await store.get(source.sourceId, chapter.chapter.chapterId) != null) != crossSource ||
         (await (store as SourceMigrationJournalStore).listPendingSourceMigrations()).isNotEmpty) {
       throw StateError('ordinary confirmed migration did not commit target/cleanup/journal');
     }
     for (final match in plan.chapterMatches) {
-      final entry = await store.get(source.sourceId, match.target.chapterId);
-      final states = await store.listChapterReadStates(source.sourceId, target.comic.comicId);
+      final entry = await store.get(targetSource.sourceId, match.target.chapterId);
+      final states = await store.listChapterReadStates(targetSource.sourceId, target.comic.comicId);
       final state = states.where((s) => s.chapterId == match.target.chapterId).firstOrNull;
       if (match.confidence == ChapterMigrationConfidence.exact) {
         if (entry?.chapter.comicId != target.comic.comicId || entry?.progress?.pageIndex != progress.pageIndex ||
@@ -179,21 +225,29 @@ Future<void> _probeLiveVersionMigration() async {
       }
     }
     final relations = await (store as ComicVersionRelationStore).listAllComicVersionRelations();
-    if (!relations.any((relation) => relation.sourceId == source.sourceId &&
+    if (!crossSource && !relations.any((relation) => relation.sourceId == source.sourceId &&
         relation.predecessorComicId == origin.comic.comicId &&
         relation.successorComicId == target.comic.comicId)) {
       throw StateError('ordinary source-declared relation not retained');
     }
-    if (!_probeBytesEqual(payload, await original.readAsBytes())) {
-      throw StateError('user source payload modified');
+    if (crossSource && (relations.isNotEmpty || preference?.acknowledgedVersionComicId != null ||
+        (await store.get(source.sourceId, chapter.chapter.chapterId))?.progress?.pageIndex != progress.pageIndex)) {
+      throw StateError('cross-source migration changed origin state or invented a version relation');
     }
-    await _record(<String, Object?>{'step': 'ordinary-live-version-migration', 'status': 'passed',
+    for (final original in originalPayloads.entries) {
+      if (!_probeBytesEqual(original.value, await original.key.readAsBytes())) {
+        throw StateError('user source payload modified');
+      }
+    }
+    await _record(<String, Object?>{'step': crossSource ? 'ordinary-live-cross-source-migration' : 'ordinary-live-version-migration', 'status': 'passed',
       'exact_matches': plan.chapterMatches.where((m) => m.confidence == ChapterMigrationConfidence.exact).length,
       'sequence_only_matches': plan.chapterMatches.where((m) => m.confidence == ChapterMigrationConfidence.sequenceOnly).length,
       'target_native_identity_and_preference_preserved': true,
-      'chapter_match_state_outcomes_verified': true, 'old_metadata_and_shelf_cleared': true,
-      'source_declared_relation_retained': true, 'durable_journal_drained': true,
-      'user_source_payload_unchanged': true, 'artifact_reuse_or_cross_source_proven': false});
+      'chapter_match_state_outcomes_verified': true,
+      (crossSource ? 'old_metadata_and_shelf_retained' : 'old_metadata_and_shelf_cleared'): true,
+      (crossSource ? 'no_cross_source_version_relation' : 'source_declared_relation_retained'): true,
+      'durable_journal_drained': true, 'user_source_payload_unchanged': true,
+      'cross_source_confirmation_proven': crossSource, 'media_artifact_reuse_proven': false});
     passed = true;
   } on Object catch (error) {
     await _record(<String, Object?>{'step': 'failure', 'status': 'failed',

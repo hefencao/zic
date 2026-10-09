@@ -9,8 +9,8 @@
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
-- 完成真实跨源搜索/手填原生ID的确认迁移；实际EH同源确认已通过production Home/details控件与隔离SQLite，exact状态/偏好、旧metadata/书架清理及relation/journal已验。只补真实sequence-only/artifact分支及来源artifact/metadata/cleanup callback内部中断与schema11 journal幂等恢复。
-  `metadataCommitted` 后无需目标源在线，只继续旧 source cleanup；journal phase不得触发Home projection revision。真实来源/普通入口证据须与隔离事务phase-boundary及callback内部中断证据分别登记。
+- 完成真实跨源搜索/手填原生ID的确认迁移，核对目标原生身份/整本偏好、原metadata/进度保留及journal收尾。JM目标先须来源声明的有效镜像配置；2a7c85ef在确认前收到插件镜像更新/选择/重启提示，未迁移。实际EH同源确认及exact状态/清理/relation/journal保持已验。
+  保留已验schema11五phase/三callback内部实际进程中断恢复：`metadataCommitted`后无需目标在线，只继续旧source cleanup；journal phase不触发Home projection revision。
 - 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
@@ -38,7 +38,6 @@
 ## P0：身份、同源更新与验证设备闭环
 
 - 使用真实 Venera/E-Hentai predecessor/ACK输入及successor补Reader首次/后续提醒；真实版本详情、比较及同源确认已验，不再重复。
-- 仅补真实sequence-only及artifact结果：候选不复制阅读状态或未经证明的字节；实际EH exact目标原生身份/进度/已读/偏好已验，保留title+sequence比较合同。
 - 禁漫天堂仅余真实`challenge-error-*`/typed interceptor、脚本-only/普通403、可见challenge期间停留及真实解题后handoff。081已验普通完整页面稳定返回、取消/中断和一次snapshot提交，不重复；不得要求新`cf_clearance`作为唯一成功条件。
 - 使用真实 Mihon 1.4/1.6扩展验证宿主调用顺序：1.6先 `getMangaUpdate(...fetchChapters=true)` / `getPageList(SChapter)`，1.4仅能力缺失时回退 legacy。用禁漫天堂确认 source返回的每个完整 SChapter原样保留且不按相同 URL折叠；Roumanwu原80章不得再因错误入口刷新成0章。
 
