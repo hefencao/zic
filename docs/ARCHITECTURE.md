@@ -149,6 +149,9 @@ replay期间consumer通知可暂时隐藏，但publish必须以replay开始前�
 Reader source watch把encoded content classification与native source growth同等视为decode evidence：
 `unknown→fallback/gif/webp`必须立即wake waiting decode，
 尤其fallback/gif不得被`sourceReady=false`或尚未seal的partial prefix阻塞到下一次手势/reconcile。
+DecodeSession 的异步错误回调先校验原 CancelToken、session/demand 与 Reader-local ingress epoch；
+已退休工作以 typed cancellation 退出，不再读取旧 EncodedSource 或发布失败/prefix retry。
+此检查在 cursor 真正返回后执行，不提前释放 DecodeLane/native capacity。
 deferred resident range hydration对同一physical `SourceEpoch`的失败是Reader-local终态：
 失败后不得仅因requested length尚未满足就在microtask tail中自递归重放，也不得由role/priority churn重新消费同一失败authority；
 只有新的physical epoch可以重新尝试。成功中的hydration若同时收到更大的decoder-owned target，仍可在当前成功attempt结束后只接续一次最新target。

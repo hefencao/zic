@@ -475,6 +475,80 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  for (final typed in <bool>[false, true]) {
+  for (final retirement in <String>['cancel', 'epoch-reset', 'dispose']) {
+  test('late decode error after $retirement is cancellation typed=$typed',
+      () async {
+    final ingress = Ingress(
+      factory: _SourceFactory(rejectDisposedReads: true),
+      maxBytes: 1024,
+    );
+    addTearDown(ingress.dispose);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'retired-decode-error',
+      ingress: ingress,
+    );
+    final cursors = _DelayedCursorFactory();
+    final trace = MemoryTraceSink();
+    final session = DecodeSession(
+      id: _decodeId(_downloadId()),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    final control = CancelToken();
+    var settled = false;
+    final fill = session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'retired-error',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: control,
+    ).whenComplete(() {
+      settled = true;
+    });
+    final result = expectLater(fill, throwsA(isA<Failure>().having(
+      (failure) => failure.code, 'code', ErrorCode.cancelled)));
+
+    switch (retirement) {
+      case 'cancel':
+        control.cancel();
+        break;
+      case 'epoch-reset':
+        projection.reset(const SourceEpoch(1));
+        break;
+      case 'dispose':
+        session.dispose();
+        break;
+    }
+    final stateBefore = session.state;
+    final eventCountBefore = trace.events.length;
+    await Future<void>.delayed(Duration.zero);
+    expect(settled, isFalse,
+        reason: 'cancelled work must retain capacity until the cursor returns');
+    cursors.cursor.next.completeError(typed
+        ? const Failure(code: ErrorCode.decode, message: 'late native failure')
+        : StateError('late native failure'));
+    await result;
+    expect(session.state, stateBefore);
+    expect(session.snapshot.failure, isNull);
+    expect(trace.events, hasLength(eventCountBefore),
+        reason: 'retired errors must not publish a decode failure or prefix retry');
+  });
+  }
+  }
+
   test('partial WebP retries only after the learned per-frame prefix', () async {
     final temp = await Directory.systemTemp.createTemp(
       'decode_prefix_hint_test_',
@@ -1832,13 +1906,21 @@ final class _Clock implements MonoClock {
 }
 
 final class _SourceFactory implements SourceFactory {
+  _SourceFactory({this.rejectDisposedReads = false});
+
+  final bool rejectDisposedReads;
+
   @override
   EncodedSource create({required int epoch, required int maxBytes}) =>
-      _Source(epoch);
+      _Source(epoch, rejectDisposedReads: rejectDisposedReads);
 }
 
 final class _Source implements EncodedSource {
-  _Source(this.epoch);
+  _Source(this.epoch, {this.rejectDisposedReads = false});
+
+  final bool rejectDisposedReads;
+  bool _disposed = false;
+  bool _sealed = false;
 
   @override
   int epoch;
@@ -1846,7 +1928,12 @@ final class _Source implements EncodedSource {
   @override
   int get length => bytes.length;
   @override
-  bool sealed = false;
+  bool get sealed {
+    if (_disposed && rejectDisposedReads) {
+      throw StateError('native source is disposed');
+    }
+    return _sealed;
+  }
   @override
   SourceKind get kind => SourceKind.webp;
 
@@ -1866,18 +1953,18 @@ final class _Source implements EncodedSource {
   SourceStatus reset(int epoch) {
     this.epoch = epoch;
     bytes.clear();
-    sealed = false;
+    _sealed = false;
     return SourceStatus.ok;
   }
 
   @override
   SourceStatus seal(int epoch) {
-    sealed = true;
+    _sealed = true;
     return SourceStatus.ok;
   }
 
   @override
-  void dispose() {}
+  void dispose() => _disposed = true;
 }
 
 final class _CursorFactory implements CursorFactory {

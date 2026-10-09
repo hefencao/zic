@@ -708,6 +708,7 @@ final class DecodeSession {
       _setState(DecodeState.ready);
       return snapshot;
     } on Failure catch (error) {
+      _requireCurrentFill(cancel, epoch, revision);
       if (error.code != ErrorCode.cancelled &&
           error.code == ErrorCode.decode &&
           _deferUnsealedInitialDecodeFailure(source)) {
@@ -719,6 +720,7 @@ final class DecodeSession {
       }
       rethrow;
     } on Object catch (error) {
+      _requireCurrentFill(cancel, epoch, revision);
       if (_deferUnsealedInitialDecodeFailure(source)) {
         return snapshot;
       }
@@ -733,6 +735,17 @@ final class DecodeSession {
     }
   }
 
+
+  void _requireCurrentFill(CancelToken cancel, SourceEpoch epoch, int revision) {
+    cancel.throwIfCancelled();
+    if (_disposed || _revision != revision) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'decode work was retired',
+      );
+    }
+    _requireIngressEpoch(epoch);
+  }
 
   bool _deferUnsealedInitialDecodeFailure(EncodedSource source) {
     if (source.sealed || (_holder?.depth ?? 0) > 0) return false;
