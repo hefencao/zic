@@ -1771,10 +1771,10 @@ Animated WebP holder/cursor与partial-prefix循环资格仍仅属于DecodeSessio
 `DecodeSnapshot.partialPrefixLoopEligible`只暴露这一瞬时decoder资格，不能成为source-growth、transport或partial authority。
 对已识别WebP，unsealed source且尚无成功frame时的native decode exception可沿既有prefix hint/source revision wake作为provisional prefix failure等待增长；
 source sealed或已有成功frame后的decode exception仍是authoritative failure。
-dev.230起artifact cache彻底删除directed hard alias/rekey：explicit migration也只登记symmetric verified equivalence；
-ordinary Reader promotion若已存在同长度direct equivalent durable artifact则不复制第二份exact body，
-只有required durable command barrier才materialize exact identity。
-dev.231起required durable target由physical owner当前claim语义决定：
+`ArtifactCacheManager` 不持 directed hard alias/rekey；`VerifiedArtifactReusePlan` 登记 symmetric verified equivalence。
+显式迁移的目标 durable binding 仍由 `HomeSourceMigrationTransaction` 调用 `materializeTargetArtifacts`，经既有 artifact owner 建立目标 exact authority；等价关系不能替代该持久提交。
+ordinary Reader promotion若已存在同长度direct equivalent durable artifact则不复制第二份exact body；required durable command（含显式迁移）仍按原 barrier materialize exact identity。
+required durable target由physical owner当前claim语义决定：
 若physical A正服务required exact B，promotion handoff直接把A的hot/resident bytes持久化为B，不先materialize A；
 只有无required target的ordinary promotion才以physical session.id作为默认durable target。
 dev.236起Reader current transfer progress同样只投影demand reconcile后resolved physical `DownloadSession.snapshot`：

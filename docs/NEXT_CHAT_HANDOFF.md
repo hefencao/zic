@@ -10,7 +10,7 @@
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
 - Home卡片source signal/key及健康/pending artwork State保持，063/066/082收口。同生产输入2368/27suite/analyzer/Rust22、全门禁/三ABI Debug/Profile/minifiedRelease/JNI保持通过；native115保留，均非本轮重跑。本轮文档/所有权门禁通过，38 decode/55关联保持。
-- 073/027/028/072/070/041已验保持。057：JM API1→2→1应用/回读通过；API2后12有效引用不变、JM代际推进/EH不变。应用后/最终恢复身份、native ID/closed及真实Web登录未验；普通设置/9插件/32会话不重跑。challenge/升级/DNS/原加载独立。
+- 013独立网络接收未验：当前SDK36设备perfetto仅有ftrace/log，未注册android.network_packets；取得独立wire/Rust观测后才采集，20ms Dart progress不能代替。057镜像仅补应用后/最终恢复身份与native ID/closed，Web登录仍需真实账号；普通设置/9插件/32会话不重跑。
 - EH predecessor/ACK与提醒开放；099受控及实际canonical已验，停止重复。31后台proof失败根因为compact focus URI泄漏；只hydrate占位focus，取消/仍占位停止，真实carrier/epoch保持。四回归/新Release371→424、Reader80静置、本地13,394,740B/0失败通过。
 - rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
@@ -52,7 +52,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移统一入口/来源药丸/聚合封面标题/高级ID保持，024/025/075不重跑。023仍需实际旧卡与唯一head，46终点不证明head。已恢复Release499ee89d/PID32478、无forward；该次恢复后Home/Keyguard未复核。AOT evaluate禁用不阻断UI/trace。040/074独立。
+- 迁移统一入口/来源药丸/聚合封面标题/高级ID保持，024/025/075不重跑。023仍需实际旧卡与唯一head，46终点不证明head。已恢复Release499ee89d/PID13719、无forward；Home/Keyguard未复核。057 observer握手失败未到BASE/设置修改，不能记新通过。040/074独立。
   Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。

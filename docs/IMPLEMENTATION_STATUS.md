@@ -39,7 +39,7 @@
 
 ### 外部插件运行时 (Mihon & Venera)
 - ADR0400 Accepted：受控先失败确认同步编码堵共享JavaBridge，输出借原executor且退出才dispose/finished，canonical1/isolated2不变。回调6/Binder11/2304/Rust22/native108与六APK已验；真实JM8页runtime≤60.489ms、缓存104读/0重下。049正文载体收口；真实client/原加载/性能独立开放。
-- 049正文载体/寿命已收口：Binder11/Dart9/Source9/PNG6/FailureRetry6/Network4/Cookie8/NativeWebP6/Mihon6已验；039普通四类Home筛选/信号通过，040真实首次入架仍开放。089默认GaiResolver的blocking DNS不能由HTTP取消证明退出；VPN旁路受限，TestNetwork成功对照无DNS包，原生回溯需root，仍未验；未改生产。
+- 049正文载体/寿命已收口：Binder11/Dart9/Source9/PNG6/FailureRetry6/Network4/Cookie8/NativeWebP6/Mihon6已验；039筛选/信号通过，040真实入架开放。089 blocking DNS退出未验：VPN旁路受限、TestNetwork无成功对照，回溯需root。013独立接收时间未验：SDK36未注册android.network_packets，ftrace/log不能补证；未改生产。
 - ADR0395 Accepted：两有效先失败确认入口回执后晚短页ratio误走top anchor；复用原center/revision，99 Reader及2280/Rust22/108、三ABI通过。Release7ad3a60d三次真冷进入JM保持已保存index3，各11缓存/0下载/失败；slider/首尾与3独立历史覆盖通过。
 - ADR0396 Accepted：public显式失效忽略仅touch的recency变化，保留新binding保护与trim/其它完整record比较；受控先失败修复，全门禁/三ABI通过。普通Release单次显式重载仅1预期下载，冷重入11缓存/0重下；未宣称真机强制了touch竞态。
 - 浏览器成功等Cookie/storage/UA一次提交，081保持。Android13+返回现共用history/完成并销毁撤销，15回归通过；046真机两次设置/10断言及四次普通返回通过，Mihon两ABI的10优先级断言通过，047按原client/semantic标准收口。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 同输入2368/27suite/analyzer、Rust22/全门禁/三ABI Debug/Profile/minifiedRelease/JNI/native115保持通过。099实际EH canonical/静置已验；当前Release499ee89d/PID32478已恢复，前台未复核。3既有quarantine；独立性能/来源开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 同输入2368/27suite/analyzer、Rust22/全门禁/三ABI Debug/Profile/minifiedRelease/JNI/native115保持通过。099实际EH canonical/静置已验；当前Release499ee89d/PID13719已恢复，前台未复核。3既有quarantine；独立性能/来源开放 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/099/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。

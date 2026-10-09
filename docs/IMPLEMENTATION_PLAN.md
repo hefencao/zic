@@ -4,7 +4,7 @@
 - P0：补dev.282快滑最终composition与视觉验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。余下顿挫只按fresh有效显示证据定位SurfaceProducer/compositor，不重复已量化首个native output成本或重改已验geometry/anchor、窗口。
 - P0：按dev.280 scroll-stable geometry的现行合同补真机视觉验收：保留painted extent；允许视口之外forward ratio预备、reverse prefix原子anchor校正及slider真实visible ratio采用。物理观察只用已布局geometry，剩余ratio在idle latest-wins提交。已验组件见ADR0330/0361与loading审计；不得恢复active全冻结或逐ratio jumpTo。
 ## P0：Current / Previous 真实执行槽真机闭环
-- dev.192 持续传输归因先对齐consumerPacing/body-read permit的停驻区间与实际读取区间，再比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`及`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`。当前receive-progress来自限频Dart onData，并非独立socket/Rust时钟；共同长gap不能单独归因源/CDN，FFI交付与真实网络接收仍须独立分辨，不以诊断驱动scheduler。
+- dev.192 传输归因须对齐consumerPacing/body-read permit，并独立分辨网络接收、FFI/Dart交付与应用停驻；20ms限频Dart progress共同长gap不足以归因。SDK36当前设备未注册`android.network_packets`，普通ftrace/log不能补证；取得独立wire/Rust时间观测后才采集，不重复同一无该能力设备，不以diagnostics驱动scheduler。
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
