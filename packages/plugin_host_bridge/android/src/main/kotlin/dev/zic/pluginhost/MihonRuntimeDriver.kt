@@ -1646,7 +1646,7 @@ internal class MihonRuntimeDriver private constructor(
                 mihonActivationLog(driverId, "context-ready", startedAt, stageStarted)
                 stageStarted = SystemClock.elapsedRealtime()
                 try {
-                    initializeMihonInjekt(loader, extensionContext)
+                    initializeMihonInjekt(loader, extensionContext, context.applicationContext)
                 } catch (error: Throwable) {
                     throw IllegalStateException(
                         "Mihon Injekt initialization failed: ${error.sanitizedMessage()}",
@@ -2096,6 +2096,7 @@ private fun verifyMihonPluginAbi(classLoader: ClassLoader) {
 private fun initializeMihonInjekt(
     classLoader: ClassLoader,
     context: Context,
+    networkContext: Context,
 ) {
     runCatching { classLoader.loadClass("dev.mihon.injekt.InjektKt") }
         .getOrNull()
@@ -2104,7 +2105,7 @@ private fun initializeMihonInjekt(
 
     val application = MihonPayloadApplication(context)
     val networkType = classLoader.loadClass("eu.kanade.tachiyomi.network.NetworkHelper")
-    val network = networkType.getConstructor(Context::class.java).newInstance(application)
+    val network = networkType.getConstructor(Context::class.java).newInstance(networkContext)
     val (jsonType, json) = createMihonJson(classLoader)
     val scope = classLoader.loadClass("uy.kohesive.injekt.InjektKt")
         .getMethod("getInjekt")

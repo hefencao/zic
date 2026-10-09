@@ -1138,6 +1138,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   The generic test/embed default MUST NOT silently become a user-visible eight-plugin limit.
 - plugin host MUST NOT 把 network bridge 的内部 browser-cookie session实现列为 Mihon common runtime ABI。
   Cookie snapshot reset MUST 通过稳定网络适配器边界调用。
+  Mihon `NetworkHelper` MUST 使用宿主 applicationContext读取浏览器 Cookie/UA快照；注入的插件 `Application` MUST继续使用扩展 payload Context保留资源与偏好隔离。
 - Mihon common runtime完整性预检中所有 `dev.zic.network.*` 动态类型 MUST 在 network bridge consumer R8规则中保留原始全限定类名和成员；
   typed `SourceVerificationRequiredException` 不得被混淆、裁剪或用错误消息字符串替代。
 - app startup channel 通过类名反射挂载的 feature plugin 和 rhttp entry MUST 在 app R8规则中保留原始全限定类名及可调用成员；

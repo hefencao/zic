@@ -44,3 +44,15 @@ requires one terminal result with no third bind. A missed pending-work timing
 sample is a test limitation. These deliberate process deaths do not diagnose a
 spontaneous crash or LMK. The source manifest, payload and preferences are not
 deleted; only task-owned temporary files are cleaned.
+
+`--cases mihon-cookie-restart` creates and retires two production native drivers
+from the actual installed WNACG1.6 APK. A private Context keeps the browser
+snapshot, extracted runtime and preferences away from user stores. Before each
+activation, an actual prior snapshot import is observed; after activation, its
+reset must precede the first physical HTTP request through the extension's
+unchanged source client. Both first requests must carry the latest host snapshot
+Cookie and UA and return exact PNG bytes. This tests native driver restart and
+snapshot ordering; the controlled loopback input does not prove Cloudflare
+challenge completion, source-origin health or Binder recovery. Cleanup drains
+drivers/workers, expires only the uniquely named test Cookie and removes the
+private Context files/preferences.

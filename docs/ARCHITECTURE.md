@@ -2400,6 +2400,7 @@ URL选择仍属于 source/request plan。宿主直连前同步投影当前 sourc
 非 retryable/source错误或重试耗尽在当前 demand内成为 terminal，source listener/finally不得自行重复提交。
 
 可见浏览器 Activity 与 Cookie/localStorage/UA snapshot 只由 `network_bridge` 声明和拥有；`plugin_host_bridge` 仅消费共享网络 runtime helper，不保留独立登录 Activity 或快照存储。
+Mihon Injekt 分别使用扩展 payload Context 注入 `Application`、宿主 applicationContext 注入 `NetworkHelper`；浏览器 Cookie/UA快照沿 network bridge 宿主目录读取，扩展资源和偏好维持 payload 隔离。
 Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览器 session。
 验证模式下 `NetworkBrowserActivity` 不得把插件/OkHttp 的静态 UA 写入 WebView；
 WebView 使用当前 Android WebView provider 的真实 UA，并把该 UA 与同站点 Cookie/localStorage 写入同一 snapshot revision。

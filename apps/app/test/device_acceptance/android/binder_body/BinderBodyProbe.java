@@ -11,8 +11,12 @@ import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.os.FileObserver;
 import android.os.IBinder;
+import android.webkit.CookieManager;
 import java.io.*;
 import java.lang.reflect.*;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
@@ -28,6 +32,11 @@ public final class BinderBodyProbe extends Instrumentation {
     private File work, packets, payload;
     private File installedManifest;
     private String installedManifestDigest, installedVersion;
+    private JSONObject installedMihon;
+    private Object mihonDriver;
+    private ExecutorService mihonExecutor;
+    private String cookieUrl, cookieName;
+    private final Set<String> testPreferences=new LinkedHashSet<String>();
     private FileObserver observer;
     private String name, key, digest, processId, sessionId;
     private final JSONObject proof = new JSONObject();
@@ -115,7 +124,7 @@ public final class BinderBodyProbe extends Instrumentation {
         observer=new FileObserver(packets.getPath(),FileObserver.MOVED_TO|FileObserver.CREATE|FileObserver.DELETE){
             @Override public void onEvent(int event,String file){if(file!=null&&(file.endsWith(".packet")||file.endsWith(".body")||file.endsWith(".body.part")||file.endsWith(".lease")))packetEvents.add(event+":"+file);}
         };observer.startWatching();
-        if(name.startsWith("eh-initial-")){
+        if(name.startsWith("eh-initial-")||name.equals("mihon-cookie-restart")){
             installedManifest=new File(context.getFilesDir(),"zic/external_plugins/installed.json");
             require(installedManifest.isFile(),"installed source manifest unavailable");
             installedManifestDigest=sha(installedManifest);
@@ -123,12 +132,14 @@ public final class BinderBodyProbe extends Instrumentation {
             JSONArray plugins=manifest.getJSONArray("plugins");JSONObject installed=null;
             for(int i=0;i<plugins.length();i++){
                 JSONObject row=plugins.getJSONObject(i);
-                if("venera:ehentai".equals(row.getJSONObject("plugin").getString("pluginId"))){require(installed==null,"duplicate installed EH payload");installed=row;}
+                boolean selected=name.equals("mihon-cookie-restart")?"eu.kanade.tachiyomi.extension.zh.wnacg".equals(row.optString("packageName")):"venera:ehentai".equals(row.getJSONObject("plugin").getString("pluginId"));
+                if(selected){require(installed==null,"duplicate installed source payload");installed=row;}
             }
-            require(installed!=null,"actual installed EH payload unavailable");
+            require(installed!=null,"actual installed source payload unavailable");
             JSONObject plugin=installed.getJSONObject("plugin");
-            require("veneraJavaScript".equals(plugin.getString("format")),"installed EH payload is not Venera");
-            payload=new File(installed.getString("payloadPath"));key=installed.getString("sourceKey");
+            require((name.equals("mihon-cookie-restart")?"mihonExtension":"veneraJavaScript").equals(plugin.getString("format")),"installed source format changed");
+            payload=new File(installed.getString("payloadPath"));
+            if(name.equals("mihon-cookie-restart")){installedMihon=installed;require("1.6".equals(installed.getString("extensionLib")),"expected actual WNACG1.6 input");}else key=installed.getString("sourceKey");
             installedVersion=plugin.getString("version");digest=installed.getString("payloadSha256");
             require(payload.isFile()&&sha(payload).equals(digest),"installed EH payload changed");
             return;
@@ -136,6 +147,69 @@ public final class BinderBodyProbe extends Instrumentation {
         String source="class BinderBodyFixture extends ComicSource {name='Fixture';key='"+key+"';version='1';url='https://fixture.invalid';explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];comic={onThumbnailLoad:(uri)=>({onResponse:async(input)=>input,modifyImage:'"+SCRIPT+"'})};}";
         payload=new File(work,"fixture.js");try(OutputStream stream=new FileOutputStream(payload)){stream.write(source.getBytes("UTF-8"));}
         digest=sha(payload);
+    }
+    private final class CookieContext extends ContextWrapper {
+        CookieContext(){super(context);}
+        private File directory(String name){File dir=new File(work,name);require(dir.isDirectory()||dir.mkdirs(),"cookie fixture root unavailable");return dir;}
+        @Override public Context getApplicationContext(){return this;}
+        @Override public File getFilesDir(){return directory("host-files");}
+        @Override public File getCodeCacheDir(){return directory("host-code-cache");}
+        @Override public File getCacheDir(){return directory("host-cache");}
+        @Override public android.content.SharedPreferences getSharedPreferences(String name,int mode){String scoped="zic_cookie_restart_"+android.os.Process.myPid()+"_"+name;testPreferences.add(scoped);return super.getSharedPreferences(scoped,mode);}
+    }
+    private Object browserSession() throws Exception {return type("dev.zic.network.AndroidBrowserCookieSession").getField("INSTANCE").get(null);}
+    private void snapshot(Context host,String agent,String value,long revision) throws Exception {
+        JSONObject snapshot=new JSONObject().put("requestedUrl",cookieUrl).put("currentUrl",cookieUrl).put("userAgent",agent).put("cookieHeader",cookieName+"="+value).put("updatedAt",revision);
+        try(OutputStream output=new FileOutputStream(new File(host.getFilesDir(),"zic_network_browser_snapshot.json"))){output.write(snapshot.toString().getBytes("UTF-8"));}
+    }
+    private void closeMihon() throws Exception {
+        if(mihonDriver!=null){((CompletableFuture<?>)call(mihonDriver,"closeWhenDrained",new Class<?>[0])).get(15,TimeUnit.SECONDS);mihonDriver=null;}
+    }
+    @SuppressWarnings("unchecked") private void cookieRestart() throws Exception {
+        CookieContext host=new CookieContext();cookieName="zic_cookie_restart_"+android.os.Process.myPid();
+        mihonExecutor=Executors.newCachedThreadPool();JSONArray phases=new JSONArray();
+        List<String> entries=new ArrayList<String>();JSONArray declared=installedMihon.getJSONArray("entryClasses");for(int i=0;i<declared.length();i++)entries.add(declared.getString(i));
+        JSONObject plugin=installedMihon.getJSONObject("plugin");
+        Map<String,Object> activation=map("pluginId",plugin.getString("pluginId"),"pluginVersion",installedVersion,"packageName",installedMihon.getString("packageName"),"extensionLib","1.6","entryClasses",entries,"limits",map("maxResponseBytes",MAX));
+        Object companion=type("dev.zic.pluginhost.MihonRuntimeDriver").getField("Companion").get(null);
+        Object browser=browserSession();long revision=System.currentTimeMillis();byte[] body=image(16);
+        for(int phase=1;phase<=2;phase++){
+            closeMihon();
+            try(ServerSocket origin=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"))){
+                origin.setSoTimeout(15000);cookieUrl="http://127.0.0.1:"+origin.getLocalPort()+"/cookie-restart";
+                snapshot(host,"PreviousCookieFixture/"+phase,"previous",revision+phase*2);
+                Object imported=call(browser,"importCookies",new Class<?>[]{Context.class,String.class,String.class},host,cookieUrl,null);
+                require(((Number)imported).intValue()==1,"prior real browser snapshot was not imported");
+                require(!((Map<?,?>)get(browser,"importedSnapshotRevisions")).isEmpty(),"prior browser import was not observable");
+                String expectedAgent="RestartCookieFixture/"+phase,expectedValue="fresh"+phase;
+                snapshot(host,expectedAgent,expectedValue,revision+phase*2+1);
+                mihonDriver=call(companion,"create",new Class<?>[]{Context.class,String.class,Map.class,String.class,long.class,String.class,ExecutorService.class},host,"cookie-restart-"+phase,activation,payload.getPath(),payload.length(),digest,mihonExecutor);
+                Context extension=(Context)get(mihonDriver,"payloadContext");
+                require(!extension.getFilesDir().equals(host.getFilesDir())&&installedMihon.getString("packageName").equals(extension.getPackageName()),"extension resources or files lost payload isolation");
+                require(((Map<?,?>)get(browser,"importedSnapshotRevisions")).isEmpty(),"activation did not reset old imports before first request");
+                long resetObserved=System.nanoTime();
+                CompletableFuture<Map<String,String>> wire=CompletableFuture.supplyAsync(()->{
+                    try(Socket peer=origin.accept()){
+                        peer.setSoTimeout(10000);BufferedReader input=new BufferedReader(new InputStreamReader(peer.getInputStream(),"UTF-8"));
+                        String requestLine=input.readLine();require(requestLine!=null&&requestLine.startsWith("GET /cookie-restart "),"unexpected first source request");Map<String,String> headers=new LinkedHashMap<String,String>();String line;
+                        while((line=input.readLine())!=null&&!line.isEmpty()){int split=line.indexOf(':');if(split>0)headers.put(line.substring(0,split).toLowerCase(Locale.US),line.substring(split+1).trim());}
+                        headers.put("observedNanos",String.valueOf(System.nanoTime()));
+                        OutputStream output=peer.getOutputStream();output.write(("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));output.write(body);output.flush();return headers;
+                    }catch(Exception error){throw new CompletionException(error);}
+                },mihonExecutor);
+                Reply reply=new Reply();Class<?> resultType=type("dev.zic.pluginhost.NativeDriverResult");Object result=Proxy.newProxyInstance(loader,new Class<?>[]{resultType},reply);
+                Map<String,Object> request=map("requestId","cookie-first-"+phase,"externalSourceId","6551136894818591762","operation","loadResource","arguments",map("uri",cookieUrl));
+                call(mihonDriver,"invoke",new Class<?>[]{Map.class,resultType},request,result);
+                Object bytes=reply.done.get(20,TimeUnit.SECONDS);Map<String,String> received=wire.get(10,TimeUnit.SECONDS);
+                boolean cookieMatches=received.getOrDefault("cookie","").contains(cookieName+"="+expectedValue),agentMatches=expectedAgent.equals(received.get("user-agent"));
+                proof.put("firstRequestCookieMatches",cookieMatches).put("firstRequestUaMatches",agentMatches);
+                require(cookieMatches&&agentMatches,"first actual source request lost host snapshot Cookie or UA");
+                require(Long.parseLong(received.get("observedNanos"))>resetObserved&&reply.count.get()==1&&bytes instanceof byte[]&&Arrays.equals(body,(byte[])bytes),"first source request ordering or body changed");
+                phases.put(new JSONObject().put("phase",phase).put("oldImportPresentBeforeActivation",true).put("resetObservedBeforeRequest",true).put("firstRequestCookieAndUaMatch",true).put("payloadContextRemainsIsolated",true).put("sourceClientBodyExact",true).put("resultCount",reply.count.get()));
+            }
+        }
+        closeMihon();require(sha(installedManifest).equals(installedManifestDigest)&&sha(payload).equals(digest),"cookie test changed installed source files");
+        proof.put("pluginPackage",installedMihon.getString("packageName")).put("extensionLib","1.6").put("payloadSha256",digest).put("realDriverCreations",2).put("firstPhysicalHttpRequests",2).put("phases",phases).put("installedSourceFilesUnchanged",true).put("userLibraryOrArtifactIndexOpened",false).put("snapshotAndPreferencesUsePrivateContext",true);
     }
     @SuppressWarnings("unchecked") private void activate() throws Exception {
         Map<String,Object> activation=map("schemaVersion",1,"format","veneraJavaScript","pluginId","venera:binder-body-fixture","pluginVersion","1","payloadPath",payload.getPath(),"payloadByteLength",payload.length(),"payloadSha256",digest,"sourceKey",key,"capabilities",Collections.emptyList(),"limits",map("invocationTimeoutMicros",60000000L,"maxResponseBytes",MAX,"maxConcurrentInvocations",1,"maxRuntimeHeapBytes",64*1024*1024));
@@ -346,13 +420,16 @@ public final class BinderBodyProbe extends Instrumentation {
     }
     private void cleanup() {
         for(Gate gate:gates)gate.release.countDown();
+        try{closeMihon();}catch(Exception error){try{proof.put("cleanupError",error.toString());}catch(Exception ignored){}}
+        if(mihonExecutor!=null){mihonExecutor.shutdownNow();try{require(mihonExecutor.awaitTermination(5,TimeUnit.SECONDS),"cookie fixture executor did not drain");}catch(Exception error){try{proof.put("cleanupError",error.toString());}catch(Exception ignored){}}}
+        if(cookieUrl!=null){CountDownLatch done=new CountDownLatch(1);runOnMainSync(()->CookieManager.getInstance().setCookie(cookieUrl,cookieName+"=; Path=/; Max-Age=0",ok->done.countDown()));try{require(done.await(5,TimeUnit.SECONDS),"fixture cookie cleanup did not settle");CookieManager.getInstance().flush();}catch(Exception error){try{proof.put("cleanupError",error.toString());}catch(Exception ignored){}}}
         if(client!=null)try{runOnMainSync(()->{try{call(client,"shutdown",new Class<?>[0]);}catch(Exception ignored){}});await(()->((ExecutorService)get(client,"responseExecutor")).isTerminated(),8,"client cleanup did not drain");}catch(Exception error){try{proof.put("cleanupError",error.toString());}catch(Exception ignored){}}
-        if(observer!=null)observer.stopWatching();if(work!=null)remove(work);if(key!=null&&installedManifest==null)context.deleteSharedPreferences("zic_venera_"+key);
+        if(observer!=null)observer.stopWatching();if(work!=null)remove(work);if(key!=null&&installedManifest==null)context.deleteSharedPreferences("zic_venera_"+key);for(String pref:testPreferences)context.deleteSharedPreferences(pref);
     }
     private static void remove(File file){File[] rows=file.listFiles();if(rows!=null)for(File child:rows)remove(child);file.delete();}
     @Override public void onCreate(Bundle args){name=args.getString("case","normal");super.onCreate(args);start();}
     @Override public void onStart(){int code=0;Bundle evidence=new Bundle();
-        try{setup();if(name.startsWith("eh-initial-"))initialEhActivation(name.equals("eh-initial-terminal"));else if(name.equals("host-reopen"))hostReopen();else{activate();
+        try{setup();if(name.equals("mihon-cookie-restart"))cookieRestart();else if(name.startsWith("eh-initial-"))initialEhActivation(name.equals("eh-initial-terminal"));else if(name.equals("host-reopen"))hostReopen();else{activate();
             switch(name){case "normal":normal();break;case "cancel-before-claim":beforeClaim();break;case "cancel-during-hash":duringClaim();break;case "close-claim":closeClaim();break;case "close-during-hash":closeDuringHash();break;case "session-close-read":sessionCloseRead();break;case "source-loss":serviceLoss();break;case "producer-loss":producerLoss();break;case "host-stage":hostStage();break;case "rpc-timeout":rpcTimeout();break;default:throw new AssertionError("unknown case "+name);}}
             proof.put("case",name).put("status","passed");code=-1;
         }catch(Throwable error){error.printStackTrace();try{proof.put("case",name).put("status","failed").put("error",error.toString());}catch(Exception ignored){}}
