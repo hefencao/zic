@@ -12,6 +12,7 @@ import 'package:network_bridge/network_bridge.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:transport/transport.dart';
 
@@ -44,6 +45,7 @@ const _browserOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_BROWSER_ONLY');
 const _userAgentOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_USER_AGENT_ONLY');
 const _pluginLifecycleOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_PLUGIN_LIFECYCLE_ONLY');
 const _cleartextMediaOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_CLEARTEXT_MEDIA_ONLY');
+const _liveVersionOnly = bool.fromEnvironment('ZIC_SOURCE_ACCEPTANCE_LIVE_VERSION_ONLY');
 
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() =>
@@ -51,6 +53,7 @@ Future<void> zicExternalPluginRuntimeServiceMain() =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (_liveVersionOnly) debugPrint('[zic-live-version] binding-ready');
   runApp(MaterialApp(
     home: Scaffold(
       appBar: AppBar(title: const Text('来源设备验收')),
@@ -61,7 +64,9 @@ Future<void> main() async {
     ),
   ));
   await waitForFirstFlutterUiDisplayed();
+  if (_liveVersionOnly) debugPrint('[zic-live-version] first-UI-wait-completed');
   await attachAndroidPlugin('network_bridge');
+  if (_liveVersionOnly) debugPrint('[zic-live-version] network-attached');
   if (_userAgentOnly) {
     await _probeNetworkUserAgent();
     return;
@@ -71,6 +76,7 @@ Future<void> main() async {
     return;
   }
   await attachAndroidPlugin('plugin_host_bridge');
+  if (_liveVersionOnly) debugPrint('[zic-live-version] plugin-host-attached');
   if (_metadataOnly) {
     await _probeMetadataFailure();
     return;
@@ -81,6 +87,10 @@ Future<void> main() async {
   }
   if (_cleartextMediaOnly) {
     await _probeCleartextMedia();
+    return;
+  }
+  if (_liveVersionOnly) {
+    await _probeLiveVersionMigration();
     return;
   }
   await _run();

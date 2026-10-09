@@ -1,4 +1,4 @@
-- P0：RMR-037继续连续手势/输入延迟、GC/入口CPU及最终显示验收。用户确认自动锁屏吞首次模拟触摸，现永不自动锁屏；导航无效先核对Keyguard及fresh XML，单次无效不证明产品/输入故障。ACTION_CLICK普通路由保持，不能代替连续手势/性能。融合locator候选已撤回，不凭API推测收益或跳过兼容；原加载/固定顿挫、RMR-038与Plan039/040真实来源开放，保留NetLane、7/3和2/1。
+- P0：RMR-037继续连续手势/输入延迟、GC/入口CPU及最终显示验收。用户确认自动锁屏吞首次模拟触摸，现永不自动锁屏；导航无效先核对Keyguard及fresh XML，单次无效不证明产品/输入故障。ACTION_CLICK普通路由保持，不能代替连续手势/性能。融合locator候选已撤回，不凭API推测收益或跳过兼容；原加载/固定顿挫、RMR-038与Plan040真实来源开放，保留NetLane、7/3和2/1。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282快滑最终composition与视觉验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。余下顿挫只按fresh有效显示证据定位SurfaceProducer/compositor，不重复已量化首个native output成本或重改已验geometry/anchor、窗口。
@@ -9,7 +9,7 @@
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 用真实存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 的书架 source card，确认右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
-- 从普通入口完成真实同源版本及跨源搜索/手填原生ID的确认迁移；Mihon原生URL比较及原详情41章无重复已验，确认事务仍开放。sequence-only不复制状态；覆盖实际来源artifact/metadata/cleanup callback内部中断与schema11 journal幂等恢复。
+- 完成真实跨源搜索/手填原生ID的确认迁移；实际EH同源确认已通过production Home/details控件与隔离SQLite，exact状态/偏好、旧metadata/书架清理及relation/journal已验。只补真实sequence-only/artifact分支及来源artifact/metadata/cleanup callback内部中断与schema11 journal幂等恢复。
   `metadataCommitted` 后无需目标源在线，只继续旧 source cleanup；journal phase不得触发Home projection revision。真实来源/普通入口证据须与隔离事务phase-boundary及callback内部中断证据分别登记。
 - 真机验证 E-Hentai/Venera 迁移后的 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志，状态及 artifact 提交保持对应版本身份。
 
@@ -37,8 +37,8 @@
 
 ## P0：身份、同源更新与验证设备闭环
 
-- 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
-- 在普通入口使用真实同源版本复验章节对应关系：title+sequence exact confidence仍须校验目标原生身份；sequence-only 候选不复制阅读状态或 artifact。
+- 使用真实 Venera/E-Hentai predecessor/ACK输入及successor补Reader首次/后续提醒；真实版本详情、比较及同源确认已验，不再重复。
+- 仅补真实sequence-only及artifact结果：候选不复制阅读状态或未经证明的字节；实际EH exact目标原生身份/进度/已读/偏好已验，保留title+sequence比较合同。
 - 禁漫天堂仅余真实`challenge-error-*`/typed interceptor、脚本-only/普通403、可见challenge期间停留及真实解题后handoff。081已验普通完整页面稳定返回、取消/中断和一次snapshot提交，不重复；不得要求新`cf_clearance`作为唯一成功条件。
 - 使用真实 Mihon 1.4/1.6扩展验证宿主调用顺序：1.6先 `getMangaUpdate(...fetchChapters=true)` / `getPageList(SChapter)`，1.4仅能力缺失时回退 legacy。用禁漫天堂确认 source返回的每个完整 SChapter原样保留且不按相同 URL折叠；Roumanwu原80章不得再因错误入口刷新成0章。
 
