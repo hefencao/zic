@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:storage_bridge/storage_bridge.dart'
+    show chapterHasHomeProjectionSnapshotPagePlaceholders;
 import 'package:telemetry/telemetry.dart';
 
 import 'home_library_session.dart';
@@ -628,6 +630,18 @@ final class HomeVersionReuseLifecycle {
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
+    // A compact Home focus has page counts, not source locators. Resolve only
+    // that projection; a real refreshed manifest must retain its own carrier.
+    if (chapterHasHomeProjectionSnapshotPagePlaceholders(focus.chapter)) {
+      focus = await session.hydrateEntry(
+        focus,
+        awaitCanonicalPhysicalBackfill: false,
+      );
+      control?.throwIfCancelled();
+      if (chapterHasHomeProjectionSnapshotPagePlaceholders(focus.chapter)) {
+        return;
+      }
+    }
     final relations = _relationsForComic(
       source.sourceId,
       focus.chapter.comicId,
@@ -662,6 +676,7 @@ final class HomeVersionReuseLifecycle {
               'stage': 'version-page-mapping-warm-failed',
               'focusChapterId': focus.chapter.chapterId,
               'errorType': error.runtimeType.toString(),
+              if (error is Failure) 'errorCode': error.code.name,
             },
           ),
         );

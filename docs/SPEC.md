@@ -802,18 +802,20 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   current-attempt response total MAY临时提供显示尺度，但任何display hint都不得取得resume/seal/cache authority。
   颜色 MAY按当前transport speed变化，但UI MUST NOT据此控制scheduler/retry。
   Reader role名称、1000、820/900等策略阈值 MUST NOT散落在`DownloadTransferOwner`控制流。
-  版本页复用 MUST 收口为composition-owned direct candidate authority，而不是source-version head替换：
-  `HomeLibrarySession` MUST以durable verified relation + 当前visible/按需hydrate manifests原子发布bidirectional direct candidate projection；
+  版本页复用 MUST 优先使用composition-owned canonical authority，而不是source-version head替换：
+  `HomeLibrarySession` MUST以durable verified relation + 匹配revision/pageCount的真实hydrated manifests原子发布canonical projection；
+  canonical projection先于physical session创建解析，同一verified coordinate MUST共享physical owner，不要求已有carrier。
+  同一relation MAY发布bidirectional direct candidates，供旧exact artifact/partial回填及hot acquire兼容定位；
   relation本身 MUST NOT把用户请求的logical `DownloadId`改写为更新版本，
   也 MUST NOT改变partial/READY/manual-download的exact durable owner。
-  `ArtifactCacheManager` READY lookup、`PartialDownloadHandoff` cold partial restore与`CompositionDownloadTransferRuntime` hot acquire MUST消费同一`VersionPageAuthority` candidate set；
-  只有候选确实已有可复用physical state时，新exact demand MAY在acquire前join carrier。
-  若logical exact本身已有session且仍demanded，则本次acquire MUST继续使用exact physical；
-  若exact仅idle/retained且无consumer demand，则它只作为verified physical candidates之一，
+  `ArtifactCacheManager` READY lookup与`PartialDownloadHandoff` cold partial restore MUST消费同一`VersionPageAuthority` candidate set定位旧正文；候选metadata不得成为body proof。
+  `CompositionDownloadTransferRuntime` hot acquire仅在direct canonical未绑定当前generation时 MAY选择候选中已有的可复用physical state；
+  该兼容路径中，若logical exact本身已有session且仍demanded或已promoted，则本次acquire MUST继续使用exact physical；
+  若exact仅idle/retained且无consumer demand、尚未promoted，则它只作为verified physical candidates之一，
   MUST与等价READY/hot/partial按physical authority与已提交长度共同择优，
   允许下一次demand使用更先进carrier，但 MUST NOT merge/rebind两个已存在session，旧exact仍由既有retention独立回收。
   跨版本partial复用 MUST清空foreign provider validator，显式durable completion仍 MUST materialize调用者自己的exact target。
-  Reader MUST只负责确保compact relation所需manifest已hydrate/缺失mapping的bounded proof，
+  Home/composition在显式版本查看的Reader进入前 MUST只确保所选compact relation所需manifest已hydrate/缺失mapping的bounded proof，
   不得按whole overlap展开page pair、批量查询candidate page keys或逐页materialize equivalence edge。
   初始source-owned related-version proof MUST使用固定预算而非page-count预算；
   当前默认最多8个predecessor位置，首/中/尾offset一致时可形成低成本affine coverage，
@@ -2341,6 +2343,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     有效的普通HTTP/replay-capable章节 MUST NOT因没有该后缀而被强制刷新或拒绝；legacy locator与快照占位页 MUST继续刷新。
 - 同源版本媒体复用 MUST 将强identity/offset验证收敛为当前chapter的bounded preparation并持久化chapter mapping。
   详情/version-state发现relation后 SHOULD异步warm实际有缓存状态的当前chapter；
+  warmup focus若为Home快照占位页，MUST先由既有library owner hydrate真实manifest，再请求相关来源或probe；取消或仍为占位时 MUST停止，不得用占位URI验证正文。
+  真实refreshed focus MUST保留当前carrier，不得无条件改用旧cached manifest；focus hydrate MUST NOT等待历史physical backfill。
   普通Reader route只消费本地mapping并立即进入Pipeline，MUST NOT为generic历史relation同步做source proof。
   用户显式“查看同源版本”时 MUST由 version-reuse lifecycle 持有selected target context（`originComicId + reuse-preparation Future`），
   UI route 只负责在 push 前开始、在 finally 精确释放；不能因前置Future完成而提前清除。若用户随后进入目标Reader，Reader MUST在创建physical demand前先等待该Future，

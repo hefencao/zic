@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import json
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,9 @@ for token in (
     "'verificationMode': 'bounded-affine-probe'",
     "'verifiedCoveragePages': mapping.verifiedIntervals.fold<int>(",
     'mapping.effectiveVerifiedIntervals',
+    'chapterHasHomeProjectionSnapshotPagePlaceholders(focus.chapter)',
+    'focus = await session.hydrateEntry(',
+    'awaitCanonicalPhysicalBackfill: false,',
 ):
     require(version_lifecycle, token, 'version metadata warm / compact authority owner')
 for token in (
@@ -68,13 +72,32 @@ for token in (
 for path in ('docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATE.json'):
     current = read(path)
     forbid(current, 'version-artifact-equivalence-restored', 'current alias-restore acceptance')
-    require(current, 'version-reuse-authority-ready', 'current canonical authority acceptance')
-forbid(read('docs/SPEC.md'), '注册有界临时in-memory equivalence',
+state_text = read('docs/IMPLEMENTATION_STATE.json')
+require(state_text, 'version-reuse-authority-ready', 'current canonical authority acceptance')
+version_acceptance = next(row for row in json.loads(state_text)['requirements']
+                          if row['id'] == 'SWG-PLAN-099')
+plan = read('docs/IMPLEMENTATION_PLAN.md')
+if version_acceptance['status'] in ('verified_device', 'verified_toolchain'):
+    forbid(plan, '- 099', 'completed canonical acceptance retained in Plan')
+else:
+    require(plan, 'version-reuse-authority-ready', 'unfinished canonical acceptance in Plan')
+spec = read('docs/SPEC.md')
+forbid(spec, '注册有界临时in-memory equivalence',
        'current Reader READY-only alias restoration contract')
+version_contract = spec[spec.index('  版本页复用 MUST'):spec.index('  初始source-owned related-version proof MUST')]
+require(version_contract, 'canonical projection先于physical session创建',
+        'version contract canonical authority precedence')
+require(version_contract, 'hot acquire仅在direct canonical未绑定当前generation时',
+        'version contract existing-carrier compatibility scope')
 architecture = read('docs/ARCHITECTURE.md')
 forbid(architecture, 'targeted `getMany/IN`一次筛出实际READY与indexed partial',
        'Reader READY-only alias restoration in Architecture')
 require(architecture, 'version-reuse-authority-ready', 'Architecture canonical authority before acquire')
+candidate_contract = architecture[architecture.index('  `VersionPageAuthority`位于version relation'):architecture.index('  初始proof默认最多8个predecessor位置')]
+require(candidate_contract, '新canonical session不要求已有carrier',
+        'Architecture cold canonical authority without existing body')
+require(candidate_contract, 'hot acquire仅在direct canonical未绑定当前generation时',
+        'Architecture existing-carrier compatibility scope')
 forbid(
     migration + version_lifecycle,
     'aliases.contains(relation.successorComicId)',

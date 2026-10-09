@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device74/toolchain11/superseded2/partial19/pending6，25条未完成记录。039四类Home筛选/049正文载体收口；首次入架、client变体及性能独立开放。052/020/TTL/LRU已验保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
+- 当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。039四类Home筛选/049正文载体/099实际canonical收口；首次入架、client变体及性能独立开放。052/020/TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,10 +9,10 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home卡片source signal/key祖先及健康/pending artwork State保持；32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2364/27suite/analyzer/Rust22及三ABI Debug/JNI通过；普通三ABI Profile/minifiedRelease/native115复用同输入。38 decode/55关联保持；native88在UA边界新跑、27当时复用。
+- Home卡片source signal/key及健康/pending artwork State保持，063/066/082收口。fresh2368/27suite/analyzer/Rust22、全门禁与三ABI Debug/Profile/minifiedRelease/JNI通过；native115保留同Kotlin/native输入，未在本轮重跑。38 decode/55关联保持。
 - 073/027/028/072及070 source UA/WNACG浏览器/原地设置/同包事务、041真实HTTP媒体保持已验。来源管理ListTile保留启用/源设置/属性登录独立语义，修复旧SwitchListTile按钮合并；迁移目标显示来源名/插件类型，区分同名Mihon/Venera。challenge/升级/DNS/原加载另验。
-- EH predecessor/ACK和提醒开放；099冷/推广/跨provider partial保持。普通main Profile227ab457内存读snapshot：Ani完整图56节点/151关系/46终点，131mapping中106带区间proof；不是缺少proof输入。复用既有输入核对真实目标authority，不据日期/序号猜latest，不重跑受控场景。
-- rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。3dbc12fb/PID28421/Home；097真实代际及016/client/原加载其余开放。
+- EH predecessor/ACK与提醒开放；099受控及实际canonical已验，停止重复。31后台proof失败根因为compact focus URI泄漏；只hydrate占位focus，取消/仍占位停止，真实carrier/epoch保持。四回归/新Release371→424、Reader80静置、本地13,394,740B/0失败通过。
+- rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
@@ -52,7 +52,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移统一入口/搜索药丸/高级ID保持，024/025/075停止重复。普通Profile标题自动带原文并分源返回；EH未返回在架旧版，023 !/最新目标未验。Home首屏未见不证明完整更新投影为空；VM认证未接通不改生产。Release3dbc12fb/PID28421/Home恢复，023/040/074及099真实目标开放。
+- 迁移统一入口/来源药丸/高级ID保持，024/025/075停止重复。EH最新动作023仍需实际旧卡与唯一head，已查图46终点不证明head。当前Release499ee89d/PID7259/Home、无forward；AOT evaluate禁用不阻断UI/trace。040/074独立。
   Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。

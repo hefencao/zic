@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -218,6 +219,122 @@ void main() {
       } else {
         expect(persisted.chapter.toJson(), target.chapter.toJson());
       }
+    });
+  }
+
+  for (final scenario in <({bool compact, bool cancelOnHydrate,
+      bool missingFocus})>[
+    (compact: true, cancelOnHydrate: false, missingFocus: false),
+    (compact: true, cancelOnHydrate: true, missingFocus: false),
+    (compact: true, cancelOnHydrate: false, missingFocus: true),
+    (compact: false, cancelOnHydrate: false, missingFocus: false),
+  ]) {
+    test('version proof consumes actual focus before source work '
+        '(compact: ${scenario.compact}, cancel: ${scenario.cancelOnHydrate}, '
+        'missing: ${scenario.missingFocus})', () async {
+      final root = await Directory.systemTemp.createTemp('version-proof-focus-');
+      final composition = await PersistentDownloadComposition.open(
+        root.path,
+        transferNet: DownloadResourceCoordinator().networkLane,
+      );
+      final library = _BlockingVersionRelationStore(compactEntries: true);
+      await library.open();
+      final old = _entry(pageUri: 'https://example.invalid/old.webp');
+      final target = _entry(comicId: 'new-comic', chapterId: 'new-chapter',
+          pageId: 'new-page', pageUri: 'https://example.invalid/new.webp');
+      await library.upsertChapter(old.chapter);
+      await library.upsertChapter(target.chapter);
+      await library.saveComicVersionRelation(ComicVersionRelation(
+        sourceId: 'fixture', predecessorComicId: 'old-comic',
+        successorComicId: 'new-comic',
+      ));
+      final queue = WholeComicDownloadQueue(
+        downloads: composition.chapterDownloads,
+      );
+      final session = HomeLibrarySession(
+        library: library,
+        chapterDownloads: composition.chapterDownloads,
+        downloadComposition: composition,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: false,
+        ownsWholeComicDownloads: true,
+      );
+      final probes = <Uri>[];
+      final trace = MemoryTraceSink();
+      final lifecycle = _lifecycle(session, trace: trace,
+          verifiedPageReuseIdentity: ({required sourceId, required locator,
+            control}) async {
+        control?.throwIfCancelled();
+        probes.add(locator);
+        if (locator.scheme != 'https') {
+          throw const Failure(code: ErrorCode.invalidState,
+              message: 'A compact Home page cannot prove media identity');
+        }
+        return 'same-verified-body';
+      });
+      addTearDown(() async {
+        await lifecycle.close();
+        await session.close();
+        session.dispose();
+        await composition.close();
+        await root.delete(recursive: true);
+      });
+      await session.ready;
+      final compactFocus = session.entries.singleWhere(
+        (entry) => entry.chapter.comicId == 'old-comic',
+      );
+      if (!scenario.compact) await session.hydrateEntry(compactFocus);
+      final focus = scenario.compact ? compactFocus :
+          _entry(pageUri: 'https://example.invalid/refreshed-old.webp');
+      expect(chapterHasHomeProjectionSnapshotPagePlaceholders(focus.chapter),
+          scenario.compact);
+      final manifest = old.chapter.toManifest();
+      final physical = composition.transferRuntime.sessionFor(
+        readerPageDownloadId(manifest, manifest.pages.single),
+      );
+      await physical.restore();
+      final writer = physical.acquireWriter();
+      await physical.append(writer, 0, <int>[1]);
+      await physical.pause(writer);
+      final epoch = physical.epoch;
+      final control = _TestTaskControl();
+      if (scenario.cancelOnHydrate) {
+        library.onGet = (_, chapterId) {
+          if (chapterId == old.chapter.chapterId) control.cancel();
+        };
+      }
+      if (scenario.missingFocus) {
+        await library._inner.removeChapter('fixture', old.chapter.chapterId);
+      }
+      final source = _ChapterVersionSource(target);
+      final warming = lifecycle.prepareWarmup(source, focus,
+          targetComicId: 'new-comic', control: control);
+      if (scenario.cancelOnHydrate) {
+        await expectLater(warming, throwsA(isA<Failure>().having(
+          (error) => error.code, 'code', ErrorCode.cancelled)));
+      } else {
+        await warming;
+      }
+      final stopped = scenario.cancelOnHydrate || scenario.missingFocus;
+      expect(source.comicLoads, stopped ? 0 : 1);
+      expect(source.chapterLoads, 0);
+      expect(probes, stopped ? isEmpty : unorderedEquals(<Uri>[
+        scenario.compact ? manifest.pages.single.uri :
+            focus.chapter.toManifest().pages.single.uri,
+        target.chapter.toManifest().pages.single.uri,
+      ]));
+      final relations = await library.listAllComicVersionRelations();
+      expect(relations.single.pageMappings.length, stopped ? 0 : 1);
+      if (!stopped) {
+        expect(relations.single.pageMappings.single.effectiveVerifiedIntervals
+            .single.length, 1);
+      }
+      expect(trace.events.where((event) =>
+          event.payload['stage'] == 'version-page-mapping-warm-failed'), isEmpty);
+      expect(physical.epoch, epoch);
+      expect(physical.committedLength, 1);
     });
   }
 
@@ -577,11 +694,13 @@ void main() {
 HomeVersionReuseLifecycle _lifecycle(
   HomeLibrarySession session, {
   bool Function(ImportedChapterRecord)? requiresSourceLocatorRefresh,
+  HomeVersionVerifiedPageIdentityResolver? verifiedPageReuseIdentity,
+  TraceSink? trace,
 }) =>
     HomeVersionReuseLifecycle(
       session: session,
       loadRemoteEntrySnapshot: (entry, {control}) async => entry,
-      verifiedPageReuseIdentity: ({
+      verifiedPageReuseIdentity: verifiedPageReuseIdentity ?? ({
         required sourceId,
         required locator,
         control,
@@ -597,7 +716,7 @@ HomeVersionReuseLifecycle _lifecycle(
           false,
       cancelQueuedMetadataTask: (_) => false,
       cancelMetadataTask: (_) => false,
-      trace: const NoopTraceSink(),
+      trace: trace ?? const NoopTraceSink(),
       monotonicMicros: () => 0,
     );
 

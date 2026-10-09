@@ -52,6 +52,5 @@
 ## P0：后台重入生命周期
 
 - 验证真实来源revision/carrier更新后不复用旧Reader session，并证明各代独立退休。保留当前两项idle exact-key LRU与两分钟TTL；Reader退休不销毁composition共享transfer/cache authority。
-## P0：版本等价与纵向性能真机闭环
-- 099冷Reader、`version-reuse-authority-ready`先于acquire、存活推广及A→B→A冷partial/native loop/64KiB overlap/URI ETag保持已验。当前普通EH snapshot已有106条带区间proof的mapping；复用这些实际输入核对目标章节revision/pageCount与canonical authority/acquire，停止重复受控场景或重造proof。旧版successor的`!`仅共用023的真实前提；当前46终点不证明唯一最新版。
+## P0：纵向性能真机闭环
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。

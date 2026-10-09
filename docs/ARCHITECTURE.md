@@ -1578,10 +1578,11 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   仍按既有 persistent preflight 规则裁决。prepare append出的prefix可直接进入既有Reader-local ingress；
   prepare完成后才判断是否仍需network task，若已promoted或完整可本地完成则直接短路。
   `downloadStarted`只描述真实provider transport attempt，本地hydrate/completion不得占用provider lifecycle。
-  verified跨版本等价只允许在acquire前把尚未创建exact session的新claim加入既有direct verified physical authority；
-  若proof同时命中多个既有owner，resolver按promoted、active writer/run、
+  verified canonical projection在acquire前直接解析physical identity，不要求已存在exact session或carrier。
+  仅在direct canonical未绑定当前generation的兼容路径，新claim才按verified候选选择既有physical authority；
+  若此兼容proof同时命中多个既有owner，resolver按promoted、active writer/run、
   demanded、committed prefix及长度/priority稳定择优，复用其中一个而不创建第三owner，也绝不事后merge两个已存在session。
-  source-resident且非artifact-cache authority的body不得跨版本join，弱证据仍不得进入physical identity。
+  此兼容路径中source-resident且非artifact-cache authority的body不得跨版本join，弱证据仍不得进入physical identity。
   Scheduling-only migration of an already-established physical claim is not a lifecycle edge:
   existing-scope priority/role changes MUST NOT re-emit demand-lifecycle Trace or reattach Reader ingress/source-watch ownership。
   consumer 对 logical `DownloadId` 的 physical/version/canonical resolution 是 acquire-time state；
@@ -1601,18 +1602,21 @@ current±7 的 keepAlive center 在 active scroll 内继续冻结；
   page-promotion watchdog在lower physical run已进入`queued` open或`networkAttemptActive` body且lower read-stall authority有效时必须让权并重新计时，
   只在无lower active phase且无真实字节进展时执行owner-level reclaim，避免两个同窗watchdog竞速reset。
   `VersionPageAuthority`位于version relation与READY/cold-partial/hot physical consumers之间，
-  只拥有scoped direct verified candidates，不拥有logical version head或durable binding。
+  只拥有旧exact artifact/partial回填与hot兼容路径的scoped direct verified candidates，不拥有logical version head或durable binding。
   `HomeLibrarySession`从完整durable relations、visible entries与按需hydrate但不进入Home projection的manifest cache构造`library-version-relations` scope并原子replace；
   每条verified mapping发布predecessor↔successor两个direct affine resolver，manifest/revision移除会撤销candidate。
-  `ArtifactCacheManager`注册同一authority resolver，`PartialDownloadHandoff`与physical acquire均通过同一candidate集合选择已有state；
-  无existing state时 exact demand仍创建自己的session。physical acquire不是永久exact-first：
-  正在demanded的exact session保持原physical generation；
-  已idle/retained的exact session则与verified equivalent carriers一起使用现有authority/committedLength排序，
+  `ArtifactCacheManager`注册同一candidate resolver，`PartialDownloadHandoff`据此定位并物理校验旧正文；
+  hot acquire仅在direct canonical未绑定当前generation时通过此集合选择已有state，新canonical session不要求已有carrier。
+  无canonical binding且无可复用candidate时才创建exact physical session。兼容acquire不是永久exact-first：
+  该兼容路径中，正在demanded或已promoted的exact session保持原physical generation；
+  尚未promoted的idle/retained exact session则与verified equivalent carriers一起使用现有authority/committedLength排序，
   下一次claim可直接绑定更先进carrier而不创建late alias或合并旧session，旧exact继续独立存在直到retention回收；
   若logical id尚无exact session，则仍可使用registry acquire-time alias快路径。
   partial checkpoint与automatic promoted handoff保持carrier自身exact id，
-  显式durable command仅在其exact target经acquire-time verified physical alias成立时zero-copy materialize该target。
-  Reader只batch hydrate相关chapter并确认compact authority；
+  显式durable command在canonical binding或verified physical alias成立时zero-copy materialize自己的exact target。
+  `HomeVersionReuseLifecycle`在显式版本查看流程中只hydrate所选relation所需chapter并确认compact authority；普通Reader入口不等待全历史发现。
+  warmup的focus若来自Home占位快照，先经`HomeLibrarySession.hydrateEntry`读取真实manifest，不等待历史physical backfill；hydrate后复核取消，仍是占位时停止source/proof。
+  已真实hydrate或刚刷新得到的focus保留自己的carrier，不能无条件被旧cached manifest覆盖。
   Home compact snapshot只属于列表启动加速，若同exact chapter已经hydrate出真实manifest，
   canonical media scope构造必须让hydrated manifest覆盖compact `_entries`与orphan entry，
   禁止placeholder page id/URI反向遮蔽真实resolver；
