@@ -33,3 +33,14 @@ python3 apps/app/test/device_acceptance/android/binder_body/run.py \
 `--cases normal` runs a shorter transport check. `host-stage` and `host-reopen`
 must run consecutively: the first leaves one actual claimed lease, and the next
 verifies that a new host sees it intact before the original client removes it.
+
+`--cases eh-initial-replay eh-initial-terminal` instead reads the actual installed
+`venera:ehentai` payload without opening the library or artifact index. Each case
+starts a cold Service and kills its physical process while the original
+activation remains pending. It requires the same pending object, request ID and
+encoded payload across exactly one fresh Binder generation. The first case
+establishes the real EH session; the second kills the fresh generation and
+requires one terminal result with no third bind. A missed pending-work timing
+sample is a test limitation. These deliberate process deaths do not diagnose a
+spontaneous crash or LMK. The source manifest, payload and preferences are not
+deleted; only task-owned temporary files are cleaned.

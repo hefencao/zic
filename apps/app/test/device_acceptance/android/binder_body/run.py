@@ -16,6 +16,7 @@ CASES = (
     'close-during-hash', 'session-close-read', 'source-loss', 'producer-loss',
     'host-stage', 'host-reopen', 'rpc-timeout',
 )
+INITIAL_EH_CASES = ('eh-initial-replay', 'eh-initial-terminal')
 SOURCE = Path(__file__).resolve().parent
 
 
@@ -30,7 +31,7 @@ def main():
     parser.add_argument('--serial')
     parser.add_argument('--profile-apk', type=Path)
     parser.add_argument('--restore-apk', type=Path)
-    parser.add_argument('--cases', nargs='+', choices=CASES, default=list(CASES))
+    parser.add_argument('--cases', nargs='+', choices=CASES + INITIAL_EH_CASES, default=list(CASES))
     args = parser.parse_args()
     if args.run and not all((args.serial, args.profile_apk, args.restore_apk)):
         parser.error('--run requires --serial, --profile-apk and --restore-apk')

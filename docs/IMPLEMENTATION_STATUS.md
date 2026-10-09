@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2359/27 suites/analyzers/Rust22、306门禁、三ABI Debug/Profile/minifiedRelease/JNI通过；native113同输入复用。store170/decode38/关联55、实际native换源/续帧floor/Texture通过；3既有quarantine；Release b766acf9/PID24186/Home |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2359/27 suites/analyzers/Rust22、306门禁、三ABI Debug/Profile/minifiedRelease/JNI通过；native113同输入复用。store170/decode38/关联55、实际native换源/续帧floor/Texture通过；3既有quarantine；Release b766acf9/PID27035/Home |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device65/toolchain11/superseded2/partial26/pending8，34条未完成记录。020高分辨率current已验：旧native执行中真实Reader切页约68ms新帧，cursor待物理返回才退休，0失败；097保留TTL/LRU/退休分量，仅真实代际开放。016/真实来源/wire013/DNS089及原加载/输入/最终显示独立开放。
+  当前112项：device66/toolchain11/superseded2/partial26/pending7，33条未完成记录。052真实EH冷激活保留原pending跨Binder1→2，第二次死亡一次terminal/无第三bind，两分支通过。020/已验TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。

@@ -26,6 +26,8 @@ public final class BinderBodyProbe extends Instrumentation {
     private Context context;
     private TrackingContext tracked;
     private File work, packets, payload;
+    private File installedManifest;
+    private String installedManifestDigest, installedVersion;
     private FileObserver observer;
     private String name, key, digest, processId, sessionId;
     private final JSONObject proof = new JSONObject();
@@ -113,6 +115,24 @@ public final class BinderBodyProbe extends Instrumentation {
         observer=new FileObserver(packets.getPath(),FileObserver.MOVED_TO|FileObserver.CREATE|FileObserver.DELETE){
             @Override public void onEvent(int event,String file){if(file!=null&&(file.endsWith(".packet")||file.endsWith(".body")||file.endsWith(".body.part")||file.endsWith(".lease")))packetEvents.add(event+":"+file);}
         };observer.startWatching();
+        if(name.startsWith("eh-initial-")){
+            installedManifest=new File(context.getFilesDir(),"zic/external_plugins/installed.json");
+            require(installedManifest.isFile(),"installed source manifest unavailable");
+            installedManifestDigest=sha(installedManifest);
+            JSONObject manifest=new JSONObject(new String(java.nio.file.Files.readAllBytes(installedManifest.toPath()),"UTF-8"));
+            JSONArray plugins=manifest.getJSONArray("plugins");JSONObject installed=null;
+            for(int i=0;i<plugins.length();i++){
+                JSONObject row=plugins.getJSONObject(i);
+                if("venera:ehentai".equals(row.getJSONObject("plugin").getString("pluginId"))){require(installed==null,"duplicate installed EH payload");installed=row;}
+            }
+            require(installed!=null,"actual installed EH payload unavailable");
+            JSONObject plugin=installed.getJSONObject("plugin");
+            require("veneraJavaScript".equals(plugin.getString("format")),"installed EH payload is not Venera");
+            payload=new File(installed.getString("payloadPath"));key=installed.getString("sourceKey");
+            installedVersion=plugin.getString("version");digest=installed.getString("payloadSha256");
+            require(payload.isFile()&&sha(payload).equals(digest),"installed EH payload changed");
+            return;
+        }
         String source="class BinderBodyFixture extends ComicSource {name='Fixture';key='"+key+"';version='1';url='https://fixture.invalid';explore=[{title:'Fixture',type:'multiPageComicList',load:async(page)=>[]}];comic={onThumbnailLoad:(uri)=>({onResponse:async(input)=>input,modifyImage:'"+SCRIPT+"'})};}";
         payload=new File(work,"fixture.js");try(OutputStream stream=new FileOutputStream(payload)){stream.write(source.getBytes("UTF-8"));}
         digest=sha(payload);
@@ -124,6 +144,51 @@ public final class BinderBodyProbe extends Instrumentation {
         IBinder binder=(IBinder)get(client,"serviceBinder");require(binder!=null,"actual bound Binder unavailable");
         proof.put("binderDescriptor",binder.getInterfaceDescriptor()).put("hostPid",android.os.Process.myPid()).put("servicePid",servicePid()).put("processId",processId).put("sessionId",sessionId).put("payloadSha256",digest);
         require(servicePid()!=android.os.Process.myPid(),"Service did not run in its separate Android process");
+    }
+    private Object[] pendingActivation(Reply reply) throws Exception {
+        final Object[][] snapshot=new Object[1][];final Throwable[] failure=new Throwable[1];
+        runOnMainSync(()->{try{
+            Map<?,?> pending=(Map<?,?>)get(client,"pending");
+            if(!reply.done.isDone()&&pending.size()==1&&get(client,"serviceBinder")!=null&&((Collection<?>)get(client,"queued")).isEmpty()){
+                Map.Entry<?,?> row=pending.entrySet().iterator().next();Object activation=row.getValue();
+                require("activateVeneraRuntime".equals(get(activation,"method")),"pending call is not initial activation");
+                snapshot[0]=new Object[]{row.getKey(),activation,get(activation,"payload"),get(activation,"serviceGenerationReplays"),get(client,"binderGeneration"),servicePid()};
+            }
+        }catch(Throwable error){failure[0]=error;}});
+        if(failure[0]!=null)throw new RuntimeException(failure[0]);return snapshot[0];
+    }
+    @SuppressWarnings("unchecked") private void initialEhActivation(boolean terminal) throws Exception {
+        require(servicePid()==-1,"EH test did not start with a cold service process");
+        Map<String,Object> activation=map("schemaVersion",1,"format","veneraJavaScript","pluginId","venera:ehentai","pluginVersion",installedVersion,"payloadPath",payload.getPath(),"payloadByteLength",payload.length(),"payloadSha256",digest,"sourceKey",key,"capabilities",Collections.emptyList(),"limits",map("invocationTimeoutMicros",55000000L,"maxResponseBytes",MAX,"maxConcurrentInvocations",1,"maxRuntimeHeapBytes",32*1024*1024));
+        Reply reply=invoke("activateVeneraRuntime",activation);final Object[][] first=new Object[1][];
+        await(()->{first[0]=pendingActivation(reply);return first[0]!=null||reply.done.isDone();},15,"cold EH activation did not bind");
+        require(first[0]!=null,"cold EH activation completed before physical death could be tested");
+        Object[] original=first[0];int firstPid=((Number)original[5]).intValue();
+        require(firstPid>0&&firstPid!=android.os.Process.myPid()&&((Number)original[3]).intValue()==0,"first physical activation generation missing");
+        android.os.Process.killProcess(firstPid);final Object[][] replay=new Object[1][];
+        await(()->{Object[] row=pendingActivation(reply);if(row!=null&&((Number)row[3]).intValue()==1){replay[0]=row;return true;}return reply.done.isDone();},15,"original EH activation did not rebind");
+        require(replay[0]!=null,"replay timing did not observe original pending activation");
+        Object[] retained=replay[0];int secondPid=((Number)retained[5]).intValue();
+        require(original[0].equals(retained[0])&&original[1]==retained[1]&&original[2]==retained[2],"replay replaced original pending activation or payload");
+        require(secondPid>0&&secondPid!=firstPid&&!original[4].equals(retained[4])&&tracked.binds.get()==2,"replay did not use exactly one fresh physical generation");
+        if(terminal){
+            android.os.Process.killProcess(secondPid);
+            try{reply.done.get(10,TimeUnit.SECONDS);throw new AssertionError("twice-killed activation published a session");}catch(ExecutionException expected){}
+            require(("runtime-service-died".equals(reply.errorCode)||"runtime-service-disconnected".equals(reply.errorCode))&&reply.count.get()==1,"second generation did not settle once at physical loss");
+            Thread.sleep(1000);final boolean[] retired=new boolean[1];
+            runOnMainSync(()->{try{retired[0]=((Map<?,?>)get(client,"pending")).isEmpty()&&((Collection<?>)get(client,"queued")).isEmpty()&&get(client,"serviceMessenger")==null;}catch(Exception e){throw new RuntimeException(e);}});
+            require(retired[0]&&tracked.binds.get()==2&&reply.count.get()==1,"terminal death left pending work or added a third replay");
+            proof.put("terminalCode",reply.errorCode).put("noThirdBindOrReplay",true);
+        }else{
+            Map<String,Object> result=(Map<String,Object>)reply.done.get(40,TimeUnit.SECONDS);
+            processId=(String)result.get("processId");sessionId=(String)result.get("sessionId");
+            require(processId!=null&&sessionId!=null&&reply.count.get()==1&&tracked.binds.get()==2,"original activation did not establish one session");
+            boolean sourceFound=false;for(Object raw:(List<?>)((Map<?,?>)result.get("handshake")).get("sources"))if(key.equals(((Map<?,?>)raw).get("externalId")))sourceFound=true;
+            require(sourceFound&&servicePid()==secondPid,"fresh generation did not activate the actual EH source");
+            proof.put("actualEhSessionEstablished",true);
+        }
+        require(sha(installedManifest).equals(installedManifestDigest)&&sha(payload).equals(digest),"test changed installed source files");
+        proof.put("hostPid",android.os.Process.myPid()).put("firstServicePid",firstPid).put("secondServicePid",secondPid).put("firstBinderGeneration",original[4]).put("secondBinderGeneration",retained[4]).put("pendingRequestId",original[0]).put("originalPendingAndPayloadRetained",true).put("activationCalls",1).put("resultCount",reply.count.get()).put("physicalDeathInput","same-UID Process.killProcess").put("pluginId","venera:ehentai").put("pluginVersion",installedVersion).put("payloadSha256",digest).put("installedSourceFilesUnchanged",true).put("userLibraryOrArtifactIndexOpened",false);
     }
     private int servicePid() {
         ActivityManager manager=(ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);
@@ -282,12 +347,12 @@ public final class BinderBodyProbe extends Instrumentation {
     private void cleanup() {
         for(Gate gate:gates)gate.release.countDown();
         if(client!=null)try{runOnMainSync(()->{try{call(client,"shutdown",new Class<?>[0]);}catch(Exception ignored){}});await(()->((ExecutorService)get(client,"responseExecutor")).isTerminated(),8,"client cleanup did not drain");}catch(Exception error){try{proof.put("cleanupError",error.toString());}catch(Exception ignored){}}
-        if(observer!=null)observer.stopWatching();if(work!=null)remove(work);if(key!=null)context.deleteSharedPreferences("zic_venera_"+key);
+        if(observer!=null)observer.stopWatching();if(work!=null)remove(work);if(key!=null&&installedManifest==null)context.deleteSharedPreferences("zic_venera_"+key);
     }
     private static void remove(File file){File[] rows=file.listFiles();if(rows!=null)for(File child:rows)remove(child);file.delete();}
     @Override public void onCreate(Bundle args){name=args.getString("case","normal");super.onCreate(args);start();}
     @Override public void onStart(){int code=0;Bundle evidence=new Bundle();
-        try{setup();if(name.equals("host-reopen"))hostReopen();else{activate();
+        try{setup();if(name.startsWith("eh-initial-"))initialEhActivation(name.equals("eh-initial-terminal"));else if(name.equals("host-reopen"))hostReopen();else{activate();
             switch(name){case "normal":normal();break;case "cancel-before-claim":beforeClaim();break;case "cancel-during-hash":duringClaim();break;case "close-claim":closeClaim();break;case "close-during-hash":closeDuringHash();break;case "session-close-read":sessionCloseRead();break;case "source-loss":serviceLoss();break;case "producer-loss":producerLoss();break;case "host-stage":hostStage();break;case "rpc-timeout":rpcTimeout();break;default:throw new AssertionError("unknown case "+name);}}
             proof.put("case",name).put("status","passed");code=-1;
         }catch(Throwable error){error.printStackTrace();try{proof.put("case",name).put("status","failed").put("error",error.toString());}catch(Exception ignored){}}

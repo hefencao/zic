@@ -226,6 +226,7 @@ for row in requirements:
     if row["status"] == "pending" and "remaining_acceptance" in row and not row["remaining_acceptance"]:
         raise SystemExit(f"{row['id']} hides pending acceptance")
 completed_plan_markers = {
+    "SWG-PLAN-052": "冷启动直接激活 `venera:ehentai`",
     "SWG-PLAN-008": "证明exact+verified-equivalent miss不materialize durable-store",
     "SWG-PLAN-009": "009选定可播放/0已解码帧的同response停驻恢复保持",
     "SWG-PLAN-012": "继续Range probe/full-body catch-up的EOF/mismatch",
