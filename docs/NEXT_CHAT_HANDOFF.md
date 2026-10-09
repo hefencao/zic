@@ -11,7 +11,7 @@
 ## 3. 当前开放问题
 - Home卡片source signal/key祖先及健康/pending artwork State保持；32 UI、冷两进程8/组合3真机通过，063/066/082收口。fresh2364/27suite/analyzer/Rust22及三ABI Debug通过；普通三ABI Profile/minifiedRelease/JNI/native115复用同输入。38 decode/55关联保持；native88在UA边界新跑、27当时复用。
 - 073/027/028/072及070 source UA/WNACG浏览器/原地设置/同包事务、041真实HTTP媒体保持已验。来源管理ListTile保留启用/源设置/属性登录独立语义，修复旧SwitchListTile按钮合并；迁移目标显示来源名/插件类型，区分同名Mihon/Venera。challenge/升级/DNS/原加载另验。
-- EH adapter仅投影successor，不能凭缺提醒认定predecessor缺边是设备原因；0389真实声明输入/ACK前提未验。原19/20偶发加载、GC/最终显示、真实提醒/mapping仍开放；第二设备未在线。较早1条EH阅读时间差异先于v4且未归因，不重写已接受Reader/缓存实现。
+- EH adapter仅投影successor，0389真实predecessor/ACK及首次/后续提醒仍开放。099消费canonical media authority，观察version-reuse-authority-ready/canonicalDirect，保持现行physical路径。原19/20偶发加载、GC/最终显示开放，第二设备离线；早期EH时间差先于v4且未归因。
 - rhttp取消与borrowed reset验收保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。3dbc12fb/PID29367/Home；097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。

@@ -53,5 +53,5 @@
 
 - 验证真实来源revision/carrier更新后不复用旧Reader session，并证明各代独立退休。保留当前两项idle exact-key LRU与两分钟TTL；Reader退休不销毁composition共享transfer/cache authority。
 ## P0：版本等价与纵向性能真机闭环
-- dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
+- 版本复用真机验收：普通冷Reader不等待source-version resolver；已有mapping以`version-reuse-authority-ready`（`restoreMode=canonical-media-direct`）确认authority先于acquire。相关Reader存活时，新promoted artifact应被旧版未启动页通过同一`PhysicalMediaId`缓存复用，无需退出重扫；观察`canonicalDirect`及缓存/origin事实，不强制兼容alias标记。E-Hentai旧版successor的`!`共用023验收；partial仍验durable inactive与validatorless overlap，不继承其它provider的ETag。
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。

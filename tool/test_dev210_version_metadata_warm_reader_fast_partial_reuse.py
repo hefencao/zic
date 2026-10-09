@@ -65,6 +65,12 @@ for token in (
     "'stage': 'version-artifact-equivalence-restored'",
 ):
     forbid(migration + version_lifecycle, token, 'superseded Reader materialized alias restore')
+for path in ('docs/IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATE.json'):
+    current = read(path)
+    forbid(current, 'version-artifact-equivalence-restored', 'current alias-restore acceptance')
+    require(current, 'version-reuse-authority-ready', 'current canonical authority acceptance')
+forbid(read('docs/SPEC.md'), '注册有界临时in-memory equivalence',
+       'current Reader READY-only alias restoration contract')
 forbid(
     migration + version_lifecycle,
     'aliases.contains(relation.successorComicId)',

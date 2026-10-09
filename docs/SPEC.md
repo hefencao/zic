@@ -1046,13 +1046,14 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   任一结构事实变化即不得沿用。page-mapping-only 更新属于derived reuse state：
   MUST写入authoritative relation store并更新当前内存reuse authority，
   但 MUST NOT触发Home broad projection notification或为每条mapping另写Home snapshot。
-  Reader恢复 MUST按当前chapter的compact mapping推导aligned exact key，
-  只通过targeted batch exact-key查询筛选**已经READY**的旧缓存，并仅为source READY且target exact absent的页面注册有界临时in-memory equivalence；
-  MUST NOT为未缓存页注册future/lazy equivalence，不得持久化逐页alias，也不得在Reader lookup/miss时重新调用source验证页面。
-  相关source chapter manifest SHOULD按唯一chapter identity一次batch hydrate，
+  Reader恢复 MUST由 `HomeLibrarySession` 接入当前chapter/revision/count有效的compact canonical projection，
+  已验证exact page MUST在physical session创建前直接解析为 `PhysicalMediaId.canonical`；未验证或冲突区间 MUST保持exact。
+  proof有效性由来源验证的mapping决定，不以对应正文已经READY为前提；后续artifact promotion MUST可由同一physical identity的acquire发现。
+  Reader MUST NOT自行登记future/lazy equivalence、持久化逐页alias或在lookup/miss时调用source验证页面；旧generation兼容alias MUST NOT覆盖canonical direct路径。
+  需要的相关source chapter manifest SHOULD按唯一chapter identity一次batch hydrate，
   MUST NOT按relation串行get、整库list或长期manifest cache；缺失manifest直接跳过。
   `lookupAuthoritative`、exact write/invalidate与显式migration materialization始终绕过equivalence，
-  persistent backend保持exact-only。
+  exact durable binding仍按 `DownloadId` 裁决；canonical physical artifact由持久physical owner独立管理，MUST NOT重写provider URI/validator或硬迁移版本正文。
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于右侧，不得以“取消”文字按钮替代关闭 X。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。
   原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。

@@ -2188,6 +2188,8 @@ source-card `!`按relation predecessor/successor的raw+canonical identity区分�
 再只针对`origin ↔ target` direct relation做一次target-side bounded catch-up。generic Reader不等待这条barrier，也不扫描历史。
 proof形成后`HomeLibrarySession`把exact version page的verified interval编译为compact canonical projection；
 落入projection的`DownloadId`在session创建前直接解析为版本无关`PhysicalMediaId`，目标版本新增/未验证区间保持exact-only。
+Reader接入authority可观察`version-reuse-authority-ready`（`restoreMode=canonical-media-direct`）；实际acquire以`canonicalDirect`、physical identity和缓存/origin事实核验。
+READY仅表示正文可用，source-verified projection可覆盖尚未缓存的已验证区间；另一版本后续promote的正文由相同physical identity自然发现。
 Reader启动后继续异步metadata/version refresh；
 既有pre-canonical physical generation可由兼容alias自然退休，但新hot-path不再通过版本carrier ranking定义physical identity。
 cross-version cold durable state仍只在physical prepare的durable tier参与恢复，

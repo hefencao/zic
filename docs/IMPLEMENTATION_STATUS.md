@@ -34,7 +34,7 @@
 - ADR0389 Provisional：旧版缺边先失败，9 owner与2235/Rust22/三ABI通过。普通Release3e65ae94/PID23850匹配51文件，正确Mihon/下载、5静置slider/4首尾跨章含历史覆盖通过；119完整章不变。真实predecessor/提醒输入、原加载与性能开放。
 - 自动缓存 projection 进一步收口为 durable inventory only：Reader hot/source-resident session 不再被误计为缓存；本地 `content://` 图册普通读取保持 source-backed、零 artifact write，不会因 Reader session retention 再生成自动缓存项或正文副本。
 - 书架管理/批量选择的 managing、batch 与 source-aware identity selection 已收口到纯 Dart `HomeShelfManagement`；删除/移动/归档等真实 mutation 和 dialog 仍留在 UI/既有 owner。
-- 显式同源版本查看使用的 `originComicId + reuse-preparation Future` 已从 `HomeShell` 移入 `HomeVersionReuseLifecycle`；UI 只负责 route 前 start / finally finish，Reader preparation 从同一 lifecycle 查询 selected target token。
+- 显式版本查看的originComicId/preparation Future由HomeVersionReuseLifecycle持有，UI start/finally finish，Reader查同一selected token。普通Reader接入canonical projection，观察version-reuse-authority-ready/canonicalDirect；099真机时序与存活推广仍开放。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
