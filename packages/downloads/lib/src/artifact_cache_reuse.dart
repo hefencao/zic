@@ -927,9 +927,8 @@ Iterable<String> verifiedRecordIdentities(CacheRec record) sync* {
       yield 'eh:$imageKey';
     }
   }
-  final hash = RegExp(
-    r'[a-fA-F0-9]{32,64}',
-  ).firstMatch(uri.toString())?.group(0)?.toLowerCase();
+  final hash = _uriContentHashPattern
+      .firstMatch(uri.toString())?.group(0)?.toLowerCase();
   if (hash != null) {
     yield 'hash:$hash';
   }

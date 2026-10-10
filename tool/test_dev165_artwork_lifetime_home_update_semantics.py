@@ -68,9 +68,14 @@ forbid(migration, 'Future<void> _reconcileConfirmedSourceUpdateSignal(',
        'superseded version-to-chapter-signal mirroring')
 forbid(migration, 'if (!discoveredNewVersion) return;',
        'one-shot version update detection')
+if re.search(
+    r'_sourceUpdateAtForComic\(comic\)\s*!=\s*null\s*&&\s*'
+    r'_preferenceForComic\(comic(?:,\s*aliases:\s*'
+    r'identityQuery\.aliasesFor\(comic\.sourceId,\s*comic\.comicId\),\s*)?\)\.inShelf',
+    views,
+) is None:
+    raise SystemExit('missing Home source-update then shelf-preference filter')
 for token in (
-    '_sourceUpdateAtForComic(comic) != null &&\n'
-    '              _preferenceForComic(comic).inShelf',
     '_sourceUpdateAtForComic(right)!',
     '加入书架的漫画有新章节或新版本时显示',
 ):

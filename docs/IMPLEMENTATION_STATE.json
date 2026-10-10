@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-10T06:22:51Z",
+  "updated_at": "2026-10-10T09:12:44Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -145,27 +145,27 @@
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
   "current_device_installation": {
-    "serial": "72b08a1c",
-    "model": "M2007J1SC",
+    "serial": "210a3115",
+    "model": "25113PN0EC",
     "sdk": 36,
-    "sha256": "4ff852df9c04eaa19a9e18fb4054fbfb96be9b3575b3d6af8a3e192adcceb6f0",
-    "app_pid": 31125,
+    "sha256": "ec6f9e5a8d5021bcca57ce3b500c6654d03488614e56737df125f6a5606733ff",
+    "app_pid": 16864,
     "ordinary_release": true,
     "normal_minified_release": true,
-    "app_foreground": "Ordinary minified Release4ff852df installed; actual device APK SHA/PID31125/MainActivity verified. Ani424-page details/history80 -> Reader stationary body -> details/history80 -> Home pass. Latest export is new; no forwards or temporary XML/screenshots remain."
+    "app_foreground": "Ordinary minified Releaseec6f9e5a; host/device APK SHA equal,PID16864/MainActivity/Home,no forwards. HalfLove22 -> Ani377 -> HalfLove22 -> Ani377 stationary body/history pass. New09-06-28 export has10000 events: first entry overwritten,three later taps/body and four exits retained. XML no-op was a test observation error; screenshot showed Reader,device unlocked."
   },
   "validation": {
-    "command": "bash tool/check.sh --require-toolchains; bash tool/build_android.sh profile; bash tool/build_android.sh release; bash tool/check_android_native.sh: fresh exit0. Gradle plugin_host_bridge/local_media_bridge/file_selector_android/app testDebugUnitTest --rerun-tasks: fresh exit0 with JDK17 test environment.",
+    "command": "bash tool/check.sh --require-toolchains; bash tool/build_android.sh profile; bash tool/build_android.sh release; bash tool/check_android_native.sh: fresh exit0. Android JUnit115 retain the previous passing result with identical Kotlin/native inputs.",
     "exit_code": 0,
-    "dart_flutter_tests": 2376,
+    "dart_flutter_tests": 2377,
     "analyzers": 27,
     "Rust_tests": 25,
     "Android_native_tests": 115,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Fresh native1 Debug/Profile/normal minified Release for arm64-v8a/armeabi-v7a/x86_64 and JNI/symbol/build-ID checks pass. Ordinary Release4ff852df/PID31125 confirms Ani424/page80 actual stationary body, return/history/Home; exit reconcile441us and taskFailed0.",
-    "Android_native_tests_scope": "All115 freshly rerun: plugin_host_bridge88,local_media_bridge7,file_selector_android17,app3; JUnit failures/errors/skipped0. CookieJar15 and existing Kotlin/native compile gates also pass in the required full check.",
-    "scope": "Reader entry/exit work in existing native/bridge/Home/catalog/storage owners. Exhaustive4096 small directed graphs preserve unique-path/cycle ambiguity, serial CRC tests preserve checksum/failure, and Home tests preserve durable proof/no-op projection/coalesced writes. Original112 statuses and24 independent unfinished records remain.",
+    "ordinary_package_acceptance": "Fresh repository native0 Debug plus ordinary native1 Profile/normal minified Release for arm64-v8a/armeabi-v7a/x86_64 and JNI/symbol/build-ID pass. Releaseec6f9e5a/PID16864 confirms local22/EH377 stationary body/history; three retained taps reach body108-165ms,taskFailed0,locator refresh false. First entry timing was overwritten by the ring.",
+    "Android_native_tests_scope": "Previous115 passing JUnit tests retained with unchanged Kotlin/native sources:plugin_host_bridge88,local_media_bridge7,file_selector_android17,app3. CookieJar15 and Kotlin/native compile gates freshly pass in the required full check;115 not rerun for Dart-only changes.",
+    "scope": "Home build-local identity/alias reuse and downloads READY-index event-turn scheduling only. Catalog-growth and one-target-page READY regressions fail before the fix and pass after; existing alias merge/current-authority,cache proof and cancellation checks pass. Native/Reader/Pipeline/NetLane/trust contracts unchanged. Original112 statuses and24 unfinished records remain.",
     "artifact_retention": "Keep current validation log, named static XML/index, current installable Release packages and original user Reader trace needed by open issues. Accepted CPU/helper/duplicate trace, Profile/Debug and duplicate APK outputs are deleted by exact task paths after conclusions; temporary directories clean up on exit."
   },
   "new_user_task_acceptance": {
@@ -174,10 +174,10 @@
     "cached_Reader_stationary_and_history": "Accepted bounded stationary/history cases: docs/archive/audits/reader-cached-entry-after-CookieJar-2026-10-07.json. Original19/20 occasional cached loading/redownload remains open until a fresh reproducing input; do not reopen accepted cache/trust/URI owners from missing old evidence or count protocol049 as that symptom acceptance.",
     "real_slider_download_stationary": "docs/archive/audits/reader-real-slider-download-after-CookieJar-2026-10-07.json",
     "migration_title_search_shared_controls": "Fixed bottom search/direct filters,shared horizontal source bar with All,and inline confirmed-version update notice. Native ID shares the single-source input and clears on selection changes. Shared-search12/version4/lifecycle3 and freshfull2371/27 analyzers/Rust22/all gates/nine ordinary packages/JNI pass. Ordinary Release70ac8752 verifies both layouts,inline expansion,All/direct toggles and native mode/IME without dialog;no ID submission or migration confirmation. Original paging,raw identity,read-only refresh and transaction owners remain;24 independent unfinished records preserved.",
-    "reader_entry_exit_stutter": "Accepted latest trace/CPU root causes: UI-native frame/cursor/source destruction, repeated unchanged global version authority, queued snapshots and large resume CRC. Transfer handles only after exact decode/write exit to an independent native reclaimer; composition drains off-UI. Home preserves durable/adoption/revision and coalesces only uncaptured projections; catalog prunes unreachable paths,storage hashes bounded chunks off-UI. Same Ani424/page80 Profile: exit20864->875us,decode17889->230us,upload2417->172us; first5s have no frame gap over100ms versus prior287847us. Main CPU has0 baseline/canonical/reuse rebuild or trim samples; old CRC.add89 leaves become0 within prefix checksum,spawn126->15. First frame138444us is not claimed faster. Normal Release4ff852df/PID31125 verifies stationary body,return/history80,Home and taskFailed0; exit441us. Freshfull2376/27 analyzers,Rust25,Android115,nine ordinary packages/JNI pass. Retain/proof/checksum/read-budget/cancel and24 independent open records remain."
+    "reader_entry_exit_stutter": "210a3115 manual HalfLove22/Ani371/377 switching exposed main-isolate READY indexing and repeated Home canonical/preference work. One-chapter14393-record snapshot blocked315-358ms; READY ctor501 CPU samples. Index/sort/group now share the existing4ms/64 event budget,with stable command record snapshots and original cancellation/proof semantics. Home shares build-local identity/reverse aliases without retaining authority; single-card live queries remain target-only. Failing-first regressions and fresh2377/Rust25/all gates/three-ABI builds/JNI pass;native115 unchanged inputs retained. Profile before the final target-only card refinement captures local22->371->377->local22->377 first-body80-170ms,no failures/locator refresh; READY CPU spans177 sampled messages,max4.139ms,408ms wall time is not claimed faster. Final Releaseec6f9e5a/PID16864 verifies local22->377->local22->377 stationary body/history; three retained taps reach body108-165ms,four exit reconciles762-1847us,taskFailed0. First entry overwritten by the10000-event ring; final Home whole-build duration/physical display not measured. Cover-install first Reader seconds remain unrecorded/hard to reproduce; no cache/URI/plugin cause established. Earlier72b Ani424/page80 acceptance remains scoped;24 independent requirements stay open."
   },
   "remaining": [
-    "Original19/20 intermittent cached loading/redownload remains an independent user task; accepted stationary/history/slider scopes do not prove its occasional symptom. Active visual/input/GC,complete-input/canonical allocation,fixed-position and final physical-display acceptance remain open alongside001/002/005/007/100. App-side correlation091 and original049 binary response/file protocol are closed; neither claims allocation or physical-display performance. Existing control-plane/cached-entry/transition acceptances stay closed; second hardware/user visual observation unavailable.",
+    "Original19/20 intermittent cached loading/redownload remains an independent user task; accepted stationary/history/slider scopes do not prove its occasional symptom. Active visual/input/GC,complete-input/canonical allocation,fixed-position and final physical-display acceptance remain open alongside001/002/005/007/100. App-side correlation091 and original049 binary response/file protocol are closed; neither claims allocation or physical-display performance. Existing control-plane/cached-entry/transition acceptances stay closed; current device traces lack valid final physical-display observations,and user visual/input acceptance remains open.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "Network/media016: actual previous660-to780 promotion-to-admission latency and real-source gate timing.020 high-resolution current native/Texture/physical-exit handoff is closed at its scoped criterion; no capacity change.010 destructive/read/retention pressure and018/093 fast/cross-Reader reuse are closed;009/021 stay accepted.",
     "099 controlled cold authority-before-acquire/live canonical promotion/different-provider partial and actual EH selected-target canonical acquisition are closed. Current ordinary Release confirms371->424/offset53,Reader80 local bytes/stationary observation and zero failures after compact-focus hydration;do not repeat these scopes. Conditional latest-update action023,predecessor/notifications040/074 and genuine source revision/carrier097 remain independent.052/011/098 stay closed;do not restore late takeover.",

@@ -415,9 +415,9 @@ void main() {
     );
   });
 
-  testWidgets('home update filtering avoids aliases for comics without updates',
+  testWidgets('home update filtering bounds alias work across the catalog',
       (tester) async {
-    Future<int> measure(int unchangedCount) async {
+    Future<int> measure(int unchangedCount, {bool allUpdated = false}) async {
       final source = _CountingCanonicalSource()..collapseAliases = false;
       final store = MemoryImportedLibraryStore();
       final preferences = AppPreferencesController();
@@ -436,7 +436,7 @@ void main() {
             coverSourceId: 'https://example.invalid/$comicId.png',
             savedAt: DateTime.utc(2026, 7, 28),
             updatedAt: DateTime.utc(2026, 7, 28),
-            sourceUpdateAt: comicId.startsWith('updated-')
+            sourceUpdateAt: allUpdated || comicId.startsWith('updated-')
                 ? DateTime.utc(2026, 7, 29)
                 : null,
           ),
@@ -463,9 +463,11 @@ void main() {
       preferences.setDebugModeEnabled(!preferences.debugModeEnabled);
       await tester.pump();
       final reads = source.identityReads;
-      final card = tester.widget<ComicCoverCard>(find.byType(ComicCoverCard));
-      expect(card.comic.comicId, 'updated-on');
-      expect(card.preference.inShelf, isTrue);
+      final cards = tester.widgetList<ComicCoverCard>(find.byType(ComicCoverCard));
+      expect(cards, isNotEmpty);
+      expect(cards.every((card) => card.preference.inShelf), isTrue);
+      expect(cards.any((card) => card.comic.comicId == 'updated-off'), isFalse);
+      if (!allUpdated) expect(cards.single.comic.comicId, 'updated-on');
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       await store.close();
@@ -481,6 +483,14 @@ void main() {
       lessThanOrEqualTo(smallReads * 5),
       reason: 'Unchanged comics must not multiply preference alias work: '
           '$smallReads -> $largeReads',
+    );
+    final smallUpdatedReads = await measure(8, allUpdated: true);
+    final largeUpdatedReads = await measure(32, allUpdated: true);
+    expect(
+      largeUpdatedReads,
+      lessThanOrEqualTo(smallUpdatedReads * 5),
+      reason: 'Each updated comic must not repeat a whole catalog alias scan: '
+          '$smallUpdatedReads -> $largeUpdatedReads',
     );
   });
 

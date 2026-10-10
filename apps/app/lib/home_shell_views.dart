@@ -196,12 +196,15 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   Widget _buildHomePage() {
-    final comics = _libraryComics;
+    final identityQuery = _catalogIdentityQuery();
+    final comics = _projectLibraryComics(identityQuery);
     final updates = comics
         .where(
           (comic) =>
               _sourceUpdateAtForComic(comic) != null &&
-              _preferenceForComic(comic).inShelf,
+              _preferenceForComic(comic,
+                aliases: identityQuery.aliasesFor(comic.sourceId, comic.comicId),
+              ).inShelf,
         )
         .toList(growable: true)
       ..sort(
@@ -233,6 +236,7 @@ extension _HomeShellViews on _HomeShellState {
           const SizedBox(height: 10),
           _buildHorizontalComics(
             visibleUpdates,
+            canonicalKeyFor: identityQuery.keyFor,
             telemetryOwners: telemetryOwners,
           ),
           const SizedBox(height: 24),
@@ -244,6 +248,7 @@ extension _HomeShellViews on _HomeShellState {
           const SizedBox(height: 10),
           _buildHorizontalComics(
             history,
+            canonicalKeyFor: identityQuery.keyFor,
             history: true,
             telemetryOwners: telemetryOwners,
           ),
@@ -285,6 +290,7 @@ extension _HomeShellViews on _HomeShellState {
     List<LibraryComic> comics, {
     bool history = false,
     Set<String>? telemetryOwners,
+    String Function(String sourceId, String comicId)? canonicalKeyFor,
   }) {
     if (comics.isEmpty) {
       return const SizedBox(
@@ -295,9 +301,12 @@ extension _HomeShellViews on _HomeShellState {
       );
     }
     final section = history ? 'home-history' : 'home-update';
-    final presentationIdentities = <String>[
+    final coverIdentities = <String>[
       for (final comic in comics)
-        '$section:${_canonicalComicKey(comic.sourceId, comic.comicId)}',
+        (canonicalKeyFor ?? _canonicalComicKey)(comic.sourceId, comic.comicId),
+    ];
+    final presentationIdentities = <String>[
+      for (final identity in coverIdentities) '$section:$identity',
     ];
     final itemIndexByKey = <String, int>{
       for (var index = 0; index < presentationIdentities.length; index++)
@@ -317,10 +326,7 @@ extension _HomeShellViews on _HomeShellState {
         itemBuilder: (context, index) {
           final comic = comics[index];
           final resume = comic.resumeChapter;
-          final coverIdentity = _canonicalComicKey(
-            comic.sourceId,
-            comic.comicId,
-          );
+          final coverIdentity = coverIdentities[index];
           final presentationIdentity = presentationIdentities[index];
           final startupTelemetry = telemetryOwners == null ||
                   telemetryOwners.add(presentationIdentity)

@@ -125,6 +125,7 @@
   去重 MUST 限于单次查询，下一查询 MUST 读取当前来源 authority，仍保留离线 saved canonical identity 兜底及全部别名偏好合并。
   首页更新筛选 MUST 先检查更新证据，未更新漫画不得触发该筛选的别名偏好查询；更新与入架条件、历史展示语义保持。
   首页同次同步构建的更新与历史列表 MUST 共用一份当前只读漫画库聚合；下一构建 MUST 重读当前 library/source authority，不得跨构建缓存该结果。
+  同次构建的聚合、更新候选偏好与卡片身份 SHOULD 复用 source/raw comic identity 解析及按来源建立的反向别名索引，避免更新漫画数乘以全库别名扫描；卡片 live preference 查询 MUST 重读当前 authority。
   Home snapshot 编码 worker MUST 只接收持久字段投影，不得复制普通章节的完整 pages/prepared manifest 或投影容器的非持久 owner 状态。
   JSON 编码/压缩 MUST 保持异步 worker；compact 普通章节与完整 orphan download metadata、写入串行及完成屏障 MUST 保持。
   durable catalog/preference/read-state DTO 的 JSON 字段转换 MUST 留在该 worker，不得为缩小输入图把整份大目录的转换移回 caller。
@@ -212,6 +213,8 @@
   仅对该刚触达 locator 开启一次 fresh generation 并在同一用户命令内继续一次，MUST NOT 刷新未触达页、MUST NOT 对同一 locator 无限 fresh。
   fresh refresh MUST 清除 host request-plan 与 runtime retained config/resolution 后重新执行初始 source image config。
   - **下载管理投影**：自动缓存存在性 MUST 以 durable physical authority 为准；
+  READY 身份索引、候选排序与章节/page 归组 MUST 纳入 downloads-owned 有限 event-turn 预算，不得只对目标页让步而同步扫描全部缓存记录；单页查询也 MUST 允许平台/帧回调运行。
+  计算让步 MUST 保持原 checksum/URI proof、候选排序及逻辑歧义判定；MUST NOT 跨让步持有 SQLite 事务，或形成 Reader/network eligibility gate。显式下载 MUST 在索引准备后的原取消检查通过后继续命令。
   known chapter MAY 由 canonical physical artifact/partial 直接形成管理投影，不要求 exact READY binding。
   durable mutation MUST 通过轻量 invalidation 驱动打开中的 Download Manager 合并刷新；
   显式章节下载期间只累计 dirty，全部 run 结束后最多补发一次 management refresh。**Reader stale-carrier recovery boundary**：

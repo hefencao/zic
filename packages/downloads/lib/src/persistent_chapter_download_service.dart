@@ -552,10 +552,11 @@ final class PersistentChapterDownloadService
               comicDirectoryName: structuredComicDirectory,
             );
 
-      final readyIndex = _DurableReadyRecordIndex(
+      final readyIndex = await _DurableReadyRecordIndex.build(
         indexedRecords.values,
         isReady: artifactStore._isVerifiedReadyRecord,
       );
+      token.throwIfCancelled();
       final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
 
       var placement = await artifactStore.resolveDownloadPlacement(
@@ -2017,11 +2018,14 @@ final class PersistentChapterDownloadService
     final displayMetadataByLogicalChapter =
         _managementDisplayMetadata(visibleEntries);
     final recordsByChapter = <String, List<CacheRec>>{};
-    final readyIndex = _DurableReadyRecordIndex(
+    final workBudget = _DownloadProjectionWorkBudget();
+    final readyIndex = await _DurableReadyRecordIndex.build(
       indexed.values,
       isReady: artifactStore._isVerifiedReadyRecord,
+      workBudget: workBudget,
     );
     for (final record in indexed.values) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
       if (!artifactStore._isVerifiedReadyRecord(record)) {
         continue;
       }
@@ -2031,7 +2035,6 @@ final class PersistentChapterDownloadService
       recordsByChapter.putIfAbsent(chapterKey, () => <CacheRec>[]).add(record);
     }
     final snapshots = <ChapterDownloadSnapshot>[];
-    final workBudget = _DownloadProjectionWorkBudget();
     for (final entry in visibleEntries) {
       final chapterKey =
           '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}\u0000${entry.chapter.sourceRevision}';
@@ -2077,6 +2080,7 @@ final class PersistentChapterDownloadService
     final recordsByPage = <String, CacheRec>{};
     final targetRecords = chapterRecords ?? records.values;
     for (final rec in targetRecords) {
+      if (budget.exhausted) await budget.yieldTurn();
       if (!artifactStore._isVerifiedReadyRecord(rec) ||
           rec.id.sourceRevision != entry.chapter.sourceRevision) {
         continue;
@@ -2091,9 +2095,10 @@ final class PersistentChapterDownloadService
     }
     final resolvedReadyIndex =
         readyIndex ??
-        _DurableReadyRecordIndex(
+        await _DurableReadyRecordIndex.build(
           records.values,
           isReady: artifactStore._isVerifiedReadyRecord,
+          workBudget: budget,
         );
     final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
     var exactCompletedPages = 0;
@@ -2264,7 +2269,11 @@ final class PersistentChapterDownloadService
         entry,
         phase: phase,
         failure: failure,
-        indexedRecords: indexedRecords,
+        // Command page completions mutate their inventory while this
+        // projection yields. Inspect one stable set of immutable records.
+        indexedRecords: indexedRecords == null
+            ? null
+            : Map<String, CacheRec>.of(indexedRecords),
       ),
     );
   }
@@ -2314,7 +2323,7 @@ final class PersistentChapterDownloadService
     if (missing.isEmpty) {
       return ready;
     }
-    final readyIndex = _DurableReadyRecordIndex(
+    final readyIndex = await _DurableReadyRecordIndex.build(
       indexedRecords.values,
       isReady: artifactStore._isVerifiedReadyRecord,
     );
@@ -2547,15 +2556,21 @@ final class _DownloadProjectionWorkBudget {
 }
 
 final class _DurableReadyRecordIndex {
-  _DurableReadyRecordIndex(
+  _DurableReadyRecordIndex._();
+
+  static Future<_DurableReadyRecordIndex> build(
     Iterable<CacheRec> records, {
     required bool Function(CacheRec record) isReady,
-  }) {
+    _DownloadProjectionWorkBudget? workBudget,
+  }) async {
+    final index = _DurableReadyRecordIndex._();
+    final budget = workBudget ?? _DownloadProjectionWorkBudget();
     for (final record in records) {
+      if (budget.exhausted) await budget.yieldTurn();
       if (!isReady(record)) continue;
       final content = record.id.content;
       for (final identity in verifiedRecordIdentities(record)) {
-        _byVerifiedIdentity
+        index._byVerifiedIdentity
             .putIfAbsent(
               '${content.sourceId}\u0000$identity',
               () => <CacheRec>[],
@@ -2569,21 +2584,23 @@ final class _DurableReadyRecordIndex {
         sourceRevision: record.id.sourceRevision,
         pageId: content.pageId,
       );
-      final existing = _byLogicalPage[logicalKey];
+      final existing = index._byLogicalPage[logicalKey];
       if (existing == null) {
-        if (!_ambiguousLogicalPages.contains(logicalKey)) {
-          _byLogicalPage[logicalKey] = record;
+        if (!index._ambiguousLogicalPages.contains(logicalKey)) {
+          index._byLogicalPage[logicalKey] = record;
         }
       } else if (existing.id != record.id) {
-        _byLogicalPage.remove(logicalKey);
-        _ambiguousLogicalPages.add(logicalKey);
+        index._byLogicalPage.remove(logicalKey);
+        index._ambiguousLogicalPages.add(logicalKey);
       }
     }
-    for (final candidates in _byVerifiedIdentity.values) {
+    for (final candidates in index._byVerifiedIdentity.values) {
+      if (budget.exhausted) await budget.yieldTurn();
       candidates.sort(
         (left, right) => right.createdUs.compareTo(left.createdUs),
       );
     }
+    return index;
   }
 
   final Map<String, List<CacheRec>> _byVerifiedIdentity =

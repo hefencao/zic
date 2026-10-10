@@ -1,6 +1,81 @@
 part of 'home_shell.dart';
 
+// This projection lives for one synchronous query/build only. A later query
+// reads the current source and library again, including offline identities.
+final class _HomeCatalogIdentityQuery {
+  _HomeCatalogIdentityQuery({
+    required this.entries,
+    required this.savedComics,
+    required this.sourceForId,
+  });
+
+  final List<ImportedLibraryEntry> entries;
+  final List<SavedComicRecord> savedComics;
+  final BrowsableComicSource? Function(String sourceId) sourceForId;
+  final Map<String, String> _canonicalIds = <String, String>{};
+  final Map<String, BrowsableComicSource?> _sources =
+      <String, BrowsableComicSource?>{};
+  late final Map<String, String> _storedIds = _indexStoredIds();
+  final Map<String, Map<String, Set<String>>> _aliasesBySource =
+      <String, Map<String, Set<String>>>{};
+
+  Map<String, String> _indexStoredIds() {
+    final ids = <String, String>{};
+    for (final saved in savedComics) {
+      final canonical = saved.canonicalComicId;
+      if (canonical != null) {
+        ids.putIfAbsent('${saved.sourceId}\u0000${saved.comicId}',
+            () => canonical);
+      }
+    }
+    return ids;
+  }
+
+  String keyFor(String sourceId, String comicId) {
+    final rawKey = '$sourceId\u0000$comicId';
+    final canonical = _canonicalIds.putIfAbsent(rawKey, () {
+      final source = _sources.putIfAbsent(sourceId, () => sourceForId(sourceId));
+      return source is CanonicalComicIdentitySource
+          ? (source as CanonicalComicIdentitySource).canonicalComicIdentity(comicId)
+          : _storedIds[rawKey] ?? comicId;
+    });
+    return '$sourceId\u0000$canonical';
+  }
+
+  Map<String, Set<String>> _indexAliases(String sourceId) {
+    final aliases = <String, Set<String>>{};
+    final examined = <String>{};
+    void add(String comicId) {
+      if (!examined.add(comicId)) return;
+      aliases.putIfAbsent(keyFor(sourceId, comicId), () => <String>{})
+          .add(comicId);
+    }
+    for (final saved in savedComics) {
+      if (saved.sourceId == sourceId) add(saved.comicId);
+    }
+    for (final entry in entries) {
+      if (entry.chapter.sourceId == sourceId) add(entry.chapter.comicId);
+    }
+    return aliases;
+  }
+
+  Set<String> aliasesFor(String sourceId, String comicId) {
+    final canonical = keyFor(sourceId, comicId);
+    final aliases = _aliasesBySource.putIfAbsent(
+      sourceId, () => _indexAliases(sourceId),
+    );
+    return <String>{comicId, ...?aliases[canonical]};
+  }
+}
+
 extension _HomeShellCatalogIdentity on _HomeShellState {
+  _HomeCatalogIdentityQuery _catalogIdentityQuery() =>
+      _HomeCatalogIdentityQuery(
+        entries: _libraryEntries,
+        savedComics: _savedComics,
+        sourceForId: _sourceForId,
+      );
+
   String? _sourceCanonicalComicId(String sourceId, String comicId) {
     final source = _sourceForId(sourceId);
     if (source is! CanonicalComicIdentitySource) {
@@ -47,8 +122,8 @@ extension _HomeShellCatalogIdentity on _HomeShellState {
   Set<String> _canonicalComicAliases(String sourceId, String comicId) {
     final canonical = _canonicalComicKey(sourceId, comicId);
     final aliases = <String>{comicId};
-    // Chapters share raw comic identities. Resolve each candidate only once
-    // in this query; the next query still reads the current source authority.
+    // A single live card query needs only its matching aliases. Building a
+    // reverse index here would allocate the whole catalog again per card.
     final examined = <String>{comicId};
     for (final saved in _savedComics) {
       if (saved.sourceId == sourceId &&
@@ -71,12 +146,13 @@ extension _HomeShellCatalogIdentity on _HomeShellState {
     String sourceId,
     String comicId,
   ) {
-    final canonical = _canonicalComicKey(sourceId, comicId);
+    final query = _catalogIdentityQuery();
+    final canonical = query.keyFor(sourceId, comicId);
     return _savedComics
         .where(
           (saved) =>
               saved.sourceId == sourceId &&
-              _canonicalComicKey(sourceId, saved.comicId) == canonical,
+              query.keyFor(sourceId, saved.comicId) == canonical,
         )
         .toList(growable: false);
   }

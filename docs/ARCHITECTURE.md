@@ -296,7 +296,9 @@ comic/source preference 与 chapter read-state 的 durable write-through 也由 
 helper 返回稳定写入的 library identity，caller 在无 await 的同步 continuation 再确认仍是 current 后才发布 projection。
 批量 comic preference（例如书架 reorder/alias neutralization）必须先完成同一 current store 的该批 durable writes，
 再一次性发布 Home projection，不能退回 UI `save* + replace*` 或逐项 rebuild。
-Home 的 canonical alias 查询只在单次调用内按同来源 raw comic ID 去重；共享漫画 ID 的章节不重复解析 source identity。首页同次同步构建只聚合一份当前漫画库，更新与历史列表分别过滤排序；更新先检查只读更新证据，再对候选合并别名偏好。查询继续采用当前 source authority 优先、已保存 canonical ID 离线兜底，下一构建重新读取，偏好合并顺序不变，不持久缓存别名。
+Home 的 canonical identity 查询在单次同步调用内按 source/raw comic ID 复用解析结果，并按当前目标来源建立反向别名索引；共享漫画 ID 的章节不重复解析。
+首页同次构建的漫画聚合、更新筛选及卡片身份共用该查询；更新先检查只读更新证据，再对候选合并别名偏好，更新与历史仍分别排序。
+查询继续采用当前 source authority 优先、已保存 canonical ID 离线兜底，下一构建重新读取；卡片 live preference 查询也读取当前 authority，偏好合并顺序不变，不持久缓存别名。
 同一 stable mutation owner 也覆盖 session-owned chapter、SavedComic 与非 Reader progress write-through；
 chapter/SavedComic 的 write+readback 必须在同一个 concrete store 内完成，
 跨 adoption 时整轮重试 current store，caller 同步确认 persisted store 仍是 current 后才发布 Home projection。
@@ -1830,6 +1832,8 @@ pause/cancel/close 对底层 cancel 与 active run 都采用 10 秒有界等待�
 Home 在首个可见 frame 后及 durable composition adoption 后后台生成包含 orphan entries 的投影；
 持久下载后端用一个 artifact-index snapshot 同时完成 orphan discovery 与 chapter snapshot inspection，
 同一 service 的并发 refresh single-flight。
+READY 身份索引构建、候选排序、章节归组和页面投影共用 downloads-owned 4ms/64 work-unit event-turn 预算，单页查询也覆盖整库 READY 扫描。
+让步期间只持有本次不可变记录快照，不持有数据库事务或新增缓存 authority；显式下载在索引完成后仍检查原取消 token，再进入 placement/媒体命令。
 route 首帧和后续更新只消费/订阅该投影，打开、重复进入及退出 route 均不重新读取 library、artifact index 或 cache usage；显式刷新仍委托 Home 重建一次投影。
 Home startup snapshot只持久化轻量download summaries、不持久化physical cache projection，
 因此首次进入自动缓存/Canonical tab若该projection仍为空，screen在首帧后通过同一个Home projection owner lazy hydrate一次authoritative management projection；

@@ -53,6 +53,68 @@ void main() {
   });
   }
 
+  test('READY inventory yields even when the requested chapter has one page',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('zic-ready-yield-');
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    String hashFor(int index) => index.toRadixString(16).padLeft(32, '0');
+    for (var index = 0; index < 256; index++) {
+      final id = DownloadId(
+        content: ContentId(
+          sourceId: 'fixture',
+          comicId: 'cached-comic',
+          chapterId: 'cached-chapter',
+          pageId: '$index',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://cache.test/${hashFor(index)}.webp'),
+      );
+      await service.artifactStore.index.put(CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '${directory.path}/$index.webp',
+        bytes: 16,
+        checksum: '12345678',
+        checksumAlgorithm: 'crc32',
+        createdUs: index,
+        touchedUs: index,
+      ));
+    }
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'ready-yield',
+        displayName: 'Chapter',
+        sourceId: 'fixture',
+        comicId: 'target-comic',
+        comicTitle: 'Comic',
+        chapterId: 'target-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://origin.test/${hashFor(255)}.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    // Warm the immutable inventory. One target page alone cannot exercise
+    // the chapter/page projection budget; the READY scan must yield too.
+    expect(await service.readyPageIndices(entry), <int>{0});
+    var eventTurnRan = false;
+    Timer.run(() => eventTurnRan = true);
+    expect(await service.readyPageIndices(entry), <int>{0});
+    expect(eventTurnRan, isTrue,
+        reason: 'READY identity indexing must allow platform/frame callbacks');
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.exactCompletedPages, 0);
+    expect(snapshot.reusablePages, 1);
+    expect(snapshot.receivedBytes, 16);
+  });
+
   test('chapter resource access rejects an empty binding', () {
     expect(ChapterResourceAccess.new, throwsArgumentError);
   });

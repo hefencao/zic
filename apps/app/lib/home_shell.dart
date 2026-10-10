@@ -298,12 +298,16 @@ final class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  List<LibraryComic> get _libraryComics => collapseCanonicalLibraryComics(
+  List<LibraryComic> get _libraryComics =>
+      _projectLibraryComics(_catalogIdentityQuery());
+
+  List<LibraryComic> _projectLibraryComics(_HomeCatalogIdentityQuery query) =>
+      collapseCanonicalLibraryComics(
         aggregateImportedLibrary(
           _libraryEntries,
           savedComics: _savedComics,
         ),
-        canonicalIdentity: _canonicalComicKey,
+        canonicalIdentity: query.keyFor,
       );
 
   @override
@@ -1034,10 +1038,14 @@ final class _HomeShellState extends State<HomeShell> {
     return _librarySession.upsertChapter(snapshot.chapter);
   }
 
-  ComicPreference _preferenceForComic(LibraryComic comic) =>
+  ComicPreference _preferenceForComic(
+    LibraryComic comic, {
+    Iterable<String>? aliases,
+  }) =>
       _mergedPreferenceFor(
         comic.sourceId,
         comic.comicId,
+        aliases: aliases,
         fallbackSourceKind: comic.sourceId == 'local-folder'
             ? ComicSourceKind.local
             : ComicSourceKind.remote,
@@ -1047,13 +1055,14 @@ final class _HomeShellState extends State<HomeShell> {
   ComicPreference _mergedPreferenceFor(
     String sourceId,
     String comicId, {
+    Iterable<String>? aliases,
     ComicPreference? fallbackPreference,
     ComicSourceKind? fallbackSourceKind,
     bool fallbackInShelf = false,
   }) {
-    final aliases = _canonicalComicAliases(sourceId, comicId);
+    final currentAliases = aliases ?? _canonicalComicAliases(sourceId, comicId);
     final values = <ComicPreference>[];
-    for (final alias in aliases) {
+    for (final alias in currentAliases) {
       final value = _preferences[comicLibraryIdentity(sourceId, alias)];
       if (value != null) values.add(value);
     }
