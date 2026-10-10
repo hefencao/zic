@@ -51,6 +51,6 @@
 
 ## P0：后台重入生命周期
 
-- 097验证真实来源revision/carrier更新后的新Reader与独立代际退休；两项idle exact-key LRU/两分钟TTL已验，不重跑。已有肉漫屋1.6.21/1.6.22真实APK，但隔离包旧21首次搜索连到rouman5.com/127.0.0.1:443被拒，尚无manifest，不能归因真实源站。进入条件是可用真实代际或保留的source-owned旧manifest；不重试同一失败端点、不造revision、不销毁composition transfer/cache authority。
+- 097用现有10-01 ZIC备份的真实第3話/66页旧manifest继续新来源revision/carrier与独立Reader代际退休；旧manifest绑定真实21 payload且身份/pages未改。21/22 APK已具备；新manifest与Reader仍未验，不重试旧21回环搜索。已验idle exact-key LRU/两分钟TTL保持，不销毁composition transfer/cache authority。
 ## P0：纵向性能真机闭环
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
