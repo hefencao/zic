@@ -27,11 +27,13 @@ Future<void> _until(WidgetTester tester, Finder finder) async {
 Widget _page(List<_Source> sources, {
   String query = '漫画标题',
   Future<void> Function(BrowsableComicSource, SourceComicSummary)? open,
+  Future<void> Function(BrowsableComicSource, String)? native,
 }) => MaterialApp(home: ComicTitleSearchPage(
   query: query,
   sources: sources,
   loadCover: (_, _, _, {bool forceRefresh = false}) async => MemoryEncodedResourceSource(_png()),
   onOpenComic: open ?? (_, _) async {},
+  onSelectNativeId: native,
 ));
 
 void main() {
@@ -98,7 +100,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('migration advanced native input requires one source and clears on selection change',
+  testWidgets('migration inline native input requires one source and clears on selection change',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -119,34 +121,52 @@ void main() {
     await tester.tap(find.byKey(details.comicDetailsMigrateKey));
     await _until(tester, find.byKey(comicTitleSearchPageKey));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byTooltip('使用原生 ID'));
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.byType(TextFormField), findsNothing);
-    await tester.tap(find.byKey(comicSourceChoiceKey(origin.sourceId)));
+    expect(tester.widget<IconButton>(find.byKey(comicTitleSearchNativeIdKey)).onPressed, isNull);
+    await tester.tap(find.byKey(comicTitleSearchAllKey));
     await tester.pump();
-    await tester.tap(find.byTooltip('使用原生 ID'));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.enterText(find.byType(TextFormField), '/album/42');
-    await tester.tap(find.widgetWithText(TextButton, '取消'));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(comicSourceChoiceKey(origin.sourceId)));
-    await tester.pump();
-    await tester.tap(find.byTooltip('使用原生 ID'));
-    await tester.pump();
-    expect(find.byType(TextFormField), findsNothing);
     await tester.tap(find.byKey(comicSourceChoiceKey(target.sourceId)));
     await tester.pump();
-    await tester.tap(find.byTooltip('使用原生 ID'));
-    await tester.pump(const Duration(milliseconds: 400));
-    final field = find.descendant(of: find.byType(TextFormField), matching: find.byType(EditableText));
-    expect(tester.widget<EditableText>(field).controller.text, isEmpty);
-    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, '使用原生 ID')).onPressed, isNull);
-    await tester.tap(find.widgetWithText(TextButton, '取消'));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pageBack();
+    await tester.tap(find.byKey(comicTitleSearchNativeIdKey));
+    await tester.pump();
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.enterText(find.byKey(comicTitleSearchInputKey), '/album/42');
+    await tester.tap(find.byKey(comicSourceChoiceKey(origin.sourceId)));
+    await tester.pump();
+    expect(tester.widget<IconButton>(find.byKey(comicTitleSearchNativeIdKey)).isSelected, isFalse);
+    expect(tester.widget<TextField>(find.byKey(comicTitleSearchInputKey)).controller!.text, '漫画标题');
+    await tester.tap(find.byKey(comicSourceChoiceKey(target.sourceId)));
+    await tester.pump();
+    await tester.tap(find.byKey(comicTitleSearchNativeIdKey));
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(comicTitleSearchInputKey)).controller!.text, isEmpty);
+    await tester.tap(find.descendant(of: find.byKey(comicTitleSearchPageKey),
+        matching: find.byType(BackButton)));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
     expect(target.loadedComicIds, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('inline native submission preserves opaque identity without another browse request',
+      (tester) async {
+    final source = _Source('mihon:native', '目标来源');
+    const nativeId = 'mihon:manga:eyJ1cmwiOiIvYWxidW0vNDIifQ==';
+    (String, String)? selected;
+    await tester.pumpWidget(_page([source], native: (source, id) async {
+      selected = (source.sourceId, id);
+    }));
+    await _until(tester, find.byKey(sourceComicCardKey(source.sourceId, 'book')));
+    await tester.tap(find.byKey(comicTitleSearchNativeIdKey));
+    await tester.pump();
+    await tester.enterText(find.byKey(comicTitleSearchInputKey), ' $nativeId ');
+    await tester.testTextInput.receiveAction(TextInputAction.go);
+    await tester.pump();
+    expect(selected, (source.sourceId, nativeId));
+    expect(source.requests, [('漫画标题', 0)]);
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.tap(find.byKey(comicTitleSearchNativeIdKey));
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(comicTitleSearchInputKey)).controller!.text, '漫画标题');
     expect(tester.takeException(), isNull);
   });
 
@@ -183,6 +203,14 @@ void main() {
     expect(fast.requests, hasLength(1), reason: 'reselecting keeps this query result');
     await tester.tap(find.byKey(sourceComicCardKey(fast.sourceId, 'book')));
     expect(opened?.comicId, 'book');
+    await tester.tap(find.byKey(comicTitleSearchAllKey));
+    await tester.pump();
+    expect(find.byKey(comicTitleSearchGroupKey(fast.sourceId)), findsNothing);
+    await tester.tap(find.byKey(comicTitleSearchAllKey));
+    await tester.pump();
+    expect(tester.widget<FilterChip>(find.byKey(comicTitleSearchAllKey)).selected, isTrue);
+    expect(fast.requests, hasLength(1));
+    expect(slow.requests, hasLength(1));
     pending.complete(slow.page('慢源结果'));
     await _until(tester, find.text('慢源结果'));
     expect(tester.takeException(), isNull);
@@ -405,12 +433,9 @@ void main() {
 }
 
 Future<void> _toggleResultFilter(WidgetTester tester, String label) async {
-  await tester.ensureVisible(find.byTooltip('搜索结果筛选'));
-  await tester.tap(find.byTooltip('搜索结果筛选'));
+  await tester.tap(find.byKey(label == '标题完全一致'
+      ? comicTitleSearchExactKey : comicTitleSearchEmptyKey));
   await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  await tester.tap(find.text(label));
-  await tester.pump(const Duration(milliseconds: 400));
 }
 
 final class _Source implements BrowsableComicSource, CanonicalComicIdentitySource {

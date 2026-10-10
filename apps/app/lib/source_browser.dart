@@ -233,6 +233,34 @@ final class _ComicSourceChip extends StatelessWidget {
   }
 }
 
+final class _ComicSourceBar extends StatelessWidget {
+  const _ComicSourceBar({required this.chips, this.barKey});
+
+  final List<Widget> chips;
+  final Key? barKey;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    key: barKey,
+    elevation: 3,
+    child: SafeArea(
+      top: false,
+      child: SizedBox(
+        height: 58,
+        child: chips.isEmpty
+            ? const Center(child: Text('没有已启用的漫画源'))
+            : ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                scrollDirection: Axis.horizontal,
+                itemCount: chips.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) => chips[index],
+              ),
+      ),
+    ),
+  );
+}
+
 
 ComicWebViewRequest _browserRequestForSource(
   BrowsableComicSource source,
@@ -2918,11 +2946,9 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
     // emitted at the position of its first represented source.
     final chips = <Widget>[];
     final emittedOwners = <String>{};
-    var itemCount = 0;
     void emitSourceChip(BrowsableComicSource source) {
       final accent = _comicSourceAccent(source);
       final selected = source.sourceId == widget.activeSourceId;
-      itemCount++;
       chips.add(
         _ComicSourceChip(
           chipKey: comicSourceChoiceKey(source.sourceId),
@@ -2939,7 +2965,6 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
       final owner = controller?.ownerOfSource(source.sourceId);
       if (owner != null && visiblePluginIds.contains(owner)) {
         if (emittedOwners.add(owner)) {
-          itemCount++;
           chips.add(_pluginChip(context, controller!, pluginById[owner]!));
         }
         continue;
@@ -2950,35 +2975,10 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
     // activation failure being retried) still gets its control at the end.
     for (final plugin in plugins) {
       if (emittedOwners.add(plugin.plugin.pluginId)) {
-        itemCount++;
         chips.add(_pluginChip(context, controller!, plugin));
       }
     }
-    return Material(
-      key: comicSourceSwitcherKey,
-      elevation: 3,
-      child: SafeArea(
-        top: false,
-        child: itemCount == 0
-            ? const SizedBox(
-                height: 58,
-                child: Center(child: Text('没有已启用的漫画源')),
-              )
-            : SizedBox(
-                height: 58,
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: itemCount,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) => chips[index],
-                ),
-              ),
-      ),
-    );
+    return _ComicSourceBar(barKey: comicSourceSwitcherKey, chips: chips);
   }
 }
 

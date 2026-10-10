@@ -45,23 +45,19 @@ for token in (
     '_openSourceUpdateForSummary(',
     '_loadSourceVersionState(',
     '_librarySession.versionBaselines.latestKnownHeadFor(',
-    '...state.successors,',
-    '...state.predecessors,',
     '_viewSourceVersion(',
     '_selectSourceMigrationTarget(',
-    '_selectConfirmedSourceVersion(',
     '_openSourceMigrationForSummary(',
     '_openSourceMigration(',
-    'showConfirmedSourceVersionSelection(',
-    'backgroundRefresh: state.backgroundRefresh?.then(',
-    '...refreshed.successors,',
-    '...refreshed.predecessors,',
-    'webUriFor: (version) => _sourceComicWebUri(source, version.comicId)',
-    "label: const Text('已确认同源版本')",
+    'webUriFor: (version) => _sourceComicWebUri(currentSource, version.comicId)',
     'ComicTitleSearchPage(',
-    'searchActionBuilder:',
-    'selectedSources.length != 1',
     'versionState: versionState',
+    '_SourceMigrationVersionNotice(',
+    'future: initial.backgroundRefresh',
+    '...state.successors, ...state.predecessors',
+    'ConfirmedSourceVersionList(',
+    'onSelectNativeId:',
+    'ModalRoute.of(context)?.isCurrent != true',
     'await route.completed;',
     'showSourceMigrationComparison(',
     'ComicSourceMigrationPlan.build(',
@@ -72,12 +68,11 @@ presentation = read('apps/app/lib/source_migration_compare.dart')
 for token in (
     'showConfirmedSourceVersionSelection(',
     'future: backgroundRefresh,',
-    'snapshot.data ?? versions',
     "child: const Text('查看')",
-    "? '迁移旧版状态'",
-    ": '迁移到此版本'",
+    "? '迁移旧版状态' : '迁移到此版本'",
     'webUriFor(version).toString()',
     '(version: version, viewOnly: true)',
+    'versions: snapshot.data ?? versions',
     '(version: version, viewOnly: false)',
 ):
     require(presentation, token, 'readonly confirmed-version presentation')
@@ -97,8 +92,8 @@ forbid(
 
 # Search selects exact candidates; only the source/durable authority supplies
 # confirmed versions. The selector never commits relationships or migration.
-version_ui = migration.split('Future<_SourceMigrationSelection?> _selectConfirmedSourceVersion(', 1)[1]
-version_ui = version_ui.split('Future<_SourceMigrationSelection?> _selectSourceMigrationTarget(', 1)[0]
+version_ui = migration.split('final class _SourceMigrationVersionNotice', 1)[1]
+version_ui = version_ui.split('extension _HomeShellSourceMigration', 1)[0]
 forbid(version_ui, '.browse(', 'title-inferred confirmed versions')
 selector = migration.split('Future<_SourceMigrationSelection?> _selectSourceMigrationTarget(', 1)[1]
 selector = selector.split('Future<void> _openSourceMigrationForSummary(', 1)[0]

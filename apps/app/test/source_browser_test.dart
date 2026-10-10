@@ -3635,13 +3635,14 @@ void main() {
     expect(find.byType(Badge), findsWidgets);
     await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
     await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
-    await _tapVisible(tester, find.text('已确认同源版本'));
-    await _pumpUntilFound(tester, find.text('同源版本 · 版本源'));
+    await _tapVisible(tester, find.text('发现同源更新'));
+    await _pumpUntilFound(tester, find.widgetWithText(TextButton, '查看'));
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.widgetWithText(TextButton, '查看'), findsNWidgets(2));
     expect(find.widgetWithText(FilledButton, '迁移到此版本'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '迁移旧版状态'), findsOneWidget);
     expect(
-      find.descendant(of: find.byType(AlertDialog), matching: find.text('版本源 漫画')),
+      find.descendant(of: find.byType(ExpansionTile), matching: find.text('版本源 漫画')),
       findsOneWidget,
     );
     expect(find.text('旧版标题'), findsOneWidget);
@@ -3706,9 +3707,11 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(details.comicDetailsMigrateKey));
     await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
     await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
-    expect(find.byType(FilterChip), findsNothing);
-    await _tapVisible(tester, find.text('已确认同源版本'));
-    await _pumpUntilFound(tester, find.text('同源版本 · 版本源'));
+    expect(find.byKey(comicSourceChoiceKey(sourceId)), findsNothing);
+    expect(tester.widget<FilterChip>(find.byKey(comicTitleSearchAllKey)).onSelected, isNull);
+    await _tapVisible(tester, find.text('发现同源更新'));
+    await _pumpUntilFound(tester, find.widgetWithText(TextButton, '查看'));
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.widgetWithText(TextButton, '查看'), findsOneWidget);
     expect(source.browseCalls, 0);
     expect(source.versionLoadCalls, 1);
@@ -3743,7 +3746,6 @@ void main() {
     await _tapVisible(tester, find.byKey(details.comicDetailsMigrateKey));
     await _pumpUntilFound(tester, find.byKey(comicTitleSearchPageKey));
     await tester.pump(const Duration(milliseconds: 400));
-    await _tapVisible(tester, find.text('已确认同源版本'));
     final selectionContext = tester.element(find.byKey(comicTitleSearchPageKey));
     final selectionRoute = ModalRoute.of(selectionContext)!;
     expect(selectionRoute.isCurrent, isTrue);
@@ -3752,7 +3754,14 @@ void main() {
     expect(selectionRoute.isCurrent, isFalse);
     versionLoadGate.complete();
     await _pumpUntilFound(tester, find.byTooltip('迁移漫画源 · 发现同源更新'));
-    expect(find.text('同源版本 · 版本源'), findsNothing);
+    var routeCompleted = false;
+    unawaited(selectionRoute.completed.then((_) => routeCompleted = true));
+    for (var frame = 0; frame < 80 && !routeCompleted; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(routeCompleted, isTrue);
+    expect(find.text('发现同源更新'), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(source.versionLoadCalls, 1);
     expect((await store.listComicVersionSuccessors(sourceId, '$sourceId-comic')).single.successorComicId,
         'fixture-version-new-comic');

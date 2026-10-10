@@ -527,7 +527,8 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 首帧后命令既有 external-source lifecycle 发布来源，route消费其只读投影通知；该页持有查询与来源选择的UI状态，按已选择且可搜索的sourceId分组，新激活源加入当前查询，原组Future/分页保持。
 各组独立消费既有 source browse Future、canonical page projection与共享 artwork loader；
 首次选择未查询来源、查询、分页和显式重试才创建请求，build和结果筛选不重发；同查询重新选中来源直接投影已完成结果。旧查询/旧分页/已退出页面的回包不再发布；来源runtime、cache和取消仍归原owner。
-迁移与标题搜索共用上述页面、来源药丸和结果筛选；空结果开关只隐藏已完成且首个请求页无余页的空组，加载/失败/后续分页保持。精确标题只规范大小写及空白后筛选返回标题，原请求与候选身份不变。
+迁移与标题搜索共用上述页面、底部搜索栏和结果筛选；来源药丸与漫画源页共用`_ComicSourceBar`横向布局。固定底部控件不跟随结果滚动，“全部”切换完整启用来源集合，隐藏空组不修改选择。
+精确匹配和隐藏空结果直接点击切换，不打开菜单；空结果只隐藏已完成且首个请求页无余页的空组，加载/失败/后续分页保持。精确标题只规范大小写及空白后筛选返回标题，原请求与候选身份不变。
 点原漫画结果返回原详情，其它结果沿既有详情入口；标签仍走 `onSearchMetadata`，退出详情/聚合栈到 Home 的该单源搜索页。
 `ComicSourcesPage`在首次挂载前接收已有`requestedQuery`，初始化原query/controller后才开始source读取；已挂载页仍由`queryRevision`消费新的查询命令，不另建路由或请求owner。
 JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `https://18comic.ink/album/<id>`，合法绝对 HTTP(S) ID 保留。
@@ -539,12 +540,12 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
 不得用标题 `browse` 推断同源。详情保留版本发现Future及更新提示，统一“迁移漫画源”按钮承载同源版本和跨源操作。
-Home选择适配器复用`ComicTitleSearchPage`，顶部仅适配当前信息及紧接的确认版本命令；页面共用复选药丸筛选已启用来源，默认聚合搜索。既有external-source投影发布新来源，已有组请求保持。
+Home选择适配器复用`ComicTitleSearchPage`，顶部当前信息后以更新提示投影已确认版本，可在页内展开；与通用版本选择面板共用`ConfirmedSourceVersionList`的查看/迁移操作。页面共用复选药丸筛选启用来源，默认聚合搜索，来源发布保留已有请求。
 可编辑查询交给来源browse，结果按源展示封面与标题；当前精确作品只在UI过滤，候选raw identity原样返回，不展示或解码内部模型。
-原生ID由搜索栏内的数字按钮打开单来源输入对话框，输入草稿只活到该对话框关闭。选择路由退出完成后才打开比较，取消或未确认比较不提交迁移状态。
-确认版本读取完成时检查选择路由仍为当前页，迟到结果不重开面板；退出选择页不取消既有owner的关系发现。
+原生ID由搜索栏数字按钮切换到同一输入框，仅单选来源时可用；切换来源或退出ID模式即丢弃ID输入并恢复标题查询。提交只调用精确候选命令，不发起browse。选择路由退出完成后才打开比较，取消或未确认比较不提交迁移状态。
+确认版本首显和后台刷新均由页内FutureBuilder消费，失败保留首显，迟到结果不打开路由；候选命令检查选择页仍为当前路由。退出选择页不取消既有owner的关系发现。
 搜索只用于候选发现；详情已消费的只读版本Future连同background refresh传给确认版本选择器，不再次发起发现，
-同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
+页内同源更新列表只展示来源确认的successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标raw identity，不改变状态；
 确认版本入口保留历史详情的访问，不受聚合搜索筛选或来源启用状态限制；禁用来源不进入聚合搜索，也不被入口重新启用。
 通用确认版本列表消费既有只读首显与source-owned background Future，刷新在当前dialog发布、失败保留首显，关闭不取消owner工作；选择保留精确版本对象。relation discoveredAt只表示发现证据，不能投影为来源更新日期；未知日期省略，实际来源日期随刷新发布。
 迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，
@@ -577,7 +578,7 @@ exact partial绑定自己的DownloadId/URI validator；
 详情头部先投影已持久化的 successor/predecessor 关系，来源版本发现只在后台校准并更新持久关系。
 正文喜欢、书架、收藏、下载整本保留统一 48×48 `_PreferenceButton` 尺寸与 `filledTonal` 外观，不因版本提示缩放整组。
 顶部统一“迁移漫画源”action 始终占用标准 `IconButton` 宽度，已确认版本以装饰徽标提示，徽标不覆盖按钮的可访问名称。
-同源版本在迁移页的“已确认同源版本”面板同时提供查看和迁移；独立详情缺少通用迁移回调时仍复用已有新/旧版本面板。
+同源版本在迁移页以更新提示展开共用版本列表，提供查看和迁移；独立详情缺少通用迁移回调时保留已有新/旧版本面板。
 列表不显示 opaque comic ID 或伪 generation 编号。
 持久关系首显后的 source refresh 必须二次发布到当前详情和已打开面板，不得要求退出重进。独立详情面板中间的“迁移到当前版本”是真实命令：
 只有当前版本存在不同 canonical identity 的 predecessor 时才可用，并直接进入既有迁移对比。

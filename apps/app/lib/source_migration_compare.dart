@@ -23,6 +23,64 @@ const sourceMigrationComparisonChaptersKey =
 
 typedef SourceMigrationCoverLoader = Future<Uint8List> Function();
 
+final class ConfirmedSourceVersionList extends StatelessWidget {
+  const ConfirmedSourceVersionList({
+    required this.versions,
+    required this.webUriFor,
+    required this.onSelected,
+    super.key,
+  });
+
+  final List<SourceComicVersion> versions;
+  final Uri Function(SourceComicVersion) webUriFor;
+  final ValueChanged<({SourceComicVersion version, bool viewOnly})> onSelected;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: <Widget>[
+      for (final version in versions)
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                version.title.trim().isEmpty ? '未命名版本' : version.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                <String>[
+                  version.isPredecessor ? '旧版' : '新版',
+                  if (version.date?.trim().isNotEmpty == true) version.date!.trim(),
+                  webUriFor(version).toString(),
+                ].join(' · '),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              children: <Widget>[
+                TextButton(
+                  onPressed: () => onSelected((version: version, viewOnly: true)),
+                  child: const Text('查看'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () => onSelected((version: version, viewOnly: false)),
+                  child: Text(version.isPredecessor ? '迁移旧版状态' : '迁移到此版本'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+    ],
+  );
+}
+
 Future<({SourceComicVersion version, bool viewOnly})?>
     showConfirmedSourceVersionSelection({
   required BuildContext context,
@@ -43,57 +101,11 @@ Future<({SourceComicVersion version, bool viewOnly})?>
                 child: ListView(
                   shrinkWrap: true,
                   children: <Widget>[
-                    for (final version in snapshot.data ?? versions)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              version.title.trim().isEmpty
-                                  ? '未命名版本'
-                                  : version.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              <String>[
-                                version.isPredecessor ? '旧版' : '新版',
-                                if (version.date?.trim().isNotEmpty == true)
-                                  version.date!.trim(),
-                                webUriFor(version).toString(),
-                              ].join(' · '),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Wrap(
-                            alignment: WrapAlignment.end,
-                            spacing: 4,
-                            children: <Widget>[
-                              TextButton(
-                                onPressed: () => Navigator.pop(
-                                  context,
-                                  (version: version, viewOnly: true),
-                                ),
-                                child: const Text('查看'),
-                              ),
-                              FilledButton.tonal(
-                                onPressed: () => Navigator.pop(
-                                  context,
-                                  (version: version, viewOnly: false),
-                                ),
-                                child: Text(
-                                  version.isPredecessor
-                                      ? '迁移旧版状态'
-                                      : '迁移到此版本',
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
+                    ConfirmedSourceVersionList(
+                      versions: snapshot.data ?? versions,
+                      webUriFor: webUriFor,
+                      onSelected: (selection) => Navigator.pop(context, selection),
+                    ),
                   ],
                 ),
               ),
