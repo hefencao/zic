@@ -61,7 +61,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；原24项独立验收保持。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：210a3115暴露READY整库同步索引及Home重复身份查询。前者315–358ms，现覆盖已有4ms/64事件预算；后者同次构建复用，live偏好仍读当前。回归先失败后通过，Profile已采样177段最长4.139ms。Release本地22↔EH377正文/历史通过，已记录3次点击到正文108–165ms、0失败；首次覆盖安装延迟未捕获，active/最终显示仍开放。
+- Reader进退：READY315–358ms同步索引已纳入4ms/64事件预算，Profile最长4.139ms；Home构建复用身份，live偏好仍读当前。Release本地22↔EH377正文/历史108–165ms通过。新72b Profile Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整，全进退/active GC、首次覆盖安装及物理显示未验，24项开放。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
