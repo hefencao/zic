@@ -11,7 +11,7 @@
 ## 3. 当前开放问题
 - Reader210a3115：READY14,393记录同步315–358ms，索引/归组补已有4ms/64事件预算；Home同次构建复用identity/alias，live偏好仍读当前。Releaseec6f9e5a/PID16864本地22↔EH377正文/历史通过，已记录点击到正文108–165ms、0失败。2377/Rust25/三ABI/门禁通过；native115输入未变沿用。覆盖安装首次数秒及原24项独立开放。
 - 013独立网络接收未验：SDK36设备perfetto仅有ftrace/log，未注册android.network_packets；取得独立wire/Rust观测后才采集，20ms Dart progress不能代替。057镜像应用/重入/恢复的原12引用/native ID/未关闭状态通过，只余真实Web登录；设置/9插件/32会话不重跑。
-- EH predecessor/ACK与提醒开放；099受控及实际canonical已验，停止重复。31后台proof失败根因为compact focus URI泄漏；只hydrate占位focus，取消/仍占位停止，真实carrier/epoch保持。四回归/新Release371→424、Reader80静置、本地13,394,740B/0失败通过。
+- 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；Releaseec6f9e5a/72b/PID25155/Home/无forward，210当前掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
 - rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。

@@ -8,11 +8,11 @@
 - 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
-- 验实际 `sourceUpdateAt` 书架卡片的右上更新标识与左上书架标识分离。版本动作仅在实际搜索返回在架旧版且来源关系证明唯一 latest head 时验：直接打开该 raw successor、目标仍未入架。当前 EH 标题聚合结果未返回旧版，Ani 完整图56节点/46终点；不能按日期、generation或5条saved子图补造head，不重复该不满足前提的版本动作。
+- 版本动作仅在实际搜索返回在架旧版且来源关系证明唯一 latest head 时验：直接打开该 raw successor、目标仍未入架。当前 EH 标题聚合结果未返回旧版，Ani 完整图56节点/46终点；不能按日期、generation或5条saved子图补造head，不重复该不满足前提的版本动作。
 
 ## P0：Artwork 生命周期与更新语义真机闭环
 
-- 使用原始报障 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
+- 037先恢复原封面批次：归档只识别18comic186442/195520，缺本地及另一封面；项目/私有测试目录未找到08-08原trace/dev164包。取得完整批次后验首页/Reader往返、内存压力和response cache trim下既有ImageProvider不悬空；不恢复presentation retry/evict/watchdog。
 - 普通主入口验证真实来源版本首次入架确认既有chapter/version通知、后续successor仍可提醒；隔离来源验收不得代替真实版本发现流程（ADR0383 Provisional）。
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
