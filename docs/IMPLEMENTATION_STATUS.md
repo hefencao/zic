@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 新2377/27suite/analyzer、Rust25/Android121/全门禁/三ABI Debug/Profile/Release/JNI通过。真实22属性通过，新manifest网络超时，97 Reader未验。Release06945ef7/72b/PID15419/Home/无forward；3既有quarantine |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 保留2377/27suite/analyzer、Rust25/Android121/全门禁/三ABI Debug/Profile/Release/JNI；本轮文档门禁通过。097新manifest请求::1被拒绝、Reader未验。当前Release06945ef7/72b/PID30575/Home/无forward；3既有quarantine |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。按原文撤除必需单SChapter及Cookie/POST门槛；升级缓存/host正文仍待验。052/020/099/TTL/LRU保持；097新manifest超时、210离线，016/wire013/DNS089、真实来源及原加载/输入/最终显示开放。
+  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录，不全是阻塞。097独立包请求连到::1被拒绝，新manifest仍缺；公开DNS非回环，设备VPN活跃，解析来源未定。210离线，016/wire013/DNS089、真实来源及原加载/输入/最终显示开放；已验TTL/LRU/052/020/099保持。

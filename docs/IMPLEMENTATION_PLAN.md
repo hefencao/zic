@@ -51,6 +51,6 @@
 
 ## P0：后台重入生命周期
 
-- 097真实66页旧21 manifest与21/22 APK已具备；22自行保存URL后返回false的修复及真实拒绝/规范化/同值重入已验，停止重跑。新manifest在roum29.xyz请求超时，Reader未创建；待真实输入或网络条件变化后验新revision/carrier与独立退休，不归为DNS、不重试同一失败。保持LRU/TTL、composition transfer/cache authority。
+- 097真实66页旧21 manifest与21/22 APK已具备，22真实设置保存已验。使用插件声明的rouman5.com后，独立包请求连到::1并被拒绝，Reader未创建；公开DNS为公网地址，设备VPN活跃，解析来源仍未确认。仅待取得真实新manifest后验代际/独立退休，不重复失败请求、不绕过系统DNS；LRU/TTL与composition authority保持。
 ## P0：纵向性能真机闭环
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
