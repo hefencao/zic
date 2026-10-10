@@ -61,7 +61,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；原24项独立验收保持。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：READY315–358ms同步索引已纳入4ms/64事件预算，Profile最长4.139ms；Home构建复用身份，live偏好仍读当前。Release本地22↔EH377正文/历史108–165ms通过。新72b Profile Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整，全进退/active GC、首次覆盖安装及物理显示未验，24项开放。
+- Reader进退：READY315–358ms索引已纳入4ms/64事件预算，Profile最长4.139ms；Home复用身份，live偏好仍读当前。Release本地22↔EH377正文/历史108–165ms通过。72b Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整。active/input/全窗口GC可独立推进，210原输入及最终物理显示另待条件，24项开放。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 保留2377/27suite/analyzer、Rust25/Android121/全门禁/三ABI Debug/Profile/Release/JNI；本轮文档门禁通过。097新manifest请求::1被拒绝、Reader未验。当前Release06945ef7/72b/PID30575/Home/无forward；3既有quarantine |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录，不全是阻塞。097独立包请求连到::1被拒绝，新manifest仍缺；公开DNS非回环，设备VPN活跃，解析来源未定。210离线，016/wire013/DNS089、真实来源及原加载/输入/最终显示开放；已验TTL/LRU/052/020/099保持。
+  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未验记录。055升级缓存及可用设备active/input/GC可推进；097新manifest、013/wire、089/DNS等只暂停缺前提分支。JM一次强刷80项/1.254s无验证，079/080失败分支未验、不重复正常刷新。已验TTL/LRU/052/020/099保持。

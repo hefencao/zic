@@ -1,4 +1,6 @@
-- P0：RMR-037仅余连续手势/输入延迟、完整进退/active GC与最终显示。72b Profile06bdc2b2 Ani273正文/返回通过；保留timeline覆盖Reader帧，max GC6.019ms，完整窗口缺头尾，不证明总分配/全程性能。取得210a3115原HalfLove→Ani输入与有效物理显示条件再验；不重复静置样本、不重开已验控制面。自动锁屏/误点击及采样ring覆盖属于测试边界；融合locator候选保持撤回，NetLane、7/3和2/1保持。
+- 先推进可独立验收的升级durable缓存055、合格host正文056/069及可用设备的active/input/完整窗口GC；固定各自输入和通过断言。最终显示条件不阻止应用侧检查，缺失样本不阻止其它来源；同一场景更新全部相关记录。
+- 只暂停缺少具体前提的分支：原始批次/旧目录037/054/077、真实登录057、@string/多入口APK071、独立接收时钟013、默认DNS控制089及097新manifest。未复现的challenge/版本动作仍是未验，不据此修改生产或反复刷新正常输入。
+- P0：RMR-037仅余连续手势/输入延迟、完整进退/active GC与最终显示。72b Profile06bdc2b2 Ani273正文/返回通过；保留timeline覆盖Reader帧，max GC6.019ms，完整窗口缺头尾，不证明总分配/全程性能。可用72b独立验active/input/完整窗口GC；210a3115只限原HalfLove→Ani输入，最终显示另等有效观测。不重复静置样本、不重开已验控制面。自动锁屏/误点击及采样ring覆盖属于测试边界；融合locator候选保持撤回，NetLane、7/3和2/1保持。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282快滑最终composition与视觉验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。余下顿挫只按fresh有效显示证据定位SurfaceProducer/compositor，不重复已量化首个native output成本或重改已验geometry/anchor、窗口。
@@ -40,7 +42,7 @@
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 
-- 对禁漫天堂执行强制刷新，确认只有真实 Cloudflare challenge 产生 `sourceVerificationRequired`；普通 403/timeout/解析错误保持原分类，主/兼容 interceptor 行为一致。
+- 079真实Mihon禁漫天堂已一次下拉强刷成功：80项、1.254s、无失败/验证。仅余实际challenge与普通403/timeout/解析错误分类、主/兼容interceptor一致性；成功输入不覆盖失败分支，停止重复正常刷新。
 - 完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。
 
 本文件覆盖用户要求的全部产品、性能与来源验收；112项有效状态只读`docs/IMPLEMENTATION_STATE.json`。只验证剩余合同，修改生产前须确认新的失败及根因；更新已有文件，不新增ADR/audit、完整子审计或逐轮安装/哈希快照。保持唯一cache、NetLane、窗口/预算及真实退出边界。
@@ -53,4 +55,4 @@
 
 - 097真实66页旧21 manifest与21/22 APK已具备，22真实设置保存已验。使用插件声明的rouman5.com后，独立包请求连到::1并被拒绝，Reader未创建；公开DNS为公网地址，设备VPN活跃，解析来源仍未确认。仅待取得真实新manifest后验代际/独立退休，不重复失败请求、不绕过系统DNS；LRU/TTL与composition authority保持。
 ## P0：纵向性能真机闭环
-- 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
+- 普通Profile/Release独立验纵向active拖动、拖动→惯性（ballistic）的应用帧/输入与完整窗口GC；最终呈现另需有效physical-display及视觉观测，不作为前述检查的前提。forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
