@@ -98,8 +98,8 @@ require(
     'shared encoded-image signature authority',
 )
 
-# Previously cached bad Mihon manifests must not mask the corrected catalog
-# contract after upgrade; do not invalidate unrelated source ecosystems.
+# Mihon owner-local metadata responses use distinct host-contract revisions.
+# Durable library records have a separate refresh/locator compatibility owner.
 for token in (
     "'chapter-metadata-v3-source-contract-refresh'",
     "identity.sourceId.startsWith('mihon:')",

@@ -1383,10 +1383,10 @@ ResourceCacheKey _comicKey(
         <String>[identity.sourceId, comicId, 'details'],
       ),
       namespace: identity.namespace,
-      // dev.160 corrects the Mihon 1.6 CatalogueSource host contract. Avoid
-      // serving durable manifests produced by the previous shim, where chapter
-      // discovery could collapse to an empty/invalid catalog. Other source
-      // ecosystems keep their existing cache revision.
+      // Keep responses from different Mihon host contracts separate in memory.
+      // Typed catalog responses are not persisted by ResourceCacheManager;
+      // durable library snapshots use their own refresh/locator compatibility.
+      // Other source ecosystems keep their existing cache revision.
       revision: identity.sourceId.startsWith('mihon:')
           ? 'mihon-comic-details-v2-host-contract'
           : '',

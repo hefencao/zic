@@ -111,6 +111,68 @@ void main() {
     expect(cache.stats.inFlight, 0);
   });
 
+  test('metadata stays owner-local while image bytes survive cache reopen',
+      () async {
+    final store = _MemoryResourceByteStore();
+    final metadataKeys = <ResourceCacheKey>[
+      for (final kind in <ResourceCacheKind>[
+        ResourceCacheKind.comicDetails,
+        ResourceCacheKind.chapterMetadata,
+        ResourceCacheKind.searchResults,
+      ])
+        ResourceCacheKey(kind: kind, identity: 'source/metadata'),
+    ];
+    for (final key in metadataKeys) {
+      store.values[key] = PersistedResourceBytes(
+        bytes: Uint8List.fromList(<int>[99]),
+        expiresAt: DateTime.now().add(const Duration(days: 1)),
+      );
+    }
+    const imageKey = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/cover',
+    );
+    var imageLoads = 0;
+    final metadataLoads = <ResourceCacheKey, int>{};
+    for (var generation = 1; generation <= 2; generation++) {
+      final cache = ResourceCacheManager(byteStore: store);
+      try {
+        for (final key in metadataKeys) {
+          Future<Uint8List> load() async {
+            metadataLoads.update(key, (value) => value + 1, ifAbsent: () => 1);
+            return Uint8List.fromList(<int>[generation]);
+          }
+
+          for (var read = 0; read < 2; read++) {
+            expect(
+              await cache.getOrLoad<Uint8List>(
+                key: key, loader: load, weightOf: (value) => value.length,
+              ),
+              <int>[generation],
+            );
+          }
+          expect(metadataLoads[key], generation);
+          expect(store.values[key]!.bytes, <int>[99]);
+        }
+        expect(
+          await cache.getOrLoad<Uint8List>(
+            key: imageKey,
+            loader: () async {
+              imageLoads++;
+              return Uint8List.fromList(<int>[7]);
+            },
+            weightOf: (value) => value.length,
+          ),
+          <int>[7],
+        );
+        expect(imageLoads, 1);
+        expect(store.writes, 1);
+      } finally {
+        await cache.close();
+      }
+    }
+  });
+
   test('restores durable image bytes before invoking the source', () async {
     final store = _MemoryResourceByteStore();
     const key = ResourceCacheKey(

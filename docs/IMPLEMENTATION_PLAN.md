@@ -1,4 +1,4 @@
-- 先推进可独立验收的升级durable缓存055、合格host正文056/069及可用设备的active/input/完整窗口GC；固定各自输入和通过断言。最终显示条件不阻止应用侧检查，缺失样本不阻止其它来源；同一场景更新全部相关记录。
+- 先准备合格host正文056/069及可用设备的active/input/完整窗口GC；固定各自输入和通过断言。最终显示条件不阻止应用侧检查，缺失样本不阻止其它来源；同一场景更新全部相关记录。
 - 只暂停缺少具体前提的分支：原始批次/旧目录037/054/077、真实登录057、@string/多入口APK071、独立接收时钟013、默认DNS控制089及097新manifest。未复现的challenge/版本动作仍是未验，不据此修改生产或反复刷新正常输入。
 - P0：RMR-037仅余连续手势/输入延迟、完整进退/active GC与最终显示。72b Profile06bdc2b2 Ani273正文/返回通过；保留timeline覆盖Reader帧，max GC6.019ms，完整窗口缺头尾，不证明总分配/全程性能。可用72b独立验active/input/完整窗口GC；210a3115只限原HalfLove→Ani输入，最终显示另等有效观测。不重复静置样本、不重开已验控制面。自动锁屏/误点击及采样ring覆盖属于测试边界；融合locator候选保持撤回，NetLane、7/3和2/1保持。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。
@@ -21,7 +21,6 @@
 
 - 原19/20偶发缓存加载/重下、真实host正文/fallback、challenge/登录、partial/live媒体及完整输入/canonical分配仍独立待验；仅按剩余合同验收来源实际返回的输入，不额外要求所有协议变体。049正文载体已收口，不宣称live streaming或零分配，也不重跑已验生命周期。
 - Roumanwu：复取历史exact 80章真机样本，核对raw SManga与升级/旧durable manifest刷新路径；不得用当前42章样本或JVM80对象合同替代原样本验收，见source-contract-acceptance审计。
-- 禁漫天堂：仅余升级后的durable details/chapter cache revision真实刷新；fresh 350章不替代升级缓存验收。若单个完整 `SChapter` 再现，保留原对象检查；该条件分支不是必须找回的样本。Cloudflare不调整。
 - 绅士漫画：补可无状态重放的真实cover/page host正文与 `sourceMediaProtocolMismatch` fallback；保留自定义响应/镜像/压缩语义，不把各变体另加为必验项，不扩大client白名单。
 - Venera057仅余完成真实Web登录后的原active source/session连续性。JM API1→2→1应用/重入/恢复已验：原12引用有效、native process/session/runtime ID和未关闭状态保持，JM代际推进/EH不变；镜像、普通设置、9插件/原11源和32-session边界不重跑。
 
@@ -38,7 +37,6 @@
 
 - 使用真实 Venera/E-Hentai predecessor/ACK输入及successor补Reader首次/后续提醒；真实版本详情、比较及同源确认已验，不再重复。
 - 禁漫天堂仅余真实`challenge-error-*`/typed interceptor、脚本-only/普通403、可见challenge期间停留及真实解题后handoff。081已验普通完整页面稳定返回、取消/中断和一次snapshot提交，不重复；不得要求新`cf_clearance`作为唯一成功条件。
-- 使用真实 Mihon 1.4/1.6扩展验证宿主调用顺序：1.6先 `getMangaUpdate(...fetchChapters=true)` / `getPageList(SChapter)`，1.4仅能力缺失时回退 legacy。用禁漫天堂确认 source返回的每个完整 SChapter原样保留且不按相同 URL折叠；Roumanwu原80章不得再因错误入口刷新成0章。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 

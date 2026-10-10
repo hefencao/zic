@@ -42,6 +42,8 @@ Native implementation
 ### `resource_cache`
 
 封面、详情、搜索、章节元数据等可重新获取响应的唯一缓存平面，拥有容量、TTL、分类预算、in-flight 合并、持久 byte store 和失效策略。
+只有 `imageBytes` 读取/写入 byte store；details、browse、preview/comment 与 chapter metadata 的类型化响应只在当前 manager 内存中复用，冷 owner 重新调用 source。
+catalog response revision 分隔内存响应，不迁移或失效书库记录。`SavedComicRecord`/`ImportedChapterRecord` 属于独立 library authority，来源刷新与旧 locator 兼容继续由 Home composition 消费。
 retained 晋升沿用同一 response key：byte store 返回有效 durable payload 是否存在，已有副本只改生命周期元数据；transient 副本缺失时，manager 将仍未过期的内存响应后台补写为 retained，不重新请求来源。晋升意图由 manager 内部 claim 标识，精确失效、强制刷新和 clear 撤销该 claim；内存容量淘汰不撤销持久化意图。补写沿用原 persistence tail，不阻塞呈现或增加网络调度权威。
 Android `local-folder` 导入保持正文 SAF/document-tree identity，不复制整本图册；但 cover 是独立的长期 artwork resource：
 根目录签名有效且主名精确为 `cover` 的图片优先作为封面并从 Reader 页序列排除，否则第一页同时承担封面与正文。

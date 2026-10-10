@@ -1904,6 +1904,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   ContentId、DownloadId 与 DecodeId 的新字符串 key MUST 使用长度 framing；
   旧 delimiter key 只能用于兼容读取/恢复，新的 cache/index/metadata 写入 MUST 使用 framed key，不能因 source/comic/URI 字段包含分隔符而发生碰撞。
 - 封面、详情、搜索和章节元数据 MUST 由统一 response cache 拥有，key 包含 namespace、稳定 identity 和必要 revision。
+  response byte store MUST只持久化 `imageBytes`；details、search、preview/comment、chapter metadata 的类型化响应 MUST保持 owner-local 内存复用，冷 owner MUST重新调用 source。
+  response revision MUST NOT被解释为书库迁移或失效指令；独立持久化的漫画/章节记录 MUST继续由 library authority 与现有来源刷新/locator兼容合同裁决。
 - Promoted Reader artifact MUST由唯一`ArtifactCacheManager`/persistent cache backend拥有；
   未promoted partial MUST与immutable cache分离。
   physical `DownloadSession`的`committedLength/residentCacheBacked`只声明transfer/residency状态，

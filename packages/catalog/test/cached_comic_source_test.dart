@@ -513,10 +513,14 @@ void main() {
     raw.chapterLoads = 0;
 
     await cache.getOrLoad<ChapterManifest>(
-      key: const ResourceCacheKey(
+      key: ResourceCacheKey(
         kind: ResourceCacheKind.chapterMetadata,
-        identity: 'fixture\u0000chapter',
-        namespace: 'source:fixture',
+        identity: encodeStableCacheKey(
+          'chapter-metadata',
+          <String>[raw.sourceId, 'chapter'],
+        ),
+        namespace: sourceResourceCacheNamespace(raw.sourceId),
+        revision: 'chapter-metadata-v2-durable-plugin-locators',
       ),
       loader: () async => stale,
       weightOf: (_) => 1,
@@ -527,6 +531,41 @@ void main() {
     expect(loaded.pages.single.uri, stale.pages.single.uri);
     expect(raw.chapterLoads, 1);
     expect(cache.stats.forKind(ResourceCacheKind.chapterMetadata).entries, 2);
+  });
+
+  test('only Mihon details bypass the previous host-contract response',
+      () async {
+    for (final sourceId in <String>['mihon:fixture', 'fixture']) {
+      final raw = _CountingSource(sourceId: sourceId);
+      final cache = ResourceCacheManager();
+      addTearDown(cache.close);
+      final source = CachedBrowsableComicSource(source: raw, cache: cache);
+      final previous = await raw.loadComic('comic');
+      raw.comicLoads = 0;
+      final identity = ComicResourceCacheIdentity.fromSource(raw, 'comic');
+      await cache.getOrLoad<ComicManifest>(
+        key: ResourceCacheKey(
+          kind: ResourceCacheKind.comicDetails,
+          identity: encodeStableCacheKey(
+            'comic-response',
+            <String>[sourceId, 'comic', 'details'],
+          ),
+          namespace: identity.namespace,
+        ),
+        loader: () async => previous,
+        weightOf: (_) => 1,
+      );
+
+      final current = await source.loadComic('comic');
+      final isMihon = sourceId.startsWith('mihon:');
+      expect(raw.comicLoads, isMihon ? 1 : 0);
+      expect(identical(current, previous), !isMihon);
+      expect(current.comic.sourceId, sourceId);
+      expect(
+        cache.stats.forKind(ResourceCacheKind.comicDetails).entries,
+        isMihon ? 2 : 1,
+      );
+    }
   });
 
   test('chapter refresh capability bypasses the current response', () async {
@@ -731,6 +770,8 @@ class _CountingSource implements
         ComicCommentSource,
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource {
+  _CountingSource({this.sourceId = 'fixture'});
+
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
@@ -747,7 +788,7 @@ class _CountingSource implements
   String? lastSectionId;
 
   @override
-  String get sourceId => 'fixture';
+  final String sourceId;
 
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(

@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 稳定基准版本：`0.31.0-dev.328` / App `0.31.0+328`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
-- 当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未验记录。055升级缓存、合格host输入和可用设备active/input/GC独立推进；缺原始输入、账号或底层观测只暂停对应分支。单SChapter/Cookie/POST非必需。039/049/099/052/020/TTL/LRU保持；097/016/013/089及原加载/最终显示开放。
+- 当前112项：device75/toolchain11/superseded3/partial17/pending6，23条未验。055持久response元数据前提否证，历史/当前仅图片入byte store；书库刷新独立，130 owner测试通过。合格host输入及可用设备active/input/GC可推进，缺前提只暂停对应分支。单SChapter/Cookie/POST非必需；097/016/013/089及原加载/最终显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
@@ -9,7 +9,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Reader：READY索引315–358ms已纳入4ms/64预算；Home复用identity/alias，live偏好仍读当前。210本地22↔EH377正文/历史108–165ms通过。72b Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整。可用72b独立验active/input/全窗口GC；210原输入、最终显示另待条件。首次覆盖安装/分配开放，2377/Rust25/Android121保持。
+- Reader：READY索引315–358ms已纳入4ms/64预算；Home复用identity/alias，live偏好仍读当前。210本地22↔EH377正文/历史108–165ms通过。72b Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整。72b可独立验active/input/全窗口GC；210原输入、最终显示另待条件。首次覆盖安装/分配开放，新2379/Rust25通过，Android121沿用。
 - 013独立网络接收未验：SDK36无android.network_packets；取得wire/Rust观测后才采集，20ms Dart progress不能代替。089默认DNS物理退出缺有效解析控制。新强刷6.712s自动呈现、首次换页57.393s；660→0→780始终active，016入场未验，不重复该输入。057仅余真实Web登录，已验设置/身份不重跑。
 - 097真实21旧manifest第3話/66页未改；22设置保存修复、6回归/Android121与真实拒绝/规范化/同值重入保持。独立包用声明的rouman5.com连到::1被拒绝，Reader未创建；公开DNS非回环、VPN活跃，解析来源未定。新manifest/代际与19/20独立开放，不绕过DNS或重复失败输入。
 - 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；标识验收Releaseec6f9e5a；当前Release06945ef7/72b/PID30575/Home/无forward，210当前掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
@@ -52,7 +52,7 @@
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移当前信息后更新提示页内展开版本；两页底部搜索/筛选复用漫画源横栏，含“全部”。精确/空结果单击切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选及ID/IME，无输入弹窗；空结果保留失败/余页，原24项独立范围保持。
+- 迁移当前信息后更新提示页内展开版本；两页底部搜索/筛选复用漫画源横栏，含“全部”。精确/空结果单击切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选及ID/IME，无输入弹窗；空结果保留失败/余页，独立来源/性能验收见状态JSON。
   Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。
