@@ -22,6 +22,7 @@ final class ComicTitleSearchPage extends StatefulWidget {
     this.title,
     this.inputLabel = '搜索漫画',
     this.header,
+    this.searchActionBuilder,
     this.isComicVisible,
     super.key,
   });
@@ -42,6 +43,8 @@ final class ComicTitleSearchPage extends StatefulWidget {
   final String? title;
   final String inputLabel;
   final Widget? header;
+  final Widget Function(BuildContext, List<BrowsableComicSource>)?
+      searchActionBuilder;
   final bool Function(BrowsableComicSource, SourceComicSummary)? isComicVisible;
 
   @override
@@ -60,13 +63,27 @@ final class _TitleSourceSearch {
   final List<int> offsets = <int>[0];
   int pageIndex = 0;
   bool verifying = false;
-  late Future<_TitleSourceResult> result;
+  Future<_TitleSourceResult>? result;
+  _TitleSourceResult? completed;
+  int requestRevision = 0;
 }
 
 final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
   late final TextEditingController _input;
   late String _query;
   List<_TitleSourceSearch> _groups = <_TitleSourceSearch>[];
+  final Set<String> _knownSourceIds = <String>{};
+  final Set<String> _selectedSourceIds = <String>{};
+  bool _hideEmptySources = false;
+  bool _exactTitle = false;
+
+  List<BrowsableComicSource> get _sources {
+    final seen = <String>{};
+    return <BrowsableComicSource>[
+      for (final source in widget.sources)
+        if (seen.add(source.sourceId)) source,
+    ];
+  }
 
   @override
   void initState() {
@@ -121,21 +138,63 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
     final previous = <String, _TitleSourceSearch>{
       for (final group in _groups) group.source.sourceId: group,
     };
-    final seen = <String>{};
+    final sources = _sources;
+    final available = sources.map((source) => source.sourceId).toSet();
+    for (final sourceId in available) {
+      if (_knownSourceIds.add(sourceId)) _selectedSourceIds.add(sourceId);
+    }
+    _knownSourceIds.retainAll(available);
+    _selectedSourceIds.retainAll(available);
     _groups = <_TitleSourceSearch>[
-      for (final source in widget.sources)
-        if (source.descriptor.supportsSearch && seen.add(source.sourceId))
+      for (final source in sources)
+        if (source.descriptor.supportsSearch)
           previous[source.sourceId] ?? _TitleSourceSearch(source),
     ];
-    if (_query.isEmpty) {
-      _groups = <_TitleSourceSearch>[];
-      return;
-    }
     for (final group in _groups) {
-      if (!previous.containsKey(group.source.sourceId)) {
-        group.result = _search(group);
+      if (_query.isNotEmpty && _selectedSourceIds.contains(group.source.sourceId) &&
+          group.result == null) {
+        _load(group);
       }
     }
+  }
+
+  void _load(_TitleSourceSearch group) {
+    final revision = ++group.requestRevision;
+    group.completed = null;
+    group.result = _search(group).then((result) {
+      if (mounted && _groups.contains(group) && group.requestRevision == revision) {
+        setState(() => group.completed = result);
+      }
+      return result;
+    });
+  }
+
+  void _selectSource(String sourceId, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedSourceIds.add(sourceId);
+      } else {
+        _selectedSourceIds.remove(sourceId);
+      }
+      _syncSources();
+    });
+  }
+
+  List<SourceComicSummary> _visibleItems(
+    BrowsableComicSource source,
+    SourceBrowsePage page,
+  ) {
+    final title = _normalizedSearchTitle(_query);
+    return page.items.where((comic) =>
+        (widget.isComicVisible?.call(source, comic) ?? true) &&
+        (!_exactTitle || _normalizedSearchTitle(comic.title) == title)).toList();
+  }
+
+  bool _emptySource(_TitleSourceSearch group) {
+    final page = group.completed?.page;
+    // An empty intermediate page cannot prove that this source has no result.
+    return page != null && group.pageIndex == 0 && !page.hasMore &&
+        _visibleItems(_active(group.source), page).isEmpty;
   }
 
   void _submit(String value) {
@@ -150,16 +209,17 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
   }
 
   void _reload(_TitleSourceSearch group) {
-    if (!mounted || !_groups.contains(group)) return;
+    if (!mounted || !_groups.contains(group) ||
+        !_selectedSourceIds.contains(group.source.sourceId)) return;
     setState(() {
-      group.result = _search(group);
+      _load(group);
     });
   }
 
   void _previous(_TitleSourceSearch group) {
     setState(() {
       group.pageIndex--;
-      group.result = _search(group);
+      _load(group);
     });
   }
 
@@ -169,7 +229,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
       group.offsets.removeRange(group.pageIndex + 1, group.offsets.length);
       group.offsets.add(offset);
       group.pageIndex++;
-      group.result = _search(group);
+      _load(group);
     });
   }
 
@@ -199,12 +259,14 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
     return FutureBuilder<_TitleSourceResult>(
       key: ValueKey<(String, String)>((source.sourceId, _query)),
       future: group.result,
+      initialData: group.completed,
       builder: (context, snapshot) {
-        final complete = snapshot.connectionState == ConnectionState.done;
-        final page = complete ? snapshot.data?.page : null;
-        final failure = complete ? snapshot.data?.failure : null;
-        final items = page?.items.where((comic) =>
-            widget.isComicVisible?.call(source, comic) ?? true).toList();
+        final result = group.completed ??
+            (snapshot.connectionState == ConnectionState.done ? snapshot.data : null);
+        final complete = result != null;
+        final page = result?.page;
+        final failure = result?.failure;
+        final items = page == null ? null : _visibleItems(source, page);
         return Padding(
           key: comicTitleSearchGroupKey(source.sourceId),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -213,17 +275,15 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(source.descriptor.name,
-                          style: Theme.of(context).textTheme.titleMedium),
-                      if (source.sourceId.startsWith('mihon:') ||
-                          source.sourceId.startsWith('venera:'))
-                        Text(source.sourceId.startsWith('mihon:') ? 'Mihon' : 'Venera',
-                            style: Theme.of(context).textTheme.labelSmall),
-                    ],
-                  )),
+                  if (_comicSourcePluginIcon(_comicSourcePluginFormat(source.sourceId))
+                      case final icon?) ...<Widget>[
+                    icon,
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(child: Text(source.descriptor.name,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: _comicSourceAccent(source),
+                      ))),
                   IconButton(
                     tooltip: '上一页',
                     onPressed: complete && group.pageIndex > 0
@@ -253,7 +313,8 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
                   openingWebView: group.verifying,
                 )
               else if (items == null || items.isEmpty)
-                const Padding(padding: EdgeInsets.all(20), child: Text('没有搜索结果'))
+                Padding(padding: const EdgeInsets.all(20), child: Text(
+                    _exactTitle ? '当前页没有完全一致的标题' : '没有搜索结果'))
               else
                 SizedBox(
                   height: 224,
@@ -297,38 +358,89 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
 
   @override
   Widget build(BuildContext context) {
+    final sources = _sources;
+    final emptySources = <String>{
+      if (_hideEmptySources)
+        for (final group in _groups)
+          if (_emptySource(group)) group.source.sourceId,
+    };
+    final groups = _groups.where((group) => _query.isNotEmpty &&
+        _selectedSourceIds.contains(group.source.sourceId) &&
+        !emptySources.contains(group.source.sourceId)).toList();
+    final selectedSources = sources.where((source) =>
+        _selectedSourceIds.contains(source.sourceId)).toList(growable: false);
     return Scaffold(
       key: comicTitleSearchPageKey,
       appBar: AppBar(title: Text(widget.title ?? '聚合搜索：$_query')),
-      body: Column(
+      body: ListView(
         children: <Widget>[
+          if (widget.header != null) widget.header!,
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: TextField(
-              key: comicTitleSearchInputKey,
-              controller: _input,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _submit,
-              decoration: InputDecoration(
-                labelText: widget.inputLabel,
-                suffixIcon: IconButton(tooltip: '搜索',
-                    onPressed: () => _submit(_input.text),
-                    icon: const Icon(Icons.search)),
+            child: Row(children: <Widget>[
+              Expanded(child: TextField(
+                key: comicTitleSearchInputKey,
+                controller: _input,
+                textInputAction: TextInputAction.search,
+                onSubmitted: _submit,
+                decoration: InputDecoration(
+                  labelText: widget.inputLabel,
+                  suffixIcon: IconButton(tooltip: '搜索',
+                      onPressed: () => _submit(_input.text),
+                      icon: const Icon(Icons.search)),
+                ),
+              )),
+              if (widget.searchActionBuilder != null)
+                widget.searchActionBuilder!(context, selectedSources),
+              PopupMenuButton<String>(
+                tooltip: '搜索结果筛选',
+                icon: Icon(Icons.filter_list,
+                    color: _hideEmptySources || _exactTitle
+                        ? Theme.of(context).colorScheme.primary : null),
+                onSelected: (value) => setState(() {
+                  if (value == 'empty') _hideEmptySources = !_hideEmptySources;
+                  if (value == 'exact') _exactTitle = !_exactTitle;
+                }),
+                itemBuilder: (_) => <PopupMenuEntry<String>>[
+                  CheckedPopupMenuItem(value: 'empty', checked: _hideEmptySources,
+                      child: const Text('隐藏无结果的来源')),
+                  CheckedPopupMenuItem(value: 'exact', checked: _exactTitle,
+                      child: const Text('标题完全一致')),
+                ],
               ),
-            ),
+            ]),
           ),
-          Expanded(
-            child: _groups.isEmpty && widget.header == null
-                ? const Center(child: Text('没有可搜索的漫画源'))
-                : ListView(children: <Widget>[
-                    if (widget.header != null) widget.header!,
-                    if (_groups.isEmpty)
-                      const Padding(padding: EdgeInsets.all(20), child: Text('没有可搜索的漫画源')),
-                    for (final group in _groups) _group(group),
-                  ]),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Wrap(spacing: 8, runSpacing: 4, children: <Widget>[
+              for (final source in sources)
+                if (!emptySources.contains(source.sourceId))
+                  _ComicSourceChip(
+                    chipKey: comicSourceChoiceKey(source.sourceId),
+                    label: source.descriptor.name,
+                    accent: _comicSourceAccent(source),
+                    format: _comicSourcePluginFormat(source.sourceId),
+                    multiple: true,
+                    selected: _selectedSourceIds.contains(source.sourceId),
+                    onSelected: (selected) => _selectSource(source.sourceId, selected),
+                  ),
+            ]),
           ),
+          if (_exactTitle)
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Text('仅筛选已返回的标题，其他页仍可继续查看')),
+          if (groups.isEmpty)
+            Padding(padding: const EdgeInsets.all(20), child: Text(
+                _query.isEmpty ? '输入标题开始搜索'
+                    : emptySources.isNotEmpty ? '所选来源暂无匹配结果'
+                    : '没有可搜索的漫画源')),
+          for (final group in groups) _group(group),
         ],
       ),
     );
   }
 }
+
+final _titleSearchWhitespace = RegExp(r'\s+');
+String _normalizedSearchTitle(String title) =>
+    title.trim().replaceAll(_titleSearchWhitespace, ' ').toLowerCase();

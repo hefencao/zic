@@ -160,6 +160,79 @@ Color _comicSourceAccent(BrowsableComicSource source) {
   return Colors.orange;
 }
 
+ExternalComicPluginFormat? _comicSourcePluginFormat(String sourceId) {
+  if (sourceId.startsWith('mihon:')) {
+    return ExternalComicPluginFormat.mihonExtension;
+  }
+  if (sourceId.startsWith('venera:')) {
+    return ExternalComicPluginFormat.veneraJavaScript;
+  }
+  return null;
+}
+
+Widget? _comicSourcePluginIcon(ExternalComicPluginFormat? format) =>
+    switch (format) {
+      ExternalComicPluginFormat.mihonExtension =>
+        const Icon(Icons.extension_outlined, size: 18, semanticLabel: 'Mihon'),
+      ExternalComicPluginFormat.veneraJavaScript =>
+        const Icon(Icons.javascript, size: 18, semanticLabel: 'Venera'),
+      null => null,
+    };
+
+/// Shared source presentation; callers retain selection and activation policy.
+final class _ComicSourceChip extends StatelessWidget {
+  const _ComicSourceChip({
+    required this.label,
+    required this.accent,
+    required this.selected,
+    required this.onSelected,
+    this.format,
+    this.chipKey,
+    this.multiple = false,
+  });
+
+  final String label;
+  final Color accent;
+  final bool selected;
+  final ValueChanged<bool>? onSelected;
+  final ExternalComicPluginFormat? format;
+  final Key? chipKey;
+  final bool multiple;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
+    final avatar = selected ? _comicSourcePluginIcon(format) : null;
+    final side = BorderSide(color: accent.withValues(alpha: .7));
+    final labelStyle = TextStyle(color: selected
+        ? Theme.of(context).colorScheme.onPrimary : accent);
+    if (multiple) {
+      return FilterChip(
+        key: chipKey,
+        label: text,
+        avatar: avatar,
+        selected: selected,
+        showCheckmark: false,
+        selectedColor: accent,
+        side: side,
+        labelStyle: labelStyle,
+        onSelected: onSelected,
+      );
+    }
+    return ChoiceChip(
+      key: chipKey,
+      label: text,
+      avatar: avatar,
+      selected: selected,
+      showCheckmark: false,
+      selectedColor: accent,
+      side: side,
+      labelStyle: labelStyle,
+      onSelected: onSelected,
+    );
+  }
+}
+
 
 ComicWebViewRequest _browserRequestForSource(
   BrowsableComicSource source,
@@ -1982,20 +2055,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             runSpacing: 8,
             children: <Widget>[
               for (final plugin in plugins)
-                FilterChip(
-                  key: comicSourceAggregatePluginKey(plugin.pluginId),
-                  label: Text(plugin.label),
+                _ComicSourceChip(
+                  chipKey: comicSourceAggregatePluginKey(plugin.pluginId),
+                  label: plugin.label,
+                  accent: plugin.accent,
+                  format: _comicSourcePluginFormat(plugin.source.sourceId),
+                  multiple: true,
                   selected: options.pluginIds.contains(plugin.pluginId),
-                  showCheckmark: false,
-                  selectedColor: plugin.accent,
-                  side: BorderSide(
-                    color: plugin.accent.withValues(alpha: .7),
-                  ),
-                  labelStyle: options.pluginIds.contains(plugin.pluginId)
-                      ? TextStyle(
-                          color: Theme.of(context).colorScheme.onPrimary,
-                        )
-                      : TextStyle(color: plugin.accent),
                   onSelected: options.enabled
                       ? (selected) => options.togglePlugin(
                             plugin.pluginId,
@@ -2818,20 +2884,12 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
         : '$displayName · 点击重试';
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 120),
-      child: ChoiceChip(
-        key: comicSourcePluginChoiceKey(pluginId),
-        label: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+      child: _ComicSourceChip(
+        chipKey: comicSourcePluginChoiceKey(pluginId),
+        label: label,
+        accent: accent,
+        format: plugin.plugin.format,
         selected: selected,
-        showCheckmark: false,
-        selectedColor: accent,
-        side: BorderSide(color: accent.withValues(alpha: .7)),
-        labelStyle: selected
-            ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
-            : TextStyle(color: accent),
         onSelected: busy
             ? null
             : failure != null && retryable
@@ -2866,16 +2924,12 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
       final selected = source.sourceId == widget.activeSourceId;
       itemCount++;
       chips.add(
-        ChoiceChip(
-          key: comicSourceChoiceKey(source.sourceId),
-          label: Text(source.descriptor.name),
+        _ComicSourceChip(
+          chipKey: comicSourceChoiceKey(source.sourceId),
+          label: source.descriptor.name,
+          accent: accent,
+          format: _comicSourcePluginFormat(source.sourceId),
           selected: selected,
-          showCheckmark: false,
-          selectedColor: accent,
-          side: BorderSide(color: accent.withValues(alpha: .7)),
-          labelStyle: selected
-              ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
-              : TextStyle(color: accent),
           onSelected: (_) => widget.onSelected(source.sourceId),
         ),
       );

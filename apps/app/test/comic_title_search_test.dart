@@ -70,7 +70,7 @@ void main() {
     expect(find.byKey(sourceComicCardKey(origin.sourceId, 'book')), findsNothing);
     expect(target.requests, [('漫画标题', 0)]);
     expect(other.requests, [('漫画标题', 0)]);
-    await tester.tap(find.widgetWithText(FilterChip, '另一来源 · Mihon 插件'));
+    await tester.tap(find.byKey(comicSourceChoiceKey(other.sourceId)));
     await tester.pump();
     expect(find.byKey(comicTitleSearchGroupKey(other.sourceId)), findsNothing);
     expect(target.requests, hasLength(1), reason: 'changing selected sources keeps other groups');
@@ -119,20 +119,30 @@ void main() {
     await tester.tap(find.byKey(details.comicDetailsMigrateKey));
     await _until(tester, find.byKey(comicTitleSearchPageKey));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('高级：原生 ID'));
+    await tester.tap(find.byTooltip('使用原生 ID'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byType(TextFormField), findsNothing);
-    await tester.tap(find.widgetWithText(FilterChip, '原来源 · Venera 插件'));
+    await tester.tap(find.byKey(comicSourceChoiceKey(origin.sourceId)));
     await tester.pump();
+    await tester.tap(find.byTooltip('使用原生 ID'));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.enterText(find.byType(TextFormField), '/album/42');
-    await tester.tap(find.widgetWithText(FilterChip, '原来源 · Venera 插件'));
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(comicSourceChoiceKey(origin.sourceId)));
+    await tester.pump();
+    await tester.tap(find.byTooltip('使用原生 ID'));
     await tester.pump();
     expect(find.byType(TextFormField), findsNothing);
-    await tester.tap(find.widgetWithText(FilterChip, '目标来源 · Mihon 插件'));
+    await tester.tap(find.byKey(comicSourceChoiceKey(target.sourceId)));
     await tester.pump();
+    await tester.tap(find.byTooltip('使用原生 ID'));
+    await tester.pump(const Duration(milliseconds: 400));
     final field = find.descendant(of: find.byType(TextFormField), matching: find.byType(EditableText));
     expect(tester.widget<EditableText>(field).controller.text, isEmpty);
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, '使用原生 ID')).onPressed, isNull);
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pageBack();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
@@ -160,10 +170,74 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
     expect(slow.requests, [('漫画标题', 0)]);
     expect(fast.requests, [('漫画标题', 0)]);
+    final chip = find.byKey(comicSourceChoiceKey(fast.sourceId));
+    final selected = tester.widget<FilterChip>(chip);
+    expect(selected.showCheckmark, isFalse);
+    expect(selected.selectedColor, Colors.green);
+    expect((selected.avatar as Icon).icon, Icons.extension_outlined);
+    await tester.tap(chip);
+    await tester.pump();
+    expect(tester.widget<FilterChip>(chip).avatar, isNull);
+    await tester.tap(chip);
+    await tester.pump();
+    expect(fast.requests, hasLength(1), reason: 'reselecting keeps this query result');
     await tester.tap(find.byKey(sourceComicCardKey(fast.sourceId, 'book')));
     expect(opened?.comicId, 'book');
     pending.complete(slow.page('慢源结果'));
     await _until(tester, find.text('慢源结果'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('empty filtering retains pending failures and restores results without requests',
+      (tester) async {
+    final pending = Completer<SourceBrowsePage>();
+    final empty = _Source('empty', '空源', handler: (_, _) async =>
+        SourceBrowsePage(items: const [], offset: 0, hasMore: false));
+    final waiting = _Source('waiting', '等待源', handler: (_, _) => pending.future);
+    await tester.pumpWidget(_page([empty, waiting]));
+    await _until(tester, find.text('没有搜索结果'));
+    await _toggleResultFilter(tester, '隐藏无结果的来源');
+    expect(find.byKey(comicTitleSearchGroupKey(empty.sourceId)), findsNothing);
+    expect(find.byKey(comicSourceChoiceKey(empty.sourceId)), findsNothing);
+    expect(find.byKey(comicTitleSearchGroupKey(waiting.sourceId)), findsOneWidget);
+    pending.completeError(StateError('offline'));
+    await _until(tester, find.byTooltip('重试'));
+    expect(find.byKey(comicTitleSearchGroupKey(waiting.sourceId)), findsOneWidget);
+    await _toggleResultFilter(tester, '隐藏无结果的来源');
+    expect(find.byKey(comicTitleSearchGroupKey(empty.sourceId)), findsOneWidget);
+    expect(tester.widget<FilterChip>(find.byKey(comicSourceChoiceKey(empty.sourceId))).selected,
+        isTrue, reason: 'hiding an empty result does not change selected sources');
+    expect(empty.requests, hasLength(1));
+    expect(waiting.requests, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('exact title filtering keeps source paging and the original candidate identity',
+      (tester) async {
+    final source = _Source('venera:paging', '分页源');
+    source.handler = (_, offset) async => offset == 0
+        ? SourceBrowsePage(items: [source.summary('其他标题')],
+            offset: 0, hasMore: true, nextOffset: 41)
+        : SourceBrowsePage(items: [source.summary('  manga   title  ', id: 'target-book')],
+            offset: 41, hasMore: false);
+    String? opened;
+    await tester.pumpWidget(_page([source], query: 'MANGA Title',
+        open: (_, comic) async => opened = comic.comicId));
+    await _until(tester, find.text('其他标题'));
+    await _toggleResultFilter(tester, '标题完全一致');
+    await _toggleResultFilter(tester, '隐藏无结果的来源');
+    expect(find.text('其他标题'), findsNothing);
+    expect(find.byKey(comicTitleSearchGroupKey(source.sourceId)), findsOneWidget);
+    expect(find.byKey(comicSourceChoiceKey(source.sourceId)), findsOneWidget);
+    expect(source.requests, [('MANGA Title', 0)]);
+    await tester.tap(find.byTooltip('下一页'));
+    final candidate = find.byKey(sourceComicCardKey(source.sourceId, 'target-book'));
+    await _until(tester, candidate);
+    await tester.tap(candidate);
+    expect(opened, 'target-book');
+    await tester.tap(find.byTooltip('上一页'));
+    await _until(tester, find.text('当前页没有完全一致的标题'));
+    expect(source.requests, [('MANGA Title', 0), ('MANGA Title', 41), ('MANGA Title', 0)]);
     expect(tester.takeException(), isNull);
   });
 
@@ -200,6 +274,11 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await _until(tester, find.byKey(sourceComicCardKey(first.sourceId, 'book')));
     await tester.pumpWidget(_page([first, arriving, fast]));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byKey(sourceComicCardKey(fast.sourceId, 'book')), 150,
+      scrollable: find.byType(Scrollable).first,
+    );
     await _until(tester, find.byKey(sourceComicCardKey(fast.sourceId, 'book')));
     expect(first.requests, [('漫画标题', 0), ('当前查询', 0)]);
     expect(arriving.requests, [('当前查询', 0)]);
@@ -304,6 +383,7 @@ void main() {
         matching: find.byKey(sourceComicCardKey(second.sourceId, 'book')));
     await _until(tester, other);
     await tester.ensureVisible(other);
+    await tester.pump();
     await tester.tap(other);
     await _until(tester, find.byKey(details.comicDetailsTitleSearchKey));
     await tester.pump(const Duration(milliseconds: 400));
@@ -322,6 +402,15 @@ void main() {
     expect(second.requests.last.$1, 'route-tag');
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> _toggleResultFilter(WidgetTester tester, String label) async {
+  await tester.ensureVisible(find.byTooltip('搜索结果筛选'));
+  await tester.tap(find.byTooltip('搜索结果筛选'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.tap(find.text(label));
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 final class _Source implements BrowsableComicSource, CanonicalComicIdentitySource {

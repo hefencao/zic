@@ -524,9 +524,10 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 无命名来源标签组直接渲染 chip Wrap，不建立仅用于显示“标签”标题的父层。
 
 详情内容标题通过独立 `onSearchTitle` 命令进入 `ComicTitleSearchPage`，保留原详情 route。
-首帧后命令既有 external-source lifecycle 发布来源，route消费其只读投影通知；该页按已启用且可搜索的 sourceId 分组，新激活源加入当前查询，原组Future/分页保持。
+首帧后命令既有 external-source lifecycle 发布来源，route消费其只读投影通知；该页持有查询与来源选择的UI状态，按已选择且可搜索的sourceId分组，新激活源加入当前查询，原组Future/分页保持。
 各组独立消费既有 source browse Future、canonical page projection与共享 artwork loader；
-查询、分页和显式重试才创建请求，build 不重发。旧查询/已退出页面的回包不再发布；来源 runtime、cache和取消仍归原 owner。
+首次选择未查询来源、查询、分页和显式重试才创建请求，build和结果筛选不重发；同查询重新选中来源直接投影已完成结果。旧查询/旧分页/已退出页面的回包不再发布；来源runtime、cache和取消仍归原owner。
+迁移与标题搜索共用上述页面、来源药丸和结果筛选；空结果开关只隐藏已完成且首个请求页无余页的空组，加载/失败/后续分页保持。精确标题只规范大小写及空白后筛选返回标题，原请求与候选身份不变。
 点原漫画结果返回原详情，其它结果沿既有详情入口；标签仍走 `onSearchMetadata`，退出详情/聚合栈到 Home 的该单源搜索页。
 `ComicSourcesPage`在首次挂载前接收已有`requestedQuery`，初始化原query/controller后才开始source读取；已挂载页仍由`queryRevision`消费新的查询命令，不另建路由或请求owner。
 JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `https://18comic.ink/album/<id>`，合法绝对 HTTP(S) ID 保留。
@@ -538,9 +539,9 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
 不得用标题 `browse` 推断同源。详情保留版本发现Future及更新提示，统一“迁移漫画源”按钮承载同源版本和跨源操作。
-Home选择适配器复用`ComicTitleSearchPage`，以复选药丸筛选已启用来源，默认聚合搜索；既有external-source投影发布新来源，已有组请求保持。
+Home选择适配器复用`ComicTitleSearchPage`，顶部仅适配当前信息及紧接的确认版本命令；页面共用复选药丸筛选已启用来源，默认聚合搜索。既有external-source投影发布新来源，已有组请求保持。
 可编辑查询交给来源browse，结果按源展示封面与标题；当前精确作品只在UI过滤，候选raw identity原样返回，不展示或解码内部模型。
-原生ID收在高级入口，只允许单个目标来源；选择变化清空输入。选择路由退出完成后才打开比较，取消或未确认比较不提交迁移状态。
+原生ID由搜索栏内的数字按钮打开单来源输入对话框，输入草稿只活到该对话框关闭。选择路由退出完成后才打开比较，取消或未确认比较不提交迁移状态。
 确认版本读取完成时检查选择路由仍为当前页，迟到结果不重开面板；退出选择页不取消既有owner的关系发现。
 搜索只用于候选发现；详情已消费的只读版本Future连同background refresh传给确认版本选择器，不再次发起发现，
 同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
@@ -586,7 +587,7 @@ exact partial绑定自己的DownloadId/URI validator；
 Mihon 映射 Popular/Latest，标准展示顺序为“最新 → 热门”，Venera 枚举 explore loader 与 category target；
 Venera `multiPartPage.load(null)` 返回完整分组集合，由 runtime adapter 按全局 offset 切片并仅以集合余量判定结束；普通页码 load 和既有 loadNext 游标合同独立，不修改插件返回对象或新增分页缓存。
 首次进入来源时默认 section必须由**当前展示顺序的第一项**决定，不能另写 `popular` 默认值，也不能让最近一次 catalog cache projection反向选择 UI。
-未来用户自定义排序若改变 Presentation顺序，同一排序 owner自然同时决定默认焦点。原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。
+未来用户自定义排序若改变Presentation顺序，同一排序owner自然同时决定默认焦点。漫画源页、搜索和迁移复用同一来源chip：颜色区分原生/Mihon/Venera，不显示勾或插件名称；选中后才显示JS/拼图图标，不占内容分类行。调用者仍各自拥有单选、多选及插件激活策略。
 `FilterableBrowsableComicSource` 只投影来源真实 `FilterList`：空 schema即没有筛选入口，不另设容易漂移的 capability布尔值。
 Mihon bridge必须按官方 `Filter.Header/Separator/Select/Text/CheckBox/TriState/Group/Sort` 基类继承关系识别插件自定义子类，
 并保留 Group层次与 Text/Sort状态；用户修改以类型化 filter-state override进入 search request。筛选是否激活是独立 Presentation/request mode：
