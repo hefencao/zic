@@ -17,10 +17,10 @@
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 
-- 原19/20偶发缓存加载/重下、其它真实client/ABI/拦截器/POST/包装/重定向、partial/live媒体及完整输入/canonical分配仍独立待验；049协商正文载体已收口，不宣称live streaming或零分配，也不重跑已验生命周期。
+- 原19/20偶发缓存加载/重下、真实host正文/fallback、challenge/登录、partial/live媒体及完整输入/canonical分配仍独立待验；仅按剩余合同验收来源实际返回的输入，不额外要求所有协议变体。049正文载体已收口，不宣称live streaming或零分配，也不重跑已验生命周期。
 - Roumanwu：复取历史exact 80章真机样本，核对raw SManga与升级/旧durable manifest刷新路径；不得用当前42章样本或JVM80对象合同替代原样本验收，见source-contract-acceptance审计。
-- 禁漫天堂：升级后确认durable details/chapter cache revision触发真实刷新；历史单个完整 `SChapter` 分支仍需保留原对象并采集trace，不以当前350章或无durable cache的fresh探针替代。Cloudflare不调整。
-- 绅士漫画：先取得保留自定义响应/镜像/压缩语义的请求级证明，再验证cover/page直连与 `sourceMediaProtocolMismatch` fallback；不得扩大标准client白名单或改设置使验收通过。
+- 禁漫天堂：仅余升级后的durable details/chapter cache revision真实刷新；fresh 350章不替代升级缓存验收。若单个完整 `SChapter` 再现，保留原对象检查；该条件分支不是必须找回的样本。Cloudflare不调整。
+- 绅士漫画：补可无状态重放的真实cover/page host正文与 `sourceMediaProtocolMismatch` fallback；保留自定义响应/镜像/压缩语义，不把各变体另加为必验项，不扩大client白名单。
 - Venera057仅余完成真实Web登录后的原active source/session连续性。JM API1→2→1应用/重入/恢复已验：原12引用有效、native process/session/runtime ID和未关闭状态保持，JM代际推进/EH不变；镜像、普通设置、9插件/原11源和32-session边界不重跑。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
@@ -29,7 +29,7 @@
 
 ## P0：Mihon 插件识别设备闭环
 
-- 绅士漫画：补非空Cookie/POST的真实request-plan覆盖，并验证保留自定义client语义的host直连可读正文；现有GET/Referer/UA/null-body和runtime解码不能替代这些条件。
+- 绅士漫画：真实GET/Referer/UA/null-body plan与runtime解码已验；仅补符合现行host replay条件的可读正文，核对来源实际method/headers/body。空Cookie/body是有效输入，不要求来源额外产生POST；有状态/未知client仍归runtime。
 - 只补真实 Mihon APK 的 `@string/...` metadata 与多入口 class解析，核对资源解析、extensionLib及每个class；已验direct单入口/Factory不重跑，也不能代替这两个真实输入。
 
 ## P0：身份、同源更新与验证设备闭环

@@ -217,4 +217,4 @@
 | 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 新2377/27suite/analyzer、Rust25/Android121/全门禁/三ABI Debug/Profile/Release/JNI通过。真实22属性通过，新manifest网络超时，97 Reader未验。Release06945ef7/72b/PID15419/Home/无forward；3既有quarantine |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。052/020/099/TTL/LRU保持。097旧manifest/22属性已具备，新manifest超时、Reader待验；016/wire013/DNS089、真实来源及原加载/输入/最终显示开放。
+  当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。按原文撤除必需单SChapter及Cookie/POST门槛；升级缓存/host正文仍待验。052/020/099/TTL/LRU保持；097新manifest超时、210离线，016/wire013/DNS089、真实来源及原加载/输入/最终显示开放。
