@@ -28,7 +28,7 @@ checksum_block = JOB[
     JOB.index('Future<String> _checksumExistingArtifact('):
     JOB.index('Future<Uint8List> _readExistingArtifact(')
 ]
-for token in ('session.artifact.readChunks(', 'final checksum = Crc32();', 'checksum.add(iterator.current);'):
+for token in ('session.artifact.readChunks(', 'final checksum = Crc32();', 'await checksum.addAsync(iterator.current);'):
     if token not in checksum_block:
         raise SystemExit(f'dev.195 streaming partial checksum missing: {token}')
 if 'BytesBuilder' in checksum_block or '_readExistingArtifact(' in checksum_block:

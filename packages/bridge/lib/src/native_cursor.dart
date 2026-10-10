@@ -84,6 +84,7 @@ final class NativeCursorFactory implements CursorFactory {
       );
     }
     final api = _CursorApi(openNativeLib(libPath));
+    _nativeMediaReleaseLibraries.add(nativeLibraryCacheKey(libPath));
     final ptr = api.create(
       source._requirePtr(),
       epoch,
@@ -330,7 +331,7 @@ final class NativeCursor
       return;
     }
     _ptr = nullptr;
-    _api.free(ptr);
+    _api.freeAsync(ptr);
   }
 
   void _releasePrefetched() {
@@ -341,7 +342,7 @@ final class NativeCursor
 
   void _releaseWorkerFrame(int address) {
     if (address != 0) {
-      _api.frameRelease(Pointer<_Frame>.fromAddress(address));
+      _api.frameReleaseAsync(Pointer<_Frame>.fromAddress(address));
     }
   }
 
@@ -514,7 +515,7 @@ final class NativeFrame
       return;
     }
     _ptr = nullptr;
-    _api.frameRelease(ptr);
+    _api.frameReleaseAsync(ptr);
   }
 
   Pointer<_Frame> _requirePtr() {
@@ -532,6 +533,9 @@ final class _CursorApi {
         ),
         free = lib.lookupFunction<_CursorFreeNative, _CursorFreeDart>(
           'zic_cursor_free',
+        ),
+        freeAsync = lib.lookupFunction<_CursorFreeNative, _CursorFreeDart>(
+          'zic_cursor_free_async',
         ),
         epoch = lib.lookupFunction<_CursorEpochNative, _CursorEpochDart>(
           'zic_cursor_epoch',
@@ -576,6 +580,10 @@ final class _CursorApi {
         frameRelease =
             lib.lookupFunction<_FrameReleaseNative, _FrameReleaseDart>(
           'zic_frame_release',
+        ),
+        frameReleaseAsync =
+            lib.lookupFunction<_FrameReleaseNative, _FrameReleaseDart>(
+          'zic_frame_release_async',
         ),
         frameEpoch = lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
           'zic_frame_epoch',
@@ -641,6 +649,7 @@ final class _CursorApi {
 
   final _CursorCreateDart create;
   final _CursorFreeDart free;
+  final _CursorFreeDart freeAsync;
   final _CursorEpochDart epoch;
   final _DecodeDart decode;
   final _CursorU32Dart frameCount;
@@ -654,6 +663,7 @@ final class _CursorApi {
   final _CursorRewindDart rewind;
   final _FrameRetainDart frameRetain;
   final _FrameReleaseDart frameRelease;
+  final _FrameReleaseDart frameReleaseAsync;
   final _FrameU64Dart frameEpoch;
   final _FrameU32Dart frameIndex;
   final _FrameU32Dart frameCycle;

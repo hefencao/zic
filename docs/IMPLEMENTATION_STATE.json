@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-10T01:20:50Z",
+  "updated_at": "2026-10-10T06:22:51Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -148,32 +148,33 @@
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
-    "sha256": "70ac87529f0c8ed78aa612d20ef1a2fa3d386f1245da8544841929c4da58d680",
-    "app_pid": 23084,
+    "sha256": "4ff852df9c04eaa19a9e18fb4054fbfb96be9b3575b3d6af8a3e192adcceb6f0",
+    "app_pid": 31125,
     "ordinary_release": true,
     "normal_minified_release": true,
-    "app_foreground": "Ordinary minified Release70ac8752 installed;device APK SHA/PID23084/MainActivity verified. Inline version update and both bottom-control layouts accepted;All/direct filter toggles and single-source native input/IME verified. Returned to Home with no forwards;no ID submission,migration confirmation or source/system setting writes."
+    "app_foreground": "Ordinary minified Release4ff852df installed; actual device APK SHA/PID31125/MainActivity verified. Ani424-page details/history80 -> Reader stationary body -> details/history80 -> Home pass. Latest export is new; no forwards or temporary XML/screenshots remain."
   },
   "validation": {
-    "command": "bash tool/check.sh --require-toolchains; bash tool/build_android.sh profile; bash tool/build_android.sh release; bash tool/check_android_native.sh: all fresh exit0. Shared-search12/version4/lifecycle3 also pass.",
+    "command": "bash tool/check.sh --require-toolchains; bash tool/build_android.sh profile; bash tool/build_android.sh release; bash tool/check_android_native.sh: fresh exit0. Gradle plugin_host_bridge/local_media_bridge/file_selector_android/app testDebugUnitTest --rerun-tasks: fresh exit0 with JDK17 test environment.",
     "exit_code": 0,
-    "dart_flutter_tests": 2371,
+    "dart_flutter_tests": 2376,
     "analyzers": 27,
-    "Rust_tests": 22,
+    "Rust_tests": 25,
     "Android_native_tests": 115,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Fresh normal native1 Profile/minified Release for arm64-v8a/armeabi-v7a/x86_64 plus JNI/symbol/build-ID checks pass. Ordinary Release70ac8752 accepts inline updates,both bottom layouts,All/direct toggles and native input/IME;filter data branches are covered by widget tests.",
-    "Android_native_tests_scope": "Native115 retain identical Kotlin/native/Gradle/dependency inputs:88 fresh at the source-UA boundary and27 retained then. Native unit tests were not rerun for this Dart UI change;current native packaging/JNI checks were rerun.",
-    "scope": "Bottom migration/title-search controls and shared source-bar/version-row presentation. Original112 statuses and24 independent unfinished records preserved;source/library/cache/Reader/NetLane owners unchanged.",
-    "artifact_retention": "Reuse current validation log and named static XML; no new audit or per-round manifest. Temporary test directories clean up on exit; completed focused-log/build duplicates removed after acceptance. Keep only current named UI screenshots and installable Release packages for this task."
+    "ordinary_package_acceptance": "Fresh native1 Debug/Profile/normal minified Release for arm64-v8a/armeabi-v7a/x86_64 and JNI/symbol/build-ID checks pass. Ordinary Release4ff852df/PID31125 confirms Ani424/page80 actual stationary body, return/history/Home; exit reconcile441us and taskFailed0.",
+    "Android_native_tests_scope": "All115 freshly rerun: plugin_host_bridge88,local_media_bridge7,file_selector_android17,app3; JUnit failures/errors/skipped0. CookieJar15 and existing Kotlin/native compile gates also pass in the required full check.",
+    "scope": "Reader entry/exit work in existing native/bridge/Home/catalog/storage owners. Exhaustive4096 small directed graphs preserve unique-path/cycle ambiguity, serial CRC tests preserve checksum/failure, and Home tests preserve durable proof/no-op projection/coalesced writes. Original112 statuses and24 independent unfinished records remain.",
+    "artifact_retention": "Keep current validation log, named static XML/index, current installable Release packages and original user Reader trace needed by open issues. Accepted CPU/helper/duplicate trace, Profile/Debug and duplicate APK outputs are deleted by exact task paths after conclusions; temporary directories clean up on exit."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",
     "cached_Reader_stationary_and_history": "Accepted bounded stationary/history cases: docs/archive/audits/reader-cached-entry-after-CookieJar-2026-10-07.json. Original19/20 occasional cached loading/redownload remains open until a fresh reproducing input; do not reopen accepted cache/trust/URI owners from missing old evidence or count protocol049 as that symptom acceptance.",
     "real_slider_download_stationary": "docs/archive/audits/reader-real-slider-download-after-CookieJar-2026-10-07.json",
-    "migration_title_search_shared_controls": "Fixed bottom search/direct filters,shared horizontal source bar with All,and inline confirmed-version update notice. Native ID shares the single-source input and clears on selection changes. Shared-search12/version4/lifecycle3 and freshfull2371/27 analyzers/Rust22/all gates/nine ordinary packages/JNI pass. Ordinary Release70ac8752 verifies both layouts,inline expansion,All/direct toggles and native mode/IME without dialog;no ID submission or migration confirmation. Original paging,raw identity,read-only refresh and transaction owners remain;24 independent unfinished records preserved."
+    "migration_title_search_shared_controls": "Fixed bottom search/direct filters,shared horizontal source bar with All,and inline confirmed-version update notice. Native ID shares the single-source input and clears on selection changes. Shared-search12/version4/lifecycle3 and freshfull2371/27 analyzers/Rust22/all gates/nine ordinary packages/JNI pass. Ordinary Release70ac8752 verifies both layouts,inline expansion,All/direct toggles and native mode/IME without dialog;no ID submission or migration confirmation. Original paging,raw identity,read-only refresh and transaction owners remain;24 independent unfinished records preserved.",
+    "reader_entry_exit_stutter": "Accepted latest trace/CPU root causes: UI-native frame/cursor/source destruction, repeated unchanged global version authority, queued snapshots and large resume CRC. Transfer handles only after exact decode/write exit to an independent native reclaimer; composition drains off-UI. Home preserves durable/adoption/revision and coalesces only uncaptured projections; catalog prunes unreachable paths,storage hashes bounded chunks off-UI. Same Ani424/page80 Profile: exit20864->875us,decode17889->230us,upload2417->172us; first5s have no frame gap over100ms versus prior287847us. Main CPU has0 baseline/canonical/reuse rebuild or trim samples; old CRC.add89 leaves become0 within prefix checksum,spawn126->15. First frame138444us is not claimed faster. Normal Release4ff852df/PID31125 verifies stationary body,return/history80,Home and taskFailed0; exit441us. Freshfull2376/27 analyzers,Rust25,Android115,nine ordinary packages/JNI pass. Retain/proof/checksum/read-budget/cancel and24 independent open records remain."
   },
   "remaining": [
     "Original19/20 intermittent cached loading/redownload remains an independent user task; accepted stationary/history/slider scopes do not prove its occasional symptom. Active visual/input/GC,complete-input/canonical allocation,fixed-position and final physical-display acceptance remain open alongside001/002/005/007/100. App-side correlation091 and original049 binary response/file protocol are closed; neither claims allocation or physical-display performance. Existing control-plane/cached-entry/transition acceptances stay closed; second hardware/user visual observation unavailable.",

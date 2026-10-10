@@ -56,6 +56,7 @@ final class NativePipelineMediaRuntimeFactory
   Future<void> prewarm() => _prewarmFuture ??= Future.wait<void>(<Future<void>>[
         prewarmNativeDecodeWorkers(),
         prewarmNativeSourceWriteWorkers(),
+        prewarmNativeMediaReleases(),
         if (_texturePresenter != null) _texturePresenter!.prewarm(),
       ]);
 
@@ -79,6 +80,7 @@ final class NativePipelineMediaRuntimeFactory
     await _texturePool?.releaseIdle();
     await shutdownNativeDecodeWorkers();
     await shutdownNativeSourceWriteWorkers();
+    await drainNativeMediaReleases();
     _prewarmFuture = null;
   }
 

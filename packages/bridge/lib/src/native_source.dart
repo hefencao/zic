@@ -43,6 +43,43 @@ Future<void> shutdownNativeDecodeWorkers({String? libPath}) =>
 Future<void> shutdownNativeSourceWriteWorkers({String? libPath}) =>
     _NativeSourceWriteWorkerPool.shutdownForLibrary(libPath);
 
+final Set<String> _nativeMediaReleaseLibraries = <String>{};
+
+/// Starts one process-owned media reclaimer, separate from decode/ingress.
+Future<void> prewarmNativeMediaReleases({String? libPath}) async {
+  await Isolate.run<void>(_NativeMediaReleaseCommand(libPath, false).call);
+  _nativeMediaReleaseLibraries.add(nativeLibraryCacheKey(libPath));
+}
+
+/// Waits off the UI isolate for relinquished media to be physically freed.
+/// Call only after media producers and platform retain handles have drained.
+Future<void> drainNativeMediaReleases({String? libPath}) async {
+  if (!_nativeMediaReleaseLibraries.contains(nativeLibraryCacheKey(libPath))) {
+    return;
+  }
+  await Isolate.run<void>(_NativeMediaReleaseCommand(libPath, true).call);
+}
+
+typedef _MediaReleaseCommandNative = Uint32 Function();
+typedef _MediaReleaseCommandDart = int Function();
+
+final class _NativeMediaReleaseCommand {
+  const _NativeMediaReleaseCommand(this.libPath, this.drain);
+
+  final String? libPath;
+  final bool drain;
+
+  void call() {
+    final command = openNativeLib(libPath).lookupFunction<
+        _MediaReleaseCommandNative, _MediaReleaseCommandDart>(
+      drain ? 'zic_media_release_drain' : 'zic_media_release_prewarm',
+    );
+    if (command() != 0) {
+      throw StateError('native media release worker unavailable');
+    }
+  }
+}
+
 typedef _CreateNative = Pointer<_Source> Function(Uint64 epoch, UintPtr maxBytes);
 typedef _CreateDart = Pointer<_Source> Function(int epoch, int maxBytes);
 typedef _FreeNative = Void Function(Pointer<_Source> source);
@@ -107,7 +144,9 @@ final Map<String, _SourceApi> _sourceApis = <String, _SourceApi>{};
 
 _SourceApi _sourceApiFor(String? libPath) {
   final key = nativeLibraryCacheKey(libPath);
-  return _sourceApis.putIfAbsent(key, () => _SourceApi(openNativeLib(libPath)));
+  final api = _sourceApis.putIfAbsent(key, () => _SourceApi(openNativeLib(libPath)));
+  _nativeMediaReleaseLibraries.add(key);
+  return api;
 }
 
 final class NativeSourceFactory implements SourceFactory {
@@ -268,7 +307,7 @@ final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource,
     if (ptr == nullptr) return;
     _ptr = nullptr;
     if (_backgroundWrites == 0) {
-      _api.free(ptr);
+      _api.freeAsync(ptr);
     } else {
       _deferredFree = ptr;
     }
@@ -288,7 +327,7 @@ final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource,
         final deferred = _deferredFree;
         _deferredFree = null;
         if (deferred != null && deferred != nullptr) {
-          _api.free(deferred);
+          _api.freeAsync(deferred);
         }
       }
     }
@@ -308,6 +347,8 @@ final class _SourceApi {
           'zic_source_create',
         ),
         free = lib.lookupFunction<_FreeNative, _FreeDart>('zic_source_free'),
+        freeAsync =
+            lib.lookupFunction<_FreeNative, _FreeDart>('zic_source_free_async'),
         reserveCapacity = lib.lookupFunction<
             _ReserveCapacityNative,
             _ReserveCapacityDart
@@ -338,6 +379,7 @@ final class _SourceApi {
 
   final _CreateDart create;
   final _FreeDart free;
+  final _FreeDart freeAsync;
   final _ReserveCapacityDart reserveCapacity;
   final _ReserveDart reserve;
   final _CommitDart commit;

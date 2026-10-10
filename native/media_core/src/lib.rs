@@ -6,6 +6,7 @@
 //! already-created cursor, while epoch checks still reject stale work.
 
 mod android_texture;
+mod media_release;
 mod webp;
 
 use std::os::raw::{c_int, c_void};
@@ -15,7 +16,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub const ABI_VERSION: u32 = 6;
-pub const LIB_VERSION: u32 = 0x0012_1500;
+pub const LIB_VERSION: u32 = 0x0012_1600;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -710,6 +711,67 @@ pub unsafe extern "C" fn zic_frame_release(frame: *mut FrameHandle) {
 }
 
 #[no_mangle]
+pub extern "C" fn zic_media_release_prewarm() -> u32 {
+    if media_release::reclaimer().is_some() {
+        Status::Ok as u32
+    } else {
+        Status::Failed as u32
+    }
+}
+
+/// Transfers a handle to the process reclaimer; retain handles remain valid.
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_release_async(frame: *mut FrameHandle) {
+    if frame.is_null() {
+        return;
+    }
+    let frame = Box::from_raw(frame);
+    if let Some(reclaimer) = media_release::reclaimer() {
+        reclaimer.release(frame);
+    } else {
+        drop(frame);
+    }
+}
+
+/// Caller must have joined every operation on this exact cursor handle.
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_free_async(cursor: *mut Cursor) {
+    if cursor.is_null() {
+        return;
+    }
+    let cursor = Box::from_raw(cursor);
+    if let Some(reclaimer) = media_release::reclaimer() {
+        reclaimer.release_cursor(cursor);
+    } else {
+        drop(cursor);
+    }
+}
+
+/// Caller must have joined every write on this exact source handle.
+#[no_mangle]
+pub unsafe extern "C" fn zic_source_free_async(source: *mut ByteSource) {
+    if source.is_null() {
+        return;
+    }
+    let source = Box::from_raw(source);
+    if let Some(reclaimer) = media_release::reclaimer() {
+        reclaimer.release_source(source);
+    } else {
+        drop(source);
+    }
+}
+
+/// Composition-close barrier, called off the UI thread after producers drain.
+#[no_mangle]
+pub extern "C" fn zic_media_release_drain() -> u32 {
+    if media_release::reclaimer().is_some_and(|reclaimer| reclaimer.drain()) {
+        Status::Ok as u32
+    } else {
+        Status::Failed as u32
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn zic_frame_epoch(frame: *const FrameHandle) -> u64 {
     frame.as_ref().map_or(0, |frame| frame.data.epoch)
 }
@@ -830,7 +892,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 6);
-        assert_eq!(zic_version(), 0x0012_1500);
+        assert_eq!(zic_version(), 0x0012_1600);
         // These values are provided by the linked system libwebp, so their
         // exact version is platform-dependent while the exported ABI remains
         // stable.

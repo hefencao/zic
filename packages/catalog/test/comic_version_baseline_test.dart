@@ -2,6 +2,55 @@ import 'package:catalog/catalog.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('unique download paths agree with simple-path enumeration including cycles',
+      () {
+    final edges = <(int, int)>[
+      for (var from = 0; from < 4; from++)
+        for (var to = 0; to < 4; to++)
+          if (from != to) (from, to),
+    ];
+    for (var mask = 0; mask < 1 << edges.length; mask++) {
+      final outgoing = <int, List<int>>{};
+      final relations = <ComicVersionRelation>[];
+      for (var i = 0; i < edges.length; i++) {
+        if (mask & (1 << i) == 0) continue;
+        final (from, to) = edges[i];
+        outgoing.putIfAbsent(from, () => <int>[]).add(to);
+        relations.add(ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: '$from',
+          successorComicId: '$to',
+        ));
+      }
+      int pathCount(int current, Set<int> path) {
+        if (current == 3) return 1;
+        var count = 0;
+        for (final next in outgoing[current] ?? const <int>[]) {
+          if (path.contains(next)) continue;
+          count += pathCount(next, <int>{...path, next});
+          if (count > 1) return 2;
+        }
+        return count;
+      }
+      final expected = <String>{
+        for (var from = 0; from < 3; from++)
+          if (pathCount(from, <int>{from}) == 1) '$from',
+      };
+      final projection = resolveComicVersionBaselines(
+        relations: relations,
+        manualDownloadComics: const <ComicVersionIdentity>[
+          ComicVersionIdentity(sourceId: 's', comicId: '3'),
+        ],
+      );
+      expect(
+        projection.downloadHeadRelations
+            .map((relation) => relation.predecessorComicId).toSet(),
+        expected,
+        reason: 'directed graph mask $mask',
+      );
+    }
+  });
+
   ComicVersionPageMapping mapping(
     String predecessorChapter,
     String successorChapter,

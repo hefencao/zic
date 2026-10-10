@@ -4,12 +4,12 @@
 - 当前112项：device75/toolchain11/superseded2/partial18/pending6，24条未完成记录。039四类Home筛选/049正文载体/099实际canonical收口；首次入架、client变体及性能独立开放。052/020/TTL/LRU保持；097真实代际、016/wire013/DNS089及原加载/输入/最终显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
+- Reader进退已修：native独立回收/无变化版本免重建/快照合并/可达剪枝/大chunk CRC。424页Reader80同Profile退出20.864→0.875ms，前5s无>100ms帧间隔；2376/Rust25/native115及全门禁通过。Release4ff852df/PID31125静置/返回历史通过，退出0.441ms；Home无forward，active输入/最终显示仍开放。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Home卡片source signal/key及健康/pending artwork State保持，063/066/082收口。新跑2371/27suite/analyzer/Rust22、全门禁/三ABI Debug/Profile/minifiedRelease/JNI通过；native115仅保留相同输入。Release70ac8752/PID23084/Home/无forward；38 decode/55关联保持。
 - 013独立网络接收未验：SDK36设备perfetto仅有ftrace/log，未注册android.network_packets；取得独立wire/Rust观测后才采集，20ms Dart progress不能代替。057镜像应用/重入/恢复的原12引用/native ID/未关闭状态通过，只余真实Web登录；设置/9插件/32会话不重跑。
 - EH predecessor/ACK与提醒开放；099受控及实际canonical已验，停止重复。31后台proof失败根因为compact focus URI泄漏；只hydrate占位focus，取消/仍占位停止，真实carrier/epoch保持。四回归/新Release371→424、Reader80静置、本地13,394,740B/0失败通过。
 - rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。

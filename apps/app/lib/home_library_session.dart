@@ -444,6 +444,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   int? _snapshotLibraryRevision;
   bool _snapshotRewriteNeeded = false;
   Future<void> _snapshotWriteTail = Future<void>.value();
+  Object? _scheduledSnapshotWrite;
   Future<void> _versionEvidenceWriteTail = Future<void>.value();
   final LinkedHashMap<String, _VersionReusePageObservation>
       _versionReuseIdentityObservations =
@@ -2331,6 +2332,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       next.add(relation);
     } else {
       final previous = next[index];
+      if (relation.pageMappings.isEmpty &&
+          previous.predecessorTitle == relation.predecessorTitle &&
+          (previous.discoveredAt != null || relation.discoveredAt == null)) {
+        // Persistence/adoption still ran. Empty discovery mappings preserve
+        // proof and the first discovery date; no runtime authority changed.
+        if (writeSnapshot) _scheduleSnapshotWrite();
+        return;
+      }
       next[index] = ComicVersionRelation(
         sourceId: relation.sourceId,
         predecessorComicId: relation.predecessorComicId,
@@ -3382,54 +3391,65 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (store == null) {
       return;
     }
+    if (_scheduledSnapshotWrite != null) return;
+    final scheduled = Object();
+    _scheduledSnapshotWrite = scheduled;
     _homeLog(
       'snapshot-write-scheduled entries=${_entries.length} '
       'saved=${_savedComics.length} readStates=${_readStates.length}',
     );
     final operation = _snapshotWriteTail.then<void>((_) async {
-      if (_closed) {
-        return;
+      try {
+        if (_closed) {
+          return;
+        }
+        final startedAt = _homeStartupClock.elapsedMilliseconds;
+        _homeLog('snapshot-write-start');
+        final libraryRevision = await _traceStartupOperation<int?>(
+          'snapshot-write-revision-read',
+          _readLibraryProjectionRevision,
+          summary: (revision) => 'revision=${revision ?? 'none'}',
+        );
+        if (_closed) {
+          return;
+        }
+        final snapshot = HomeProjectionSnapshot(
+          entries: List<ImportedLibraryEntry>.unmodifiable(_entries),
+          savedComics: List<SavedComicRecord>.unmodifiable(_savedComics),
+          categories: List<LibraryCategory>.unmodifiable(_categories),
+          preferences: List<ComicPreference>.unmodifiable(_preferences.values),
+          readStates: List<ChapterReadState>.unmodifiable(_readStates.values),
+          sourcePreferences: List<ComicSourcePreference>.unmodifiable(
+            _sourcePreferences.values,
+          ),
+          versionRelations: List<ComicVersionRelation>.unmodifiable(
+            _versionRelations,
+          ),
+          orphanedDownloadEntries: List<ImportedLibraryEntry>.unmodifiable(
+            _orphanedDownloadEntries,
+          ),
+          chapterDownloads: <HomeChapterDownloadSummary>[
+            ..._downloadSnapshots.values
+                .where(
+                  (snapshot) =>
+                      snapshot.isManualDownload || snapshot.hasAutoCache,
+                )
+                .map(_downloadSummary),
+          ],
+          libraryRevision: libraryRevision,
+        );
+        // Mutations after this captured projection need one subsequent write.
+        _scheduledSnapshotWrite = null;
+        await store.write(snapshot);
+        _homeLog(
+          'snapshot-write-complete ${_snapshotSummary(snapshot)} '
+          'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
+        );
+      } finally {
+        if (identical(_scheduledSnapshotWrite, scheduled)) {
+          _scheduledSnapshotWrite = null;
+        }
       }
-      final startedAt = _homeStartupClock.elapsedMilliseconds;
-      _homeLog('snapshot-write-start');
-      final libraryRevision = await _traceStartupOperation<int?>(
-        'snapshot-write-revision-read',
-        _readLibraryProjectionRevision,
-        summary: (revision) => 'revision=${revision ?? 'none'}',
-      );
-      if (_closed) {
-        return;
-      }
-      final snapshot = HomeProjectionSnapshot(
-        entries: List<ImportedLibraryEntry>.unmodifiable(_entries),
-        savedComics: List<SavedComicRecord>.unmodifiable(_savedComics),
-        categories: List<LibraryCategory>.unmodifiable(_categories),
-        preferences: List<ComicPreference>.unmodifiable(_preferences.values),
-        readStates: List<ChapterReadState>.unmodifiable(_readStates.values),
-        sourcePreferences: List<ComicSourcePreference>.unmodifiable(
-          _sourcePreferences.values,
-        ),
-        versionRelations: List<ComicVersionRelation>.unmodifiable(
-          _versionRelations,
-        ),
-        orphanedDownloadEntries: List<ImportedLibraryEntry>.unmodifiable(
-          _orphanedDownloadEntries,
-        ),
-        chapterDownloads: <HomeChapterDownloadSummary>[
-          ..._downloadSnapshots.values
-              .where(
-                (snapshot) =>
-                    snapshot.isManualDownload || snapshot.hasAutoCache,
-              )
-              .map(_downloadSummary),
-        ],
-        libraryRevision: libraryRevision,
-      );
-      await store.write(snapshot);
-      _homeLog(
-        'snapshot-write-complete ${_snapshotSummary(snapshot)} '
-        'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
-      );
     });
     _snapshotWriteTail = operation.then<void>(
       (_) {},

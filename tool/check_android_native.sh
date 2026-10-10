@@ -66,6 +66,11 @@ for ABI in "${ABI_LIST[@]}"; do
     zic_cursor_full_canvas_frame_count \
     zic_cursor_independent_frame_count \
     zic_cursor_max_dependent_run \
+    zic_frame_release_async \
+    zic_source_free_async \
+    zic_cursor_free_async \
+    zic_media_release_prewarm \
+    zic_media_release_drain \
     zic_frame_native_prepare_us \
     zic_frame_native_canvas_prepare_us \
     zic_frame_native_fragment_decode_us \

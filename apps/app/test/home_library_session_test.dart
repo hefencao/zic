@@ -1745,6 +1745,58 @@ void main() {
     );
   });
 
+  test('unchanged version discovery preserves the existing runtime projection',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: WholeComicDownloadQueue(downloads: downloads),
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final discoveredAt = DateTime.utc(2026, 9, 7);
+    await session.upsertVersionRelation(ComicVersionRelation(
+      sourceId: 's', predecessorComicId: 'old', successorComicId: 'new',
+      predecessorTitle: 'Original', discoveredAt: discoveredAt,
+      pageMappings: const <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: 'a', successorChapterId: 'b',
+          predecessorPageCount: 3, successorPageCount: 3, successorOffset: 0,
+        ),
+      ],
+    ));
+    final baseline = session.versionBaselines;
+    var notifications = 0;
+    session.addListener(() => notifications++);
+    await session.upsertVersionRelation(ComicVersionRelation(
+      sourceId: 's', predecessorComicId: 'old', successorComicId: 'new',
+      predecessorTitle: 'Original', discoveredAt: DateTime.utc(2026, 10, 10),
+    ));
+    expect(identical(session.versionBaselines, baseline), isTrue);
+    expect(notifications, 0);
+    expect(session.versionRelations.single.discoveredAt, discoveredAt);
+    expect(session.versionRelations.single.pageMappings, hasLength(1));
+    expect((await library.listComicVersionSuccessors('s', 'old'))
+        .single.pageMappings, hasLength(1));
+    await session.upsertVersionRelation(ComicVersionRelation(
+      sourceId: 's', predecessorComicId: 'old', successorComicId: 'new',
+      predecessorTitle: 'Updated', discoveredAt: discoveredAt,
+    ));
+    expect(notifications, 1);
+    expect(session.versionRelations.single.predecessorTitle, 'Updated');
+  });
+
   test('derived version page mappings do not broadcast Home projection',
       () async {
     final library = MemoryImportedLibraryStore();
@@ -3204,6 +3256,49 @@ void main() {
     primaryFrame.complete();
     await session.ready;
     expect(session.loading, isFalse);
+  });
+
+  test('pending snapshot preparation coalesces mutations and flushes the latest',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('zic-snapshot-coalesce-');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = HomeProjectionSnapshotStore.atPath('${directory.path}/snapshot.json');
+    final library = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 42,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final session = HomeLibrarySession(
+      library: library, snapshotStore: store,
+      chapterDownloads: downloads,
+      wholeComicDownloads: WholeComicDownloadQueue(downloads: downloads),
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true, ownsChapterDownloads: true, ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    await session.flushSnapshotWrites();
+    final reads = library.libraryRevisionReads;
+    final gate = Completer<void>();
+    library.libraryRevisionReadGate = gate.future;
+    for (var i = 0; i < 8; i++) {
+      session.replacePreference(ComicPreference.defaults(
+        sourceId: 's', comicId: 'comic-$i', sourceKind: ComicSourceKind.remote,
+      ).copyWith(liked: true));
+    }
+    await Future<void>.delayed(Duration.zero);
+    gate.complete();
+    await session.flushSnapshotWrites();
+    expect(library.libraryRevisionReads - reads, 1);
+    final persisted = await store.read();
+    expect(persisted!.preferences.where((p) => p.liked), hasLength(8));
+    expect(persisted.libraryRevision, 42);
   });
 
   test('explicit Home projection flush drains the latest queued snapshot',

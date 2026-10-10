@@ -120,6 +120,7 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
   final history = List<ComicVersionRelation>.unmodifiable(relations);
   final nodesBySource = <String, Set<String>>{};
   final outgoing = <String, List<ComicVersionRelation>>{};
+  final incoming = <String, Set<String>>{};
   final undirected = <String, Set<String>>{};
 
   String node(String sourceId, String comicId) => '$sourceId\u0000$comicId';
@@ -135,6 +136,7 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
     final predecessor = node(relation.sourceId, relation.predecessorComicId);
     final successor = node(relation.sourceId, relation.successorComicId);
     outgoing.putIfAbsent(predecessor, () => <ComicVersionRelation>[]).add(relation);
+    incoming.putIfAbsent(successor, () => <String>{}).add(predecessor);
     undirected[predecessor]!.add(successor);
     undirected[successor]!.add(predecessor);
   }
@@ -154,20 +156,26 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
   final directCacheReuseRelations = <ComicVersionRelation>[];
   final visited = <String>{};
 
+  // Heads are queried repeatedly for every materialized member. Walk their
+  // predecessors once per resolution, without retaining a second authority.
+  final ancestorsByTarget = <String, Set<String>>{};
+  Set<String> ancestors(String sourceId, String comicId) =>
+      ancestorsByTarget.putIfAbsent(node(sourceId, comicId), () {
+        final target = node(sourceId, comicId);
+        final seen = <String>{target};
+        final pending = <String>[target];
+        while (pending.isNotEmpty) {
+          final current = pending.removeLast();
+          for (final predecessor in incoming[current] ?? const <String>{}) {
+            if (seen.add(predecessor)) pending.add(predecessor);
+          }
+        }
+        return seen;
+      });
+
   bool reaches(String sourceId, String fromComicId, String toComicId) {
-    if (fromComicId == toComicId) return true;
-    final seen = <String>{fromComicId};
-    final pending = <String>[fromComicId];
-    while (pending.isNotEmpty) {
-      final current = pending.removeLast();
-      for (final relation in outgoing[node(sourceId, current)] ??
-          const <ComicVersionRelation>[]) {
-        final successor = relation.successorComicId;
-        if (successor == toComicId) return true;
-        if (seen.add(successor)) pending.add(successor);
-      }
-    }
-    return false;
+    return ancestors(sourceId, toComicId)
+        .contains(node(sourceId, fromComicId));
   }
 
   String? dominantHead(String sourceId, Iterable<String> candidates) {
@@ -189,27 +197,31 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
   ) {
     if (fromComicId == toComicId) return const <ComicVersionRelation>[];
     final results = <List<ComicVersionRelation>>[];
+    final canReachTarget = ancestors(sourceId, toComicId);
+    final path = <ComicVersionRelation>[];
     void visit(
       String current,
       Set<String> pathNodes,
-      List<ComicVersionRelation> path,
     ) {
       if (results.length > 1) return;
       for (final relation in outgoing[node(sourceId, current)] ??
           const <ComicVersionRelation>[]) {
         final next = relation.successorComicId;
+        if (!canReachTarget.contains(node(sourceId, next))) continue;
         if (!pathNodes.add(next)) continue;
-        final nextPath = <ComicVersionRelation>[...path, relation];
+        path.add(relation);
         if (next == toComicId) {
-          results.add(nextPath);
+          results.add(List<ComicVersionRelation>.of(path));
         } else {
-          visit(next, pathNodes, nextPath);
+          visit(next, pathNodes);
         }
+        path.removeLast();
         pathNodes.remove(next);
+        if (results.length > 1) return;
       }
     }
 
-    visit(fromComicId, <String>{fromComicId}, const <ComicVersionRelation>[]);
+    visit(fromComicId, <String>{fromComicId});
     return results.length == 1 ? results.single : null;
   }
 
@@ -371,17 +383,15 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
 
       DateTime? latestKnownDiscoveredAt;
       if (latestKnown != null && component.length > 1) {
-        for (final relation in history) {
-          if (relation.sourceId != sourceId ||
-              !component.contains(relation.predecessorComicId) ||
-              !component.contains(relation.successorComicId)) {
-            continue;
-          }
-          final discoveredAt = relation.discoveredAt;
-          if (discoveredAt != null &&
-              (latestKnownDiscoveredAt == null ||
-                  discoveredAt.isAfter(latestKnownDiscoveredAt))) {
-            latestKnownDiscoveredAt = discoveredAt;
+        for (final member in component) {
+          for (final relation in outgoing[node(sourceId, member)] ??
+              const <ComicVersionRelation>[]) {
+            final discoveredAt = relation.discoveredAt;
+            if (discoveredAt != null &&
+                (latestKnownDiscoveredAt == null ||
+                    discoveredAt.isAfter(latestKnownDiscoveredAt))) {
+              latestKnownDiscoveredAt = discoveredAt;
+            }
           }
         }
       }
@@ -469,15 +479,17 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
     }
   }
 
-  String firstMember(ComicVersionFamilyBaseline family) {
-    final members = family.memberComicIds.toList()..sort();
-    return members.first;
-  }
+  final firstMembers = <ComicVersionFamilyBaseline, String>{
+    for (final family in families)
+      family: family.memberComicIds.reduce(
+        (left, right) => left.compareTo(right) < 0 ? left : right,
+      ),
+  };
 
   families.sort((left, right) {
     final source = left.sourceId.compareTo(right.sourceId);
     if (source != 0) return source;
-    return firstMember(left).compareTo(firstMember(right));
+    return firstMembers[left]!.compareTo(firstMembers[right]!);
   });
   directDownloadRelations.sort((left, right) {
     final source = left.sourceId.compareTo(right.sourceId);

@@ -2716,6 +2716,7 @@ def check_native_abi() -> None:
         'zic_webp_demux_version',
         'zic_source_create',
         'zic_source_free',
+        'zic_source_free_async',
         'zic_source_reserve_capacity',
         'zic_source_reserve',
         'zic_source_commit',
@@ -2728,6 +2729,7 @@ def check_native_abi() -> None:
         'zic_source_kind',
         'zic_cursor_create',
         'zic_cursor_free',
+        'zic_cursor_free_async',
         'zic_cursor_epoch',
         'zic_cursor_decode_next',
         'zic_cursor_frame_count',
@@ -2741,6 +2743,9 @@ def check_native_abi() -> None:
         'zic_cursor_rewind',
         'zic_frame_retain',
         'zic_frame_release',
+        'zic_frame_release_async',
+        'zic_media_release_prewarm',
+        'zic_media_release_drain',
         'zic_frame_epoch',
         'zic_frame_index',
         'zic_frame_cycle',
@@ -2764,8 +2769,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_1500;' not in rust:
-        fail('native library version must identify the dev.135 decode-observability release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_1600;' not in rust:
+        fail('native library version must identify the asynchronous media-release build')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')

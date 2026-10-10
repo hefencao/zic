@@ -128,6 +128,7 @@
   Home snapshot 编码 worker MUST 只接收持久字段投影，不得复制普通章节的完整 pages/prepared manifest 或投影容器的非持久 owner 状态。
   JSON 编码/压缩 MUST 保持异步 worker；compact 普通章节与完整 orphan download metadata、写入串行及完成屏障 MUST 保持。
   durable catalog/preference/read-state DTO 的 JSON 字段转换 MUST 留在该 worker，不得为缩小输入图把整份大目录的转换移回 caller。
+  Home snapshot请求 MAY在捕获projection前合并；捕获后的mutation MUST排后继写，flush/close MUST等待最新tail。无变化的版本发现 MUST保留durable/adoption和snapshot revision边界，MUST NOT重建全库authority或广播Home。
   `HomeLibrarySession` 的 chapter、SavedComic 与非 Reader progress write-through MUST 使用同一 generation-stable mutation owner；
   chapter/SavedComic 的 write 与 readback MUST 固定同一 concrete store，
   跨 adoption MUST 整轮重试 current store，并在 publish 前同步重验 persisted store identity。
@@ -825,6 +826,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   byte-reuse consumer MUST使用verified intervals求唯一对应index，MUST NOT直接用mapping级`successorOffset`授权正文。
   多跳relation MUST通过interval坐标平移与交集组合，revision断裂或同一predecessor范围产生不同offset时 MUST fail-closed。
   运行时version resolver MUST NOT为整章构建pageId/URI→index表；
+  version baseline解析 MAY在单次调用内复用反向可达集合并剪枝；MUST保留唯一简单路径、环/分支歧义和verified interval的既有裁决，不得建立跨调用缓存authority。
   manifest-aware caller MAY在`DownloadId`携带不参与key/JSON/equality/hash的非持久`pageIndexHint`，
   resolver只能在该hint与目标manifest slot的exact pageId+URI同时一致时使用其O(1) index，否则 MUST exact-only。
   已存在的Reader/download source open MAY把direct request正常解析后自然获得的strong media identity作为增量relation evidence，
@@ -2421,6 +2423,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     scheduler-owned local preparation若已进入generic `Artifact.restore`/whole-file CRC，
     现有`TaskControl` MUST继续下沉到该restore；
     受控CRC MUST保持off-UI且cancel必须终止其worker并及时释放operation slot，普通restore/seal的非受控CRC语义不得改变；
+    续传旧prefix/full-body catch-up的大chunk CRC MUST离开UI isolate，每次仅传一个chunk和累计值；完整性、read budget/account不变，取消 MUST等待该chunk计算物理结束才释放原执行容量。
     0-byte victim MUST重新进入正常 local preparation，已复制 prefix 的 victim MUST进入既有 post-local network admission rank barrier，
     而不得绕过仍在 local prepare 的更高 priority work。
     persistent partial/artifact 的真实 body I/O MUST 继续由共享 `ArtifactCacheReadScheduler` 逐 chunk 重新 acquire，
@@ -2445,6 +2448,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
     其 scheduler-owned `TaskControl` MUST贯穿 background Ingress/source execution；native source-write worker MAY并行执行已接纳的 reserve/copy/direct-file range，但 pending queue MUST消费同一动态 priority/cancellation，MUST NOT退化为独立FIFO scheduler，且取消后的in-flight native operation MUST真实退出后才释放worker capacity。
     `DecodeLane` 的 scheduler-owned `CancelToken` MUST继续贯穿 `DecodeSession -> ScheduledFrameCursor -> NativeCursor -> native decode pool`。pending native decode 在取得worker前 MUST响应同一 cancellation；numeric priority MUST在每次pending selection时直接读取同一TaskControl实时值，bridge MUST NOT复制priority字段或维护request-local priority subscription。current/nonCurrent execution class仍独立于numeric rank，current MUST优先于non-current，class内 MUST按priority降序、submission sequence升序。role promotion MUST先迁移DecodeLane priority再迁移同一native request class，MUST NOT以native-side addFirst/FIFO形成第二scheduler。已取得worker的native decode取消后 MUST等真实response/unwind才释放capacity；其cursor/source generation也 MUST等对应DecodeLane/UploadLane task真实退出后退休。详见 ADR 0339。
     native decode worker 与 source-write worker MUST具有显式独立 lifecycle，由composition并列prewarm/shutdown；worker exit MUST由各自pool的单一长期listener拥有，该listener直接结算至多一个current active request并退休dead worker。每请求 MUST只持有短命response port/subscription，不得向process-lifetime exit Future注册request-local continuation；pool MUST从live scheduling set移除exited worker并在仍存活时有界补位。replacement spawn失败但pool仍有至少一个live worker时 MUST保留pending并继续以degraded capacity执行，MUST NOT批量fail/clear无关queued requests；只有live worker为0且replacement也失败时才可终止无法执行的pending。busy/capacity MUST按真实active-run unwind结算，不能因worker先从列表移除就提前释放；decode仅剩一个live worker时non-current MUST让出最后slot给current。
+    native frame/cursor/source dispose MUST同步撤销handle并仅交付一次；cursor/source MUST先等原decode/write实际退出，再交独立native进程线程析构，各retain/Arc寿命保持。composition MUST在媒体生产者/平台retain退出后于后台等待media释放barrier，普通Reader返回不得等待大块内存析构；回收不得成为decode、ingress或network eligibility owner。
     NativeCursor若在batch decode等待期间dispose，batch返回的所有尚未转交frame MUST立即release，不得把prefetched native frame写回已dispose cursor。详见 ADR 0338。
     SQLite artifact authority metadata MUST由 `SqliteIndex` owner connection 在一个短read transaction中返回object/replica/root一致snapshot，不得仅为该sub-millisecond查询建立常驻read worker；recency write MAY在既有 `StorageWriteScheduler` admission 后由专用worker执行。详见 ADR 0328。
     FrameBudgeter/memory pressure 只裁决native decoded/upload residency与media资源释放，

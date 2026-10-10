@@ -1,3 +1,16 @@
+import 'dart:isolate';
+
+// A bound callable copies only one byte chunk and the running checksum into
+// Isolate.run, never the artifact/session or its cancellation/scheduler state.
+final class _Crc32Chunk {
+  const _Crc32Chunk(this.value, this.bytes);
+
+  final int value;
+  final List<int> bytes;
+
+  int call() => (Crc32._raw(value)..add(bytes))._value;
+}
+
 final class Crc32 {
   Crc32() : _value = 0xffffffff;
 
@@ -12,8 +25,12 @@ final class Crc32 {
   Crc32._raw(this._value);
 
   int _value;
+  bool _addingAsync = false;
 
   void add(List<int> bytes) {
+    if (_addingAsync) {
+      throw StateError('await the pending CRC32 chunk before adding bytes');
+    }
     var crc = _value;
     for (final byte in bytes) {
       if (byte < 0 || byte > 255) {
@@ -22,6 +39,25 @@ final class Crc32 {
       crc = _table[(crc ^ byte) & 0xff] ^ (crc >> 8);
     }
     _value = crc;
+  }
+
+  /// Adds a serial chunk without running a large byte loop on the caller.
+  /// The caller must await physical completion before cancellation or reuse.
+  Future<void> addAsync(List<int> bytes) async {
+    if (bytes.length < 64 * 1024) {
+      add(bytes);
+      return;
+    }
+    if (_addingAsync) {
+      throw StateError('await the pending CRC32 chunk before adding bytes');
+    }
+    _addingAsync = true;
+    try {
+      final chunk = _Crc32Chunk(_value, bytes);
+      _value = await Isolate.run<int>(chunk.call);
+    } finally {
+      _addingAsync = false;
+    }
   }
 
   int get value => (_value ^ 0xffffffff) & 0xffffffff;

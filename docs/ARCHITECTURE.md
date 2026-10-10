@@ -37,6 +37,7 @@ Native implementation
 所有这些可重新获取的响应共用注入的 `ResourceCacheManager`，但按稳定 response identity 分开；
 完整details响应嵌入请求的raw漫画/章节父ID，因此response key按raw comicId区分；同源别名仍共用canonical namespace失效与artwork身份，不能把一种别名的manifest返回给另一种。
 它不拥有 artwork 加载，Reader 页面正文仍透传到统一 Pipeline。
+版本基线解析只在当前调用内复用目标的反向可达集合，唯一简单路径搜索剪去无法到达目标的分支；环仍按简单路径判定，多路径不授权合成映射，缓存复用只消费已验证的直接关系。
 
 ### `resource_cache`
 
@@ -93,7 +94,8 @@ sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性
 partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。
 对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；
 网络 attempt 重启、validator 缺失或 Range 被拒绝都不能删除、缩短或重建该 prefix。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；
-seal/restore在isolate rehash后提交权威checksum。partial→final promotion的filesystem rename与内存state切换属于Artifact内部事务，
+seal/restore在isolate rehash后提交权威checksum。partial→final promotion的filesystem rename与内存state切换属于Artifact内部事务。
+续传旧prefix和full-body catch-up的大块CRC由storage的纯checksum worker计算；每次仅发送一个chunk和累计值，原read budget/account及取消保留，计算物理结束后才继续或退出。
 所有encoded read必须由Artifact按preferred/alternate path直接open同一authoritative file handle，
 Reader/sessions不得观察或猜测rename窗口。它不决定页面角色或网络优先级。
 Android SAF 的 provider document-id/children-listing 缓存只属于路径解析加速，不是文件存在性authority：
@@ -189,6 +191,8 @@ reset 前启动的旧 handoff 不得解除；禁止从session final或sibling bi
 
 把 native source factory、cursor、frame uploader、output projector 和 prewarmer 作为原子 capability 注入 `pipeline_runtime`。
 核心 Pipeline 不直接创建具体 FFI 或 Android texture 实现。
+native frame/cursor/source同步撤销handle，在原decode/write真正退出后交给media_core独立进程回收线程，避免UI释放大块raster/canvas/encoded buffer；各retain/Arc仍独立有效，回收不参与decode/source-write/network调度。
+composition关闭先drain媒体生产者、平台retain及decode/source-write，再在后台等待media-release barrier；普通Reader返回不等待内存析构，也不保留可用的Reader-local media。
 
 ### `reader_runtime` / `reader`
 
@@ -417,6 +421,7 @@ Reader route/version-reuse consumer 只读该 composition capability，
 存储 owner 在 worker handoff 前只投影快照的持久字段；既有 isolate 执行 JSON 编码与压缩，普通章节的完整 pages/prepared manifest 不进入 worker 输入图。
 durable catalog/preference/read-state DTO 的 JSON 字段转换也留在该 worker；caller 只准备 compact entry metadata 与不携带 prepared manifest 的 orphan 页字段。
 orphan download entries 仍保存完整页元数据；写入串行、完成屏障及临时文件替换由原 snapshot store 拥有。
+HomeLibrarySession合并尚未捕获projection的snapshot请求；捕获后到达的mutation再排一次，flush/close仍等待latest tail。无变化版本发现保留持久化/adoption及revision快照，但不重建全库authority或广播Home。
 revision匹配的durable handoff只切换authority并targeted revalidate这些已持久download identities，
 禁止为了Home启动扫描全部library entries或执行orphan discovery；后者属于Download Manager/用户显式刷新。
 Download Manager 首次打开 Canonical/自动缓存页若缺 physical cache projection，

@@ -1117,7 +1117,10 @@ final class DownloadJob {
         continue;
       }
       final take = chunk.length < remaining ? chunk.length : remaining;
-      checksum.add(take == chunk.length ? chunk : chunk.sublist(0, take));
+      await checksum.addAsync(
+        take == chunk.length ? chunk : chunk.sublist(0, take),
+      );
+      cancel?.throwIfCancelled();
       remaining -= take;
       consumed += take;
       onDuplicateBytes(consumed);
@@ -1181,7 +1184,8 @@ final class DownloadJob {
         if (!available) break;
         cancel?.throwIfCancelled();
         speculativeEncodedReadAccount?.recordRead(iterator.current.length);
-        checksum.add(iterator.current);
+        await checksum.addAsync(iterator.current);
+        cancel?.throwIfCancelled();
       }
     } finally {
       try {

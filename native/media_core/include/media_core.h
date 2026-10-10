@@ -50,6 +50,8 @@ uint32_t zic_webp_demux_version(void);
 
 zic_byte_source *zic_source_create(uint64_t epoch, size_t max_bytes);
 void zic_source_free(zic_byte_source *source);
+/* Transfer only after every in-flight operation on this handle has exited. */
+void zic_source_free_async(zic_byte_source *source);
 uint32_t zic_source_reserve_capacity(zic_byte_source *source,
                                      uint64_t epoch, size_t capacity);
 uint32_t zic_source_reserve(zic_byte_source *source, uint64_t epoch,
@@ -69,6 +71,8 @@ zic_cursor *zic_cursor_create(const zic_byte_source *source, uint64_t epoch,
                               uint32_t target_width,
                               uint32_t target_height);
 void zic_cursor_free(zic_cursor *cursor);
+/* Transfer only after the exact in-flight decode has physically exited. */
+void zic_cursor_free_async(zic_cursor *cursor);
 uint64_t zic_cursor_epoch(const zic_cursor *cursor);
 uint32_t zic_cursor_decode_next(zic_cursor *cursor, uint64_t epoch,
                                 zic_frame **out_frame);
@@ -84,6 +88,12 @@ uint32_t zic_cursor_rewind(zic_cursor *cursor, uint64_t epoch);
 
 zic_frame *zic_frame_retain(const zic_frame *frame);
 void zic_frame_release(zic_frame *frame);
+/* Transfers this handle to the process media reclaimer, without waiting for
+ * pixel deallocation. Other retain handles remain valid. Drain off the UI
+ * thread after all composition producers have physically exited. */
+uint32_t zic_media_release_prewarm(void);
+void zic_frame_release_async(zic_frame *frame);
+uint32_t zic_media_release_drain(void);
 uint64_t zic_frame_epoch(const zic_frame *frame);
 uint32_t zic_frame_index(const zic_frame *frame);
 uint32_t zic_frame_cycle(const zic_frame *frame);
