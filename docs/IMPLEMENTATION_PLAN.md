@@ -5,7 +5,7 @@
 - P0：按dev.280 scroll-stable geometry的现行合同补真机视觉验收：保留painted extent；允许视口之外forward ratio预备、reverse prefix原子anchor校正及slider真实visible ratio采用。物理观察只用已布局geometry，剩余ratio在idle latest-wins提交。已验组件见ADR0330/0361与loading审计；不得恢复active全冻结或逐ratio jumpTo。
 ## P0：Current / Previous 真实执行槽真机闭环
 - dev.192 传输归因须对齐consumerPacing/body-read permit，并独立分辨网络接收、FFI/Dart交付与应用停驻；20ms限频Dart progress共同长gap不足以归因。SDK36当前设备未注册`android.network_packets`，普通ftrace/log不能补证；取得独立wire/Rust时间观测后才采集，不重复同一无该能力设备，不以diagnostics驱动scheduler。
-- 补dev.186真实Reader previous660→780到`downloadStarted`的时序；selected runtime previous pressure已验。780沿原gate请求低40分active invocation取消，JS finished与已接纳native call均退出后才可交出permit，`maxActive`保持1。
+- 016只在真实previous660→780发生于首次`downloadStarted`前时验入场延迟与source gate。新强刷样本5 starts/0 failures，但旧正文始终active，660→0→780不能补入场时序；停止重复该输入。selected runtime pressure/物理退出已验，780沿原gate取消低40分invocation，JS与已接纳native均退出才交permit，`maxActive`保持1。
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 版本动作仅在实际搜索返回在架旧版且来源关系证明唯一 latest head 时验：直接打开该 raw successor、目标仍未入架。当前 EH 标题聚合结果未返回旧版，Ani 完整图56节点/46终点；不能按日期、generation或5条saved子图补造head，不重复该不满足前提的版本动作。
@@ -51,6 +51,6 @@
 
 ## P0：后台重入生命周期
 
-- 验证真实来源revision/carrier更新后不复用旧Reader session，并证明各代独立退休。保留当前两项idle exact-key LRU与两分钟TTL；Reader退休不销毁composition共享transfer/cache authority。
+- 097验证真实来源revision/carrier更新后的新Reader与独立代际退休；两项idle exact-key LRU/两分钟TTL已验，不重跑。已有肉漫屋1.6.21/1.6.22真实APK，但隔离包旧21首次搜索连到rouman5.com/127.0.0.1:443被拒，尚无manifest，不能归因真实源站。进入条件是可用真实代际或保留的source-owned旧manifest；不重试同一失败端点、不造revision、不销毁composition transfer/cache authority。
 ## P0：纵向性能真机闭环
 - 补齐纵向active拖动、拖动→惯性（ballistic）交接的真机视觉连续、输入延迟与最终呈现证据。进入条件为普通Profile/Release与有效physical-display证据；forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。

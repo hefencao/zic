@@ -10,13 +10,13 @@
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
 - Reader210a3115：READY14,393记录同步315–358ms，索引/归组补已有4ms/64事件预算；Home同次构建复用identity/alias，live偏好仍读当前。Releaseec6f9e5a/PID16864本地22↔EH377正文/历史通过，已记录点击到正文108–165ms、0失败。2377/Rust25/三ABI/门禁通过；native115输入未变沿用。覆盖安装首次数秒及原24项独立开放。
-- 013独立网络接收未验：SDK36设备perfetto仅有ftrace/log，未注册android.network_packets；取得独立wire/Rust观测后才采集，20ms Dart progress不能代替。057镜像应用/重入/恢复的原12引用/native ID/未关闭状态通过，只余真实Web登录；设置/9插件/32会话不重跑。
+- 013独立网络接收未验：SDK36无android.network_packets；取得wire/Rust观测后才采集，20ms Dart progress不能代替。089默认DNS物理退出缺有效解析控制。新强刷6.712s自动呈现、首次换页57.393s；660→0→780始终active，016入场未验，不重复该输入。057仅余真实Web登录，已验设置/身份不重跑。
+- 097已有真实肉漫屋21/22 APK，独立Profile旧21搜索rouman5.com/127.0.0.1:443被拒，真实源站未触及，未到manifest/Reader，owner关闭且测试包卸载。保留24记录；进入条件是可用真实来源代际或source-owned旧manifest，不改用户数据、不造revision、不重复失败端点。
 - 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；Releaseec6f9e5a/72b/PID25155/Home/无forward，210当前掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
 - rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
-  navigation/source-search 与 picker/trace-export busy flag 经复审仍直接服务当前 Scaffold/route intent/async UI operation，暂不为“瘦身”强抽 owner。
-  后续若继续瘦身，应从明确重复状态或 route builder adapter 入手；禁止新增跨 owner facade，也禁止把 service generation / route admission / version preparation / shelf selection 镜像回 `HomeShell`。
+  navigation/source-search与picker/trace-export busy flag仍服务当前Scaffold/route intent。后续只从明确重复状态或route builder adapter收口，不为瘦身强抽owner、不建跨owner facade，不把service generation/route admission/version preparation/shelf selection镜像回`HomeShell`。
 - 静态竖排功耗下一步只接受 fresh Profile/Release 证据再改行为：idle 3/7 static warm 是刻意的平滑资源分配，staged refill不会整窗同时decode；
   2026-09-24 最新可见空白Trace证明“active期间把所有hidden native-static upload都推迟到visible seam”会制造0.3–0.8s首帧债务；更深一层确认vertical曾硬禁detached output binding，导致native output已ready后仍可等PageHost约1.95–2.34s才present。
   因此active只继续defer `far/near`；既有2/1 deadline窗口的`next/next2/previous`可提前pre-present并retain，vertical real UploadDemand同时预绑定detached output consumer，仍由UploadLane/FrameBudgeter限流，不得写成扩大预加载窗口。
