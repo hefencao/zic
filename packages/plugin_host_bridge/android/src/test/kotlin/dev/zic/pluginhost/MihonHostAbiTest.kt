@@ -1,6 +1,8 @@
 package dev.zic.pluginhost
 
 import android.app.Application
+import android.content.SharedPreferences
+import java.lang.reflect.Proxy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -9,6 +11,104 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MihonHostAbiTest {
+    private class PreferenceStore {
+        val values = mutableMapOf<String, Any>()
+        val preferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            check(method.name == "getAll")
+            values.toMap()
+        } as SharedPreferences
+    }
+
+    @Test
+    fun sourceManagedUrlKeepsItsNormalizedValueWhenListenerReturnsFalse() {
+        val store = PreferenceStore()
+        store.values["overrideBaseUrl"] = "https://old.invalid"
+        var defaultWrites = 0
+
+        applyMihonPreferenceChange(store.preferences, "overrideBaseUrl",
+            "https://mirror.invalid/path/", {
+                store.values["overrideBaseUrl"] = "https://mirror.invalid"
+                false
+            }, { defaultWrites++ })
+
+        assertEquals("https://mirror.invalid", store.values["overrideBaseUrl"])
+        assertEquals(0, defaultWrites)
+    }
+
+    @Test
+    fun alreadyPersistedSourceManagedValueDoesNotBecomeAValidationError() {
+        val store = PreferenceStore()
+        store.values["overrideBaseUrl"] = "https://mirror.invalid"
+
+        applyMihonPreferenceChange(store.preferences, "overrideBaseUrl",
+            "https://mirror.invalid", { false }, { error("unexpected default write") })
+
+        assertEquals("https://mirror.invalid", store.values["overrideBaseUrl"])
+    }
+
+    @Test
+    fun trueListenerUsesTheDefaultWriteExactlyOnce() {
+        val store = PreferenceStore()
+        var defaultWrites = 0
+        var listenerCalls = 0
+
+        applyMihonPreferenceChange(store.preferences, "enabled", true, {
+            listenerCalls++
+            true
+        }, {
+            defaultWrites++
+            store.values["enabled"] = true
+        })
+
+        assertEquals(true, store.values["enabled"])
+        assertEquals(1, defaultWrites)
+        assertEquals(1, listenerCalls)
+    }
+
+    @Test
+    fun falseValidationWithoutAnExactPreferenceChangeStillFails() {
+        val store = PreferenceStore()
+        store.values["overrideBaseUrl"] = "https://old.invalid"
+        val failure = runCatching {
+            applyMihonPreferenceChange(store.preferences, "overrideBaseUrl", "not a URL",
+                { false }, { error("unexpected default write") })
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals("https://old.invalid", store.values["overrideBaseUrl"])
+    }
+
+    @Test
+    fun anUnrelatedPreferenceWriteDoesNotAcceptARejectedValue() {
+        val store = PreferenceStore()
+        store.values["overrideBaseUrl"] = "https://old.invalid"
+        val failure = runCatching {
+            applyMihonPreferenceChange(store.preferences, "overrideBaseUrl", "not a URL", {
+                store.values["other"] = true
+                false
+            }, { error("unexpected default write") })
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals("https://old.invalid", store.values["overrideBaseUrl"])
+    }
+
+    @Test
+    fun aSourceListenerExceptionRemainsAuthoritative() {
+        val store = PreferenceStore()
+        val sourceFailure = IllegalStateException("source callback failed")
+        val failure = runCatching {
+            applyMihonPreferenceChange(store.preferences, "enabled", true,
+                { throw sourceFailure }, { error("unexpected default write") })
+        }.exceptionOrNull()
+
+        assertTrue(failure === sourceFailure)
+        assertTrue(store.values.isEmpty())
+    }
+
     private class SourceHeaders(private val values: Map<String, String>) {
         fun names(): Set<String> = values.keys
         fun get(name: String): String? = values[name]

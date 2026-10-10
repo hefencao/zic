@@ -1053,11 +1053,14 @@ internal class MihonRuntimeDriver private constructor(
             ?: error("Mihon source does not expose configurable preferences")
         val preference = screen.findPreference<Preference>(key)
             ?: error("Mihon source preference is unavailable: $key")
-        val accepted = when (preference) {
+        val preferences = sourcePreferences(source)
+        when (preference) {
             is SwitchPreferenceCompat -> {
                 val next = value as? Boolean
                     ?: error("Mihon switch preference requires a boolean")
-                preference.callChangeListener(next).also { if (it) preference.isChecked = next }
+                applyMihonPreferenceChange(preferences, key, next, preference::callChangeListener) {
+                    preference.isChecked = next
+                }
             }
             is ListPreference -> {
                 val next = value as? String
@@ -1065,20 +1068,25 @@ internal class MihonRuntimeDriver private constructor(
                 require(preference.entryValues.orEmpty().any { it.toString() == next }) {
                     "Mihon list preference value is unavailable"
                 }
-                preference.callChangeListener(next).also { if (it) preference.value = next }
+                applyMihonPreferenceChange(preferences, key, next, preference::callChangeListener) {
+                    preference.value = next
+                }
             }
             is MultiSelectListPreference -> {
                 val next = value.asStringList("Mihon multi-select preference").toSet()
-                preference.callChangeListener(next).also { if (it) preference.values = next }
+                applyMihonPreferenceChange(preferences, key, next, preference::callChangeListener) {
+                    preference.values = next
+                }
             }
             is EditTextPreference -> {
                 val next = value as? String
                     ?: error("Mihon text preference requires a string")
-                preference.callChangeListener(next).also { if (it) preference.text = next }
+                applyMihonPreferenceChange(preferences, key, next, preference::callChangeListener) {
+                    preference.text = next
+                }
             }
             else -> error("Mihon source preference type is unsupported")
         }
-        require(accepted) { "Mihon source rejected the preference value" }
         invalidateMihonResourcePlans(sourceId)
         return emptyMap()
     }
@@ -1904,6 +1912,26 @@ private fun PreferenceGroup.flattenPreferences(): Sequence<Preference> = sequenc
         } else {
             yield(preference)
         }
+    }
+}
+
+internal fun applyMihonPreferenceChange(
+    preferences: SharedPreferences,
+    key: String,
+    value: Any,
+    listener: (Any) -> Boolean,
+    persist: () -> Unit,
+) {
+    val previous = preferences.all[key].let { if (it is Set<*>) it.toSet() else it }
+    if (listener(value)) {
+        persist()
+        return
+    }
+    // A source may normalize and persist the value itself, then return false
+    // to suppress the Preference's default write. Do not overwrite that value.
+    val stored = preferences.all[key]
+    require(stored != previous || stored == value) {
+        "Mihon source rejected the preference value"
     }
 }
 

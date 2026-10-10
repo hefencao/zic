@@ -1160,6 +1160,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - plugin host MUST NOT 把 network bridge 的内部 browser-cookie session实现列为 Mihon common runtime ABI。
   Cookie snapshot reset MUST 通过稳定网络适配器边界调用。
   Mihon `NetworkHelper` MUST 使用宿主 applicationContext读取浏览器 Cookie/UA快照；注入的插件 `Application` MUST继续使用扩展 payload Context保留资源与偏好隔离。
+  Mihon属性回调返回false MUST只阻止宿主默认写入；若来源已改变同一key的保存值或该值已匹配提交值，MUST保留来源结果并完成request-plan失效。
+  未保存且不匹配的值 MUST继续拒绝；其它key的写入不得充当成功证明，回调异常 MUST原样传播。宿主 MUST NOT为特定来源复制URL校验或规范化规则。
   Mihon 普通网页配置 MUST优先采用来源 headers声明的非空 UA，仅缺失时使用宿主 fallback；Cloudflare验证仍 MUST采用真实 WebView provider UA，MUST NOT把普通网页 UA套入验证模式。
 - Mihon common runtime完整性预检中所有 `dev.zic.network.*` 动态类型 MUST 在 network bridge consumer R8规则中保留原始全限定类名和成员；
   typed `SourceVerificationRequiredException` 不得被混淆、裁剪或用错误消息字符串替代。

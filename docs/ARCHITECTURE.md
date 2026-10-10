@@ -667,6 +667,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `plugin_host`按同一source URL解析原生/opaque输入的Web与canonical身份；二者共用既有目录互斥和artwork namespace，UI不构造opaque模型、猜路径或另持identity authority。
   Mihon目录保留source返回的完整对象与newest-first顺序；opaque章节ID仍编码source ordinal，向外sequence投影为oldest-first逻辑序号。
   plugin-host的只读顺序适配兼容旧持久目录，Home composition消费该投影，Reader不解析来源identity。Venera既有sequence合同保持不变。
+  Mihon来源属性适配保留`Preference`回调的写入权：返回true时执行默认写入；返回false时只核对同一source preference key的保存结果。
+  来源自行规范化并保存、或该key已等于提交值时完成变更且失效原source request plans，不再覆盖来源结果；未保存且值不匹配仍拒绝，回调异常原样传播。
   同一source+canonical漫画URL的getMangaUpdate在runtime内互斥，等待可被取消；不同漫画仍可并发，NetLane继续拥有网络admission与rank。
   active Mihon invocation取消后等待实际Callable退出；无可取消context的suspend调用先drain continuation，再释放目录互斥与runtime completion。
   Mihon 设备发现只覆盖作为系统共享 APK安装的扩展，合并 `getInstalledPackages`、
