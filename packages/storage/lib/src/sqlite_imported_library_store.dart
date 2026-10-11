@@ -1227,6 +1227,10 @@ final class SqliteImportedLibraryStore
           THEN comic_version_relation.page_mappings_json
           ELSE excluded.page_mappings_json
         END
+      WHERE comic_version_relation.predecessor_title <> excluded.predecessor_title
+         OR (excluded.page_mappings_json <> '[]'
+             AND comic_version_relation.page_mappings_json <>
+                 excluded.page_mappings_json)
     ''', <Object?>[
       relation.sourceId,
       relation.predecessorComicId,

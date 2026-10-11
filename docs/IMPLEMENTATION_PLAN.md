@@ -1,4 +1,4 @@
-- 先归因Reader进入build23.442ms所含14.444ms GC及退出GLES raster21.544ms；完整9.779s纵向动作窗口已观测，117drag/42ballistic、active UI≤10.525ms。分配owner、物理输入/视觉和最终显示分开验，不再重采已完整的GC窗口。
+- 继续分离warm返回剩余25.831ms等待中的版本解析、GC与调度成本；重复SQL/空ledger复制已修并经owner与普通Profile验证，提交路径不重采。既有完整9.779s窗口保持；入场GC14.444ms/退出GLES21.544ms、分配及物理输入/显示分开验。
 - 只暂停缺少具体前提的分支：原始批次/旧目录037/054/077、真实登录057、@string/多入口APK071、独立接收时钟013、默认DNS控制089及097新manifest。未复现的challenge/版本动作仍是未验，不据此修改生产或反复刷新正常输入。
 - P0：RMR-037仅余进退峰值/总分配归因、物理输入/视觉及最终显示。72b普通Profile06bdc2b2完整entry/慢拖/惯性/反向/exit，Timeline持续接收、尾部flush在ROI外，无动作内snapshot/强制GC。210a3115只限原HalfLove→Ani输入。采集的分配stock不是总分配，不能据GC重写Reader/Pipeline；融合locator候选撤回，NetLane、7/3和2/1保持。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。

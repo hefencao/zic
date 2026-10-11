@@ -356,6 +356,76 @@ void main() {
     expect(db.select('PRAGMA user_version').single.values.single, 11);
   });
 
+  test('unchanged version discovery does not advance the SQLite revision',
+      () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final firstDiscovered = DateTime.utc(2026, 1, 1);
+    final proof = ComicVersionPageMapping(
+      predecessorChapterId: 'old-chapter',
+      successorChapterId: 'new-chapter',
+      predecessorPageCount: 3,
+      successorPageCount: 3,
+      successorOffset: 0,
+      predecessorSourceRevision: 'old-r1',
+      successorSourceRevision: 'new-r1',
+      verifiedPredecessorPageIndexes: const <int>[0],
+      verifiedAt: firstDiscovered,
+    );
+    ComicVersionRelation relation({
+      String title = 'Original',
+      List<ComicVersionPageMapping> mappings = const [],
+      DateTime? discoveredAt,
+    }) => ComicVersionRelation(
+      sourceId: 'fixture',
+      predecessorComicId: 'old',
+      successorComicId: 'new',
+      predecessorTitle: title,
+      discoveredAt: discoveredAt ?? DateTime.utc(2026, 10, 11),
+      pageMappings: mappings,
+    );
+    await store.saveComicVersionRelation(relation(
+      mappings: <ComicVersionPageMapping>[proof],
+      discoveredAt: firstDiscovered,
+    ));
+    final firstRevision = (await store.libraryProjectionRevision)!;
+    await store.saveComicVersionRelation(relation());
+    expect(await store.libraryProjectionRevision, firstRevision,
+        reason: 'Repeated discovery preserves the row without firing updates');
+    await store.saveComicVersionRelation(relation(
+      mappings: <ComicVersionPageMapping>[proof],
+    ));
+    expect(await store.libraryProjectionRevision, firstRevision);
+
+    await store.saveComicVersionRelation(relation(title: 'Updated'));
+    final titleRevision = (await store.libraryProjectionRevision)!;
+    expect(titleRevision, greaterThan(firstRevision));
+    final updated = (await store.listAllComicVersionRelations()).single;
+    expect(updated.predecessorTitle, 'Updated');
+    expect(updated.discoveredAt, firstDiscovered);
+    expect(updated.pageMappings.single.toJson(), proof.toJson());
+
+    final changedProof = ComicVersionPageMapping(
+      predecessorChapterId: 'old-chapter',
+      successorChapterId: 'new-chapter',
+      predecessorPageCount: 3,
+      successorPageCount: 3,
+      successorOffset: 0,
+      predecessorSourceRevision: 'old-r1',
+      successorSourceRevision: 'new-r1',
+      verifiedPredecessorPageIndexes: const <int>[0, 1],
+      verifiedAt: DateTime.utc(2026, 10, 11),
+    );
+    await store.saveComicVersionRelation(relation(
+      title: 'Updated', mappings: <ComicVersionPageMapping>[changedProof],
+    ));
+    expect(await store.libraryProjectionRevision, greaterThan(titleRevision));
+    final changed = (await store.listAllComicVersionRelations()).single;
+    expect(changed.pageMappings.single.toJson(), changedProof.toJson());
+    expect(changed.discoveredAt, firstDiscovered);
+  });
+
   test('sqlite persists a Home projection revision across writes and reopen',
       () async {
     final directory = await Directory.systemTemp.createTemp(

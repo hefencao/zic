@@ -514,6 +514,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   persistence helper MUST 返回实际稳定写入的 library identity，
   caller MUST 在同一同步 continuation 中再次确认它仍等于 current library 后才推进 session relation projection，
   避免 Future completion→projection publish 间隙跨代；current identity 自身存储错误 MUST 传播。
+  SQLite关系重复发现 MUST保留首次发现时间和非空proof；相同标题与有效payload MUST NOT触发row update或推进durable projection revision。
+  无page mapping的relation MUST NOT复制canonical ledger；真实mapping的durable-before-authority/backfill顺序 MUST保持。
+  来源版本批量提交 MUST有界地让出event turn，并在继续提交前重验原TaskControl；MUST保持顺序、adoption重试及close drain，不得释放尚未退出的共享lane容量或新增队列owner。
   owner MUST 只接收 fresh metadata snapshot、verified page identity、
   统一 locator-validity predicate 与 metadata-task scheduler 等窄 capability，
   MUST NOT 持有 Flutter UI/Widget State/ComicDetails DTO/整个 source gateway 或直接读取 app-global coordinator。

@@ -601,7 +601,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     Iterable<ComicVersionRelation> relations,
   ) async {
     final provider = _downloadCompositionProvider;
-    if (provider == null) {
+    if (provider == null ||
+        relations.every((relation) => relation.pageMappings.isEmpty)) {
       return (backfill: Future<void>.value(),);
     }
     final mergeStartedAtMs = _homeStartupClock.elapsedMilliseconds;

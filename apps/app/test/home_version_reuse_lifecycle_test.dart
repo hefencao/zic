@@ -108,6 +108,71 @@ void main() {
         unorderedEquals(<String>['old-comic', 'middle-comic']));
   });
 
+  for (final cancel in <bool>[false, true]) {
+    test('large version discovery permits events and cancellation ($cancel)',
+        () async {
+      final library = MemoryImportedLibraryStore();
+      final downloads = MemoryChapterDownloadService(
+        pageLoader: (_, _) async => Uint8List(1),
+      );
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: library,
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true,
+      );
+      final lifecycle = _lifecycle(session);
+      addTearDown(() async {
+        await lifecycle.close();
+        await session.close();
+        session.dispose();
+      });
+      await session.ready;
+      final versions = List<SourceComicVersion>.generate(512, (index) =>
+          SourceComicVersion(
+            sourceId: 'fixture', comicId: 'old-$index',
+            title: 'Old $index', generation: index, isPredecessor: true,
+          ));
+      final source = _DeclaredVersionSource(versions);
+      final control = _TestTaskControl();
+      final eventTurn = Completer<void>();
+      var persistedAtEvent = -1;
+      source.onFind = () => Timer.run(() {
+        persistedAtEvent = session.versionRelations.length;
+        if (cancel) control.cancel();
+        eventTurn.complete();
+      });
+      HomeVersionState? state;
+      Object? failure;
+      try {
+        state = await lifecycle.loadVersionState(
+          source, 'Newest', 'new-comic', control: control,
+        );
+      } on Object catch (error) {
+        failure = error;
+      }
+      await eventTurn.future;
+      expect(persistedAtEvent, lessThan(versions.length),
+          reason: 'Source discovery must not starve queued UI/cancel events');
+      final persisted = await library.listAllComicVersionRelations();
+      if (cancel) {
+        expect(failure, isA<Failure>().having(
+            (error) => error.code, 'code', ErrorCode.cancelled));
+        expect(persisted.length, persistedAtEvent,
+            reason: 'Cancellation stops further commits, not completed writes');
+      } else {
+        expect(failure, isNull);
+        expect(state!.predecessors.length, versions.length);
+        expect(persisted.map((item) => item.predecessorComicId),
+            unorderedEquals(versions.map((item) => item.comicId)));
+      }
+    });
+  }
+
   for (final scenario in <({bool needsRefresh, bool cancelOnHydrate})>[
     (needsRefresh: false, cancelOnHydrate: false),
     (needsRefresh: true, cancelOnHydrate: false),
@@ -913,11 +978,13 @@ final class _DeclaredVersionSource extends _VersionSource {
 
   final List<SourceComicVersion> versions;
   bool offline = false;
+  void Function()? onFind;
 
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
     expect(comicId, 'new-comic');
     if (offline) throw StateError('source is offline');
+    onFind?.call();
     return versions;
   }
 }

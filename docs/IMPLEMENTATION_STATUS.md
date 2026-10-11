@@ -1,5 +1,5 @@
 # Implementation Status
-源码版本：0.31.0-dev.328，App build：0.31.0+328
+源码版本：0.31.0-dev.329，App build：0.31.0+329
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
@@ -61,7 +61,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；独立来源/性能验收见状态JSON。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：READY索引315–358ms已纳入4ms/64预算，Home复用身份、live偏好保持。72b Profile完整9.779s纵向慢拖/惯性/反向/进退，active UI≤10.525ms；入场build23.442ms含GC14.444ms，退出raster21.544ms主要GLES提交。完整窗口GC已观测；分配归因、物理输入/视觉与最终显示开放，21项未验。
+- Reader进退：重复relation不更新SQLite row，空mapping不复制ledger，4ms/64提交让行并重验取消。120个owner测试、2382完整检查/三ABI包通过；同源ready的warm返回等待46.783→25.831ms，ledger复制样本0、当前首帧116.835ms/下载及失败均0。版本解析/GC、GLES及物理输入/显示仍开放，21项未验。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），

@@ -215,9 +215,13 @@ final class HomeVersionReuseLifecycle {
     required String currentComicId,
     required String currentTitle,
     required Iterable<SourceComicVersion> versions,
+    TaskControl? control,
   }) async {
     if (_relationStore() == null || currentComicId.isEmpty) return;
+    final slice = Stopwatch()..start();
+    var committedSinceYield = 0;
     for (final version in versions) {
+      control?.throwIfCancelled();
       if (version.sourceId != source.sourceId ||
           version.comicId.isEmpty ||
           version.comicId == currentComicId) {
@@ -235,7 +239,17 @@ final class HomeVersionReuseLifecycle {
           discoveredAt: DateTime.now().toUtc(),
         ),
       );
+      committedSinceYield++;
+      if (committedSinceYield >= 64 || slice.elapsedMicroseconds >= 4000) {
+        // Completed owner writes stay ordered; pending UI/cancel events run
+        // without releasing the shared lane's admitted operation.
+        await Future<void>.delayed(Duration.zero);
+        control?.throwIfCancelled();
+        slice.reset();
+        committedSinceYield = 0;
+      }
     }
+    control?.throwIfCancelled();
   }
 
   List<ComicVersionRelation> _relationsForComic(
@@ -1138,6 +1152,7 @@ final class HomeVersionReuseLifecycle {
         currentComicId: currentComicId,
         currentTitle: title,
         versions: discovered,
+        control: control,
       );
       final current = _exactLibraryComicForSourceIdentity(
         source.sourceId,

@@ -394,6 +394,9 @@ canonical assimilation 后都重验 library identity；若 adoption 跨过任一
 关闭 Future 完成与 projection publish 之间的 handoff 窗口。owner 只接收 fresh metadata snapshot、verified page identity、
 统一 source-locator validity predicate 与 metadata-task scheduling/cancellation capability，
 不反向 import `ComicDetails` UI DTO、source gateway 或 app-global coordinator。
+SQLite关系upsert仅在标题或非空page-mapping payload变化时更新已有row；重复发现不推进durable projection revision，首次发现时间与已有proof保持。
+无page mapping的relation在canonical assimilation进入原串行tail后直接完成，不复制全库ledger；真实mapping仍先持久化projection再发布authority与backfill。
+来源版本批量提交由lifecycle按4ms/64项预算让出event turn，写入顺序、session adoption和close drain保持；每次继续提交前重验原TaskControl，不释放共享lane的接纳容量。
 Reader refresh 仍由 composition 把任务提交到 application 共享 NetworkLane priority100，
 controlled `TaskControl` 路径不得加入无 control 的 generic warmup；
 lifecycle 自己只记录其 exact task key 与已接纳的 warmup/version/background Future，
