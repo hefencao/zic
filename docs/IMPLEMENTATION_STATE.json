@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-11T01:58:34Z",
+  "updated_at": "2026-10-11T02:38:28Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -150,13 +150,13 @@
     "model": "M2007J1SC",
     "sdk": 36,
     "sha256": "adb4e36ba8b9884da076e0395b58eff18cedb3b2aa28d1cdce8c28d7cf610052",
-    "app_pid": 17722,
+    "app_pid": 2921,
     "ordinary_release": true,
     "normal_minified_release": true,
-    "app_foreground": "Ordinary minified dev331 Releaseadb4e36b/PID17722/MainActivity/Home/Awake,Keyguard=false,no forwards. Follow/adaptive/override were not changed by final visual check;task exports/XML/screenshots cleaned.210a3115 absent;user data retained."
+    "app_foreground": "Ordinary minified dev331 Releaseadb4e36b/PID2921/MainActivity/Home/Awake,Keyguard=false,inputRestricted=false,no forwards. Follow restored;adaptive/override unchanged. Task exports/XML/screenshots cleaned;210a3115 absent;user data retained."
   },
   "validation": {
-    "command": "Fresh tool/check.sh --require-toolchains exit0:2385 Dart/Flutter tests/27 suites/analyzers,Rust25,all repo/ownership/platform/docs gates andthree-ABI Debug. Freshthree-ABI ordinary Profile/minified Release/JNI pass. Android121 retains unchanged Kotlin/native inputs.",
+    "command": "Fresh48 affected repo/documentation/ownership gates pass. Retain unchanged b7b5639b tool/check.sh --require-toolchains exit0:2385 Dart/Flutter tests/27 suites/analyzers,Rust25,all gates,three-ABI Debug;separate Profile/minified Release/JNI pass. Android121 retains unchanged native inputs.",
     "exit_code": 0,
     "dart_flutter_tests": 2385,
     "analyzers": 27,
@@ -164,9 +164,9 @@
     "Android_native_tests": 121,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Freshthree-ABI Profile/minified Release/JNI pass at dev331. Releaseadb4e36b/72b/PID17722/Home/Keyguard=false restored;current Ani body visually presents,no forwards/duplicate task export. Original210 and first cover-install entry remain unverified.",
+    "ordinary_package_acceptance": "Retain unchanged dev331 three-ABI Profile/minified Release/JNI. Releaseadb4e36b/72b/PID2921/Home/Keyguard=false restored,no forwards;actual Ani page visual acceptance preserved. Original210 and first cover-install entry remain unverified.",
     "Android_native_tests_scope": "Retain e12c1863 unchanged Kotlin/native inputs:project JUnit104:plugin_host_bridge94 including six preference regressions,local_media_bridge7,app3. External file_selector17 passes with temporary API34/ASM9.9/ByteBuddy Java25 test compatibility;production dependencies unchanged. CookieJar15 and Kotlin/native compile gates pass in full check.",
-    "scope": "Fresh2385/27 suites/analyzers/Rust25/three-ABI Debug/Profile/minified Release/JNI pass;Android121 retains unchanged e12 native inputs. Warm refresh completes,upsert CPU0 and0 warm downloads/failures;Release body visual pass. Allocation/physical display/original entry stay open;112 IDs/21 unfinished.",
+    "scope": "Executable inputs unchanged:retain2385 tests/27 suites/analyzers/Rust25/three-ABI Debug/Profile/minified Release/JNI and e12 native121. Full setup-following action UI/GC components pass;exit raster still fails. Warm/Release visual acceptance retained. Allocation/original entry/physical display remain open;112 IDs/21 unfinished.",
     "artifact_retention": "Overwrite existing validation/build logs and current package outputs. Retain original faults/minimal open inputs;delete completed capture duplicates and temporary directories by exact task paths. Prior clean worktrees/generated trees removed;dirty and unique commits preserved."
   },
   "new_user_task_acceptance": {
@@ -175,10 +175,10 @@
     "cached_Reader_stationary_and_history": "Accepted bounded stationary/history cases:docs/archive/audits/reader-cached-entry-after-CookieJar-2026-10-07.json. Latest72b Release current force-reload presents new epoch1/frame0 at6.712s;first navigation is at57.393s,0 failures. Original19/20 occasional cached loading/redownload remains open until a fresh reproducing input;do not reopen accepted cache/trust/URI owners from missing historical evidence.",
     "real_slider_download_stationary": "docs/archive/audits/reader-real-slider-download-after-CookieJar-2026-10-07.json",
     "migration_title_search_shared_controls": "Migration/title search share fixed bottom search,source pills/All,direct exact/empty-result toggles and inline version notice. Single-source native ID shares input/clears on source changes.19 regressions and original2371/full gates pass. Release70ac8752 verifies layouts,expansion,toggles/native mode/IME without dialogs;no ID submission or migration confirmation in that layout scope. Paging/raw identity/read-only refresh/transaction owners preserved;other acceptance stays in requirements.",
-    "reader_entry_exit_stutter": "READY/no-op relation/empty ledger and one-pass4ms/64 parsing stay accepted. dev331 upsert statement is connection-scoped,closed/cleared before DB close;failure recovery/reopen and original revision/discovery/proof pass31 storage tests. Fresh2385/full gates/three-ABI packages/JNI pass. Profilee6f31315/PID13646 warm Ani274/371:6.289s/413CPU,metadata+version refresh complete,upsert CPU0,0 lazy rescans,0 warm downloads/failures,current first frame125934us. Entrybuild13792us/exitraster14737us/UI16073us/GC6958us. Two sampled prepares are relation reads;4 parse samples include pre-loop scan. Related manifests55 vsdev3300,so no strict speed ratio. Two setup downloads outside ROI. Releaseadb4e36b actual color page presents. Original9.779s/first cover-install/210 input,total allocation and physical touch/display remain open."
+    "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored."
   },
   "remaining": [
-    "Original19/20 intermittent cached loading/redownload needs a fresh reproducing input. dev331 compiled upsert closes with its store connection;31 storage/2385 full checks and three-ABI packages pass. Warm refresh complete,first frame125934us,0 downloads/failures and0 upsert CPU samples;entrybuild13.792ms/exitraster14.737ms/UI16.073ms/naturalGC6.958ms satisfy the scoped16.667ms component budget. Related manifests differ,so no strict speed ratio. Retain original9.779s input for remaining entry/exit/allocation attribution;001/002/005/007/100 physical input/visual/final display stay open.210 absence limits original HalfLove-to-Ani;invalid clocks only final-display assertions.091/049/control-plane/transition stay closed.",
+    "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",
     "099 cold/live canonical acquisition and actual EH target stay closed;371->424/offset53,Reader80 local bytes/stationary/zero failures remain accepted.097 has genuine21/22 APKs,unchanged66-page old manifest and accepted22 preference repair. New declared rouman5.com request selects::1:443/ECONNREFUSED before Reader;public DNS is public,device VPN DNS172.19.0.2. Resolution authority remains unconfirmed. Resume only with changed conditions and a genuine new manifest,then verify generations/independent retirement;no fabricated revision or DNS bypass.023/040/074 notifications and original19/20 remain independent;052/011/098 stay closed.",
