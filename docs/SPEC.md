@@ -1031,6 +1031,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
 - 详情页 MUST以统一“迁移漫画源”入口承载同源版本及跨源选择；版本发现和更新提示 MUST保留，顶部不再另设同源迁移按钮。
   来源提供 `ComicVersionSource` 时，“已确认同源版本”候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；
   gallery HTML MUST使用显式HTTP(S) source-document请求，保持来源Cookie/session与调度取消；MUST NOT作为图片进入thumbnail/transform/signature/recovery链。普通图片请求的校验与有界来源恢复 MUST保留。
+  source adapter的版本解析 MUST单次遍历anchor，保留来源顺序、日期与opaque URI；长结果的anchor遍历 MUST有界让出event turn并重验原TaskControl。解析 MUST仍属于原source operation，NetLane MUST等待其Future结束，不得新增解析调度或缓存owner。
   来源明确声明的 predecessor 与 successor MUST 经同一版本关系 authority 持久化为 predecessor→current 与 current→successor；MUST拒绝外源、空及自身身份，MUST保留已有发现时间和页面复用证明。MUST NOT按标题、日期或展示序号补造关系；未确认分叉 MUST仍保持 exact。
   不支持版本发现的来源仍 MAY通过通用搜索选择候选；搜索结果不构成已确认关系。候选 MUST对应不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
   旧版和新版都可作为同源迁移目标。

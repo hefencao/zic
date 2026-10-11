@@ -551,6 +551,8 @@ JM 浏览链接由 Venera source adapter 将数字/`jm`数字 ID 投影为 `http
 关系发现保留已有首次发现时间与 page-mapping proof；唯一最新版仍由已确认的有向关系决定，未确认分叉保持无唯一 head，不放宽正文复用。
 版本发现的gallery HTML由source adapter显式标记`loadResource.sourceDocument=true`，经既有`Network.fetchBinary`返回native-byte token；
 它共享来源session、Cookie、requestId和物理invocation gate，但不进入thumbnail/image hook、图片签名校验或图片语义恢复。普通页面/artwork保留默认图片资源边界。
+source adapter单次遍历gnd anchor匹配，复用当前解析的pattern，不按length/elementAt重扫懒迭代结果；来源顺序、日期与opaque URI保持。
+长版本的anchor遍历按4ms/64项预算让出event turn并重验原TaskControl；解析Future仍属于原source operation，共享NetLane等待其结束，不增加worker、缓存或调度owner。
 不得用标题 `browse` 推断同源。详情保留版本发现Future及更新提示，统一“迁移漫画源”按钮承载同源版本和跨源操作。
 Home选择适配器复用`ComicTitleSearchPage`，顶部当前信息后以更新提示投影已确认版本，可在页内展开；与通用版本选择面板共用`ConfirmedSourceVersionList`的查看/迁移操作。页面共用复选药丸筛选启用来源，默认聚合搜索，来源发布保留已有请求。
 可编辑查询交给来源browse，结果按源展示封面与标题；当前精确作品只在UI过滤，候选raw identity原样返回，不展示或解码内部模型。

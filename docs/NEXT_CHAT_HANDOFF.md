@@ -1,6 +1,6 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- 稳定基准版本：`0.31.0-dev.329` / App `0.31.0+329`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
+- 稳定基准版本：`0.31.0-dev.330` / App `0.31.0+330`；历史兼容基准仍覆盖 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际来源plan/runtime媒体与sealed body保持已验。Reader进退GC/GLES峰值可继续归因；097/016/013/089、原加载及物理显示仍开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
@@ -9,10 +9,10 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Reader：重复relation/空mapping与提交让行已修，120个owner/2382完整检查/三ABI包通过。同源ready的warm返回等待46.783→25.831ms，ledger复制样本0、当前首帧116.835ms/下载及失败均0。剩余版本解析/GC及GLES、分配/物理输入/显示开放；首次覆盖安装/210原输入独立。
+- Reader：重复relation/空mapping及anchor单遍/4ms/64让行已验；62适配器/2384完整检查/三ABI包通过。warm刷新完成、重扫0，首帧123.321ms/下载及失败均0；等待15.379ms/raster17.621ms，准备态不同不作严格加速比。前置扫描/SQL、GC/GLES、分配与物理显示仍开放；首次覆盖安装/210原输入独立。
 - 013独立网络接收未验：SDK36无android.network_packets；取得wire/Rust观测后才采集，20ms Dart progress不能代替。089默认DNS物理退出缺有效解析控制。新强刷6.712s自动呈现、首次换页57.393s；660→0→780始终active，016入场未验，不重复该输入。057仅余真实Web登录，已验设置/身份不重跑。
 - 097真实21旧manifest第3話/66页未改；22设置保存修复、6回归/Android121与真实拒绝/规范化/同值重入保持。独立包用声明的rouman5.com连到::1被拒绝，Reader未创建；公开DNS非回环、VPN活跃，解析来源未定。新manifest/代际与19/20独立开放，不绕过DNS或重复失败输入。
-- 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；标识验收Releaseec6f9e5a；当前Release4f2c7d26/72b/PID30170/Home/无forward，210掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
+- 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；标识验收Releaseec6f9e5a；当前Release3bb729d1/72b/PID8906/Home/无forward，210掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
 - rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。

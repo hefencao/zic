@@ -564,6 +564,75 @@ void main() {
     expect(connection.lastRequest?.arguments['sourceDocument'], isTrue);
   });
 
+  for (final cancel in <bool>[false, true]) {
+    test('large version parsing permits events and cancellation ($cancel)',
+        () async {
+      const count = 512;
+      final resourceReady = Completer<void>();
+      final html = '<div id="gnd"><div>${List<String>.generate(count, (index) =>
+          '<a href="/g/${index + 2}/token-$index/">Version &amp; $index</a>, '
+          'added 2026-08-01 12:30').join('<br>')}</div></div>'
+          '<a href="/g/9999/outside/">Outside</a>';
+      final connection = _FixtureConnection(
+        resource: Uint8List.fromList(utf8.encode(html)),
+        block: resourceReady.future,
+      );
+      final session = ExternalPluginRuntimeSession(
+        plugin: _plugin(), connection: connection,
+        limits: const ExternalPluginRuntimeLimits(),
+      );
+      addTearDown(session.close);
+      final source = session.sources.single;
+      final payload = base64Url.encode(utf8.encode(jsonEncode(
+        <String, Object?>{'v': 2, 'id': 'https://example.invalid/g/1/old/'},
+      ))).replaceAll('=', '');
+      final control = _MutableTaskControl(priority: 100);
+      var completed = false;
+      var eventBeforeCompletion = false;
+      final eventTurn = Completer<void>();
+      final pending = (source as ControlledComicVersionSource)
+          .findComicVersionsControlled('venera:comic:$payload', control: control);
+      pending.then<void>((_) { completed = true; },
+          onError: (Object _, StackTrace __) { completed = true; });
+      await Future<void>.delayed(Duration.zero);
+      expect(connection.operations, <ExternalPluginRuntimeOperation>[
+        ExternalPluginRuntimeOperation.loadResource,
+      ]);
+      resourceReady.complete();
+      Timer.run(() {
+        eventBeforeCompletion = !completed;
+        if (cancel) control.cancel();
+        eventTurn.complete();
+      });
+      List<SourceComicVersion>? versions;
+      Object? failure;
+      try {
+        versions = await pending;
+      } on Object catch (error) {
+        failure = error;
+      }
+      await eventTurn.future;
+      expect(eventBeforeCompletion, isTrue,
+          reason: 'Document parsing must not starve UI/cancel events');
+      if (cancel) {
+        expect(failure, isA<Failure>().having(
+            (error) => error.code, 'code', ErrorCode.cancelled));
+        expect(versions, isNull);
+      } else {
+        expect(failure, isNull);
+        expect(versions, hasLength(count));
+        for (var index = 0; index < count; index++) {
+          final version = versions![index];
+          expect(version.title, 'Version & $index');
+          expect(version.generation, index + 1);
+          expect(version.date, '2026-08-01 12:30');
+          expect((source as ComicWebUriSource).resolveComicWebUri(version.comicId),
+              Uri.parse('https://example.invalid/g/${index + 2}/token-$index/'));
+        }
+      }
+    });
+  }
+
   test('version document coalescing never joins an image resource', () async {
     final connection = _FixtureConnection(
       resource: Uint8List.fromList(utf8.encode('<div id="gnd"></div>')),

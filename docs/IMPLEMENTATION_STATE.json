@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-11T00:58:28Z",
+  "updated_at": "2026-10-11T01:24:51Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -149,24 +149,24 @@
     "serial": "72b08a1c",
     "model": "M2007J1SC",
     "sdk": 36,
-    "sha256": "4f2c7d260fe931772d2b801c5b9a55864a6f3d1150695bea759ea31b21cbab61",
-    "app_pid": 30170,
+    "sha256": "3bb729d1704cc07e15e8265ebfe77430513d64023992a3fffa4d19ca80e77085",
+    "app_pid": 8906,
     "ordinary_release": true,
     "normal_minified_release": true,
-    "app_foreground": "Ordinary minified dev329 Release4f2c7d26/PID30170/MainActivity/Home/Awake,no forwards. Ani restored to Follow;adaptive/override retained. Four task export duplicates deleted.210a3115 absent;user data retained."
+    "app_foreground": "Ordinary minified dev330 Release3bb729d1/PID8906/MainActivity/Home/Awake,Keyguard=false,no forwards. Ani Follow/adaptive/override restored;task export/XML cleaned.210a3115 absent;user data retained."
   },
   "validation": {
-    "command": "Fresh tool/check.sh --require-toolchains exit0:2382 Dart/Flutter tests/27 suites/analyzers,Rust25,all repo/ownership/platform/docs gates andthree-ABI Debug. Freshthree-ABI ordinary Profile/minified Release/JNI pass. Android121 retains unchanged Kotlin/native inputs.",
+    "command": "Fresh tool/check.sh --require-toolchains exit0:2384 Dart/Flutter tests/27 suites/analyzers,Rust25,all repo/ownership/platform/docs gates andthree-ABI Debug. Freshthree-ABI ordinary Profile/minified Release/JNI pass. Android121 retains unchanged Kotlin/native inputs.",
     "exit_code": 0,
-    "dart_flutter_tests": 2382,
+    "dart_flutter_tests": 2384,
     "analyzers": 27,
     "Rust_tests": 25,
     "Android_native_tests": 121,
     "debug_three_ABI_build": true,
     "missing_toolchains": [],
-    "ordinary_package_acceptance": "Freshthree-ABI Profile/minified Release/JNI pass at dev329. Release4f2c7d26/72b/PID30170/Home/Awake restored,Follow/adaptive/override preserved,no forwards or task export duplicates. Original210 input and first cover-install entry remain unverified.",
+    "ordinary_package_acceptance": "Freshthree-ABI Profile/minified Release/JNI pass at dev330. Release3bb729d1/72b/PID8906/Home/Keyguard=false restored,Follow/adaptive/override preserved,no forwards or task export duplicates. Original210 and first cover-install entry remain unverified.",
     "Android_native_tests_scope": "Retain e12c1863 unchanged Kotlin/native inputs:project JUnit104:plugin_host_bridge94 including six preference regressions,local_media_bridge7,app3. External file_selector17 passes with temporary API34/ASM9.9/ByteBuddy Java25 test compatibility;production dependencies unchanged. CookieJar15 and Kotlin/native compile gates pass in full check.",
-    "scope": "Fresh2382/27 suites/analyzers/Rust25/three-ABI Debug/Profile/minified Release/JNI pass for dev329 commit repair;Android121 retains e12 unchanged Kotlin/native inputs. Matched warm source refresh completes and redundant ledger copies disappear;remaining25.831ms parsing/GC,entry/GLES/allocation and physical input/display stay open.112 IDs/21 unfinished.",
+    "scope": "Fresh2384/27 suites/analyzers/Rust25/three-ABI Debug/Profile/minified Release/JNI pass at dev330;Android121 retains unchanged e12 native inputs. Source refresh completes with0 lazy rescans and0 warm downloads/failures. Related-manifest preparation differs,so no strict speed ratio. GC/GLES,allocation and physical display remain open;112 IDs/21 unfinished.",
     "artifact_retention": "Overwrite existing validation/build logs and current package outputs. Retain original faults/minimal open inputs;delete completed capture duplicates and temporary directories by exact task paths. Prior clean worktrees/generated trees removed;dirty and unique commits preserved."
   },
   "new_user_task_acceptance": {
@@ -175,10 +175,10 @@
     "cached_Reader_stationary_and_history": "Accepted bounded stationary/history cases:docs/archive/audits/reader-cached-entry-after-CookieJar-2026-10-07.json. Latest72b Release current force-reload presents new epoch1/frame0 at6.712s;first navigation is at57.393s,0 failures. Original19/20 occasional cached loading/redownload remains open until a fresh reproducing input;do not reopen accepted cache/trust/URI owners from missing historical evidence.",
     "real_slider_download_stationary": "docs/archive/audits/reader-real-slider-download-after-CookieJar-2026-10-07.json",
     "migration_title_search_shared_controls": "Migration/title search share fixed bottom search,source pills/All,direct exact/empty-result toggles and inline version notice. Single-source native ID shares input/clears on source changes.19 regressions and original2371/full gates pass. Release70ac8752 verifies layouts,expansion,toggles/native mode/IME without dialogs;no ID submission or migration confirmation in that layout scope. Paging/raw identity/read-only refresh/transaction owners preserved;other acceptance stays in requirements.",
-    "reader_entry_exit_stutter": "READY index4ms/64 and existing210 body/history108-165ms/0 failures stay accepted;first cover-install entry unrecorded. Complete9.779s vertical input observes naturalGC/activeUI,not total allocation:entryGC14.444ms,exitGLES21.544ms remain open. CPU baseline attributes46.783ms return waiting to repeated SQL/empty-ledger copies. dev329 preserves persistence/adoption/proof,skips unchanged SQLite updates and empty ledger copies,yields sequential commits4ms/64 with originalTaskControl.120 focused and fresh2382/full gates/three-ABI packages pass. Ordinary Profilee324801c matched source-ready Ani274/371 warm capture:2.472s/238CPU samples;versionChecked/metadataSnapshotLoaded true,0 retry/preempt. First-exit-second wait25.831ms,ledger constructor samples0,current first frame116835us,0 warm-session downloads/failures. Remaining delay includes version parsing/GC;full performance remains unverified. Cold-first route predates plugin host readiness and submits no refresh,so it is not this comparison. Retain only current open input."
+    "reader_entry_exit_stutter": "READY index4ms/64,210 body/history and dev329 redundant SQL/empty-ledger repair stay accepted;first cover-install entry unrecorded. dev330 removes quadratic lazy-anchor rescans,keeps source order/date/URI and original control,with4ms/64 anchor yields. Two failing-first/62 adapter and fresh2384/full gates/three-ABI packages pass. Profile415ca614/PID32303 actual warm Ani274/371:2.782s/271CPU,source refresh completes,0 rescans,0 warm downloads/failures,current first frame123321us. Wait15379us/raster17621us/UI13500us/GC8481us;7 parse samples still include pre-loop matching/date scan. Related cached manifests differ55->0(missing manifests),so no strict speed comparison;existing canonical local completion remains. Earlier setup has2 starts outside ROI;operator did not visually verify the captured page. Original9.779s active input retains entryGC14.444ms/exitGLES21.544ms. GC/GLES,total allocation and physical input/display stay open;keep minimal current inputs."
   },
   "remaining": [
-    "Original19/20 intermittent cached loading/redownload needs a fresh reproducing input. dev329 redundant background relation writes/empty-ledger copies are repaired and checked;matched warm return waiting46.783->25.831ms,refresh completes,current first frame116835us,0 downloads/failures. Continue separating version parsing,GC and scheduling in the remaining25.831ms;entryGC14.444ms/exitGLES21.544ms,total allocation and001/002/005/007/100 physical input/visual/final display remain open.210 absence limits original HalfLove-to-Ani,invalid clocks only final-display assertions.091/049/control-plane/transition stay closed.",
+    "Original19/20 intermittent cached loading/redownload still needs a fresh reproducing input. dev329 redundant SQL/empty-ledger copies and dev330 quadratic anchor rescans are repaired/checked;warm source refresh completes,current first frame123321us,0 downloads/failures. Latest wait15.379ms/raster17.621ms includes pre-loop parsing/SQL/GC;related-manifest preparation differs,not a strict speed comparison. Continue GC/GLES and total allocation attribution;001/002/005/007/100 physical input/visual/final display stay open. Original9.779s active input retained.210 absence limits original HalfLove-to-Ani;invalid clocks only final-display assertions.091/049/control-plane/transition stay closed.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",
     "099 cold/live canonical acquisition and actual EH target stay closed;371->424/offset53,Reader80 local bytes/stationary/zero failures remain accepted.097 has genuine21/22 APKs,unchanged66-page old manifest and accepted22 preference repair. New declared rouman5.com request selects::1:443/ECONNREFUSED before Reader;public DNS is public,device VPN DNS172.19.0.2. Resolution authority remains unconfirmed. Resume only with changed conditions and a genuine new manifest,then verify generations/independent retirement;no fabricated revision or DNS bypass.023/040/074 notifications and original19/20 remain independent;052/011/098 stay closed.",

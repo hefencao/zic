@@ -815,6 +815,7 @@ final class _RuntimeBrowsableComicSource
       sourceId: sourceId,
       baseUri: uri,
       html: html,
+      control: control,
     );
   }
 
@@ -2274,11 +2275,14 @@ bool _isVeneraGndGalleryUri(Uri uri) {
       segments[2].isNotEmpty;
 }
 
-List<SourceComicVersion> _parseVeneraComicVersions({
+Future<List<SourceComicVersion>> _parseVeneraComicVersions({
   required String sourceId,
   required Uri baseUri,
   required String html,
-}) {
+  TaskControl? control,
+}) async {
+  _throwIfTaskCancelled(control);
+  final slice = Stopwatch()..start();
   final opening = RegExp(
     "<([A-Za-z][A-Za-z0-9:-]*)\\b[^>]*\\bid\\s*=\\s*[\\\"']gnd[\\\"'][^>]*>",
     caseSensitive: false,
@@ -2313,13 +2317,27 @@ List<SourceComicVersion> _parseVeneraComicVersions({
     r'''</a\s*>\s*,\s*added\s+(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)''',
     caseSensitive: false,
   ).allMatches(container).map((match) => match.group(1)).toList();
+  final hrefPattern = RegExp(
+    "\\bhref\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']",
+    caseSensitive: false,
+  );
+  final openingAnchorPattern = RegExp(r'^<a\b[^>]*>', caseSensitive: false);
+  final closingAnchorPattern = RegExp(r'</a\s*>$', caseSensitive: false);
+  final tagPattern = RegExp(r'<[^>]*>');
+  final whitespacePattern = RegExp(r'\s+');
   final versions = <SourceComicVersion>[];
-  for (var index = 0; index < anchors.length; index++) {
-    final anchor = anchors.elementAt(index).group(0)!;
-    final href = RegExp(
-      "\\bhref\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']",
-      caseSensitive: false,
-    ).firstMatch(anchor)?.group(1);
+  var index = 0;
+  for (final match in anchors) {
+    if ((index > 0 && index % 64 == 0) || slice.elapsedMicroseconds >= 4000) {
+      // Parsing stays in the original source operation; let queued input and
+      // cancellation run without restarting this lazy match iterator.
+      await Future<void>.delayed(Duration.zero);
+      slice.reset();
+    }
+    _throwIfTaskCancelled(control);
+    final anchorIndex = index++;
+    final anchor = match.group(0)!;
+    final href = hrefPattern.firstMatch(anchor)?.group(1);
     if (href == null) {
       continue;
     }
@@ -2331,20 +2349,21 @@ List<SourceComicVersion> _parseVeneraComicVersions({
     }
     final title = _decodeHtmlEntities(
       anchor
-          .replaceFirst(RegExp(r'^<a\b[^>]*>', caseSensitive: false), '')
-          .replaceFirst(RegExp(r'</a\s*>$', caseSensitive: false), '')
-          .replaceAll(RegExp(r'<[^>]*>'), ' '),
-    ).replaceAll(RegExp(r'\s+'), ' ').trim();
+          .replaceFirst(openingAnchorPattern, '')
+          .replaceFirst(closingAnchorPattern, '')
+          .replaceAll(tagPattern, ' '),
+    ).replaceAll(whitespacePattern, ' ').trim();
     versions.add(
       SourceComicVersion(
         sourceId: sourceId,
         comicId: _encodeVeneraComicId(resolved),
         title: title,
-        generation: index + 1,
-        date: index < dates.length ? dates[index] : null,
+        generation: anchorIndex + 1,
+        date: anchorIndex < dates.length ? dates[anchorIndex] : null,
       ),
     );
   }
+  _throwIfTaskCancelled(control);
   return List<SourceComicVersion>.unmodifiable(versions);
 }
 
