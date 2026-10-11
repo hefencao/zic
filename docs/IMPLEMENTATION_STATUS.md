@@ -61,7 +61,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；独立来源/性能验收见状态JSON。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：READY315–358ms索引已纳入4ms/64事件预算，Profile最长4.139ms；Home复用身份，live偏好仍读当前。Release本地22↔EH377正文/历史108–165ms通过。72b Ani273首帧206ms、退出871us、max GC6.019ms；仅Reader帧窗口完整。active/input/全窗口GC可独立推进，210原输入及最终物理显示另待条件，23项开放。
+- Reader进退：READY索引315–358ms已纳入4ms/64预算，Home复用身份、live偏好保持。72b Profile完整9.779s纵向慢拖/惯性/反向/进退，active UI≤10.525ms；入场build23.442ms含GC14.444ms，退出raster21.544ms主要GLES提交。完整窗口GC已观测；分配归因、物理输入/视觉与最终显示开放，21项未验。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 新2379/27suite/analyzer、Rust25/全门禁/三ABI Debug通过；Android121/Profile/Release/JNI沿用相同可执行输入。055持久response假前提退休；097新manifest仍缺。最新设备Release06945ef7/72b/PID30575/Home/无forward；3既有quarantine |
-| 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native退出重入保持；19/20缓存静置/独立历史及21话真实slider下载已验。050：20/21各存5/75页且重入恢复；另Venera17到2页后首返Home移首位。125payload/67read既有保全结果保持；原19/20偶发加载、active视觉、GC/输入/最终显示开放 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | 既有2379/27suite/analyzer、Rust25/全门禁/三ABI Debug通过；Android121/Profile/Release/JNI沿用相同可执行输入。055/056/069旧前提退休；097新manifest仍缺。当前设备状态见JSON；3既有quarantine |
+| 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native重入与19/20静置/历史、21话slider保持。完整纵向输入与GC已观测；进退GC/GLES峰值、原19/20偶发加载、物理输入/视觉与最终显示开放；总分配量未验 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
-  当前112项：device75/toolchain11/superseded3/partial17/pending6，23条未验。055“持久response元数据升级”前提已否证：历史/当前仅图片入byte store，书库刷新独立；130 owner测试通过。097新manifest、013/wire、089/DNS等只暂停对应分支，active/input/GC可推进；JM正常强刷不覆盖079/080。已验TTL/LRU/052/020/099保持。
+  当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久metadata及056/069强制WNACG host直连/无类型重放前提退休，实际runtime媒体已验。缺输入/账号/独立时钟只暂停对应分支；完整GC窗口已采，不等同进退性能通过。已验cache/NetLane/几何保持。

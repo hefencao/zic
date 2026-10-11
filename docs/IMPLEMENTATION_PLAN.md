@@ -1,6 +1,6 @@
-- 先准备合格host正文056/069及可用设备的active/input/完整窗口GC；固定各自输入和通过断言。最终显示条件不阻止应用侧检查，缺失样本不阻止其它来源；同一场景更新全部相关记录。
+- 先归因Reader进入build23.442ms所含14.444ms GC及退出GLES raster21.544ms；完整9.779s纵向动作窗口已观测，117drag/42ballistic、active UI≤10.525ms。分配owner、物理输入/视觉和最终显示分开验，不再重采已完整的GC窗口。
 - 只暂停缺少具体前提的分支：原始批次/旧目录037/054/077、真实登录057、@string/多入口APK071、独立接收时钟013、默认DNS控制089及097新manifest。未复现的challenge/版本动作仍是未验，不据此修改生产或反复刷新正常输入。
-- P0：RMR-037仅余连续手势/输入延迟、完整进退/active GC与最终显示。72b Profile06bdc2b2 Ani273正文/返回通过；保留timeline覆盖Reader帧，max GC6.019ms，完整窗口缺头尾，不证明总分配/全程性能。可用72b独立验active/input/完整窗口GC；210a3115只限原HalfLove→Ani输入，最终显示另等有效观测。不重复静置样本、不重开已验控制面。自动锁屏/误点击及采样ring覆盖属于测试边界；融合locator候选保持撤回，NetLane、7/3和2/1保持。
+- P0：RMR-037仅余进退峰值/总分配归因、物理输入/视觉及最终显示。72b普通Profile06bdc2b2完整entry/慢拖/惯性/反向/exit，Timeline持续接收、尾部flush在ROI外，无动作内snapshot/强制GC。210a3115只限原HalfLove→Ani输入。采集的分配stock不是总分配，不能据GC重写Reader/Pipeline；融合locator候选撤回，NetLane、7/3和2/1保持。
 - P0（dev.325）：补固定位置顿挫与current role promotion的真机视觉/最终呈现关联。保留已满足static decode与ready retained static upload的owner-local no-op合同，使用`analyze_current_role_boundary_jank.py`分离边界reconcile、`uploadStarted`与最终composition。current中心判定、startup artifact-pressure、7/3、decode2/1、current±2、bridge及dev.323 present fast path保持；只有fresh失败证据才重开已验控制面分量。
 - P0（dev.324）：05:33 dev.323真机已把direction-flip附近resident static重复present从dev.322的52次降为0，但用户仍在同一固定位置顿挫；因此停止扩大presentation continuity/keepAlive或继续调bridge。现有App内证据已到边界：Choreographer/Flutter/scene motion大体120Hz且scene residual为0，Window FrameMetrics未覆盖active-scroll异常。dev.324只做observation：同一设备/位置同时抓SurfaceFlinger FrameTimeline与active layer composition/buffer/HWC证据，离线按ZIC layer统计actual-present gap、late/jank/fence/GPU composition。命中content-layer或SF jank才继续下钻buffer acquire/latch/present；FrameTimeline仍连续则转layer transform/content transaction，不再修改Reader/Pipeline行为。
 - P0：补dev.282快滑最终composition与视觉验收。保留lease零copy `platformResidentReuse=true`和exact retained static重新claim/project fast path；role重入不要求恢复旧重复present timing。余下顿挫只按fresh有效显示证据定位SurfaceProducer/compositor，不重复已量化首个native output成本或重改已验geometry/anchor、窗口。
@@ -19,9 +19,8 @@
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 
-- 原19/20偶发缓存加载/重下、真实host正文/fallback、challenge/登录、partial/live媒体及完整输入/canonical分配仍独立待验；仅按剩余合同验收来源实际返回的输入，不额外要求所有协议变体。049正文载体已收口，不宣称live streaming或零分配，也不重跑已验生命周期。
+- 原19/20偶发缓存加载/重下、challenge/登录、partial/live媒体及总输入/canonical分配仍独立待验。056/069强制WNACG host直连与generic protocol-mismatch重放前提退休；当前自定义client必须runtime执行，实际plan/可读媒体与049 sealed正文载体已收口。不要求额外Cookie/POST或扩大client白名单，不重跑已验生命周期。
 - Roumanwu：复取历史exact 80章真机样本，核对raw SManga与升级/旧durable manifest刷新路径；不得用当前42章样本或JVM80对象合同替代原样本验收，见source-contract-acceptance审计。
-- 绅士漫画：补可无状态重放的真实cover/page host正文与 `sourceMediaProtocolMismatch` fallback；保留自定义响应/镜像/压缩语义，不把各变体另加为必验项，不扩大client白名单。
 - Venera057仅余完成真实Web登录后的原active source/session连续性。JM API1→2→1应用/重入/恢复已验：原12引用有效、native process/session/runtime ID和未关闭状态保持，JM代际推进/EH不变；镜像、普通设置、9插件/原11源和32-session边界不重跑。
 
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
@@ -30,7 +29,6 @@
 
 ## P0：Mihon 插件识别设备闭环
 
-- 绅士漫画：真实GET/Referer/UA/null-body plan与runtime解码已验；仅补符合现行host replay条件的可读正文，核对来源实际method/headers/body。空Cookie/body是有效输入，不要求来源额外产生POST；有状态/未知client仍归runtime。
 - 只补真实 Mihon APK 的 `@string/...` metadata 与多入口 class解析，核对资源解析、extensionLib及每个class；已验direct单入口/Factory不重跑，也不能代替这两个真实输入。
 
 ## P0：身份、同源更新与验证设备闭环
@@ -53,4 +51,4 @@
 
 - 097真实66页旧21 manifest与21/22 APK已具备，22真实设置保存已验。使用插件声明的rouman5.com后，独立包请求连到::1并被拒绝，Reader未创建；公开DNS为公网地址，设备VPN活跃，解析来源仍未确认。仅待取得真实新manifest后验代际/独立退休，不重复失败请求、不绕过系统DNS；LRU/TTL与composition authority保持。
 ## P0：纵向性能真机闭环
-- 普通Profile/Release独立验纵向active拖动、拖动→惯性（ballistic）的应用帧/输入与完整窗口GC；最终呈现另需有效physical-display及视觉观测，不作为前述检查的前提。forward future/reverse prefix/scrub及applied-layout合同保持，只有fresh失败证据才重开已验几何。
+- 完整纵向输入的应用帧和GC已观测；剩余进退峰值/分配归因及physical touch-to-display/视觉。engine PointerEvent步骤不证明手指延迟，GLES提交不证明最终显示。forward future/reverse prefix/scrub及applied-layout保持；仅fresh失败才重开对应owner。
