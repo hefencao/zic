@@ -426,6 +426,52 @@ void main() {
     expect(changed.discoveredAt, firstDiscovered);
   });
 
+  test('version relation writes recover after failure and same-store reopen',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('version-relation-reopen-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/library.sqlite';
+    final store = SqliteImportedLibraryStore(path);
+    addTearDown(store.close);
+    await store.open();
+    final firstDiscovered = DateTime.utc(2026, 1, 1);
+    ComicVersionRelation relation(String title) => ComicVersionRelation(
+      sourceId: 'fixture', predecessorComicId: 'old', successorComicId: 'new',
+      predecessorTitle: title, discoveredAt: firstDiscovered,
+    );
+    await store.saveComicVersionRelation(relation('Original'));
+    final revision = await store.libraryProjectionRevision;
+    final db = sql.sqlite3.open(path);
+    try {
+      db.execute('''
+        CREATE TRIGGER reject_version_title BEFORE INSERT
+        ON comic_version_relation WHEN NEW.predecessor_title = 'Rejected'
+        BEGIN SELECT RAISE(ABORT, 'rejected version title'); END
+      ''');
+    } finally {
+      db.dispose();
+    }
+    await expectLater(store.saveComicVersionRelation(relation('Rejected')),
+        throwsA(isA<sql.SqliteException>()));
+    expect(await store.libraryProjectionRevision, revision);
+    expect((await store.listAllComicVersionRelations()).single.predecessorTitle,
+        'Original');
+    await store.saveComicVersionRelation(relation('Recovered'));
+    expect((await store.listAllComicVersionRelations()).single.predecessorTitle,
+        'Recovered');
+    await store.close();
+    await expectLater(store.saveComicVersionRelation(relation('Closed')),
+        throwsStateError);
+    await store.open();
+    await store.saveComicVersionRelation(relation('Reopened'));
+    final reopened = (await store.listAllComicVersionRelations()).single;
+    expect(reopened.predecessorTitle, 'Reopened');
+    expect(reopened.discoveredAt, firstDiscovered);
+    final reopenedRevision = await store.libraryProjectionRevision;
+    await store.saveComicVersionRelation(relation('Reopened'));
+    expect(await store.libraryProjectionRevision, reopenedRevision);
+  });
+
   test('sqlite persists a Home projection revision across writes and reopen',
       () async {
     final directory = await Directory.systemTemp.createTemp(

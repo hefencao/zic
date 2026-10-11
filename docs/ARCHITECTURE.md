@@ -90,6 +90,8 @@ generic open watchdog真正超时时，DownloadJob必须只abort当前controlled
 持久化 imported-library 的 bulk SQL/JSON 解码由 storage-owned 短生命周期只读 worker 执行，SQLite handle 不跨 isolate；
 同一worker在返回前初始化每个不可变record的manifest投影，页面URI解析不延迟到Home首次authority构建；连接和发布authority仍由原owner持有。
 内存 store 以有限 event-turn 预算让步。
+`SqliteImportedLibraryStore`在当前连接内惰性复用版本关系upsert的compiled statement，避免批量发现逐条编译SQL；写入仍同步完成并沿原session persistence顺序提交。
+statement由store在关闭foreground连接前显式释放并清空；重开重新编译，不跨library adoption传递，失败后的参数重绑与原SQL错误传播保持。
 schema 20 的 `artifact_replica(access_locator)` 索引和 `CacheScanner.phaseMicros` 服务于恢复扫描诊断，
 sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
 

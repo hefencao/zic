@@ -1893,6 +1893,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 ## 9. Identity 与缓存
 - 持久化 imported-library 的 bulk list 查询及 JSON/model 解码 MUST 由 storage-owned 短生命周期只读 worker 执行；
   UI-owned SQLite connection/handle 不得跨 isolate，关闭 MUST 等待已接纳的 bulk read。
+  版本关系compiled upsert SHOULD在当前store连接内复用；statement MUST由store在关闭连接前释放并清空，不得跨重开或library adoption复用。写入失败 MUST传播且不得污染后续参数绑定；重复发现的revision/首次发现/proof语义 MUST保持。
   bulk list的worker MUST在传回记录前完成record-local不可变manifest投影，首次页面URI解析 MUST NOT遗留到Home的foreground authority构建；authority发布 MUST仍由原runtime owner执行。
   Home章节upsert MUST保留持久化回读及最新progress；仅在完整持久化payload一致时 MAY复用传入不可变记录的已准备manifest。实际metadata、页序或locator变化 MUST采用回读结果；不得新增scope级缓存或延迟authority提交。
   详情的来源章节准备在source fallback前 MUST先通过session hydrate已有exact source/comic/chapter的持久完整记录，再检查revision、已知pageCount与locator有效性；有效记录 MUST保留importedAt及最新进度，MUST NOT仅因紧凑Home占位投影重载来源。缺失、版本/页数变化或旧locator MUST继续来源加载。

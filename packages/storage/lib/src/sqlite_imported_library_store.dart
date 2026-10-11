@@ -56,6 +56,7 @@ final class SqliteImportedLibraryStore
 
   final String? path;
   sql.Database? _db;
+  sql.PreparedStatement? _versionRelationUpsert;
   SqliteProgressWriter? _progressWriter;
   Future<void>? _progressWriterOpening;
   final Set<Future<void>> _bulkReadDrains = <Future<void>>{};
@@ -1214,7 +1215,10 @@ final class SqliteImportedLibraryStore
         relation.predecessorComicId == relation.successorComicId) {
       throw ArgumentError.value(relation, 'relation');
     }
-    _requireDb().execute('''
+    final db = _requireDb();
+    // Discovery repeatedly submits the same upsert, including unchanged rows.
+    // Keep its compiled statement within this connection's close boundary.
+    final statement = _versionRelationUpsert ??= db.prepare('''
       INSERT INTO comic_version_relation (
         source_id, predecessor_comic_id, successor_comic_id,
         predecessor_title, discovered_us, page_mappings_json
@@ -1231,7 +1235,8 @@ final class SqliteImportedLibraryStore
          OR (excluded.page_mappings_json <> '[]'
              AND comic_version_relation.page_mappings_json <>
                  excluded.page_mappings_json)
-    ''', <Object?>[
+    ''', persistent: true);
+    statement.execute(<Object?>[
       relation.sourceId,
       relation.predecessorComicId,
       relation.successorComicId,
@@ -1297,6 +1302,8 @@ final class SqliteImportedLibraryStore
       _flushPendingReaderProgressSynchronously(db);
     }
     _db = null;
+    _versionRelationUpsert?.close();
+    _versionRelationUpsert = null;
     _progressWriter = null;
     final progressWriterOpening = _progressWriterOpening;
     _progressWriterOpening = null;

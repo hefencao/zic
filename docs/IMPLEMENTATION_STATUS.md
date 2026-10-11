@@ -1,5 +1,5 @@
 # Implementation Status
-源码版本：0.31.0-dev.330，App build：0.31.0+330
+源码版本：0.31.0-dev.331，App build：0.31.0+331
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
@@ -61,7 +61,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；独立来源/性能验收见状态JSON。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：READY索引、relation写入/空ledger复制及anchor单遍/4ms/64让行已验；62适配器/2384完整检查/三ABI包通过。Profile warm解析无length/elementAt重扫，刷新完成，首帧123.321ms/下载及失败均0；等待15.379ms、raster17.621ms。相关manifest准备态不同，不作严格加速比；GC/GLES、分配与物理输入/显示开放，21项未验。
+- Reader进退：READY/relation无变化/空ledger及anchor单遍让行已验；compiled upsert在store连接内复用、close释放，31存储/2385全仓及三ABI包通过。Profile warm刷新完成，首帧125.934ms/下载失败均0、upsert CPU0；build13.792/raster14.737/GC6.958ms。Release图像正常呈现；准备态不同不作加速比，分配/物理显示及原始场景开放。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
