@@ -558,15 +558,25 @@ void main() {
   });
 
   for (final failure in <String>['envelope', 'platform']) {
-    for (final stage in <String>['reactivation', 'replay']) {
+    for (final stage in <String>[
+      'reactivation', 'replay', 'cancelled reactivation', 'cancelled replay',
+    ]) {
       test('$failure recovery does not retry a failed $stage', () async {
+        final cancelled = stage.startsWith('cancelled');
+        final reactivation = stage.endsWith('reactivation');
+        final failing = Completer<void>();
+        final release = Completer<void>();
         var activations = 0;
         var invocations = 0;
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (call) async {
           if (call.method == ExternalPluginRuntimeServiceMethods.activateMihon) {
             activations++;
-            if (activations == 2 && stage == 'reactivation') {
+            if (activations == 2 && reactivation) {
+              if (cancelled) {
+                failing.complete();
+                await release.future;
+              }
               throw PlatformException(code: 'runtime-service-died');
             }
             return <String, Object?>{
@@ -587,23 +597,39 @@ void main() {
                 ),
               ).toMessage();
             }
+            if (invocations == 2 && cancelled) {
+              failing.complete();
+              await release.future;
+            }
             throw PlatformException(code: 'runtime-service-died');
           }
           return null;
         });
         final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
             .activate(_mihonRequest());
-        await expectLater(
-          connection.invoke(ExternalPluginRuntimeRequest.browse(
+        var settled = false;
+        final pending = connection.invoke(
+          ExternalPluginRuntimeRequest.browse(
             requestId: 'replayed', externalSourceId: 'fixture',
             query: '', offset: 0, limit: 24,
-          )),
-          throwsA(isA<PlatformException>().having(
-            (error) => error.code, 'code', 'runtime-service-died',
-          )),
-        );
+          ),
+        ).whenComplete(() => settled = true);
+        if (cancelled) {
+          await failing.future;
+          await (connection as CancellableExternalPluginRuntimeConnection).cancel('replayed');
+          expect(settled, isFalse);
+          release.complete();
+          expect((await pending).error?.code, 'runtime-request-cancelled');
+        } else {
+          await expectLater(
+            pending,
+            throwsA(isA<PlatformException>().having(
+              (error) => error.code, 'code', 'runtime-service-died',
+            )),
+          );
+        }
         expect(activations, 2);
-        expect(invocations, stage == 'reactivation' ? 1 : 2);
+        expect(invocations, reactivation ? 1 : 2);
         await connection.close();
       });
     }

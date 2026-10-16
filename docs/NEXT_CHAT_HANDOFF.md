@@ -63,7 +63,7 @@
 - 物理准备普通cap=max2；保留 post-local network-admission rank barrier；NetLane task前先 physical-local-prepare；0-byte victim 自动重排 local prepare。ADR0334的visible cohort例外见上。
 - 存储与缓存：支持 cold partial 与 verified-equivalent READY 复用；保持 SourceEpoch、generation 与 frameUploaded / framePresented 的代际单调性。
 - rhttp transport不得再次增加64/256 KiB聚合；DownloadJob 为单一数据聚合 owner。
-- Dart runtime adapter 仅对原始 invoke 的可恢复失败执行一次恢复和 replay；恢复自身失败必须直接传播，不得把 replay 移回原始异常 handler 而增加重试。
+- Dart runtime adapter 仅对原始 invoke 的可恢复失败执行一次恢复和 replay；失败不再重试；取消等待物理退出并保留 typed cancellation，不得把 replay 移回原始恢复 handler。
 - Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、`UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
   不得迁到Reader/Pipeline/Download；Injekt只属plugin host，Application/NetworkHelper/Json(ignoreUnknownKeys=true,explicitNulls=false)保持。原生/opaque漫画共用source调用、URL互斥/canonical artwork；完整manifest按raw请求缓存，raw响应ID不改。
   Mihon 新生成的 opaque page locator 都携带 stable chapter/page replay 坐标；host-direct plan 另有 `directPlanReplay`，可在 host transport failure 后沿现有一次性 source recovery 重取 page list。

@@ -262,11 +262,16 @@ final class _PlatformExternalPluginRuntimeMessageChannel
         rethrow;
       }
     }
-    await _recover(attemptedProcessId, attemptedSessionId);
-    if (_closing) {
-      throw StateError('platform external runtime channel is closing');
+    try {
+      await _recover(attemptedProcessId, attemptedSessionId);
+      if (_closing) {
+        throw StateError('platform external runtime channel is closing');
+      }
+      return await _invoke(requestMessage, invocation);
+    } on PlatformException {
+      if (invocation.cancelled) return invocation.cancelledMessage;
+      rethrow;
     }
-    return _invoke(requestMessage, invocation);
   }
 
   Future<Object?> _invoke(

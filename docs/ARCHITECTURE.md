@@ -672,7 +672,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
   runtime adapter 独立校验实际响应的 `maxResponseBytes`，字符串键和值直接计算 UTF-8 长度，不为计数物化 encoded bytes；合法 surrogate pair计4字节，孤立 surrogate按U+FFFD计3字节。depth/type、binary/scalar与body-file清理合同不变。
 - `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。
-  Dart MethodChannel adapter 只对原始 invoke 的可恢复异常或响应触发一次恢复；重新激活与单次 replay 在原始异常 handler 外执行，其失败直接传播，不再进入第二轮恢复。
+  Dart MethodChannel adapter 只对原始 invoke 的可恢复异常或响应触发一次恢复；重新激活与单次 replay 在原始恢复 handler 外执行，失败不再重试。取消继续等待物理调用退出，并将其平台异常投影为原请求的 typed cancellation。
   Mihon漫画输入在runtime内由`mihonMangaInput`转换为SManga：完整opaque模型保留所有来源字段，原生URL原文只补空初始标题；保留的`mihon:`前缀仍严格校验kind。插件调用及响应identity保持原始comicId。
   `plugin_host`按同一source URL解析原生/opaque输入的Web与canonical身份；二者共用既有目录互斥和artwork namespace，UI不构造opaque模型、猜路径或另持identity authority。
   Mihon目录保留source返回的完整对象与newest-first顺序；opaque章节ID仍编码source ordinal，向外sequence投影为oldest-first逻辑序号。

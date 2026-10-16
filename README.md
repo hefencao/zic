@@ -72,7 +72,9 @@ Flutter host 位于 `apps/app/`，不要在仓库根目录执行 `flutter create
 
 ```bash
 cd apps/app
-flutter run -d android
+flutter pub get
+python3 ../../tool/prepare_rhttp_android.py
+flutter run --no-pub -d android
 ```
 
 ## 检查与测试

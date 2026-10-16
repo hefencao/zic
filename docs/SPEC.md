@@ -2349,6 +2349,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
    Mihon首个重试 MUST能从 snapshot同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
 10. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；
     重新激活或 replay 自身失败 MUST 直接传播，MUST NOT 再次进入原请求的恢复分支。
+    已取消请求 MUST 等待实际调用退出，并将该调用的平台异常投影为 typed cancellation。
     业务错误和 `source-verification-required` MUST NOT 被当作 runtime崩溃吞掉。
 11. Mihon/外部插件同 pluginId 的 runtime restart或更新 MUST 使用事务式 replacement：
     候选 session先完成 activation、source identity/ABI等验证，成功后才能替换当前 source owner并关闭旧 session；候选失败 MUST 保留旧 session。
