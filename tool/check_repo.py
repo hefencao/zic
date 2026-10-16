@@ -294,6 +294,10 @@ def check_tool_dirs() -> None:
     analyze = (ROOT / 'tool/analyze.sh').read_text(encoding='utf-8')
     android_build = (ROOT / 'tool/build_android.sh').read_text(encoding='utf-8')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+    if re.search(r'\bdart\s+format\b', ci):
+        fail('CI must not run dart format; keep minimal manual formatting')
+    if 'python3 tool/check_dart_structure.py' not in ci:
+        fail('CI must run the Dart structure check')
     clean = (ROOT / 'tool/clean.sh').read_text(encoding='utf-8')
     for required in (
         'flutter clean',

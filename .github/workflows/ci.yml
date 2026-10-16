@@ -15,7 +15,8 @@ jobs:
           cache: true
       - run: ./tool/bootstrap_platforms.sh
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed apps packages
+      - name: Check Dart structure
+        run: python3 tool/check_dart_structure.py
       - run: ./tool/analyze.sh
       - name: Test pure Dart packages
         run: ./tool/test_dart.sh
