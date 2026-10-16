@@ -396,6 +396,17 @@ def check_tool_dirs() -> None:
         fail('Flutter CI must build split debug APKs through tool/build_android.sh')
     if './tool/build_android_native.sh release' not in ci:
         fail('CI must build Android media libraries from pinned libwebp source')
+    for required in (
+        'needs: android-native',
+        'actions/upload-artifact@v4',
+        'actions/download-artifact@v4',
+        'name: android-native',
+        'apps/app/android/app/src/main/jniLibs/',
+        'apps/app/android/app/src/main/assets/third_party/libwebp/',
+        'include-hidden-files: true',
+    ):
+        if required not in ci:
+            fail(f'CI must stage source-built Android native artifacts: {required}')
     if 'flutter build apk --debug' in ci:
         fail('CI must not build a single fat debug APK')
 

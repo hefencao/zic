@@ -37,7 +37,7 @@ if [[ "$NATIVE" == 1 ]]; then
   [[ "$NATIVE_MODE" == profile ]] && NATIVE_MODE=release
   "$ROOT/tool/build_android_native.sh" "$NATIVE_MODE"
 else
-  echo "ZIC_ANDROID_NATIVE=0; building split APKs without the native media core" >&2
+  echo "ZIC_ANDROID_NATIVE=0; reusing staged native libraries for split APKs" >&2
 fi
 
 cd "$APP"
