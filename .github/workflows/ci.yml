@@ -6,6 +6,7 @@ on:
 
 jobs:
   flutter:
+    needs: android-native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,12 +16,20 @@ jobs:
           cache: true
       - run: ./tool/bootstrap_platforms.sh
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed apps packages
+      - name: Check Dart structure
+        run: python3 tool/check_dart_structure.py
       - run: ./tool/analyze.sh
       - name: Test pure Dart packages
         run: ./tool/test_dart.sh
       - name: Test Flutter packages
         run: ./tool/test_flutter.sh
+      - name: Download source-built Android native libraries and notices
+        uses: actions/download-artifact@v4
+        with:
+          name: android-native
+          path: apps/app/android/app/src/main
+      - name: Validate staged Android native layout
+        run: ./tool/check_android_native.sh
       - name: Build split Android debug APKs without native dependency rebuild
         run: ZIC_ANDROID_NATIVE=0 ./tool/build_android.sh debug
       - run: python3 tool/check_repo.py
@@ -68,3 +77,13 @@ jobs:
         run: ./tool/build_android_native.sh release
       - name: Validate Android native layout
         run: ./tool/check_android_native.sh
+      - name: Upload source-built Android native libraries and notices
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native
+          path: |
+            apps/app/android/app/src/main/jniLibs/
+            apps/app/android/app/src/main/assets/third_party/libwebp/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1

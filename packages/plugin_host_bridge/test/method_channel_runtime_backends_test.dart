@@ -557,6 +557,84 @@ void main() {
     expect(replay['sessionId'], 'recovered-session');
   });
 
+  for (final failure in <String>['envelope', 'platform']) {
+    for (final stage in <String>[
+      'reactivation', 'replay', 'cancelled reactivation', 'cancelled replay',
+    ]) {
+      test('$failure recovery does not retry a failed $stage', () async {
+        final cancelled = stage.startsWith('cancelled');
+        final reactivation = stage.endsWith('reactivation');
+        final failing = Completer<void>();
+        final release = Completer<void>();
+        var activations = 0;
+        var invocations = 0;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == ExternalPluginRuntimeServiceMethods.activateMihon) {
+            activations++;
+            if (activations == 2 && reactivation) {
+              if (cancelled) {
+                failing.complete();
+                await release.future;
+              }
+              throw PlatformException(code: 'runtime-service-died');
+            }
+            return <String, Object?>{
+              'processId': 'process-$activations',
+              'sessionId': 'session-$activations',
+              'handshake': _handshake('mihon-runtime'),
+            };
+          }
+          if (call.method == ExternalPluginRuntimeServiceMethods.invoke) {
+            invocations++;
+            if (invocations == 1 && failure == 'envelope') {
+              return ExternalPluginRuntimeResponse.failure(
+                requestId: 'replayed',
+                error: ExternalPluginRuntimeError(
+                  code: 'runtime-process-mismatch',
+                  message: 'runtime service restarted',
+                  retryable: true,
+                ),
+              ).toMessage();
+            }
+            if (invocations == 2 && cancelled) {
+              failing.complete();
+              await release.future;
+            }
+            throw PlatformException(code: 'runtime-service-died');
+          }
+          return null;
+        });
+        final connection = await AndroidMihonIsolatedRuntimeBackend(channel: channel)
+            .activate(_mihonRequest());
+        var settled = false;
+        final pending = connection.invoke(
+          ExternalPluginRuntimeRequest.browse(
+            requestId: 'replayed', externalSourceId: 'fixture',
+            query: '', offset: 0, limit: 24,
+          ),
+        ).whenComplete(() => settled = true);
+        if (cancelled) {
+          await failing.future;
+          await (connection as CancellableExternalPluginRuntimeConnection).cancel('replayed');
+          expect(settled, isFalse);
+          release.complete();
+          expect((await pending).error?.code, 'runtime-request-cancelled');
+        } else {
+          await expectLater(
+            pending,
+            throwsA(isA<PlatformException>().having(
+              (error) => error.code, 'code', 'runtime-service-died',
+            )),
+          );
+        }
+        expect(activations, 2);
+        expect(invocations, reactivation ? 1 : 2);
+        await connection.close();
+      });
+    }
+  }
+
   test('platform support rejects an unenforceable runtime envelope', () {
     const support = PlatformExternalPluginRuntimeSupport(
       maxRuntimeHeapBytes: 1024,

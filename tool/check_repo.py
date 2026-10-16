@@ -294,6 +294,10 @@ def check_tool_dirs() -> None:
     analyze = (ROOT / 'tool/analyze.sh').read_text(encoding='utf-8')
     android_build = (ROOT / 'tool/build_android.sh').read_text(encoding='utf-8')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+    if re.search(r'\bdart\s+format\b', ci):
+        fail('CI must not run dart format; keep minimal manual formatting')
+    if 'python3 tool/check_dart_structure.py' not in ci:
+        fail('CI must run the Dart structure check')
     clean = (ROOT / 'tool/clean.sh').read_text(encoding='utf-8')
     for required in (
         'flutter clean',
@@ -333,6 +337,10 @@ def check_tool_dirs() -> None:
     for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
         if required not in android_build:
             fail(f'Android split APK build is incomplete: {required}')
+    for entry in ('tool/build_android.sh', 'tool/run_android.sh'):
+        source = (ROOT / entry).read_text(encoding='utf-8')
+        if 'flutter pub get\npython3 "$ROOT/tool/prepare_rhttp_android.py"' not in source:
+            fail(f'Android entry must prepare the pinned rhttp dependency: {entry}')
     android_native = (ROOT / 'tool/build_android_native.sh').read_text(
         encoding='utf-8'
     )
@@ -392,6 +400,17 @@ def check_tool_dirs() -> None:
         fail('Flutter CI must build split debug APKs through tool/build_android.sh')
     if './tool/build_android_native.sh release' not in ci:
         fail('CI must build Android media libraries from pinned libwebp source')
+    for required in (
+        'needs: android-native',
+        'actions/upload-artifact@v4',
+        'actions/download-artifact@v4',
+        'name: android-native',
+        'apps/app/android/app/src/main/jniLibs/',
+        'apps/app/android/app/src/main/assets/third_party/libwebp/',
+        'include-hidden-files: true',
+    ):
+        if required not in ci:
+            fail(f'CI must stage source-built Android native artifacts: {required}')
     if 'flutter build apk --debug' in ci:
         fail('CI must not build a single fat debug APK')
 

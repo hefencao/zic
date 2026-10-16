@@ -33,7 +33,7 @@
   SQLite authority仍由 SqliteIndex 拥有：约0.13ms的read已撤销常驻worker，直接在owner connection做单事务snapshot；touch保留worker且先过既有 StorageWriteScheduler。
   后续若再“放后台”，先区分 async scheduling 与真正 multithread/isolate：网络等待继续用 Future+NetLane；只有 CPU/同步FFI/磁盘调用会实际占 frame budget时才新增 worker，且不得复制 owner/retry/eligibility/state。
 ## 4. 下一步命令
-- `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`
+- `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`。Android build/run 入口在 pub get 后执行锁定的 rhttp SDK 解析补丁准备，不依赖本机 pub cache 预修正。
 ## 5. 不可改变的稳定边界
 - 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint，
   以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，
@@ -63,8 +63,8 @@
 - 物理准备普通cap=max2；保留 post-local network-admission rank barrier；NetLane task前先 physical-local-prepare；0-byte victim 自动重排 local prepare。ADR0334的visible cohort例外见上。
 - 存储与缓存：支持 cold partial 与 verified-equivalent READY 复用；保持 SourceEpoch、generation 与 frameUploaded / framePresented 的代际单调性。
 - rhttp transport不得再次增加64/256 KiB聚合；DownloadJob 为单一数据聚合 owner。
-- Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、
-  `UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
+- Dart runtime adapter 仅对原始 invoke 的可恢复失败执行一次恢复和 replay；失败不再重试；取消等待物理退出并保留 typed cancellation，不得把 replay 移回原始恢复 handler。
+- Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、`UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
   不得迁到Reader/Pipeline/Download；Injekt只属plugin host，Application/NetworkHelper/Json(ignoreUnknownKeys=true,explicitNulls=false)保持。原生/opaque漫画共用source调用、URL互斥/canonical artwork；完整manifest按raw请求缓存，raw响应ID不改。
   Mihon 新生成的 opaque page locator 都携带 stable chapter/page replay 坐标；host-direct plan 另有 `directPlanReplay`，可在 host transport failure 后沿现有一次性 source recovery 重取 page list。
   runtime-owned `mihon-runtime-transform-v3:<payload-sha256>` 仍只有非网络 source failure 可发布 replay eligibility，SSL/EOF 继续归 DownloadJob；payload-bound revision 继续绑定实际 extension payload。

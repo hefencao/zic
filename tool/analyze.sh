@@ -7,6 +7,7 @@ if ! command -v dart >/dev/null 2>&1 || ! command -v flutter >/dev/null 2>&1; th
   echo "Flutter and Dart SDKs are required" >&2
   exit 1
 fi
+ANALYSIS_FAILED=0
 
 for rel in \
   packages/domain \
@@ -23,7 +24,7 @@ for rel in \
   packages/sessions \
   packages/bridge; do
   echo "DART ANALYZE: $rel"
-  (cd "$ROOT/$rel" && dart analyze)
+  (cd "$ROOT/$rel" && dart analyze) || ANALYSIS_FAILED=1
 done
 
 for rel in \
@@ -42,5 +43,7 @@ for rel in \
   packages/downloads_bridge \
   apps/app; do
   echo "FLUTTER ANALYZE: $rel"
-  (cd "$ROOT/$rel" && flutter analyze --no-fatal-infos)
+  (cd "$ROOT/$rel" && flutter analyze --no-fatal-infos) || ANALYSIS_FAILED=1
 done
+
+exit "$ANALYSIS_FAILED"

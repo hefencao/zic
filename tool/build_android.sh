@@ -37,10 +37,12 @@ if [[ "$NATIVE" == 1 ]]; then
   [[ "$NATIVE_MODE" == profile ]] && NATIVE_MODE=release
   "$ROOT/tool/build_android_native.sh" "$NATIVE_MODE"
 else
-  echo "ZIC_ANDROID_NATIVE=0; building split APKs without the native media core" >&2
+  echo "ZIC_ANDROID_NATIVE=0; reusing staged native libraries for split APKs" >&2
 fi
 
 cd "$APP"
+flutter pub get
+python3 "$ROOT/tool/prepare_rhttp_android.py"
 FLUTTER_ARGS=("--$MODE" --split-per-abi)
 if [[ "$RHTTP_RECEIVE_DIAGNOSTICS" == 1 ]]; then
   FLUTTER_ARGS+=(--dart-define=ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=true)
@@ -48,4 +50,4 @@ fi
 if [[ "$READER_CADENCE_DIAGNOSTICS" == 1 ]]; then
   FLUTTER_ARGS+=(--dart-define=ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true)
 fi
-flutter build apk "${FLUTTER_ARGS[@]}"
+flutter build apk --no-pub "${FLUTTER_ARGS[@]}"

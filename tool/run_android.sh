@@ -16,4 +16,6 @@ else
 fi
 
 cd "$APP"
-exec flutter run -d android "$@"
+flutter pub get
+python3 "$ROOT/tool/prepare_rhttp_android.py"
+exec flutter run --no-pub -d android "$@"

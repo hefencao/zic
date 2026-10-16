@@ -253,24 +253,24 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     try {
       final response = await _invoke(requestMessage, invocation);
       if (invocation.cancelled) return invocation.cancelledMessage;
-      if (!_closing && _recoverableRuntimeEnvelope(response)) {
-        await _recover(attemptedProcessId, attemptedSessionId);
-        if (_closing) {
-          throw StateError('platform external runtime channel is closing');
-        }
-        return _invoke(requestMessage, invocation);
+      if (_closing || !_recoverableRuntimeEnvelope(response)) {
+        return response;
       }
-      return response;
     } on PlatformException catch (error) {
       if (invocation.cancelled) return invocation.cancelledMessage;
       if (_closing || !_recoverableRuntimeCodes.contains(error.code)) {
         rethrow;
       }
+    }
+    try {
       await _recover(attemptedProcessId, attemptedSessionId);
       if (_closing) {
         throw StateError('platform external runtime channel is closing');
       }
-      return _invoke(requestMessage, invocation);
+      return await _invoke(requestMessage, invocation);
+    } on PlatformException {
+      if (invocation.cancelled) return invocation.cancelledMessage;
+      rethrow;
     }
   }
 

@@ -38,6 +38,8 @@
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
+
+- Dart MethodChannel adapter 共用原有 process/session recovery single-flight；重新激活和单次 replay 不再进入原始恢复 handler；取消等待物理退出并保留 typed cancellation，恢复自身失败不触发第二轮激活。
 - ADR0400 Accepted：受控先失败确认同步编码堵共享JavaBridge，输出借原executor且退出才dispose/finished，canonical1/isolated2不变。回调6/Binder11/2304/Rust22/native108与六APK已验；真实JM8页runtime≤60.489ms、缓存104读/0重下。049正文载体收口；真实client/原加载/性能独立开放。
 - 049正文载体/寿命已收口：Binder11/Dart9/Source9/PNG6/FailureRetry6/Network4/Cookie8/NativeWebP6/Mihon6已验；039筛选/信号通过，040真实入架开放。089 blocking DNS退出未验：VPN旁路受限、TestNetwork无成功对照，回溯需root。013独立接收时间未验：SDK36未注册android.network_packets，ftrace/log不能补证；未改生产。
 - ADR0395 Accepted：两有效先失败确认入口回执后晚短页ratio误走top anchor；复用原center/revision，99 Reader及2280/Rust22/108、三ABI通过。Release7ad3a60d三次真冷进入JM保持已保存index3，各11缓存/0下载/失败；slider/首尾与3独立历史覆盖通过。
@@ -48,12 +50,10 @@
 - APK失败保留公有package/key/ABI/entry诊断，073真机先失败后3/3通过。Source Browse刷新仅重试当前Future身份的source/decode失败，健康/pending不退休；027/028先失败回归及普通Release真机通过，刷新重复load/首帧12→0。Reader/缓存/调度不变。
 - Mihon 新生成的 opaque page locator 现在统一携带稳定 chapter/page replay 坐标；host-direct plan 另带显式 `directPlanReplay`，
   因此过期签名 URL/旧 page plan 可沿既有一次性 source recovery 重取 page list。runtime-transform locator仍使用payload-bound v3：`mihon-runtime-transform-v3:<payload-sha256>`并保留producer payload authority。
-  升级前持久化但缺 replay 坐标的普通 `mihon:resource:` locator 会在 Home source-compat gate 判为 legacy 并先刷新 source page list，
-  不通过 sourceRevision 换代制造额外版本/缓存 identity。
+  升级前持久化但缺 replay 坐标的普通 `mihon:resource:` locator 会在 Home source-compat gate 判为 legacy 并先刷新 source page list，不通过 sourceRevision 换代制造额外版本/缓存 identity。
   v1/v2 均视为 legacy；当前安装 payload 与 persisted v3 revision 不一致也会在 Reader/下载入口先强制 refresh。真实 trace 中旧 locator 的 runtime HTTP 404/source transform failure 会绕过 generic semantic recovery；
   当前修复将这类**非网络** source-owned failure typed 为 plan-replay eligible，而 SSL/EOF 仍由 DownloadJob 网络重试。
-  无 replacement、replay source failure 或 replacement 再次同类失败统一收敛为 terminal source-generation handoff；
-  Reader 当前页、章节下载命令和 whole-comic queue 只在各自既有 owner 内做一次整章 refresh，网络/verification/cancel 不被误分类。
+  无 replacement、replay source failure 或 replacement 再次同类失败统一收敛为 terminal source-generation handoff；Reader 当前页、章节下载命令和 whole-comic queue 只在各自既有 owner 内做一次整章 refresh，网络/verification/cancel 不被误分类。
 - 显式 Mihon resource generation refresh 使用 `freshGeneration=true` 重取 page list；runtime 现在按 source+locator 保留 fresh source request authority，而不只是给 Dart 的 plan 投影。
   ordinary replay 的 replacement authority 只供紧随其后的 runtime load 一次性消费，fresh generation authority 则供 resolve/re-resolve/load 共用；实际取图继续走 source client，完整 method/headers/body/interceptor/cookie 不降级。
   Mihon属性回调自行保存后返回false时，按同key回读完成并失效plans，保留来源结果。6回归/Android121及真实22拒绝、规范化、同值重入通过；章节请求随后超时，Reader未创建，原因未归为DNS。旧/跨payload入口刷新保持。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | fresh2385/27suite/analyzer、Rust25/全门禁/三ABI Debug/Profile/minified Release/JNI通过；Android121沿用未改Kotlin/native输入。055/056/069旧前提退休；097新manifest仍缺。当前设备见JSON；3既有quarantine |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android build/run 入口在依赖解析后按输入/输出 SHA-256 准备 rhttp 0.18.0 的 Cargokit SDK 解析补丁；最新验证、保留的 native 验收、quarantine 和未验范围见状态 JSON。 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native重入与19/20静置/历史、21话slider保持。当前完整动作UI/自然GC分量已验，退出raster仍超预算；原19/20偶发加载及物理输入/视觉/最终显示开放。SDK3.12.2分配接口统计当前堆，不能证明总分配 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久metadata及056/069强制WNACG host直连/无类型重放前提退休，实际runtime媒体已验。缺输入/账号/独立时钟只暂停对应分支；完整GC窗口已采，不等同进退性能通过。已验cache/NetLane/几何保持。

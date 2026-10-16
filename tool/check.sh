@@ -14,6 +14,7 @@ fi
 python3 "$ROOT/tool/check_repo.py"
 python3 "$ROOT/tool/check_documentation.py"
 python3 "$ROOT/tool/check_dart_structure.py"
+python3 "$ROOT/tool/test_rhttp_android_prepare.py"
 python3 "$ROOT/tool/test_dart_library_directive_order.py"
 python3 "$ROOT/tool/test_pipeline_runtime_compile_boundary.py"
 python3 "$ROOT/tool/test_dev75_compile_ownership.py"
