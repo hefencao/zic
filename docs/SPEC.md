@@ -1466,6 +1466,23 @@ Flutter generic `ImageCache` 仍可服务非 Reader 图片和 provider decode ba
 mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHost listener MUST NOT绕过owner denial重新申请first-frame grant。
 `clearPresentationRasters()` / memory pressure MUST只清residency而保留现有demand claim；被clear的speculative identity MUST进入同一owner-side admission denial，deadline/protected claim MAY按当前需求恢复。
 
+### 2.5 漫画翻译
+
+- 翻译默认 MUST 关闭；设置 MUST 提供本地 OCR、本地 Hy-MT/CTranslate2、OpenAI-compatible 与 DeepL 的显式配置，
+  支持 API profile、语言、上下文、拟声词与原文清除策略；漫画可覆盖全局翻译默认。
+- 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
+  不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
+- OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
+  本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
+- 动图 MUST 保持原图播放并显示翻译不支持状态。静态页图片 MUST 先于译文独立呈现。
+- OCR/译文缓存 MUST 绑定内容摘要与完整引擎配置，禁止仅因 URL、长度或 page index 相同而复用。
+  切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
+- 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。
+- API key MUST 独立本机保存，不进入库备份、普通偏好或 OCR/译文 artifact。
+  远程请求 MUST 仅携带 OCR 文字及用户配置的上下文/提示词。
+- 翻译覆层 MUST 复用图片坐标与缩放旋转，保持 IgnorePointer；气泡单击查看原文 MUST 复用 Reader
+  既有手势消歧，不抢占翻页、双击或长按。命中气泡后暂隐 1.5 秒。
+
 ## 3. Pipeline 与角色合同
 
 `ReaderObs` MUST 表达 stable page、fractional position、current/target coverage、viewport/physical target、阅读方向、

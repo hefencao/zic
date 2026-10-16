@@ -30,11 +30,12 @@ def local_media_ui_source() -> str:
 
 EXPECTED_DEPENDENCIES = {
     'domain': set(),
+    'comic_translation': set(),
     'downloads': {
         'catalog', 'domain', 'resource_cache', 'sessions', 'storage',
         'telemetry', 'transport',
     },
-    'downloads_bridge': {'downloads', 'runtime_bridge', 'storage_bridge'},
+    'downloads_bridge': {'downloads', 'runtime_bridge', 'sessions', 'storage_bridge'},
     'catalog': {'domain', 'resource_cache', 'transport'},
     'plugin_host': {'catalog', 'domain'},
     'plugin_host_bridge': {'network_bridge', 'plugin_host'},

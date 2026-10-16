@@ -28,10 +28,17 @@ jobs:
         with:
           name: android-native
           path: apps/app/android/app/src/main
+      - name: Download pinned Android translation runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: android-translation-runtime
+          path: .deps/comic_translation_native/runtime
       - name: Validate staged Android native layout
         run: ./tool/check_android_native.sh
       - name: Build split Android debug APKs without native dependency rebuild
         run: ZIC_ANDROID_NATIVE=0 ./tool/build_android.sh debug
+      - name: Verify Android translation APK closure
+        run: python3 tool/check_android_translation.py --apk apps/app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
       - run: python3 tool/check_repo.py
       - name: Check native C header
         run: ./tool/check_native_header.sh
@@ -77,6 +84,20 @@ jobs:
         run: ./tool/build_android_native.sh release
       - name: Validate Android native layout
         run: ./tool/check_android_native.sh
+      - name: Prepare pinned Android translation toolchain
+        shell: bash
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?}}"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;28.0.13004108" "cmake;3.22.1"
+      - name: Build pinned Android translation dependencies
+        run: python3 tool/prepare_translation_android.py
+      - name: Upload pinned Android translation runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-translation-runtime
+          path: .deps/comic_translation_native/runtime/
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload source-built Android native libraries and notices
         uses: actions/upload-artifact@v4
         with:

@@ -48,7 +48,13 @@ for token in (
     '_invalidateObservationQueue();',
 ):
     require(pipe, token, 'enqueue-only Reader observation seam')
-require(runtime, 'onObservation: _pipeline.enqueueObservation,', 'Reader runtime enqueue seam')
+require(runtime, 'onObservation: (observation) {', 'Reader observation fan-out')
+observation_start = runtime.index('onObservation: (observation) {')
+observation_end = runtime.index('clock: _pipeline.clock,', observation_start)
+observation_callback = runtime[observation_start:observation_end]
+require(observation_callback, '_pipeline.enqueueObservation(observation);', 'Reader runtime enqueue seam')
+require(observation_callback, 'widget.presentationExtension?.observe(observation);', 'read-only presentation observation')
+forbid(observation_callback, '_pipeline.accept(', 'synchronous Reader reconcile in fan-out')
 forbid(runtime, 'onObservation: _pipeline.accept,', 'synchronous Reader->pipeline reconcile')
 for token in (
     'final observation = reader.lastObservation;',

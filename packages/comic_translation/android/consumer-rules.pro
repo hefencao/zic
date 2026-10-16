@@ -1,0 +1,2 @@
+-keep class dev.zic.comic_translation.LocalTranslationNative { *; }
+-keep class dev.zic.comic_translation.LocalHyMtNative { *; }

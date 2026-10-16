@@ -9,6 +9,9 @@ environment:
   flutter: '>=3.44.0'
 
 dependencies:
+  dio: ^5.9.0
+  sessions:
+    path: ../sessions
   downloads:
     path: ../downloads
   rhttp: 0.18.0

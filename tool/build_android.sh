@@ -43,6 +43,7 @@ fi
 cd "$APP"
 flutter pub get
 python3 "$ROOT/tool/prepare_rhttp_android.py"
+python3 "$ROOT/tool/prepare_translation_android.py"
 FLUTTER_ARGS=("--$MODE" --split-per-abi)
 if [[ "$RHTTP_RECEIVE_DIAGNOSTICS" == 1 ]]; then
   FLUTTER_ARGS+=(--dart-define=ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=true)

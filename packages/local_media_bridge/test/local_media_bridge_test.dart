@@ -268,6 +268,90 @@ void main() {
     );
   });
 
+  test('whole-document file lease pins a complete descriptor until close', () async {
+    final temp = await Directory.systemTemp.createTemp('zic_document_lease_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final file = await File('${temp.path}/image').writeAsBytes([1, 2, 3]);
+    var closes = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'closeDocument') {
+        closes++;
+        return null;
+      }
+      expect(call.method, 'openDocument');
+      return <String, Object?>{
+        'handleId': 'whole-file', 'rangeStart': 0, 'totalLength': 3,
+        'revision': 'r1', 'rangeSupported': true, 'partial': false,
+        'directPath': file.path, 'directStart': 0, 'directEndExclusive': 3,
+      };
+    });
+    final lease = await bridge.openDocumentFile('content://provider/document/image');
+    expect(lease.path, file.path);
+    expect(closes, 0);
+    expect(await File(lease.path).readAsBytes(), [1, 2, 3]);
+    await lease.close();
+    await lease.close();
+    expect(closes, 1);
+    expect(await file.exists(), isTrue);
+  });
+
+  test('offset document is spooled exactly and temporary lease is removed', () async {
+    final temp = await Directory.systemTemp.createTemp('zic_document_offset_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final file = await File('${temp.path}/container').writeAsBytes([9, 1, 2, 3, 9]);
+    var closes = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'closeDocument') {
+        closes++;
+        return null;
+      }
+      expect(call.method, 'openDocument');
+      return <String, Object?>{
+        'handleId': 'offset-file', 'rangeStart': 0, 'totalLength': 3,
+        'revision': 'r1', 'rangeSupported': true, 'partial': false,
+        'directPath': file.path, 'directStart': 1, 'directEndExclusive': 4,
+      };
+    });
+    final lease = await bridge.openDocumentFile('content://provider/document/image');
+    addTearDown(lease.close);
+    expect(lease.path, isNot(file.path));
+    expect(await File(lease.path).readAsBytes(), [1, 2, 3]);
+    expect(closes, 1);
+    await lease.close();
+    await lease.close();
+    expect(await File(lease.path).parent.exists(), isFalse);
+    expect(await file.readAsBytes(), [9, 1, 2, 3, 9]);
+  });
+
+  test('truncated local document closes source and rejects file capability', () async {
+    var closes = 0;
+    var reads = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'openDocument':
+          return <String, Object?>{
+            'handleId': 'short-file', 'rangeStart': 0, 'totalLength': 3,
+            'revision': 'r1', 'rangeSupported': true, 'partial': false,
+          };
+        case 'readDocumentChunk':
+          return reads++ == 0 ? Uint8List.fromList([1]) : Uint8List(0);
+        case 'closeDocument':
+          closes++;
+          return null;
+        default:
+          fail('Unexpected ${call.method}');
+      }
+    });
+    await expectLater(
+      bridge.openDocumentFile('content://provider/document/image'),
+      throwsStateError,
+    );
+    expect(closes, 1);
+  });
+
   test('document thumbnail capability failure falls back to caller policy',
       () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

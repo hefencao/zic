@@ -132,6 +132,8 @@ void main() {
     await tester.tap(find.byKey(miscSettingsEntryKey));
     await tester.pump();
     await _pumpUntilFound(tester, find.byKey(settingsDebugModeKey));
+    await tester.ensureVisible(find.byKey(settingsDebugModeKey));
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(settingsDebugModeKey));
     await tester.pump();
     expect(preferences.debugModeEnabled, isTrue);

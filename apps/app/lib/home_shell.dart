@@ -34,6 +34,7 @@ import 'source_migration_compare.dart';
 import 'source_resource_gateway.dart';
 import 'static_demo.dart';
 import 'startup_platform.dart';
+import 'translation_composition.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';

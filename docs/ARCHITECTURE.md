@@ -1125,6 +1125,28 @@ reload 在开始阶段捕获的 entries/SavedComic snapshot如果在 enrichment�
 结束时不得覆盖更新后的 mounted projection，download snapshot也必须基于最终可见 entries。
 inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统直接终止只提供 best effort。
 
+### 漫画翻译旁路
+
+`comic_translation` 拥有 OCR、文字翻译、模型安装、内容寻址缓存和文字覆层；App 的
+`ComicTranslationReaderExtension` 组合该旁路与当前章节。`ReaderPresentationExtensionHost`
+拥有旁路生命周期，Reader 仅转发 `ReaderObs`、已消歧单击并消费装饰层和控件。
+开启翻译、切换后端和查看原文不更换媒体 provider、Pipeline session、播放 cursor 或 texture。
+
+`PipelineReaderSession.openSealedPageFile()` 只打开当前 authority 的完整 artifact 租约，miss
+不会下载或重试；若普通 promoted handoff 已在持久化，读取只等待该既有提交。
+fresh-source quarantine 中的历史呈现不能作为 OCR 输入。源自本地文件的
+图片仍由来源拥有；`LocalMediaBridge.openDocumentFile()` 保留完整文档描述符，不能直接表示整图时
+由本地来源桥生成临时文件，租约释放时删除。输入租约覆盖内容摘要、OCR 和缓存操作，并在所有成功、失败、取消路径退出后释放。
+OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语言、上下文、协议/提示词版本和拟声词策略。
+翻译仅准备当前可见页和最多后续四张已有缓存的静态页，不扩大现有 encoded/decode 水位。
+
+Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
+不在 Flutter UI isolate 或 Android platform 主线程推理。远程 OpenAI-compatible/DeepL 仅接收文字，
+无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入
+共享 `NetLane`，容量覆盖响应正文的真实退出。API key 单独保存在 App 私有 secrets 文件，
+不进入偏好、翻译 artifact 或库备份。普通设置保存全局默认，Reader 设置可按 source/comic 覆盖翻译策略。
+覆层保持 `IgnorePointer`；原文查看复用 Reader 的单击判定，命中气泡后暂隐译文 1.5 秒。
+
 ## 5. 页面角色、窗口与优先级
 - Reader route 进入 `inactive/hidden/paused/detached` 后，用户播放状态不变，但 Pipeline playback MUST 临时视为 paused；
   `resumed` 后按用户原 `paused/speed` 恢复。

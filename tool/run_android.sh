@@ -18,4 +18,5 @@ fi
 cd "$APP"
 flutter pub get
 python3 "$ROOT/tool/prepare_rhttp_android.py"
+python3 "$ROOT/tool/prepare_translation_android.py"
 exec flutter run --no-pub -d android "$@"

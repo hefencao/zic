@@ -16,6 +16,7 @@ import 'flutter_reader_system_ui.dart';
 import 'flutter_reader_touch_resampling.dart';
 import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
+import 'reader_presentation_extension.dart';
 import 'reader_route_transition_gate.dart';
 import 'reader_session_settings.dart';
 import 'reader_tap_region_overlay.dart';
@@ -139,6 +140,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     required this.pipeline,
     this.adaptiveMetadata,
     this.artifactPageBuilder,
+    this.presentationExtension,
     this.pageSubtitleBuilder,
     this.initialProgress,
     this.onProgressChanged,
@@ -165,6 +167,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final PipelineReaderSession pipeline;
   final AdaptiveReaderMetadata? adaptiveMetadata;
   final ReaderArtifactPageBuilder? artifactPageBuilder;
+  final ReaderPresentationExtension? presentationExtension;
   final ReaderPageSubtitleBuilder? pageSubtitleBuilder;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
@@ -237,6 +240,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _playback = ReaderPlaybackController()
       ..addListener(_syncPipelinePlayback);
     _syncPipelinePlayback();
+    widget.presentationExtension?.addListener(_handlePresentationExtensionChanged);
     _settings = widget.initialSettings;
     _adaptiveClassifier = AdaptiveReaderClassifier(
       widget.chapter,
@@ -262,6 +266,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     );
   }
 
+  void _handlePresentationExtensionChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _applyReaderSystemUi() {
     final editingTapRegions = _tapRegionDraft != null;
     unawaited(
@@ -277,6 +285,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   @override
   void didUpdateWidget(covariant ReaderRuntimeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.presentationExtension, widget.presentationExtension)) {
+      oldWidget.presentationExtension?.removeListener(_handlePresentationExtensionChanged);
+      widget.presentationExtension?.addListener(_handlePresentationExtensionChanged);
+    }
     if (oldWidget.initialFavorite != widget.initialFavorite) {
       _favorite = widget.initialFavorite;
     }
@@ -359,7 +371,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       sessionId: _pipeline.sessionId,
       chapter: widget.chapter,
       initialPage: currentIndex,
-      onObservation: _pipeline.enqueueObservation,
+      onObservation: (observation) {
+        _pipeline.enqueueObservation(observation);
+        widget.presentationExtension?.observe(observation);
+      },
       clock: _pipeline.clock,
       traceSink: _pipeline.trace,
     );
@@ -823,6 +838,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void dispose() {
+    widget.presentationExtension?.removeListener(_handlePresentationExtensionChanged);
     _systemUiTransitionGate.dispose();
     _touchResamplingLease?.release();
     _touchResamplingLease = null;
@@ -1141,6 +1157,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: <Widget>[
+                      if (widget.presentationExtension != null)
+                        widget.presentationExtension!.buildControls(context),
                       IconButton(
                         key: readerRotateKey,
                         tooltip: '顺时针旋转',
@@ -1257,7 +1275,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               key: ValueKey<String>(
                 'reader-page-presentation:${asset.assetKey}:$reloadRevision',
               ),
-              child: child,
+              child: widget.presentationExtension?.decoratePage(
+                    context,
+                    asset,
+                    reader.direction == ReadingDirection.vertical &&
+                            _settings.effectiveVerticalStitch
+                        ? BoxFit.fitWidth
+                        : BoxFit.contain,
+                    child,
+                  ) ?? child,
             );
           };
     final modeSettings = _settings.modeSettingsForDirection(reader.direction);

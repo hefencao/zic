@@ -11,6 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  comic_translation:
+    path: ../../packages/comic_translation
   domain:
     path: ../../packages/domain
   downloads:
