@@ -460,7 +460,7 @@ final class _CancellingDriver extends _FixtureDriver {
         }
         cancellation.throwIfCancelled();
       }
-      return super.invoke(request, cancellation);
+      return await super.invoke(request, cancellation);
     } finally {
       active--;
     }

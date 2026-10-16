@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-11T02:38:28Z",
+  "updated_at": "2026-10-16T14:07:31Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -156,7 +156,7 @@
     "app_foreground": "Ordinary minified dev331 Releaseadb4e36b/PID2921/MainActivity/Home/Awake,Keyguard=false,inputRestricted=false,no forwards. Follow restored;adaptive/override unchanged. Task exports/XML/screenshots cleaned;210a3115 absent;user data retained."
   },
   "validation": {
-    "command": "Fresh48 affected repo/documentation/ownership gates pass. Retain unchanged b7b5639b tool/check.sh --require-toolchains exit0:2385 Dart/Flutter tests/27 suites/analyzers,Rust25,all gates,three-ABI Debug;separate Profile/minified Release/JNI pass. Android121 retains unchanged native inputs.",
+    "command": "CI=true bash tool/check.sh --require-toolchains exit0:repository/documentation/ownership/Kotlin gates,27 analyzers,2385 Dart/Flutter tests across27 suites,Rust25,three-ABI Debug. Async runtime-worker fixture follow-up7/7 and package analyzer pass;workflow YAML and2 negative CI policy controls pass. Android121/Profile/minified Release/JNI retain unchanged production inputs.",
     "exit_code": 0,
     "dart_flutter_tests": 2385,
     "analyzers": 27,
@@ -166,7 +166,8 @@
     "missing_toolchains": [],
     "ordinary_package_acceptance": "Retain unchanged dev331 three-ABI Profile/minified Release/JNI. Releaseadb4e36b/72b/PID2921/Home/Keyguard=false restored,no forwards;actual Ani page visual acceptance preserved. Original210 and first cover-install entry remain unverified.",
     "Android_native_tests_scope": "Retain e12c1863 unchanged Kotlin/native inputs:project JUnit104:plugin_host_bridge94 including six preference regressions,local_media_bridge7,app3. External file_selector17 passes with temporary API34/ASM9.9/ByteBuddy Java25 test compatibility;production dependencies unchanged. CookieJar15 and Kotlin/native compile gates pass in full check.",
-    "scope": "Executable inputs unchanged:retain2385 tests/27 suites/analyzers/Rust25/three-ABI Debug/Profile/minified Release/JNI and e12 native121. Full setup-following action UI/GC components pass;exit raster still fails. Warm/Release visual acceptance retained. Allocation/original entry/physical display remain open;112 IDs/21 unfinished.",
+    "scope": "CI workflow/gate and async test-fixture correction only;production sources unchanged. Fresh full check2385 tests/27 suites/analyzers/Rust25/three-ABI Debug;3 existing quarantined tests remain skipped. Retain prior Profile/minified Release/JNI/native121 and scoped product/device acceptance. Exit raster/allocation/original entry/physical display remain open;112 IDs/21 unfinished.",
+    "ci_workflow": "Replace the forbidden automatic formatter gate with tool/check_dart_structure.py and reject policy regressions in check_repo.py. Runtime worker test active accounting now awaits driver completion before finally. Repair branch fix/ci-dart-structure;latest stable cloud validation pending.",
     "artifact_retention": "Overwrite existing validation/build logs and current package outputs. Retain original faults/minimal open inputs;delete completed capture duplicates and temporary directories by exact task paths. Prior clean worktrees/generated trees removed;dirty and unique commits preserved."
   },
   "new_user_task_acceptance": {
