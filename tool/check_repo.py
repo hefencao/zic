@@ -337,6 +337,10 @@ def check_tool_dirs() -> None:
     for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
         if required not in android_build:
             fail(f'Android split APK build is incomplete: {required}')
+    for entry in ('tool/build_android.sh', 'tool/run_android.sh'):
+        source = (ROOT / entry).read_text(encoding='utf-8')
+        if 'flutter pub get\npython3 "$ROOT/tool/prepare_rhttp_android.py"' not in source:
+            fail(f'Android entry must prepare the pinned rhttp dependency: {entry}')
     android_native = (ROOT / 'tool/build_android_native.sh').read_text(
         encoding='utf-8'
     )

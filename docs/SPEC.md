@@ -2293,6 +2293,7 @@ Android来源正文阶段系统采集 MUST仅观测原client、stream与claim，
 - owner test MUST 位于实现所属 package；App 测试不得导入低层 `src/` 或重复低层算法。
 - 异步测试 MUST 使用可控 Future、状态对象或稳定 key，不得固定 pump 猜测完成。
 - quarantine MUST 有稳定 ID、原因、仍运行的 owner 覆盖和解除条件。
+- Android build/run 入口 MUST 在依赖解析后幂等准备锁定的 rhttp SDK 解析补丁；未知版本或脚本哈希 MUST 拒绝修改，MUST NOT 依赖未记录的 pub cache 修正。
 
 发布候选 MUST 尽可能完成 analyzer、受影响 package/App tests、native tests、
 Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，并排除 `.git`、`.dart_tool`、`build`、`.gradle`、`.deps`、
@@ -2347,6 +2348,7 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
 9. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision可再次导入。
    Mihon首个重试 MUST能从 snapshot同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
 10. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；
+    重新激活或 replay 自身失败 MUST 直接传播，MUST NOT 再次进入原请求的恢复分支。
     业务错误和 `source-verification-required` MUST NOT 被当作 runtime崩溃吞掉。
 11. Mihon/外部插件同 pluginId 的 runtime restart或更新 MUST 使用事务式 replacement：
     候选 session先完成 activation、source identity/ABI等验证，成功后才能替换当前 source owner并关闭旧 session；候选失败 MUST 保留旧 session。

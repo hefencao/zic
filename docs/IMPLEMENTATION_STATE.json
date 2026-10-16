@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-16T14:07:31Z",
+  "updated_at": "2026-10-16T14:23:48Z",
   "objective": "完成所有状态治理，解耦和收口",
   "status": "in_progress",
   "scope": [
@@ -156,9 +156,9 @@
     "app_foreground": "Ordinary minified dev331 Releaseadb4e36b/PID2921/MainActivity/Home/Awake,Keyguard=false,inputRestricted=false,no forwards. Follow restored;adaptive/override unchanged. Task exports/XML/screenshots cleaned;210a3115 absent;user data retained."
   },
   "validation": {
-    "command": "Full baseline exit0:all gates,27 analyzers,2385 Dart/Flutter tests/27 suites,Rust25,three-ABI Debug;runtime recovery29/29,worker7/7,workflow/artifact/analyzer negative controls pass.Final full check running.",
+    "command": "CI=true tool/check.sh --require-toolchains exit0:all gates,27 analyzers,2389 Dart/Flutter tests/27 suites,Rust25,three-ABI Debug;workflow/artifact/analyzer negative controls pass.",
     "exit_code": 0,
-    "dart_flutter_tests": 2385,
+    "dart_flutter_tests": 2389,
     "analyzers": 27,
     "Rust_tests": 25,
     "Android_native_tests": 121,
@@ -166,8 +166,8 @@
     "missing_toolchains": [],
     "ordinary_package_acceptance": "Retain unchanged dev331 three-ABI Profile/minified Release/JNI. Releaseadb4e36b/72b/PID2921/Home/Keyguard=false restored,no forwards;actual Ani page visual acceptance preserved. Original210 and first cover-install entry remain unverified.",
     "Android_native_tests_scope": "Retain e12c1863 unchanged Kotlin/native inputs:project JUnit104:plugin_host_bridge94 including six preference regressions,local_media_bridge7,app3. External file_selector17 passes with temporary API34/ASM9.9/ByteBuddy Java25 test compatibility;production dependencies unchanged. CookieJar15 and Kotlin/native compile gates pass in full check.",
-    "scope": "CI/async runtime recovery only;retain prior Profile/minified Release/JNI/native121 and scoped device acceptance.3 quarantined skips;exit raster/allocation/original entry/display remain open;112 IDs/21 unfinished.",
-    "ci_workflow": "Structure replaces formatter;native libs/notices/hidden build ID shared across jobs;single recovery/replay outside catch;fixture activity awaits completion.Latest stable cloud pending.",
+    "scope": "CI/build compatibility and bounded runtime recovery;retain prior Profile/minified Release/JNI/native121 and scoped device acceptance.3 quarantined skips;exit raster/allocation/original entry/display remain open;112 IDs/21 unfinished.",
+    "ci_workflow": "Structure/native artifacts and pinned rhttp SDK parser prepared;recovery/replay bounded once.Latest stable cloud pending.",
     "artifact_retention": "Overwrite existing validation/build logs and current package outputs. Retain original faults/minimal open inputs;delete completed capture duplicates and temporary directories by exact task paths. Prior clean worktrees/generated trees removed;dirty and unique commits preserved."
   },
   "new_user_task_acceptance": {
