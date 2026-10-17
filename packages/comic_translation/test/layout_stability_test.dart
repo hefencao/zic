@@ -27,6 +27,13 @@ void main() {
         await _finishLayout(tester, events, 1);
         final before = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'];
         expect(before, hasLength(4), reason: 'connected contours must retain refined text groups');
+        final areas = (before as List).map((block) => _layoutBounds(block as Map)).toList();
+        for (var i = 0; i < areas.length; i++) {
+          for (var j = i + 1; j < areas.length; j++) {
+            expect(areas[i].overlaps(areas[j]), isFalse,
+              reason: 'separate groups must not share the connected contour layout area');
+          }
+        }
         final starts = events.where((event) => event['stage'] == 'layout-started').length;
 
         session.reportPages(current: [first], near: [later], interaction: ComicTranslationInteraction.idle);
@@ -74,6 +81,90 @@ void main() {
       }
     });
   });
+
+  testWidgets('a separate OCR mark cannot move over body text in the same bubble', (tester) async {
+    await tester.runAsync(() async {
+      const identity = ComicTranslationPageIdentity(imageKey: 'page5', sourceKey: 'test',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: 4,
+        mediaKind: ComicTranslationMediaKind.staticImage);
+      final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN');
+      final page = session.listenable(identity) as ValueNotifier<ComicTranslationPageState>;
+      final bubble = _rect(.18, .48, .14, .14);
+      ComicTranslatedRegion region(String id, String source, String translated,
+          double x, double y, double width, double height) => ComicTranslatedRegion(
+        ocrRegionId: id, sourceText: source, translatedText: translated,
+        polygon: _rect(x, y, width, height), sourceMaskPolygons: [],
+        orientation: ComicTextOrientation.vertical, kind: ComicTextKind.dialogue,
+        readingOrder: 0, bubbleGroupId: 4, bubblePolygon: bubble);
+      page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+        artifact: ComicTranslationArtifact(contentDigest: 'page5-0123456789', ocrDigest: 'ocr',
+          engineId: 'cached', modelVersion: '1', sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+          contextDigest: '', imageWidth: 1000, imageHeight: 1404,
+          mediaKind: ComicTranslationMediaKind.staticImage, animatedMode: AnimatedTranslationMode.posterFrame,
+          regions: [
+            region('body-1', 'あんたでしょ', '明明是你吧', .255, .502, .027, .087),
+            region('body-2', 'やめなかったの', '不肯停下来的', .276, .502, .031, .098),
+            region('mark', '北', '北', .209, .548, .041, .041),
+          ]));
+      final events = <Map<String, Object?>>[];
+      final controller = ComicTranslationOverlayController();
+      const mediaKey = ValueKey('shared-bubble-media');
+      try {
+        await tester.pumpWidget(MaterialApp(home: Align(alignment: Alignment.topLeft,
+          child: SizedBox(width: 400, height: 561.6,
+            child: ComicTranslationOverlay(session: session, identity: identity,
+              onDiagnostic: events.add, controller: controller,
+              child: const ColoredBox(key: mediaKey, color: Colors.white))))));
+        await _finishLayout(tester, events, 1);
+        final blocks = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List;
+        expect(blocks, hasLength(2), reason: 'the mark remains separate from the dialogue');
+        final body = blocks.singleWhere((block) => ((block as Map)['regions'] as List).length == 2) as Map;
+        final mark = blocks.singleWhere((block) => ((block as Map)['regions'] as List).length == 1) as Map;
+        expect(_layoutBounds(body).overlaps(_layoutBounds(mark)), isFalse);
+        expect(_layoutBounds(body, field: 'textBounds').overlaps(
+          _layoutBounds(mark, field: 'textBounds')), isFalse);
+        final bubbleBounds = Rect.fromLTWH(.18 * 400, .48 * 561.6, .14 * 400, .14 * 561.6);
+        for (final block in [body, mark]) {
+          expect(_layoutBounds(block).intersect(bubbleBounds), _layoutBounds(block),
+            reason: 'reserving a smaller cell must not trigger layout outside a valid contour');
+        }
+        expect(_layoutBounds(body).center.dx, greaterThan(_layoutBounds(mark).center.dx),
+          reason: 'the source mark remains to the left of the body');
+        expect(body['fontSize'], greaterThan(3));
+        expect(mark['fontSize'], greaterThan(3));
+        final origin = tester.getTopLeft(find.byKey(mediaKey));
+        expect(controller.peekSourceAt(origin + _layoutBounds(mark).center), isTrue);
+        await tester.pump();
+        expect(controller.peekSourceAt(origin + _layoutBounds(mark).center), isFalse,
+          reason: 'the dialogue hit area must not include the hidden mark');
+        expect(controller.peekSourceAt(origin + _layoutBounds(body).center), isTrue,
+          reason: 'peeking the mark cannot hide the dialogue sharing its native contour');
+
+        final artifact = page.value.artifact!;
+        page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+          artifact: ComicTranslationArtifact.fromJson({...artifact.toJson(),
+            'regions': artifact.regions.map((region) => {...region.toJson(),
+              if (region.ocrRegionId == 'mark') 'translatedText': '',
+            }).toList(),
+          }));
+        await tester.pump();
+        await _finishLayout(tester, events, 2);
+        final withoutMark = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List;
+        expect(withoutMark, hasLength(1));
+        expect(_layoutBounds(withoutMark.single as Map), _layoutBounds(body),
+          reason: 'original text kept untranslated still reserves its source space');
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await session.close();
+      }
+    });
+  });
+}
+
+Rect _layoutBounds(Map block, {String field = 'bounds'}) {
+  final bounds = block[field] as List;
+  return Rect.fromLTRB((bounds[0] as num).toDouble(), (bounds[1] as num).toDouble(),
+    (bounds[2] as num).toDouble(), (bounds[3] as num).toDouble());
 }
 
 Future<void> _finishLayout(WidgetTester tester, List<Map<String, Object?>> events, int count) async {

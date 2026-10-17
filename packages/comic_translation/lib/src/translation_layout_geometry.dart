@@ -55,38 +55,47 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
         .reduce((value, next) => value.expandToInclude(next));
     final sourceCenter = _sourceCenter(block, imageRect, sourceBounds);
     final bubble = _blockBubble(block, imageRect);
-    var bubblePath = bubble?.path;
     final sourceFontSize = _sourceFontSize(block, regionBounds);
+    final domain = bubble?.path ?? (Path()..addRect(
+      _openBubbleBounds(sourceBounds, sourceFontSize, imageRect)));
+    final layoutBounds = _blockLayoutBounds(block, imageRect, domain);
+    var bubblePath = bubble == null ? null : Path.combine(
+      PathOperation.intersect, bubble.path, Path()..addRect(layoutBounds));
     var bounds = bubblePath == null
-        ? _openBubbleBounds(sourceBounds, sourceFontSize, imageRect)
+        ? _openBubbleBounds(sourceBounds, sourceFontSize, layoutBounds)
         : _safeBubbleBounds(
             bubble!.polygons,
             sourceBounds,
             sourceCenter,
             sourceFontSize,
+            layoutBounds,
           ).intersect(imageRect);
-    // A segmented tail or a merged/partially open contour can leave no usable
-    // inner rectangle although the OCR text geometry itself is valid. Such a
-    // polygon is not a valid layout constraint; keep the source-anchored block
-    // instead of silently dropping its translated text.
-    if (bubblePath != null &&
-        (bounds.width < math.max(3, sourceBounds.width) ||
-            bounds.height < math.max(3, sourceBounds.height))) {
-      final outer = _bounds(bubble!.polygons.expand((polygon) => polygon));
-      _TranslationLog.warning(
-        'Translation.Layout',
-        'bubble inner rejected block=${block.key} '
-            'outer/source='
-            '${(outer.width / sourceBounds.width).toStringAsFixed(2)}x'
-            '${(outer.height / sourceBounds.height).toStringAsFixed(2)} '
-            'inner/source='
-            '${(bounds.width / sourceBounds.width).toStringAsFixed(2)}x'
-            '${(bounds.height / sourceBounds.height).toStringAsFixed(2)} '
-            'source=${block.regions.map((region) =>
-                region.region.sourceText).join('|')}',
-      );
-      bubblePath = null;
-      bounds = _openBubbleBounds(sourceBounds, sourceFontSize, imageRect);
+    bool tooSmall(Rect value) => value.width < math.max(3, sourceBounds.width) ||
+        value.height < math.max(3, sourceBounds.height);
+    if (bubblePath != null && tooSmall(bounds)) {
+      // A valid contour may become narrower when reserving another group's
+      // space. Fit its text inside that cell; only reject an intrinsically
+      // unusable contour, never let this fallback escape a valid bubble.
+      final original = layoutBounds == imageRect ? bounds : _safeBubbleBounds(
+        bubble!.polygons, sourceBounds, sourceCenter, sourceFontSize, imageRect,
+      ).intersect(imageRect);
+      if (tooSmall(original) || bounds.width < 3 || bounds.height < 3) {
+        final outer = _bounds(bubble!.polygons.expand((polygon) => polygon));
+        _TranslationLog.warning(
+          'Translation.Layout',
+          'bubble inner rejected block=${block.key} '
+              'outer/source='
+              '${(outer.width / sourceBounds.width).toStringAsFixed(2)}x'
+              '${(outer.height / sourceBounds.height).toStringAsFixed(2)} '
+              'inner/source='
+              '${(bounds.width / sourceBounds.width).toStringAsFixed(2)}x'
+              '${(bounds.height / sourceBounds.height).toStringAsFixed(2)} '
+              'source=${block.regions.map((region) =>
+                  region.region.sourceText).join('|')}',
+        );
+        bubblePath = null;
+        bounds = _openBubbleBounds(sourceBounds, sourceFontSize, layoutBounds);
+      }
     }
     if (bounds.width < 3 || bounds.height < 3) return null;
     return _TranslationBlockGeometry(
@@ -94,6 +103,46 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
       bounds,
       bubblePath,
     );
+  }
+
+  Rect _blockLayoutBounds(_TranslationLayoutBlock block, Rect imageRect, Path domain) {
+    final source = layoutCache.sourceBounds[block.key]!;
+    final domainBounds = domain.getBounds();
+    var left = 0.0;
+    var top = 0.0;
+    var right = 1.0;
+    var bottom = 1.0;
+    for (final entry in layoutCache.sourceBounds.entries) {
+      if (entry.key == block.key) continue;
+      final other = entry.value;
+      final otherBounds = _displayBounds(other, imageRect);
+      if (!domainBounds.overlaps(otherBounds)) continue;
+      final core = Rect.fromCenter(center: otherBounds.center,
+        width: otherBounds.width * .6, height: otherBounds.height * .6);
+      if (![core.center, core.topCenter, core.centerRight,
+          core.bottomCenter, core.centerLeft].any(domain.contains)) {
+        continue;
+      }
+      final gapX = math.max(source.left, other.left) - math.min(source.right, other.right);
+      final gapY = math.max(source.top, other.top) - math.min(source.bottom, other.bottom);
+      // Reserve space from original ink, including groups kept untranslated.
+      // A shared native contour does not make separate groups share a layout
+      // area. Use the same separating axis/mid-gap for both sides, preserving
+      // each source rectangle and staying independent of font or ready order.
+      if (gapX < 0 && gapY < 0) continue;
+      if (gapX * imageRect.width >= gapY * imageRect.height) {
+        if (source.right <= other.left) {
+          right = math.min(right, (source.right + other.left) / 2);
+        } else {
+          left = math.max(left, (other.right + source.left) / 2);
+        }
+      } else if (source.bottom <= other.top) {
+        bottom = math.min(bottom, (source.bottom + other.top) / 2);
+      } else {
+        top = math.max(top, (other.bottom + source.top) / 2);
+      }
+    }
+    return _displayBounds(Rect.fromLTRB(left, top, right, bottom), imageRect);
   }
 
   double _dominantFontSize(
@@ -325,11 +374,13 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
     Rect sourceBounds,
     Offset sourceCenter,
     double sourceFontSize,
+    Rect layoutBounds,
   ) => comicBubbleInnerBounds(
     polygons: bubblePolygons,
     sourceBounds: sourceBounds,
     sourceCenter: sourceCenter,
     sourceFontSize: sourceFontSize,
+    layoutBounds: layoutBounds,
   );
   Color _regionBackground(ComicTranslatedRegion region) =>
       region.backgroundArgb == null
@@ -418,6 +469,11 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
       bubbleGroupId: region.bubbleGroupId,
       bubblePolygon: region.bubblePolygon,
     )).toList());
+    for (final group in groups) {
+      layoutCache.sourceBounds['layout:${group.key}'] = group.regions
+          .map((region) => layouts[region.id]!.inkBounds)
+          .reduce((value, next) => value.expandToInclude(next));
+    }
     final blocks = groups.map((group) {
       final values = group.regions
           .where((region) =>

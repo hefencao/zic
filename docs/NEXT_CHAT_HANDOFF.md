@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 本地 `main`（翻译分支已合并，未推送），`0.31.0-dev.331` / `0.31.0+331`：翻译第三项单击开关/长按。左下无字开关，指示器上行附标签；原文/指示器均用独立药丸，单阶段图标，页号仅Debug；保存不重建。可见缓存不等推理，Trace命中/调用。日/韩记忆、模型复用/回收；静态/覆层/NetLane保留。Debug首页测试/诊断；dev.196、dev.197、dev.198、dev.199、dev.203 bounded 语义不变。
-- Hy-MT 加载前由基线 JNI 检查 ARMv8.2-A/DotProd；API/模型经 NetLane 取消至真实退出且不重试。自动语言支持日/韩。本页字号独立估计，后续页不重排当前页；分组/边界只用原文几何。重排保留已画气泡，主题/原文查看不清空其余译文；配置名/非活动设置不重建。串行项等缓存前标记同页处理中。Trace 区分布局/切换/查看及分组成员/边界。
+- Hy-MT 加载前由基线 JNI 检查 ARMv8.2-A/DotProd；API/模型经 NetLane 取消至真实退出且不重试。自动语言支持日/韩。本页字号独立估计，后续页不重排当前页；分组/边界只用原文几何，共用轮廓按可分离原文间隙分配空间及命中区域，未翻译组仍占位。重排保留已画气泡，主题/原文查看不清空其余译文；配置名/非活动设置不重建。串行项等缓存前标记同页处理中。Trace 含分组成员及原文/可用/实际文字范围。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。

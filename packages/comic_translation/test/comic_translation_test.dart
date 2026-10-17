@@ -216,6 +216,21 @@ void main() {
     expect(bounds.height, greaterThanOrEqualTo(15));
   });
 
+  test('reserved bubble cell searches inside its own bounds near an OCR edge', () {
+    Rect inside(Rect cell) => comicBubbleInnerBounds(
+      polygons: const [[Offset(0, 0), Offset(100, 0), Offset(100, 100), Offset(0, 100)]],
+      sourceBounds: const Rect.fromLTWH(-5.5, 38.5, 15, 23),
+      sourceCenter: const Offset(2, 50), sourceFontSize: 22,
+      layoutBounds: cell,
+    );
+    final bounds = inside(const Rect.fromLTWH(0, 0, 15, 100));
+    expect(bounds.width, greaterThan(3));
+    expect(bounds.height, greaterThan(23));
+    expect(bounds.left, greaterThanOrEqualTo(0));
+    expect(bounds.right, lessThanOrEqualTo(15));
+    expect(inside(const Rect.fromLTWH(200, 200, 10, 10)), Rect.zero);
+  });
+
   test('translation cache does not persist image-lifetime layout metadata',
       () async {
     final image = File('${temp.path}/stale-layout.bin');

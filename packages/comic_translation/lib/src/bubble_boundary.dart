@@ -150,6 +150,7 @@ Rect comicBubbleInnerBounds({
   required Rect sourceBounds,
   required Offset sourceCenter,
   required double sourceFontSize,
+  Rect? layoutBounds,
 }) {
   var bubble = Path()..addPolygon(polygons.first, true);
   for (final polygon in polygons.skip(1)) {
@@ -159,7 +160,13 @@ Rect comicBubbleInnerBounds({
       Path()..addPolygon(polygon, true),
     );
   }
-  final bubbleBounds = _bounds(polygons.expand((polygon) => polygon));
+  final originalBounds = _bounds(polygons.expand((polygon) => polygon));
+  var bubbleBounds = originalBounds;
+  if (layoutBounds != null) {
+    bubble = Path.combine(PathOperation.intersect,
+      bubble, Path()..addRect(layoutBounds));
+    bubbleBounds = bubbleBounds.intersect(layoutBounds);
+  }
   final inset = math.max(2.0, sourceFontSize * .12);
   final requiredWidth = sourceBounds.width + inset * 2;
   final requiredHeight = sourceBounds.height + inset * 2;
@@ -224,16 +231,24 @@ Rect comicBubbleInnerBounds({
           : bubble.contains(centroid)
               ? centroid
               : bubbleBounds.center;
-  final delta = centroid - center;
-  final travel = math.min(delta.distance, sourceFontSize);
-  final end = delta.distance == 0
-      ? center
-      : center + delta / delta.distance * travel;
+  List<Offset> toward(Offset target) {
+    final delta = target - center;
+    final travel = math.min(delta.distance, sourceFontSize);
+    final end = delta.distance == 0
+        ? center
+        : center + delta / delta.distance * travel;
+    return [Offset.lerp(center, end, .5)!, end];
+  }
   final candidates = [
     center,
-    Offset.lerp(center, end, .5)!,
-    end,
+    ...toward(centroid),
+    // The full contour centroid may lie beyond a reserved cell. Also search
+    // toward the cell interior instead of testing only its source-side edge.
+    if (bubbleBounds != originalBounds) ...toward(bubbleBounds.center),
   ].where(bubble.contains).map(candidateAt).toList();
+  if (candidates.isEmpty) {
+    return Rect.zero;
+  }
   final fitting = candidates.where((candidate) =>
       candidate.width >= requiredWidth &&
       candidate.height >= requiredHeight).toList();

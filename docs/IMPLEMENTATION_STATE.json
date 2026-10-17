@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-17T10:25:09Z",
-  "objective": "修复Namaniku13页后续页完成引起重排，分离OCR聚类/边界与渲染字号",
+  "updated_at": "2026-10-17T12:28:46Z",
+  "objective": "追溯VibeVenera字号权重，修复同轮廓分组排版重叠并核验Namaniku5/13",
   "status": "verified_device",
   "scope": [
     "main：漫画翻译排版稳定性，保留OCR修正聚类/缓存/后端及用户设置",
@@ -147,25 +147,25 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "41af63452c730e7c42c6e29ea5d65d29fa010823df77cc6eabaa36b588a0b545",
-    "observation": "Minified Release;Namaniku13 idle15sx2/12-14;3 exact layouts;settings retained."
+    "apk_sha256": "4041044e1643af289a325da035b4ee941b30a5c6ad20c04abad3b68a607765cd",
+    "observation": "Minified Release/new process;5/13 idle15s;13->14->13 stable;isolated source-peek/restoration pass;settings retained."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
     "exit_code": 0,
     "analyzers": 28,
     "dart_flutter_tests": {
-      "passed": 2489,
+      "passed": 2491,
       "skipped": 3
     },
     "rust_tests": 25,
     "android_jvm_tests": "110 cached/0 failures;upstream Robolectric36/34 and ByteBuddy25 unverified",
     "native_runtime": "3ABI native layout/Debug/Release/APK closure pass",
-    "device": "72b41af6345:13 idle15sx2/12-14;3 exact layouts;7cache hits/0calls/failures.",
+    "device": "72b4041044e:5 inside contour/no overlap/isolated peek;13 2 exact layouts;14 cache hits/0calls/failures.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "Page13 reflow;112 records/summary byte-identical."
+    "scope": "Shared-contour layout repair;112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -175,22 +175,20 @@
     "migration_title_search_shared_controls": "Migration/title search share fixed bottom search,source pills/All,direct exact/empty-result toggles and inline version notice. Single-source native ID shares input/clears on source changes.19 regressions and original2371/full gates pass. Release70ac8752 verifies layouts,expansion,toggles/native mode/IME without dialogs;no ID submission or migration confirmation in that layout scope. Paging/raw identity/read-only refresh/transaction owners preserved;other acceptance stays in requirements.",
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
-      "status": "verified_device",
-      "branch": "main",
-      "current_contract": "Reader3rd tap/hold;8 pills/Debug page;JA/KO memory/shared models;cache bypasses inference;close drains;NetLane cancel/CPU probe. Page-local body font;source-only grouping/bounds;later pages cannot reflow current. Partial/theme/peek retains painting. Trace group IDs/bounds, no text/keys.",
-      "accepted": "72b41af6345:13 idle15sx2/screens pixel-identical;12->13->14->13 returns3 exact group/member/bounds/font layouts.7 unique cache hits/0 OCR/MT/config/failure. Both old font defects fail before fix/pass after.",
-      "performance": "Prior KO27 twice OCR/MT hits,0 calls;190.6/162.7ms before37 MT exit. DB/close tests pass. Namaniku5 entry65.6->9.3ms/reentry8.1ms retained.",
+      "status": "partial",
+      "current_contract": "Reader3rd tap/hold;JA/KO memory/shared models/cache/NetLane retained. Page-local font;source-only grouping. Separable groups sharing a contour reserve space/hit areas by original gaps,including untranslated groups. Trace source/available/text bounds.",
+      "diagnosis": "Vibe2242819 weights advance to compensate narrow glyphs;851a3af corrects missed OCR character counts geometrically. Render helper differs from grouping;weights retained. Page5 separate body r11/r12 and mark r13 shared layout space. Page13 prior reflow followed render-prior update;regrouping unproven.",
+      "accepted": "82 translation tests/full gates pass. Release4041044e:5 mark/body inside bubble,disjoint;13 four groups disjoint/idle15s/14-return 2 exact layouts.14 OCR/MT cache hits;0inference/config/failure. Isolated source-peek/restoration passes widgets and device.",
+      "performance": "Retain prior KO27 OCR/MT cache hits/0calls;190.6/162.7ms. Namaniku5 entry65.6->9.3ms/reentry8.1ms.",
       "remaining_acceptance": [
-        "Source-peek UI hit unconfirmed;widget regressions pass.",
-        "JA OCR待つて/緒に行きましよう;6 drawn bubbles yield1confirmed/11units:quality open,fixtures retained. Real DeepL/live CTranslate2 modeldir/Windows pwsh/non-DotProd physical device unverified."
+        "Broader OCR-count grouping/short-text font quality,including JA待つて/緒に行きましよう,remain open.",
+        "Real DeepL/CTranslate2 modeldir/Windows pwsh/non-DotProd device unverified."
       ],
-      "real_static": "Namaniku13/97 current;prior觸電46:26/60 UI,27/60 cache;Chinese/SFX OFF.",
-      "mainline": "Local main;d00fe9d7 retained;page13 fix;not pushed.",
-      "flicker": "09-50-23:page17 ready changed ratio .02967279->.02511188 and page13 reflowed at754.316579s/ready754.566402s;no reinference/config change. Font affected bounds;group membership change unproven. Fixed page-local font/source-only bounds;both old failures reproduced."
+      "mainline": "Local main;translation branch merged;shared-contour repair included;not pushed;settings retained."
     }
   },
   "remaining": [
-    "Translation: JA OCR/complex bubble quality;real DeepL/live CTranslate2 modeldir/Windows pwsh/non-DotProd device unverified.",
+    "Translation:broader OCR-count grouping/short-text quality and real DeepL/CTranslate2/Windows/non-DotProd remain open.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",

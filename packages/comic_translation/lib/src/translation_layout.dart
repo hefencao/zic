@@ -3,6 +3,7 @@ part of 'translation_overlay.dart';
 class _TranslationLayoutCache {
   final Map<String, _TranslationLayoutPlan> plans = {};
   final Map<String, _TranslationBlockGeometry> geometries = {};
+  final Map<String, Rect> sourceBounds = {};
   final Map<String, _TranslationPreparedBlock> prepared = {};
   final Set<String> preparedRegionIds = {};
   final Set<String> painted = {};
@@ -101,15 +102,22 @@ class _ComicTranslationPainter extends CustomPainter {
   bool hasPreparedBlocksFor(Size size) =>
       _layoutImageRect == _imageRect(size) && layoutCache.prepared.isNotEmpty;
 
-  List<Map<String, Object?>> describePreparedBlocks() => [
-    for (final block in _layoutBlocks()) if (layoutCache.prepared[block.key] case final prepared?) {
-      'key': block.key,
-      'regions': block.regions.map((region) => region.region.ocrRegionId).toList(),
-      'bounds': [prepared.geometry.bounds.left, prepared.geometry.bounds.top,
-        prepared.geometry.bounds.right, prepared.geometry.bounds.bottom],
-      'fontSize': prepared.fontSize,
-    },
-  ];
+  List<Map<String, Object?>> describePreparedBlocks() {
+    List<double> coordinates(Rect rect) => [rect.left, rect.top, rect.right, rect.bottom];
+    return [
+      for (final block in _layoutBlocks()) if (layoutCache.prepared[block.key] case final prepared?) {
+        'key': block.key,
+        'regions': block.regions.map((region) => region.region.ocrRegionId).toList(),
+        'bounds': coordinates(prepared.geometry.bounds),
+        'sourceBounds': coordinates(prepared.geometry.regionBounds
+            .reduce((value, next) => value.expandToInclude(next))),
+        'textBounds': coordinates(prepared.text.isEmpty ? Rect.zero : prepared.text
+            .map((command) => command.offset & command.fill.size)
+            .reduce((value, next) => value.expandToInclude(next))),
+        'fontSize': prepared.fontSize,
+      },
+    ];
+  }
 
   bool isPreparedFor(Size size) {
     _syncVisualStyle();
