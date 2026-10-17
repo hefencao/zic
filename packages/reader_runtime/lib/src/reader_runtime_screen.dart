@@ -1157,8 +1157,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: <Widget>[
-                      if (widget.presentationExtension != null)
-                        widget.presentationExtension!.buildControls(context),
                       IconButton(
                         key: readerRotateKey,
                         tooltip: '顺时针旋转',
@@ -1172,6 +1170,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                           onPressed: () => unawaited(_editComicSettings()),
                           icon: const Icon(Icons.chrome_reader_mode_outlined),
                         ),
+                      if (widget.presentationExtension != null)
+                        widget.presentationExtension!.buildControls(context),
                       IconButton(
                         key: readerFavoriteKey,
                         tooltip: _favorite ? '取消收藏' : '收藏',

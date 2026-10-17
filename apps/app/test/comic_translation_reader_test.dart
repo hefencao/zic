@@ -74,6 +74,18 @@ void main() {
     expect(find.byType(BottomSheet), findsOneWidget,
       reason: 'the icon tooltip must not consume the settings long press');
     expect(session()!.enabled, isTrue);
+    await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('reader-translation-indicator-toggle'))));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-translation-status')), findsNothing);
+    expect(session(), same(initial), reason: 'indicator visibility must not restart OCR or translation');
+    expect(tester.state(find.byType(_Media)), same(media));
+    expect(session()!.enabled, isTrue);
+    await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('reader-translation-indicator-toggle'))));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-translation-status')), findsOneWidget);
+    expect(session(), same(initial));
     Navigator.of(tester.element(find.text('翻译本漫画'))).pop();
     await tester.pumpAndSettle();
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));

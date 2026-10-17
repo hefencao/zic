@@ -10,6 +10,7 @@ import 'package:local_media_bridge/local_media_bridge.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'comic_translation_settings_screen.dart';
 import 'local_media_composition.dart';
@@ -109,7 +110,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   _ReaderTranslationConfiguration _configuration(Map<String, Object?> preferences) => (
     preferences: jsonEncode({
       for (final entry in preferences.entries)
-        if (entry.key != 'enabled') entry.key: entry.value,
+        if (entry.key != 'enabled' && entry.key != 'showIndicator') entry.key: entry.value,
     }),
     ocr: ComicTranslationEngineRegistry.instance.ocrEngine,
     translator: ComicTranslationEngineRegistry.instance.translationEngine,
@@ -136,6 +137,11 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         onSourceLanguageDetected: (language) => _settings.rememberLanguage(
           _chapter.sourceId, _chapter.comicId, language,
           ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? ''),
+        onDiagnostic: (identity, details) => pipeline.trace.record(TraceEvent(
+          monotonicMicros: const SystemClock().nowMicros(), sessionId: pipeline.sessionId,
+          kind: TraceEventKind.comicTranslation,
+          payload: {'pageIndex': identity.pageIndex, ...details},
+        )),
         policy: ComicTranslationPolicy(
           contextPages: preferences['contextPages'] as int,
           translateSoundEffects: preferences['translateSoundEffects'] == true,
@@ -324,6 +330,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
 
   @override
   Widget buildStatus(BuildContext context) {
+    if (_preferences['showIndicator'] == false) return const SizedBox.shrink();
     if (_session?.enabled != true && _error == null) return const SizedBox.shrink();
     return _buildCurrentState((index, state) {
       final phase = state?.phase;
@@ -356,20 +363,29 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
+      builder: (sheetContext) => ListenableBuilder(
+        listenable: _settings,
+        builder: (_, __) => SafeArea(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(title: const Text('漫画翻译'), subtitle: Text(status)),
-            SwitchListTile(
-              title: const Text('翻译本漫画'),
-              value: _session?.enabled == true,
-              onChanged: (enabled) async {
-                Navigator.pop(sheetContext);
-                await _settings.setComic(_chapter.sourceId, _chapter.comicId, {
-                  'enabled': enabled,
-                });
-              },
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                IconButton(tooltip: '重试当前页', icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    final current = _observation?.currentIndex;
+                    if (current != null) _session?.retry(_identity(current));
+                  }),
+                Expanded(child: ListTile(title: const Text('漫画翻译'), subtitle: Text(status))),
+                IconButton(tooltip: '翻译模型与 API', icon: const Icon(Icons.settings_outlined),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => ComicTranslationSettingsScreen(
+                        sourceId: _chapter.sourceId, comicId: _chapter.comicId),
+                    ));
+                  }),
+              ]),
             ),
             ListenableBuilder(
               listenable: _session?.detectedLanguageListenable ?? this,
@@ -395,30 +411,27 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                 );
               },
             ),
-            ListTile(
-              title: const Text('重试当前页'),
-              leading: const Icon(Icons.refresh),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                final current = _observation?.currentIndex;
-                if (current != null) _session?.retry(_identity(current));
-              },
-            ),
-            ListTile(
-              title: const Text('翻译模型与 API'),
-              leading: const Icon(Icons.settings_outlined),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => ComicTranslationSettingsScreen(
-                    sourceId: _chapter.sourceId,
-                    comicId: _chapter.comicId,
-                  ),
-                ));
-              },
-            ),
+            Row(children: [
+              Expanded(child: SwitchListTile(
+                contentPadding: const EdgeInsets.only(left: 16),
+                title: const Text('翻译本漫画'),
+                value: _session?.enabled == true,
+                onChanged: (enabled) async {
+                  Navigator.pop(sheetContext);
+                  await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
+                },
+              )),
+              Expanded(child: SwitchListTile(
+                key: const ValueKey('reader-translation-indicator-toggle'),
+                contentPadding: const EdgeInsets.only(left: 8, right: 16),
+                title: const Text('显示翻译指示器'),
+                value: _preferences['showIndicator'] != false,
+                onChanged: (visible) => _settings.setComic(
+                  _chapter.sourceId, _chapter.comicId, {'showIndicator': visible}),
+              )),
+            ]),
           ],
-        ),
+        )),
       ),
     );
   }

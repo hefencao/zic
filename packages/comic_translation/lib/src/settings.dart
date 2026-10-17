@@ -22,6 +22,7 @@ final class ComicTranslationSettings extends ChangeNotifier {
     'contextPages': 2,
     'translateSoundEffects': false,
     'useCleanOverlay': true,
+    'showIndicator': true,
     'enabled': false,
   };
   final Map<String, Map<String, Object?>> _comics = {};

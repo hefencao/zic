@@ -12,6 +12,7 @@ void main() {
       settings.values['targetLanguage'] = 'en';
       await settings.setComic('source-a', 'comic', {'targetLanguage': 'zh-TW'});
       await settings.setComic('source-a', 'comic', {'enabled': true});
+      await settings.setComic('source-a', 'comic', {'showIndicator': false});
       await settings.setComic('source-a', 'comic', {'sourceLanguage': 'ja'});
       await settings.setComic('source-a', 'korean', {'sourceLanguage': 'ko'});
       var notifications = 0;
@@ -28,6 +29,8 @@ void main() {
       final restored = ComicTranslationSettings();
       await restored.init(directory.path);
       expect(restored.forComic('source-a', 'comic')['enabled'], isTrue);
+      expect(restored.forComic('source-a', 'comic')['showIndicator'], isFalse);
+      expect(restored.forComic('source-b', 'comic')['showIndicator'], isTrue);
       expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
       expect(restored.forComic('source-b', 'comic')['targetLanguage'], 'en');
       expect(restored.forComic('source-a', 'comic')['sourceLanguage'], 'ja');

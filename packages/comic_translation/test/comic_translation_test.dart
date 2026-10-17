@@ -483,6 +483,68 @@ void main() {
   });
   }
 
+  for (final cached in [true, false]) {
+  test(cached ? 'a cached current page restores before another page finishes inference'
+      : 'a cache-only miss never invokes a model beside running inference', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var i = 0; i < 2; i++) {
+      final image = File('${temp.path}/cache-lane-$cached-$i.bin');
+      await image.writeAsBytes(List<int>.filled(377 + i, cached ? 47 : 53));
+      pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'cache-lane',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: i, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final seedRegistry = ComicTranslationEngineRegistry()
+      ..ocrEngine = _OcrEngine()..translationEngine = _TranslationEngine();
+    final seed = ComicTranslationSession(enabled: true, sourceLanguage: 'ko', targetLanguage: 'zh-CN', engines: seedRegistry);
+    seed.reportPages(current: [pages.first], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(seed, pages.first);
+    await seed.close();
+
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    final ocr = _OcrEngine();
+    final translator = _TranslationEngine(translateStarted: started, translateGate: gate);
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator;
+    final events = <Map<String, Object?>>[];
+    final probed = Completer<void>();
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ko', targetLanguage: cached ? 'zh-CN' : 'en',
+      engines: registry, onDiagnostic: (identity, details) {
+        if (identity == pages.first) {
+          events.add(details);
+          if (details['stage'] == 'translation-cache' && details['cacheOnly'] == true && !probed.isCompleted) {
+            probed.complete();
+          }
+        }
+      });
+    try {
+      session.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+      await started.future;
+      session.reportPages(current: [pages.first], near: [pages.last], interaction: ComicTranslationInteraction.idle);
+      await probed.future.timeout(const Duration(seconds: 2));
+      if (cached) {
+        final restored = await _waitFor(session, pages.first).timeout(const Duration(seconds: 2));
+        expect(restored.artifact!.regions.single.translatedText, '你好');
+      } else {
+        expect(session.listenable(pages.first).value.artifact, isNull);
+      }
+      expect(gate.isCompleted, isFalse, reason: 'cache display cannot wait for model inference');
+      expect(ocr.calls, 1);
+      expect(translator.calls, 1);
+      expect(events.where((event) => event['stage'] == 'translation-cache').single['hit'], cached);
+      expect(events.where((event) => event['stage'] == 'translation-started'), isEmpty);
+      gate.complete();
+      await _waitFor(session, pages.first);
+      await _waitFor(session, pages.last);
+      await session.close();
+      expect(ocr.calls, 1, reason: 'a cache-only miss must still reuse the completed OCR');
+      expect(translator.calls, cached ? 1 : 2, reason: 'only a cache miss is submitted after the running model exits');
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await session.close();
+    }
+  });
+  }
+
   test('translation survives a new session with different live context', () async {
     final firstImage = File('${temp.path}/context-page-0.bin');
     final secondImage = File('${temp.path}/context-page-1.bin');
@@ -1939,13 +2001,19 @@ final class _TranslationEngine implements ComicTextTranslationEngine {
   int loads = 0;
   int unloads = 0;
   ComicTranslationRequest? lastRequest;
+  final Completer<void>? translateStarted;
+  final Completer<void>? translateGate;
 
   _TranslationEngine({
     this.contextMode = ComicTranslationContextMode.previousPages,
+    this.translateStarted,
+    this.translateGate,
   }) : translatedText = '你好', translatedLines = null;
 
   _TranslationEngine.lines(this.translatedLines)
       : translatedText = '',
+        translateStarted = null,
+        translateGate = null,
         contextMode = ComicTranslationContextMode.previousPages;
 
   @override
@@ -1965,6 +2033,8 @@ final class _TranslationEngine implements ComicTextTranslationEngine {
   ) async {
     calls++;
     lastRequest = request;
+    if (translateStarted?.isCompleted == false) translateStarted!.complete();
+    if (translateGate != null) await translateGate!.future;
     return ComicTranslationResult({
       for (final unit in request.units)
         unit.id: translatedLines ??

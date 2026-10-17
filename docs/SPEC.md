@@ -1473,11 +1473,11 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 
 - 翻译默认 MUST 关闭；设置 MUST 提供本地 OCR、本地 Hy-MT/CTranslate2、OpenAI-compatible 与 DeepL 的显式配置，
   支持 API profile、语言、上下文、拟声词与原文清除策略；漫画可覆盖全局翻译默认。
-- Reader 底栏翻译按钮 MUST 单击切换本漫画翻译、长按打开设置面板。启用变化 MUST 保留会话与有效结果，开启时消费最新视口；配置替换 MUST 关闭旧会话。
+- Reader 底栏第三项翻译按钮 MUST 单击切换本漫画翻译、长按打开面板。重试 MUST 在左上、设置在右上、翻译开关在左下。启用变化 MUST 保留会话与有效结果，开启时消费最新视口；推理配置替换 MUST 关闭旧会话。
   当前已挂载页 MUST 接收初始化和配置变更后的翻译输出，不得依赖切页刷新。
 - 长按面板 MUST 提供本漫画原文语言快捷选择并按 source/comic 持久化，MUST NOT 改全局默认；手动选择优先。
   自动模式 MUST 按 OCR 模型版本记忆已确认的日/韩语；重新从手动选择自动时清除旧判断。未知语言采样 MUST 有界，不能每页完整运行两套 OCR；无字、纯汉字/英文及冲突证据 MUST NOT 固化语言。
-- 开启翻译时 MUST 在阅读视口右上角显示当前页号及准备图片/缓存、OCR、翻译、就绪或失败状态，使用独立于图片分辨率与缩放的可读尺寸。
+- 开启翻译时 MUST 默认在阅读视口右上角显示当前页号及准备图片/缓存、OCR、翻译、就绪或失败状态，使用独立于图片分辨率与缩放的可读尺寸。面板右下 MUST 可关闭指示器并按漫画保存；显示选项 MUST NOT 重建会话或触发推理。
   相同视口重复观察 MUST NOT 把正在处理的同代页面降回排队或重复提交。
 - DeepL 空白 `model_type` MUST 使用既有 `latency_optimized` 默认并统一请求与缓存身份；未知非空类型 MUST 报错。
 - 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
@@ -1490,6 +1490,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 - 动图 MUST 保持原图播放并显示翻译不支持状态。静态页图片 MUST 先于译文独立呈现。
 - OCR/译文缓存 MUST 绑定内容摘要与完整引擎配置，禁止仅因 URL、长度或 page index 相同而复用。
   离开 Reader MUST NOT 删除有效内容缓存；重新进入并满足相同内容与配置时 MUST 复用持久结果。
+  当前可见页恢复持久缓存 MUST NOT 等待其他页推理。并行缓存检查 MUST NOT 调用模型；miss MUST 归回串行推理，hit MUST 避免重复提交；关闭 MUST 等待所有检查与输入租约实际退出。Trace MUST 区分缓存命中和推理调用且不记录正文或凭据。
   大型缓存 JSON/base64 编解码与 OCR 摘要 MUST 在存储 worker 完成，MUST NOT 阻塞 Reader 的界面线程；缓存命中 MUST NOT 为展示结果加载模型。
   切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
 - 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。

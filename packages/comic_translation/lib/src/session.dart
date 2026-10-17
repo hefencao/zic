@@ -21,6 +21,7 @@ final class ComicTranslationSession {
   final String sourceLanguage;
   final String targetLanguage;
   final Future<void> Function(String language)? onSourceLanguageDetected;
+  final void Function(ComicTranslationPageIdentity identity, Map<String, Object?> details)? onDiagnostic;
 
   ComicTranslationSession({
     required bool enabled,
@@ -28,6 +29,7 @@ final class ComicTranslationSession {
     required this.targetLanguage,
     String? detectedSourceLanguage,
     this.onSourceLanguageDetected,
+    this.onDiagnostic,
     this.policy = const ComicTranslationPolicy(),
     this.inputResolver = const ComicTranslationInputResolver(),
     ComicTranslationEngineRegistry? engines,
@@ -54,6 +56,8 @@ final class ComicTranslationSession {
   final Map<String, ValueNotifier<ComicTranslationPageState>> _states = {};
   final Map<String, ComicTranslationPageIdentity> _identities = {};
   final Map<String, _QueuedTranslation> _queue = {};
+  final Map<String, Future<void>> _cacheProbes = {};
+  final Map<String, int> _cacheProbeGenerations = {};
   final Map<String, Map<int, ComicTranslationArtifact>> _readyPages = {};
   final ValueNotifier<double> _fontScale = ValueNotifier(1);
   final ValueNotifier<String?> _detectedLanguage;
@@ -228,10 +232,38 @@ final class ComicTranslationSession {
     if (queued == null || priority > queued.priority) {
       _queue[identity.key] = _QueuedTranslation(identity, priority);
     }
+    if (_cacheProbes.containsKey(identity.key)) return;
     state.value = const ComicTranslationPageState(
       ComicTranslationPhase.queued,
     );
+    if (_running && _current.any((page) => page.key == identity.key)) {
+      _probeCurrentCache(identity);
+    }
     unawaited(_pump());
+  }
+
+  void _probeCurrentCache(ComicTranslationPageIdentity identity) {
+    if (_disposed || !_enabled || engines.workPaused.value || _enginePair == null ||
+        _processing?.identityKey == identity.key || _cacheProbes.containsKey(identity.key) ||
+        _cacheProbeGenerations[identity.key] == _generation ||
+        _states[identity.key]?.value.artifact != null) return;
+    final ticket = _ProcessTicket(generation: _generation, identityKey: identity.key);
+    _cacheProbeGenerations[identity.key] = _generation;
+    late final Future<void> task;
+    // Cache preparation may run beside inference; it never calls a model.
+    task = _process(identity, ticket, cacheOnly: true).catchError((Object error, StackTrace _) {
+      _diagnose(identity, {'stage': 'cache-probe-failed', 'errorType': error.runtimeType.toString()});
+    }).whenComplete(() {
+      _cacheProbes.remove(identity.key);
+      final state = _states[identity.key]?.value;
+      if (_isActive(ticket) && state?.phase == ComicTranslationPhase.loadingCache) {
+        _setState(identity, const ComicTranslationPageState(ComicTranslationPhase.queued));
+      }
+      if (ticket.generation != _generation && _current.any((page) => page.key == identity.key)) {
+        _probeCurrentCache(identity);
+      }
+    });
+    _cacheProbes[identity.key] = task;
   }
 
   void _onCacheChanged(String cacheKey) {
@@ -261,6 +293,8 @@ final class ComicTranslationSession {
           identityKey: item.identity.key,
         );
         if (!_isActive(ticket)) continue;
+        await _cacheProbes[item.identity.key];
+        if (!_isActive(ticket) || _states[item.identity.key]?.value.artifact != null) continue;
         _processing = ticket;
         try {
           await _process(item.identity, ticket);
@@ -288,8 +322,10 @@ final class ComicTranslationSession {
 
   Future<void> _process(
     ComicTranslationPageIdentity identity,
-    _ProcessTicket ticket,
-  ) async {
+    _ProcessTicket ticket, {
+    bool cacheOnly = false,
+  }) async {
+    final watch = Stopwatch()..start();
     _setStateIfActive(identity, ticket, const ComicTranslationPageState(ComicTranslationPhase.loadingCache));
     final input = await inputResolver.resolve(identity);
     if (input == null) {
@@ -316,6 +352,11 @@ final class ComicTranslationSession {
       }
       final pair = _enginePair ??= await engines.acquire();
       if (!_isActive(ticket)) return;
+      if (!cacheOnly) {
+        for (final current in _current) {
+          _probeCurrentCache(current);
+        }
+      }
       final ocrEngine = pair.ocr;
       final translator = pair.translator;
       final language = effectiveSourceLanguage;
@@ -328,9 +369,16 @@ final class ComicTranslationSession {
         },
         sourceLanguage: language,
       );
+      if (!_isActive(ticket)) return;
+      _diagnose(identity, {'stage': 'ocr-cache', 'hit': cachedOcr != null,
+        'cacheOnly': cacheOnly,
+        'contentDigest': input.contentDigest, 'sourceLanguage': language,
+        'engineId': ocrEngine.id, 'modelVersion': ocrEngine.modelVersion});
       var ocr = cachedOcr?.artifact;
       var ocrDigest = cachedOcr?.digest;
+      if (ocr == null && cacheOnly) return;
       if (ocr == null) {
+        _diagnose(identity, {'stage': 'ocr-started', 'sourceLanguage': language});
         _setStateIfActive(
           identity,
           ticket,
@@ -393,6 +441,13 @@ final class ComicTranslationSession {
         targetLanguage: targetLanguage,
         contextDigest: contextDigest,
       );
+      final translationCached = translation != null;
+      _diagnose(identity, {'stage': 'translation-cache', 'hit': translationCached,
+        'cacheOnly': cacheOnly,
+        'ocrDigest': digest, 'sourceLanguage': ocr.sourceLanguage,
+        'engineId': engineIdentity.id, 'modelVersion': translationModelVersion,
+        'targetLanguage': targetLanguage});
+      if (translation == null && cacheOnly) return;
       if (translation == null) {
         if (!_isActive(ticket)) return;
         _setStateIfActive(
@@ -402,6 +457,9 @@ final class ComicTranslationSession {
             ComicTranslationPhase.translating,
           ),
         );
+        if (request.units.isNotEmpty) {
+          _diagnose(identity, {'stage': 'translation-started', 'unitCount': request.units.length});
+        }
         final result = request.units.isEmpty
             ? const ComicTranslationResult({}) : await engines.translate(pair, request);
         final translatedRegions = request.expandUnitTranslations(result);
@@ -456,9 +514,15 @@ final class ComicTranslationSession {
           cleanOverlayPng: policy.useCleanOverlay ? ocr.cleanOverlayPng : null,
         ),
       );
+      _diagnose(identity, {'stage': 'ready', 'cached': translationCached,
+        'elapsedMicros': watch.elapsedMicroseconds});
     } finally {
       await input.release();
     }
+  }
+
+  void _diagnose(ComicTranslationPageIdentity identity, Map<String, Object?> details) {
+    onDiagnostic?.call(identity, details);
   }
 
   void _updateFontScale(ComicTranslationArtifact artifact) {
@@ -623,6 +687,7 @@ final class ComicTranslationSession {
     _detectedLanguage.dispose();
     _bodyFontRatio.dispose();
     if (_running) await _pumpDone?.future;
+    await Future.wait(_cacheProbes.values);
     await _releaseEngines();
   }
 
@@ -634,6 +699,7 @@ final class ComicTranslationSession {
 
   Future<void> _releaseDisabledEngines() async {
     if (_running) await _pumpDone?.future;
+    await Future.wait(_cacheProbes.values);
     if (!_enabled && !_disposed) await _releaseEngines();
   }
 }
