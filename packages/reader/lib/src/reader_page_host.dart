@@ -289,6 +289,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
 
 final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
     with TickerProviderStateMixin {
+  final _contentKey = GlobalKey();
   late final TransformationController _transformation;
   bool _zoomed = false;
   bool _lensActive = false;
@@ -842,7 +843,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
 
   @override
   Widget build(BuildContext context) {
-    final child = SizedBox.expand(child: widget.child);
+    final child = SizedBox.expand(child: KeyedSubtree(key: _contentKey, child: widget.child));
     if (!widget.interactive) {
       return Listener(
         behavior: HitTestBehavior.opaque,

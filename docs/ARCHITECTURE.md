@@ -1063,7 +1063,7 @@ DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 cur
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺寸只作兜底，预热失败可重试且不得改变 demand/playback 语义。adaptive profile 不得借此改写 NetLane、download/decode window 或 prefetch owner。手势缩放是纯 presentation 行为：
 `ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0，两个倍率均由独立 slider 调整 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
-所有页面一起缩放）。全局 Reader presentation/gesture 偏好由 App preferences 按布局保存为两个独立 `ReaderModeSettings`：paged 与 continuous 的连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界和 zoom decode boost 可以分别取值；
+所有页面一起缩放）。paged 插入/移除缩放容器时由同一 keyed content 保留 PageHost、媒体与装饰层的 State；1x 不挂载缩放手势识别器。全局 Reader presentation/gesture 偏好由 App preferences 按布局保存为两个独立 `ReaderModeSettings`：paged 与 continuous 的连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界和 zoom decode boost 可以分别取值；
 只适用于单一布局的分页方向、纵向拼接仍各自保持单一 owner，系统栏等真正全局 UI policy 也不复制。高置信 adaptive profile 可按漫画类型覆盖长按启用默认，
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
@@ -1135,6 +1135,9 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 `ComicTranslationReaderExtension` 组合该旁路与当前章节。`ReaderPresentationExtensionHost`
 拥有旁路生命周期，Reader 仅转发 `ReaderObs`、已消歧单击并消费装饰层和控件。
 开启翻译、切换后端和查看原文不更换媒体 provider、Pipeline session、播放 cursor 或 texture。
+App 的页装饰层独立订阅旁路变更，使已挂载页接收异步初始化与配置替换后的会话；媒体 child 保持同一实例。
+底栏按钮单击只切换漫画翻译，长按打开设置面板。仅切换启用状态时保留翻译会话与已完成结果，并重放最新视口观察；配置变化才关闭旧会话并重建。
+当前页阶段由旁路只读状态投影到 Reader 视口右上角，使用逻辑像素与安全边距，不随图片分辨率或放大变换缩放。
 
 `PipelineReaderSession.openSealedPageFile()` 只打开当前 authority 的完整 artifact 租约，miss
 不会下载或重试；若普通 promoted handoff 已在持久化，读取只等待该既有提交。
@@ -1143,6 +1146,7 @@ fresh-source quarantine 中的历史呈现不能作为 OCR 输入。源自本地
 由本地来源桥生成临时文件，租约释放时删除。输入租约覆盖内容摘要、OCR 和缓存操作，并在所有成功、失败、取消路径退出后释放。
 OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语言、上下文、协议/提示词版本和拟声词策略。
 翻译仅准备当前可见页和最多后续四张已有缓存的静态页，不扩大现有 encoded/decode 水位。
+重复视口观察不重排同代正在处理的页面，准备图片/缓存、OCR 与翻译阶段沿同一次任务推进。
 
 Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
 不在 Flutter UI isolate 或 Android platform 主线程推理。
@@ -1153,6 +1157,7 @@ Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只
 不进入偏好、翻译 artifact 或库备份。普通设置保存全局默认，Reader 设置可按 source/comic 覆盖翻译策略。
 DeepL 空白 `model_type` 归一为现有 `latency_optimized` 默认，并以同一值生成请求和缓存身份；未知非空值仍报错。
 覆层保持 `IgnorePointer`；原文查看复用 Reader 的单击判定，命中气泡后暂隐译文 1.5 秒。
+同一图片与视口更新章节字号时，覆层保留上一份完整布局，待替代布局准备完成后切换；图片身份或视口几何变化不能借用旧布局。
 
 ## 5. 页面角色、窗口与优先级
 - Reader route 进入 `inactive/hidden/paused/detached` 后，用户播放状态不变，但 Pipeline playback MUST 临时视为 paused；

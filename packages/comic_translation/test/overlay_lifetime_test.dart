@@ -43,7 +43,13 @@ void main() {
     expect(controller.peekSourceAt(point), isFalse, reason: 'the translated block is hidden during peek');
     await tester.pump(const Duration(seconds: 1));
     expect(controller.peekSourceAt(point), isTrue, reason: 'the block is available again after 1.5 seconds');
+    await tester.pump(const Duration(milliseconds: 1600));
+    (session.bodyFontRatioListenable as ValueNotifier<double?>).value = 0.03;
+    await tester.pump();
+    expect(controller.peekSourceAt(point), isTrue,
+      reason: 'a font-metric update must keep the painted translation until its replacement is ready');
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
     await session.close();
   });
 

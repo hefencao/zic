@@ -100,6 +100,27 @@ Matrix4 _pagedTransform(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets('paged magnifier retains the media subtree on entry and release', (tester) async {
+    final controller = ReaderController(sessionId: 'lens-media-lifetime', chapter: _pagedChapter(1),
+      onObservation: (_) {}, clock: _FakeClock(), initialPage: 0);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SizedBox(width: 400, height: 400,
+      child: ReaderView(controller: controller, clock: _FakeClock(), longPressZoomEnabled: true,
+        longPressZoomScale: 3, pageBuilder: (_, asset, reportFirstFrame) => const _RetainedMedia()),
+    ))));
+    final media = tester.state(find.byType(_RetainedMedia));
+    for (var i = 0; i < 2; i++) {
+      final hold = await tester.startGesture(const Offset(200, 200));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(tester.state(find.byType(_RetainedMedia)), same(media));
+      await hold.up();
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsNothing);
+      expect(tester.state(find.byType(_RetainedMedia)), same(media));
+    }
+  });
+
   testWidgets('continuous strip double-tap zooms every page together', (
     tester,
   ) async {
@@ -1284,4 +1305,15 @@ void main() {
     expect(_stripMatrix(tester).storage[12], closeTo(-600, 0.01));
     expect(_stripMatrix(tester).storage[13], closeTo(-600, 0.01));
   });
+}
+
+class _RetainedMedia extends StatefulWidget {
+  const _RetainedMedia();
+  @override
+  State<_RetainedMedia> createState() => _RetainedMediaState();
+}
+
+class _RetainedMediaState extends State<_RetainedMedia> {
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Colors.white);
 }

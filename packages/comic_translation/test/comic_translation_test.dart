@@ -77,7 +77,9 @@ void main() {
     await _waitFor(first, identity);
     expect(ocr.calls, 1);
     expect(translator.calls, 1);
-    first.dispose();
+    await first.close();
+    await ComicTranslationStore.instance.close();
+    await ComicTranslationStore.instance.init(temp.path);
 
     final second = ComicTranslationSession(
       enabled: true,
@@ -117,6 +119,31 @@ void main() {
     expect(fallbackState.cleanOverlayPng, isNull);
     expect(fallbackState.artifact, isNotNull);
     fallback.dispose();
+  });
+
+  test('repeated viewport observations preserve the active OCR phase', () async {
+    final image = File('${temp.path}/active-ocr.bin');
+    await image.writeAsBytes(List<int>.filled(267, 19));
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'active',
+      comicId: 'comic', chapterId: 'chapter', pageIndex: 0, mediaKind: ComicTranslationMediaKind.staticImage);
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    final ocr = _OcrEngine(recognizeStarted: started, recognizeGate: gate);
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = _TranslationEngine();
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry);
+    addTearDown(() async {
+      if (!gate.isCompleted) gate.complete();
+      await session.close();
+    });
+    session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+    await started.future;
+    for (var i = 0; i < 3; i++) {
+      session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+      expect(session.listenable(identity).value.phase, ComicTranslationPhase.recognizing);
+    }
+    gate.complete();
+    await _waitFor(session, identity);
+    expect(ocr.calls, 1);
   });
 
   test('open bubble explores nearby candidate after text grouping', () {

@@ -62,6 +62,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
   Timer? _sourcePeekTimer;
   String? _hiddenBlockKey;
   _ComicTranslationPainter? _painter;
+  _ComicTranslationPainter? _displayPainter;
   Uint8List? _cleanOverlayBytes;
   bool _cleanOverlayReady = false;
   bool _cleanOverlayOpaque = false;
@@ -144,7 +145,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
   }
 
   bool peekSourceAt(Offset globalPosition) {
-    final painter = _painter;
+    final painter = _displayPainter;
     final box = context.findRenderObject();
     if (painter == null || box is! RenderBox || !box.attached) return false;
     final position = box.globalToLocal(globalPosition);
@@ -173,6 +174,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     _sourcePeekTimer?.cancel();
     _hiddenBlockKey = null;
     _painter = null;
+    _displayPainter = null;
     _layoutGeneration++;
     _layoutScheduled = false;
     _layoutTaskPainter = null;
@@ -196,6 +198,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     if (session == null || !session.enabled) {
       _cancelLayoutPreparation();
       _painter = null;
+      _displayPainter = null;
     }
     final identity = widget.identity;
     final pageState = session != null && session.enabled ? session.listenable(identity) : null;
@@ -223,6 +226,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                       artifact == null) {
                     _cancelLayoutPreparation();
                     _painter = null;
+                    _displayPainter = null;
                     return const SizedBox();
                   }
                   final background = Theme.of(context).colorScheme.surface.withValues(
@@ -276,9 +280,23 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                   return LayoutBuilder(
                     builder: (context, constraints) {
                       final size = constraints.biggest;
-                      if (!painter.isPreparedFor(size)) {
+                      final prepared = painter.isPreparedFor(size);
+                      if (!prepared) {
                         _scheduleLayoutPreparation(painter, size);
                       }
+                      final previous = _displayPainter;
+                      // Keep the last complete layout while chapter font samples
+                      // prepare a replacement for this same image and viewport.
+                      final displayPainter = !prepared &&
+                              previous != null &&
+                              previous.artifact == artifact &&
+                              previous.fit == painter.fit &&
+                              previous.alignment == painter.alignment &&
+                              previous.hiddenBlockKey == _hiddenBlockKey &&
+                              previous.isPreparedFor(size)
+                          ? previous
+                          : painter;
+                      _displayPainter = displayPainter;
                       return Stack(
                         fit: StackFit.expand,
                         children: [
@@ -289,7 +307,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                                 artifact: artifact,
                                 alignment: widget.alignment,
                                 fit: widget.fit,
-                                layoutCache: painter.layoutCache,
+                                layoutCache: displayPainter.layoutCache,
                               ),
                               child: AnimatedOpacity(
                                 opacity: showCleanOverlay ? 1 : 0,
@@ -315,7 +333,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                                 ),
                               ),
                             ),
-                          CustomPaint(painter: painter),
+                          CustomPaint(painter: displayPainter),
                         ],
                       );
                     },

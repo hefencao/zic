@@ -9,6 +9,7 @@ abstract class ReaderPresentationExtension extends ChangeNotifier {
   void observe(ReaderObs observation);
   Widget decoratePage(BuildContext context, PageAsset asset, BoxFit fit, Widget child);
   Widget buildControls(BuildContext context);
+  Widget buildStatus(BuildContext context) => const SizedBox.shrink();
   bool handleSingleTap(Offset globalPosition) => false;
   Future<void> close();
 }

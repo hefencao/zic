@@ -19,6 +19,7 @@ enum ComicTranslationPhase {
   disabled,
   waitingForImage,
   queued,
+  loadingCache,
   recognizing,
   translating,
   ready,

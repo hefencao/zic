@@ -17,6 +17,12 @@ import 'startup_platform.dart';
 
 Future<void>? _translationInitialization;
 
+typedef _ReaderTranslationConfiguration = ({
+  String preferences,
+  ComicOcrEngine? ocr,
+  ComicTextTranslationEngine? translator,
+});
+
 Future<void> initializeComicTranslation() =>
     _translationInitialization ??= _initializeComicTranslation();
 
@@ -52,6 +58,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   Future<void> _reloadTail = Future<void>.value();
   Future<void>? _closing;
   ComicTranslationSession? _session;
+  _ReaderTranslationConfiguration? _appliedConfiguration;
   ReaderObs? _observation;
   MediaLoadToken _inputToken = MediaLoadToken();
   Object? _error;
@@ -77,18 +84,48 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
 
   void _settingsChanged() {
     if (_closed) return;
+    try {
+      ComicTranslationRuntime.instance.configure();
+    } on Object catch (error) {
+      _session?.setEnabled(false);
+      _error = error;
+      notifyListeners();
+      return;
+    }
+    final preferences = _preferences;
+    final session = _session;
+    if (session != null && _appliedConfiguration == _configuration(preferences)) {
+      _error = null;
+      session.setEnabled(preferences['enabled'] == true);
+      final observation = _observation;
+      if (session.enabled && observation != null) observe(observation);
+      notifyListeners();
+      return;
+    }
     _session?.setEnabled(false);
     unawaited(_reload());
   }
 
+  _ReaderTranslationConfiguration _configuration(Map<String, Object?> preferences) => (
+    preferences: jsonEncode({
+      for (final entry in preferences.entries)
+        if (entry.key != 'enabled') entry.key: entry.value,
+    }),
+    ocr: ComicTranslationEngineRegistry.instance.ocrEngine,
+    translator: ComicTranslationEngineRegistry.instance.translationEngine,
+  );
+
   Future<void> _reload() {
     final task = _reloadTail.then((_) async {
       _inputToken.cancel();
-      await _session?.close();
+      final previous = _session;
       _session = null;
+      _appliedConfiguration = null;
+      await previous?.close();
       if (_closed) return;
       ComicTranslationRuntime.instance.configure();
       final preferences = _preferences;
+      _appliedConfiguration = _configuration(preferences);
       _inputToken = MediaLoadToken();
       _session = ComicTranslationSession(
         enabled: preferences['enabled'] == true,
@@ -215,48 +252,98 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
 
   @override
   Widget decoratePage(BuildContext context, PageAsset asset, BoxFit fit, Widget child) {
-    return ComicTranslationOverlay(
-      session: _session,
-      identity: _identity(asset.index),
-      controller: _overlays,
-      fit: fit,
+    return ListenableBuilder(
+      listenable: this,
       child: child,
+      builder: (_, media) => ComicTranslationOverlay(
+        session: _session,
+        identity: _identity(asset.index),
+        controller: _overlays,
+        fit: fit,
+        child: media!,
+      ),
     );
   }
 
   @override
   bool handleSingleTap(Offset globalPosition) => _overlays.peekSourceAt(globalPosition);
 
-  @override
-  Widget buildControls(BuildContext context) {
-    final session = _session;
-    Widget button(ComicTranslationPageState? state) {
-      final phase = state?.phase;
-      final status = _error != null ? '翻译初始化失败：$_error' : switch (phase) {
+  String _status(ComicTranslationPageState? state) => _error != null
+      ? '翻译初始化失败：$_error' : switch (state?.phase) {
         ComicTranslationPhase.waitingForImage => '等待完整图片',
+        ComicTranslationPhase.queued => '等待翻译',
+        ComicTranslationPhase.loadingCache => '准备图片与缓存',
         ComicTranslationPhase.recognizing => '正在识别文字',
         ComicTranslationPhase.translating => '正在翻译',
-        ComicTranslationPhase.ready => '译文已就绪',
+        ComicTranslationPhase.ready => state!.artifact?.regions.isEmpty == true
+            ? '本页未识别到文字' : '译文已就绪',
         ComicTranslationPhase.unsupportedMedia => '暂不支持动图翻译',
         ComicTranslationPhase.unavailable => '请先配置翻译模型与 API',
         ComicTranslationPhase.failed => '翻译失败：${state?.error}',
-        _ => session?.enabled == true ? '翻译已开启' : '翻译已关闭',
+        _ => _session?.enabled == true ? '翻译已开启' : '翻译已关闭',
       };
-      return IconButton(
-        key: const ValueKey('reader-translation'),
-        tooltip: status,
-        icon: Icon(session?.enabled == true ? Icons.translate : Icons.g_translate),
-        onPressed: () => _edit(context, status),
-      );
-    }
-    if (session == null) return button(null);
+
+  Widget _buildCurrentState(Widget Function(int index, ComicTranslationPageState? state) builder) {
+    final session = _session;
+    if (session == null) return builder(_currentIndex.value, null);
     return ValueListenableBuilder<int>(
       valueListenable: _currentIndex,
       builder: (_, index, __) => ValueListenableBuilder<ComicTranslationPageState>(
         valueListenable: session.listenable(_identity(index)),
-        builder: (_, state, __) => button(state),
+        builder: (_, state, __) => builder(index, state),
       ),
     );
+  }
+
+  @override
+  Widget buildControls(BuildContext context) => _buildCurrentState((index, state) {
+    final enabled = _session?.enabled == true;
+    return GestureDetector(
+      onLongPress: () => _edit(context, _status(state)),
+      child: TooltipTheme(
+        // The settings gesture owns long press; the tooltip keeps its label.
+        data: TooltipTheme.of(context).copyWith(triggerMode: TooltipTriggerMode.manual),
+        child: IconButton(
+          key: const ValueKey('reader-translation'),
+          tooltip: '${enabled ? '关闭翻译' : '开启翻译'}（长按设置）',
+          isSelected: enabled,
+          icon: const Icon(Icons.g_translate),
+          selectedIcon: const Icon(Icons.translate),
+          onPressed: _session == null ? null : () => _settings.setComic(
+            _chapter.sourceId, _chapter.comicId, {'enabled': !enabled}),
+        ),
+      ),
+    );
+  });
+
+  @override
+  Widget buildStatus(BuildContext context) {
+    if (_session?.enabled != true && _error == null) return const SizedBox.shrink();
+    return _buildCurrentState((index, state) {
+      final phase = state?.phase;
+      final busy = _error == null && (phase == ComicTranslationPhase.queued ||
+          phase == ComicTranslationPhase.loadingCache || phase == ComicTranslationPhase.waitingForImage ||
+          phase == ComicTranslationPhase.recognizing || phase == ComicTranslationPhase.translating);
+      final status = _status(state);
+      return Semantics(liveRegion: true, label: '第${index + 1}页，$status',
+        child: ExcludeSemantics(child: Container(
+          key: const ValueKey('reader-translation-status'),
+          constraints: const BoxConstraints(maxWidth: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.76),
+            borderRadius: BorderRadius.circular(16)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (busy) const SizedBox.square(dimension: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white))
+            else Icon(phase == ComicTranslationPhase.ready ? Icons.check_circle_outline : Icons.info_outline,
+              color: Colors.white, size: 14),
+            const SizedBox(width: 6),
+            Flexible(child: Text('第${index + 1}页 · $status', maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 12))),
+          ]),
+        )),
+      );
+    });
   }
 
   Future<void> _edit(BuildContext context, String status) async {

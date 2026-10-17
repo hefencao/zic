@@ -43,6 +43,7 @@ final class ComicTranslationSession {
   late final StreamSubscription<String>? _cacheSubscription;
   Completer<void>? _pumpDone;
   Future<void>? _closing;
+  _ProcessTicket? _processing;
   ComicTranslationInteraction _interaction = ComicTranslationInteraction.idle;
   List<ComicTranslationPageIdentity> _current = const [];
   List<ComicTranslationPageIdentity> _near = const [];
@@ -200,6 +201,7 @@ final class ComicTranslationSession {
       return;
     }
     if (state.value.phase == ComicTranslationPhase.ready) return;
+    if (_processing?.identityKey == identity.key && _processing?.generation == _generation) return;
     final queued = _queue[identity.key];
     if (queued == null || priority > queued.priority) {
       _queue[identity.key] = _QueuedTranslation(identity, priority);
@@ -237,6 +239,7 @@ final class ComicTranslationSession {
           identityKey: item.identity.key,
         );
         if (!_isActive(ticket)) continue;
+        _processing = ticket;
         try {
           await _process(item.identity, ticket);
         } catch (error) {
@@ -248,6 +251,8 @@ final class ComicTranslationSession {
               error: error,
             ),
           );
+        } finally {
+          _processing = null;
         }
       }
     } finally {
@@ -263,6 +268,7 @@ final class ComicTranslationSession {
     ComicTranslationPageIdentity identity,
     _ProcessTicket ticket,
   ) async {
+    _setStateIfActive(identity, ticket, const ComicTranslationPageState(ComicTranslationPhase.loadingCache));
     final input = await inputResolver.resolve(identity);
     if (input == null) {
       _setStateIfActive(

@@ -1326,19 +1326,27 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
             ),
             AnimatedBuilder(
               animation: reader,
-              builder: (context, _) => AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: ExcludeSemantics(
-                    excluding: !_controlsVisible,
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: _topControls(context, reader),
+              builder: (context, _) => Align(
+                alignment: Alignment.topCenter,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 140),
+                    child: IgnorePointer(
+                      ignoring: !_controlsVisible,
+                      child: ExcludeSemantics(
+                        excluding: !_controlsVisible,
+                        child: _topControls(context, reader),
+                      ),
                     ),
                   ),
-                ),
+                  if (widget.presentationExtension != null)
+                    SafeArea(top: !_controlsVisible, bottom: false,
+                      child: Padding(padding: const EdgeInsets.all(12),
+                        child: Align(alignment: Alignment.topRight,
+                          child: IgnorePointer(child: widget.presentationExtension!.buildStatus(context))),
+                      )),
+                ]),
               ),
             ),
             AnimatedBuilder(
