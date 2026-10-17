@@ -1604,6 +1604,50 @@ void main() {
     expect(ids, isNot(contains('two-digit-fragment')));
   });
 
+  test('weak large art cannot define its own body size reference', () {
+    for (final orientation in ComicTextOrientation.values) {
+      final artifact = _ocrArtifact([
+        _positionedRegion('art', 'H7', .502, .065, .118, .167, 0,
+          orientation: orientation, confidence: .4344),
+        _positionedRegion('body-1', 'それじゃ', .639, .174, .027, .071, 1),
+        _positionedRegion('body-2', 'また明日', .593, .307, .022, .068, 2),
+        _positionedRegion('body-3', 'よろしくね', .575, .308, .022, .079, 3),
+        _positionedRegion('body-4', 'はい', .210, .712, .025, .038, 4),
+        _positionedRegion('body-5', 'また明日', .166, .810, .022, .066, 5),
+      ]);
+      final ids = ComicTranslationUnit.fromOcr(artifact)
+          .expand((unit) => unit.regionIds).toSet();
+      expect(ids, containsAll(['body-1', 'body-2', 'body-3', 'body-4', 'body-5']));
+      expect(ids, isNot(contains('art')), reason: orientation.name);
+      expect(ComicTranslationUnit.fromOcr(artifact, translateSoundEffects: true)
+          .expand((unit) => unit.regionIds), contains('art'));
+    }
+  });
+
+  test('tiny weak drawing marks need a reliable body size reference', () {
+    final mark = _positionedRegion('mark', '1用', .425, .211, .013, .010, 1,
+      orientation: ComicTextOrientation.horizontal, confidence: .3962);
+    final artifact = _ocrArtifact([
+      _positionedRegion('body', 'また明日よろしくね', .8, .1, .024, .2, 0),
+      mark,
+      _positionedRegion('reliable-tiny', '1用', .5, .7, .013, .010, 2,
+        orientation: ComicTextOrientation.horizontal),
+      _positionedRegion('bubble-tiny', '1用', .4, .9, .013, .010, 3,
+        bubbleGroupId: 7, confidence: .3962),
+      _positionedRegion('short-answer', 'えっ', .05, .1, .024, .042, 4,
+        confidence: .3962),
+    ]);
+    for (final soundEffects in [false, true]) {
+      final ids = ComicTranslationUnit.fromOcr(artifact,
+          translateSoundEffects: soundEffects)
+          .expand((unit) => unit.regionIds).toSet();
+      expect(ids, containsAll(['body', 'reliable-tiny', 'bubble-tiny', 'short-answer']));
+      expect(ids, isNot(contains('mark')));
+    }
+    expect(ComicTranslationUnit.fromOcr(_ocrArtifact([mark])).single.regionIds,
+      ['mark'], reason: 'an uncertain page cannot provide a trusted size reference');
+  });
+
   test('uncertain lone marks filling a detected contour preserve the drawing', () {
     const contour = [NormalizedPoint(.51, .09973), NormalizedPoint(.56625, .09973),
       NormalizedPoint(.56625, .14515), NormalizedPoint(.51, .14515)];

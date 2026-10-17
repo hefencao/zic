@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Derive the OCR quality-filter size reference from reliable non-sound-effect recognition so weak large art cannot define its own exemption threshold. Preserve tiny weak independent marks only when reliable body evidence exists; retain ordinary short answers, balloon text and reliable small lettering. Advance the translation artifact version while retaining OCR cache identity, rendering fonts and grouping.
+
 - Preserve drawings behind uncertain singleton OCR results that fill an independent contour, rather than trusting every detected closed shape as a dialogue balloon. Extend weak outside-balloon digit filtering to short numeric runs; retain reliable numbers, roomy short answers and text sharing a dialogue contour. Advance the translation artifact version without changing OCR, font estimation or grouping.
 
 - Preserve the original for short, unbubbled OCR results that are both at least three times the body text size and consistently low confidence when sound-effect translation is disabled. Reject low-confidence isolated digit fragments outside balloons while retaining reliable numbers, short dialogue and balloon answers. Reuse the existing skipped-text rendering path and advance the translation artifact version; OCR cache identity and layout geometry remain unchanged.

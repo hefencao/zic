@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 本地 `main`（翻译分支已合并，未推送），`0.31.0-dev.331` / `0.31.0+331`：翻译第三项单击开关/长按。左下无字开关，指示器上行附标签；原文/指示器均用独立药丸，单阶段图标，页号仅Debug；保存不重建。可见缓存不等推理，Trace命中/调用。日/韩记忆、模型复用/回收；静态/覆层/NetLane保留。Debug首页测试/诊断；dev.196、dev.197、dev.198、dev.199、dev.203 bounded 语义不变。
-- Hy-MT加载前检查ARMv8.2-A/DotProd；API/模型经NetLane取消至真实退出，不重试。自动日/韩。本页字号独立；原文几何分组/边界，共用轮廓按间隙分空间/命中区，未译组占位。跨线组保留原位/局部字号并避让正文，气泡内裁剪。重排/主题/查看保留其余气泡，非活动设置不重建。同页等缓存前标处理中。Trace含原文/可用/文字范围及跨线判定。气泡外弱数字、独占小轮廓弱单字保留原图；拟声词关时保留弱超大短字，正常短句/可靠文字保留。
+- Hy-MT加载前检查ARMv8.2-A/DotProd；API/模型经NetLane取消至真实退出，不重试。自动日/韩。本页字号独立；原文几何分组/边界，共用轮廓按间隙分空间/命中区，未译组占位。跨线组保留原位/局部字号并避让正文，气泡内裁剪。重排/主题/查看保留其余气泡，非活动设置不重建。同页等缓存前标处理中。Trace含原文/可用/文字范围及跨线判定。气泡外弱数字、独占小轮廓弱单字保留原图；拟声词关时保留弱超大短字，正常短句/可靠文字保留。以可信正文筛弱微小碎片。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。

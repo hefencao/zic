@@ -75,11 +75,17 @@ final class ComicTranslationUnit {
       bubbleGroupId: region.bubbleGroupId,
       bubblePolygon: region.bubblePolygon,
     )).toList());
-    final bodyThickness = _dominantBodyThickness(ocr, regions);
+    // Uncertain art must not define the reference used to detect large lettering.
+    final reliableBodyRegions = regions.where((region) =>
+        region.confidence >= .72 && region.kind != ComicTextKind.soundEffect)
+        .toList();
+    final bodyThickness = _dominantBodyThickness(ocr,
+        reliableBodyRegions.isEmpty ? regions : reliableBodyRegions);
     return groups.where((group) {
       final members = group.regions.map((region) => region.value).toList();
       return _hasMeaningfulText(members) &&
-          !_isUncertainBalloonMark(members, regions) &&
+          !_isUncertainDrawingMark(ocr, members, regions,
+              reliableBodyRegions.isEmpty ? null : bodyThickness) &&
           (translateSoundEffects ||
               !_likelySoundEffect(ocr, members, bodyThickness));
     }).map((group) {
@@ -111,16 +117,27 @@ final class ComicTranslationUnit {
     return inBubble || meaningful > 1 || runes.length < 3;
   }
 
-  static bool _isUncertainBalloonMark(
+  static bool _isUncertainDrawingMark(
+    ComicOcrArtifact ocr,
     List<ComicOcrRegion> members,
     List<ComicOcrRegion> pageRegions,
+    double? reliableBodyThickness,
   ) {
     if (members.length != 1) return false;
     final region = members.single;
+    final characters = region.text.runes.where(_isMeaningfulRune).length;
+    // Tiny face strokes can decode as several glyphs. Require both weak
+    // recognition and a reliable body reference before preserving the drawing.
+    if (reliableBodyThickness != null && region.confidence < .5 &&
+        characters <= 3 && region.bubbleGroupId == null &&
+        region.bubblePolygon == null &&
+        _fontThickness(ocr, region) < reliableBodyThickness * .5) {
+      return true;
+    }
     final contour = region.bubblePolygon;
     if (region.confidence >= .6 || region.bubbleGroupId == null ||
         contour == null || contour.length < 3 ||
-        region.text.runes.where(_isMeaningfulRune).length != 1 ||
+        characters != 1 ||
         pageRegions.any((other) => other.id != region.id &&
             other.bubbleGroupId == region.bubbleGroupId)) {
       return false;

@@ -195,7 +195,7 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
-- 漫画翻译：PaddleOCR/Hy-MT/CTranslate2、OpenAI-compatible/DeepL、内容缓存/覆层；气泡保留段落。Debug 首页名点击测试、长按诊断。Reader 第三项单击开关/长按面板，左上重试/右上设置/左下无字开关。指示器上行附标签，独立药丸切换常驻/处理中/关闭，仅当前阶段图标/工作环、Debug页码；按漫画保存不重建。语言药丸同规格，日/韩按漫画/模型记忆。气泡外弱数字、独占小轮廓弱单字保留原图；拟声词关时保留弱超大短字。
+- 漫画翻译：PaddleOCR/Hy-MT/CTranslate2、OpenAI-compatible/DeepL、内容缓存/覆层；气泡保留段落。Debug 首页名点击测试、长按诊断。Reader 第三项单击开关/长按面板，左上重试/右上设置/左下无字开关。指示器上行附标签，独立药丸切换常驻/处理中/关闭，仅当前阶段图标/工作环、Debug页码；按漫画保存不重建。语言药丸同规格，日/韩按漫画/模型记忆。气泡外弱数字、独占小轮廓弱单字保留原图；拟声词关时保留弱超大短字。以可信正文筛弱微小碎片。
   本页字号独立，后续页不重排；原文几何分组，共用轮廓按间隙分空间/命中区，未译组占位。跨线组保留原位/局部字号并避让正文，气泡内仍裁剪。重排保留已画气泡/独立主题缓存；查看只隐命中组。配置名/非活动设置不重建。缓存不等推理，同页先标处理中，miss串行，关闭等输入退出。Trace含原文/可用/文字范围及跨线判定，无正文。worker编解码；共用MT/detector、单识别器、保温30秒/后台回收。NetLane至真实退出，撤销完成不重试；Hy-MT检查CPU。见状态JSON。
 
 ## 2. 当前开放问题
