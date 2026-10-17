@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-16T14:55:05Z",
-  "objective": "完成所有状态治理，解耦和收口",
-  "status": "in_progress",
+  "updated_at": "2026-10-17T08:29:07Z",
+  "objective": "排查翻译分支冲突与缺陷，修复验证并评估合并主线",
+  "status": "verified_device",
   "scope": [
-    "全仓状态/所有权治理：download与Reader/media审计全部登记项及延期cleanup",
-    "Home/source/service/Reader/Pipeline/transport/native/storage/cache现有authority与公开生命周期合同",
-    "相关Plan项的current/superseded/evidence核对与稳定文档收口",
-    "用户明确追加：Plan中全部独立产品、性能与各来源真机验收"
+    "feat/vibevenera-translation：迁入本地OCR/Hy-MT/CTranslate2、OpenAI-compatible/DeepL、模型/API设置、缓存与Reader覆层",
+    "保持Reader/Pipeline/NetLane和本地来源所有权；覆盖完整输入、取消真实退出、媒体组件生命周期与Android打包",
+    "原112条治理验收保持其已验边界和剩余条件，不因翻译迁移宣称完成或重开无关生产行为"
   ],
   "preserve": [
     "已验生产合同与用户数据",
@@ -145,40 +144,19 @@
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
-  "current_device_installation": {
-    "serial": "72b08a1c",
-    "model": "M2007J1SC",
-    "sdk": 36,
-    "sha256": "adb4e36ba8b9884da076e0395b58eff18cedb3b2aa28d1cdce8c28d7cf610052",
-    "app_pid": 2921,
-    "ordinary_release": true,
-    "normal_minified_release": true,
-    "app_foreground": "Ordinary minified dev331 Releaseadb4e36b/PID2921/MainActivity/Home/Awake,Keyguard=false,inputRestricted=false,no forwards. Follow restored;adaptive/override unchanged. Task exports/XML/screenshots cleaned;210a3115 absent;user data retained."
-  },
-  "validation": {
-    "command": "CI=true tool/check.sh --require-toolchains exit0:all gates,27 analyzers,2393 Dart/Flutter tests/27 suites,Rust25,three-ABI Debug;prep3 and workflow/artifact/analyzer negative controls pass.",
-    "exit_code": 0,
-    "dart_flutter_tests": 2393,
-    "analyzers": 27,
-    "Rust_tests": 25,
-    "Android_native_tests": 121,
-    "debug_three_ABI_build": true,
-    "missing_toolchains": [],
-    "ordinary_package_acceptance": "Retain unchanged dev331 three-ABI Profile/minified Release/JNI. Releaseadb4e36b/72b/PID2921/Home/Keyguard=false restored,no forwards;actual Ani page visual acceptance preserved. Original210 and first cover-install entry remain unverified.",
-    "Android_native_tests_scope": "Retain e12c1863 unchanged Kotlin/native inputs:project JUnit104:plugin_host_bridge94 including six preference regressions,local_media_bridge7,app3. External file_selector17 passes with temporary API34/ASM9.9/ByteBuddy Java25 test compatibility;production dependencies unchanged. CookieJar15 and Kotlin/native compile gates pass in full check.",
-    "scope": "CI/build compatibility and bounded runtime recovery;retain prior Profile/minified Release/JNI/native121 and scoped device acceptance.3 quarantined skips;exit raster/allocation/original entry/display remain open;112 IDs/21 unfinished.",
-    "ci_workflow": "Structure/native artifact transfer,pinned rhttp SDK parser,bounded recovery/typed cancellation;cloud verification:https://github.com/hefencao/zic/actions/runs/38919348125.",
-    "artifact_retention": "Overwrite existing validation/build logs and current package outputs. Retain original faults/minimal open inputs;delete completed capture duplicates and temporary directories by exact task paths. Prior clean worktrees/generated trees removed;dirty and unique commits preserved."
-  },
+  "current_device_installation": {"verified_for_current_change":true,"serial":"72b08a1c","apk_sha256":"7429a167564aec62a1904a692f6b2532d7e397cb7cde2b7ab154401dee16e42f","observation":"Minified Release;觸電46:26 auto/ON/processing-only;Hy-MT JA->ZH1743ms;Debug ON/globalOFF;models/API/IME retained."},
+  "validation": {"command":"CI=true ./tool/check.sh --require-toolchains","exit_code":0,"analyzers":28,"dart_flutter_tests":{"passed":2485,"skipped":3},"rust_tests":25,"android_jvm_tests":110,"android_jvm_environment":"110 first-party pass;upstream target36>Robolectric34/ByteBuddy Java25 limitation retained.","native_runtime":"Pinned optimized runtime unchanged;fresh baseline CPU JNI3ABI,system-only deps.","android_apks":"Debug/Release3ABI;minified arm64 DEX/JNI/ELF/assets/notices pass.","device":"72b Release7429a167:8 pills/auto/processing/ON;KO26 overlay/toggle pass;Hy-MT Japanese->Chinese1743ms.","missing_toolchains":["pwsh: Windows builder unverified"],"scope":"Translation merge review;112 original records unchanged.","artifact_retention":"JA/KO fixtures,user fault traces,final arm64 APK retained;completed captures cleaned."},
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",
     "cached_Reader_stationary_and_history": "Accepted bounded stationary/history cases:docs/archive/audits/reader-cached-entry-after-CookieJar-2026-10-07.json. Latest72b Release current force-reload presents new epoch1/frame0 at6.712s;first navigation is at57.393s,0 failures. Original19/20 occasional cached loading/redownload remains open until a fresh reproducing input;do not reopen accepted cache/trust/URI owners from missing historical evidence.",
     "real_slider_download_stationary": "docs/archive/audits/reader-real-slider-download-after-CookieJar-2026-10-07.json",
     "migration_title_search_shared_controls": "Migration/title search share fixed bottom search,source pills/All,direct exact/empty-result toggles and inline version notice. Single-source native ID shares input/clears on source changes.19 regressions and original2371/full gates pass. Release70ac8752 verifies layouts,expansion,toggles/native mode/IME without dialogs;no ID submission or migration confirmation in that layout scope. Paging/raw identity/read-only refresh/transaction owners preserved;other acceptance stays in requirements.",
-    "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored."
+    "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
+    "comic_translation_migration": {"status":"verified_device","branch":"feat/vibevenera-translation","current_contract":"Reader3rd tap/hold;retry TL/settings TR;8 content-width pills;single stage/ring,Debug page. Display keeps session;JA/KO remembered,models shared. Cache hits bypass inference;close drains inputs. NetLane settles queued cancel;DeepL never retries cancel. CPU probe precedes Hy-MT load;Trace no text/keys.","accepted":"72b Release7429a167:KO26 overlay/toggle/pills retain auto/processing/ON;Hy-MTこんにちは->你好1743ms. Prior320/360,zoom/JA-KO/DB/cache retained;active stages widget-only. GlobalOFF/Hy-MT2bit/auto;no animation.","performance":"Prior KO27 OCR/MT hits twice,0 model calls;190.6/162.7ms;ready before page37 MT exited. DB/cache/close regressions pass. Namaniku5 entry65.6->9.3ms,reentry8.1ms retained.","remaining_acceptance":["JA OCR待つて/緒に行きましよう;6 drawn bubbles yield1confirmed/11units:quality open,fixtures retained. Real vendor API/live CTranslate2 modeldir/Windows pwsh/non-DotProd physical device unverified."],"real_static":"Namaniku5/97;觸電46:26/60 UI,27/60 cache;Chinese/SFX OFF.","mainline":"origin/main52e6e695:conflict-free;review/toolchain/device pass,ready for local main merge."}
   },
   "remaining": [
+    "Translation: JA OCR/complex bubble quality;real vendor API/live CTranslate2 modeldir/Windows pwsh/non-DotProd device unverified.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",

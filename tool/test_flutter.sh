@@ -9,6 +9,7 @@ if ! command -v flutter >/dev/null 2>&1; then
 fi
 
 for rel in \
+  packages/comic_translation \
   packages/reader \
   packages/pipeline_runtime \
   packages/pipeline_native \

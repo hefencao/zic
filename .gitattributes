@@ -1,0 +1,2 @@
+# Preserve upstream patch payload and context for exact source reconstruction.
+tool/comic_translation/patches/*.patch -whitespace text eol=lf

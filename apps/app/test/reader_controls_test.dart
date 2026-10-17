@@ -125,6 +125,45 @@ Future<void> _disposePipelineReader(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('presentation extension observes pages and consumes only resolved single taps', (tester) async {
+    final chapter = _chapter();
+    late _TestPresentationExtension extension;
+    await tester.pumpWidget(MaterialApp(
+      home: PipelineReaderSessionHost(
+        chapter: chapter,
+        factory: defaultLocalMediaPipelineFactory,
+        builder: (_, pipeline) => ReaderPresentationExtensionHost(
+          pipeline: pipeline,
+          factory: (_) => extension = _TestPresentationExtension(),
+          builder: (sidecar) => ReaderRuntimeScreen(
+            chapter: chapter, pipeline: pipeline, screenKey: _screenKey,
+            presentationExtension: sidecar,
+            artifactPageBuilder: (_, asset, reportFirstFrame, runtime) =>
+                ColoredBox(key: ValueKey('sidecar-media:${asset.index}'), color: Colors.white),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(extension.observations, isNotEmpty);
+    expect(extension.observations.last.currentIndex, 0);
+    expect(find.byKey(const ValueKey('sidecar-page:0')), findsOneWidget);
+    final top = find.byKey(readerTopControlsKey);
+    final bottom = find.byKey(readerBottomControlsKey);
+    await tester.tap(find.byType(ReaderView));
+    await _pumpUntilCondition(tester, () => extension.taps == 1, description: 'resolved sidecar tap');
+    expect(extension.taps, 1);
+    expect(_controlsPointer(tester, top).ignoring, isTrue);
+    expect(extension.observations.last.currentIndex, 0);
+    extension.consumeTap = false;
+    await tester.tap(find.byType(ReaderView));
+    await _pumpUntilControls(tester, top, bottom, ignoring: false);
+    expect(extension.taps, 2);
+    expect(find.byKey(const ValueKey('sidecar-control')), findsOneWidget);
+    await _disposePipelineReader(tester);
+    expect(extension.closes, 1);
+  });
+
   testWidgets('reader starts immersive and exposes complete bottom controls',
       (tester) async {
     bool? favorite;
@@ -1293,4 +1332,22 @@ void main() {
 
   // Adaptive classification belongs to reader_runtime and is covered by
   // packages/reader_runtime/test/adaptive_reader_classifier_test.dart.
+}
+
+final class _TestPresentationExtension extends ReaderPresentationExtension {
+  final observations = <ReaderObs>[];
+  var consumeTap = true;
+  var taps = 0;
+  var closes = 0;
+  @override
+  void observe(ReaderObs observation) => observations.add(observation);
+  @override
+  Widget decoratePage(BuildContext context, PageAsset asset, BoxFit fit, Widget child) =>
+      KeyedSubtree(key: ValueKey('sidecar-page:${asset.index}'), child: child);
+  @override
+  Widget buildControls(BuildContext context) => const SizedBox(key: ValueKey('sidecar-control'));
+  @override
+  bool handleSingleTap(Offset globalPosition) { taps++; return consumeTap; }
+  @override
+  Future<void> close() async { closes++; dispose(); }
 }

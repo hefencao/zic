@@ -67,11 +67,8 @@
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
   经 `ReaderSessionSettings` 只读投影给分类器，非中性值参与 profile fingerprint；旧单向 weight 按 `0.5 + weight/2` 兼容迁移。
   Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影。
-  adaptive profile 现在重新作为跨行为输入：无显式方向时可选择方向；长按放大按漫画显式覆盖 >
-  adaptive 类型建议 > 模式默认解析（条漫默认关，页漫/动图默认开）。显式方向不再停止 profile 更新，
-  为后续翻译等消费者保留同一结果，同时不改变 Pipeline/NetLane owner。
-  来源级应用策略已统一收口到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；
-  旧 plugin-scoped 数据信任只在完整 source 集已由 installed-plugin authority 证明时退役；partial runtime discovery 会保留兼容 fallback。
+  adaptive profile 作为跨行为输入：无显式方向时可选择方向；长按放大按漫画显式覆盖 > adaptive 类型建议 > 模式默认解析（条漫默认关，页漫/动图默认开）。显式方向仍更新 profile；Pipeline/NetLane owner 保持。
+  来源级应用策略统一到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；旧 plugin-scoped 数据信任只在完整 source 集已由 installed-plugin authority 证明时退役，partial runtime discovery 保留兼容 fallback。
   configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
   阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
   全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接等只属于单一布局的选项仍保持单 owner。
@@ -198,6 +195,9 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
+- 漫画翻译：本地 PaddleOCR/Hy-MT/CTranslate2、OpenAI-compatible/DeepL、内容缓存/覆层；本地气泡保留段落。Debug 首页名点击测试、长按诊断。Reader 第三项单击开关/长按面板：重试左上、设置右上、无字开关左下；指示器上移一行附标签，独立药丸切换常驻/处理中/关闭，只显当前阶段图标与工作进度环，页码仅 Debug 显示；按漫画保存且不重建会话。语言与指示器药丸同规格按内容宽度；日/韩按漫画/模型记忆。
+  已挂载页订阅会话，启用/放大/重排保留译文；可见缓存不等其他页推理，miss 串行，关闭等输入退出。Trace 无正文。worker 编解码/摘要、分组几何复用；跨书共用 MT/detector，单识别器、保温 30 秒及后台/压力回收。extension 只读完整页租约；NetLane 覆盖正文退出，排队撤销完成取消，后端不重试取消。Hy-MT 加载前由基线 JNI 检查 CPU 能力。验证见 `docs/IMPLEMENTATION_STATE.json`。
+
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。
 - 静态竖排功耗报告已于 2026-09-24 重新按当前 owner 链复核：idle 恢复 3/7 static warm 是既定资源平滑策略，不作为功耗缺陷移除。

@@ -115,6 +115,11 @@ final class PromotedArtifactCacheHandoff {
     return _completedAutomaticCommits[session.id] == session.epoch;
   }
 
+  /// Read-only barrier for a promotion already being persisted. Unlike
+  /// [settleAutomatic], this never submits, retries or upgrades a commit.
+  Future<void> waitForPendingCommit(DownloadId id) =>
+      _commits[id] ?? Future<void>.value();
+
   /// Ensures a promoted transfer has a durable cache-owned body.
   ///
   /// Ordinary promotion observation does not materialize a reopenable source

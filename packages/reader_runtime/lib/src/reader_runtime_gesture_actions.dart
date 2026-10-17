@@ -22,6 +22,7 @@ extension _ReaderRuntimeGestureActions on _ReaderRuntimeScreenState {
     final reader = _reader;
     if (reader == null) return;
     if (_tapRegionDraft != null) return;
+    if (widget.presentationExtension?.handleSingleTap(globalPosition) == true) return;
     final mode = _readerMode(reader.direction);
     final settings = _settings.modeSettingsFor(mode);
     final zone = _tapZoneIndex(

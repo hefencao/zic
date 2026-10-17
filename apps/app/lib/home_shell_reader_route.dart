@@ -367,6 +367,8 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     final adjacent = _readerAdjacentChapters(current);
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
+      presentationExtensionFactory: (pipeline) => ComicTranslationReaderExtension(
+        pipeline, appPreferences: widget.preferences),
       adaptiveMetadata: versionSource == null
           ? null
           : AdaptiveReaderMetadata(

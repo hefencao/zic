@@ -22,6 +22,7 @@ enum TraceEventKind {
   readerSessionDisposeStarted,
   readerSessionDisposed,
   readerObservation,
+  comicTranslation,
   pageTransition,
   pageCurrent,
   pageHostMounted,

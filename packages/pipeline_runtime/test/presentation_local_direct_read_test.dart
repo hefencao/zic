@@ -14,6 +14,141 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('sidecar joins the existing durable handoff after the promoted snapshot', () async {
+    final chapter = _chapter(uri: Uri.parse('https://example.invalid/translation.jpg'));
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    final gate = Completer<void>();
+    final entered = Completer<void>();
+    final backend = _PresentationFileBackend(storeGate: gate.future, storeEntered: entered);
+    final lane = NetLane(maxActive: 1);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: null, net: lane,
+    );
+    final session = runtime.registry.get(id);
+    final transfer = DownloadJob(
+      session: session,
+      transport: LoaderTransport({
+        chapter.pages.single.uri: LoaderTransportSource(
+          revision: 'fixture-r1', loadBytes: () async => Uint8List.fromList([1, 2, 3]),
+        ),
+      }),
+    ).run();
+    final reader = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(), pageDownloadLane: lane,
+    ).withTransferRuntime(runtime).create(chapter: chapter, sessionId: 'sidecar-durable');
+    try {
+      await entered.future.timeout(const Duration(seconds: 3));
+      expect(session.state, DownloadState.promoted);
+      var finished = false;
+      final opening = reader.openSealedPageFile(chapter.pages.single, MediaLoadToken())
+          .then((lease) { finished = true; return lease; });
+      await Future<void>.delayed(Duration.zero);
+      expect(finished, isFalse);
+      gate.complete();
+      final lease = await opening;
+      expect(lease, isNotNull);
+      expect(lane.isIdle, isTrue);
+      await lease!.release();
+      expect(backend.releases, 1);
+      await transfer;
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await reader.dispose();
+      await runtime.dispose();
+    }
+  });
+
+  test('sealed sidecar file admits WebP without creating a transfer or demand', () async {
+    final chapter = _chapter(
+      uri: Uri.parse('https://example.invalid/translation.webp'),
+      contentKindHint: ContentKindHint.webp,
+    );
+    final backend = _PresentationFileBackend();
+    final lane = NetLane(maxActive: 1);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: null,
+      net: lane,
+    );
+    final reader = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: lane,
+    ).withTransferRuntime(runtime).create(chapter: chapter, sessionId: 'sidecar');
+    try {
+      final lease = await reader.openSealedPageFile(chapter.pages.single, MediaLoadToken());
+      expect(lease, isNotNull);
+      expect(lease!.path, '/proc/self/fd/41');
+      expect(runtime.registry.find(readerPageDownloadId(chapter, chapter.pages.single)), isNull);
+      expect(lane.isIdle, isTrue);
+      expect(backend.releases, 0);
+      await lease.release();
+      expect(backend.releases, 1);
+    } finally {
+      await reader.dispose();
+      await runtime.dispose();
+    }
+  });
+
+  test('sealed sidecar rejects misses and historical fresh-source carriers', () async {
+    final chapter = _chapter(uri: Uri.parse('https://example.invalid/translation.jpg'));
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    for (final historical in [false, true]) {
+      final backend = _PresentationFileBackend();
+      final cache = ArtifactCacheManager(backend: historical ? backend : const _Backend());
+      if (historical) {
+        final recovery = cache.beginFreshSourceRecovery({id});
+        cache.armFreshSourceRecovery(recovery);
+      }
+      final runtime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache, partialDownloadStore: null, net: NetLane(maxActive: 1),
+      );
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: runtime.net,
+      ).withTransferRuntime(runtime).create(chapter: chapter, sessionId: 'sidecar-miss');
+      try {
+        expect(await reader.openSealedPageFile(chapter.pages.single, MediaLoadToken()), isNull);
+        expect(runtime.registry.find(id), isNull);
+        expect(backend.opens, 0);
+      } finally {
+        await reader.dispose();
+        await runtime.dispose();
+      }
+    }
+  });
+
+  test('sidecar cancellation waits for open and releases the late file', () async {
+    final chapter = _chapter(uri: Uri.parse('https://example.invalid/translation.jpg'));
+    final gate = Completer<void>();
+    final entered = Completer<void>();
+    final backend = _PresentationFileBackend(openGate: gate.future, openEntered: entered);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: null, net: NetLane(maxActive: 1),
+    );
+    final reader = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: runtime.net,
+    ).withTransferRuntime(runtime).create(chapter: chapter, sessionId: 'sidecar-cancel');
+    try {
+      final token = MediaLoadToken();
+      final opening = reader.openSealedPageFile(chapter.pages.single, token);
+      await entered.future;
+      token.cancel();
+      expect(backend.releases, 0);
+      gate.complete();
+      await expectLater(opening, throwsA(isA<Failure>().having(
+        (failure) => failure.code, 'code', ErrorCode.cancelled,
+      )));
+      expect(backend.releases, 1);
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await reader.dispose();
+      await runtime.dispose();
+    }
+  });
+
   test(
     'promoted resident cache body serves presentation without session artifact',
     () async {
@@ -1012,24 +1147,35 @@ ChapterManifest _chapter({
     );
 
 final class _PresentationFileBackend implements ArtifactCacheBackend {
+  _PresentationFileBackend({this.openGate, this.openEntered, this.storeGate, this.storeEntered});
+  final Future<void>? openGate;
+  final Completer<void>? openEntered;
+  final Future<void>? storeGate;
+  final Completer<void>? storeEntered;
+  bool _stored = false;
   int opens = 0;
   int releases = 0;
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
     opens++;
+    if (storeGate != null && !_stored) return null;
     return ArtifactCacheStreamEntry(
       length: 3,
       open: ({required int start, int? endExclusive}) async* {
         yield Uint8List.fromList(const <int>[1, 2, 3]);
       },
-      openPresentationFile: () async => ArtifactCachePresentationFileLease(
-        path: '/proc/self/fd/41',
-        length: 3,
-        width: 1200,
-        height: 1800,
-        release: () async => releases++,
-      ),
+      openPresentationFile: () async {
+        openEntered?.complete();
+        await openGate;
+        return ArtifactCachePresentationFileLease(
+          path: '/proc/self/fd/41',
+          length: 3,
+          width: 1200,
+          height: 1800,
+          release: () async => releases++,
+        );
+      },
     );
   }
 
@@ -1037,7 +1183,11 @@ final class _PresentationFileBackend implements ArtifactCacheBackend {
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,
-  }) async {}
+  }) async {
+    storeEntered?.complete();
+    await storeGate;
+    _stored = true;
+  }
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {}

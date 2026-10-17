@@ -14,6 +14,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'dialog_actions.dart';
 
 import 'app_preferences.dart';
+import 'comic_translation_settings_screen.dart';
 import 'chapter_download_directory.dart';
 import 'directory_picker.dart';
 import 'diagnostic_error_ui.dart';
@@ -216,6 +217,13 @@ final class SettingsScreen extends StatelessWidget {
               context,
               ReadingSettingsScreen(preferences: preferences),
             ),
+          ),
+          _SettingsEntry(
+            key: const ValueKey('settings-translation-entry'),
+            icon: Icons.translate,
+            title: '翻译模型与 API',
+            subtitle: 'OCR、本地翻译与远程 API',
+            onTap: () => _push(context, const ComicTranslationSettingsScreen()),
           ),
           _SettingsEntry(
             key: settingsDownloadEntryKey,

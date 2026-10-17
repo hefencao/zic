@@ -192,6 +192,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
     this.adaptiveMetadata,
+    this.presentationExtensionFactory,
     this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
     this.responseSources = const <String, LocalImageResponseSource>{},
     this.onPreviewStateChanged,
@@ -221,6 +222,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
 
   final ImportedChapterRecord record;
   final AdaptiveReaderMetadata? adaptiveMetadata;
+  final ReaderPresentationExtensionFactory? presentationExtensionFactory;
   final Map<String, LocalImageFileBytesLoader> byteLoaders;
   final Map<String, LocalImageResponseSource> responseSources;
   final ImagePreviewStateChanged? onPreviewStateChanged;
@@ -263,129 +265,134 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       chapter: chapter,
       factory: configuredFactory,
       traceSink: traceSink,
-      builder: (context, pipeline) => ReaderRuntimeScreen(
+      builder: (context, pipeline) => ReaderPresentationExtensionHost(
         pipeline: pipeline,
-        screenKey: imageFolderScreenKey,
-        chapter: chapter,
-        adaptiveMetadata: adaptiveMetadata ??
-            AdaptiveReaderMetadata(
-              sourceKey: record.sourceId,
-              comicId: record.comicId,
-              title: record.comicTitle,
-              authors: record.comicAuthors,
-              tags: record.comicTags,
-              sourceUrl: record.pages.first.uri.toString(),
-            ),
-        initialProgress: initialProgress,
-        onProgressChanged: onProgressChanged,
-        onProgressFlush: onProgressFlush,
-        initialFavorite: initialFavorite,
-        onFavoriteChanged: onFavoriteChanged,
-        onDownloadRequested: onDownloadRequested,
-        onFirstPresentationFrame: onFirstPresentationFrame,
-        initiallyImmersive: initiallyImmersive,
-        initialSettings: initialReaderSettings,
-        onSettingsChanged: onReaderSettingsChanged,
-        onModeSettingsChanged: onReaderModeSettingsChanged,
-        onOpenGlobalReadingSettings: onOpenGlobalReadingSettings,
-        onOpenSourceWebView: onOpenSourceWebView,
-        onOpenExternalBrowser: onOpenExternalBrowser,
-        canReadPreviousChapter: canReadPreviousChapter,
-        canReadNextChapter: canReadNextChapter,
-        onChapterBoundaryRequested: onChapterBoundaryRequested,
-        pageSubtitleBuilder: (asset) {
-          final current = record.pages[asset.index];
-          final uri = current.uri;
-          final displayName = !uri.hasScheme ||
-                  uri.scheme == 'file' || uri.scheme == 'content'
-              ? current.displayName
-              : '第 ${asset.index + 1} 页';
-          return '$displayName · ${_importedPageFormat(current).label}';
-        },
-        artifactPageBuilder: (
-          context,
-          asset,
-          reportFirstFrame,
-          runtime,
-        ) {
-          final page = record.pages[asset.index];
-          final format = _importedPageFormat(page);
-          final image = PickedImage(
-            file: XFile(page.sourceId),
-            format: format,
-            displayName: page.displayName,
-            sourceId: page.sourceId,
-            byteLength: page.byteLength,
-            readBytes: byteLoaders[page.sourceId] ??
-                (_isRemoteMediaUri(page.uri)
-                    ? () => Future<Uint8List>.error(
-                          StateError(
-                            'remote page bytes are owned by the Reader artifact',
-                          ),
-                        )
-                    : () => readLocalImageSource(page.sourceId)),
-          );
-          return ColoredBox(
-            color: Colors.black,
-            child: LocalImagePlayer(
-              key: ValueKey<String>(
-                'folder-image:${page.sourceId}:${format.name}:${asset.index}',
+        factory: presentationExtensionFactory,
+        builder: (extension) => ReaderRuntimeScreen(
+          presentationExtension: extension,
+          pipeline: pipeline,
+          screenKey: imageFolderScreenKey,
+          chapter: chapter,
+          adaptiveMetadata: adaptiveMetadata ??
+              AdaptiveReaderMetadata(
+                sourceKey: record.sourceId,
+                comicId: record.comicId,
+                title: record.comicTitle,
+                authors: record.comicAuthors,
+                tags: record.comicTags,
+                sourceUrl: record.pages.first.uri.toString(),
               ),
-              image: image,
-              presentationBytesLoader: (_, token) =>
-                  runtime.loadPresentationBytes(token),
-              presentationFileLoader: runtime.openEncodedPresentationFile,
-              onRecoverPresentationFailure: onPagePresentationRecovery == null
-                  ? runtime.recoverPresentationFailure
-                  : (error, authority) async {
-                      if (await onPagePresentationRecovery!(
-                        asset,
-                        error,
-                        userInitiated: false,
-                      )) {
-                        return true;
-                      }
-                      return runtime.recoverPresentationFailure(
-                        error,
-                        authority,
-                      );
-                    },
-              onRetry: onPagePresentationRecovery == null
-                  ? runtime.retryPresentation
-                  : null,
-              onRetryWithError: onPagePresentationRecovery == null
-                  ? null
-                  : (error) async {
-                      if (error != null &&
-                          await onPagePresentationRecovery!(
-                            asset,
-                            error,
-                            userInitiated: true,
-                          )) {
-                        return true;
-                      }
-                      return runtime.retryPresentation();
-                    },
-              onPreviewStateChanged: onPreviewStateChanged,
-              onFirstFrame: reportFirstFrame,
-              downloadIdentity: runtime.pageStream.identity,
-              traceClock: runtime.clock,
-              traceSink: runtime.traceSink,
-              traceSessionId: runtime.sessionId,
-              demandRevision: runtime.demandRevision,
-              playback: runtime.playback,
-              pageStream: runtime.pageStream,
-              pageOutput: runtime.pageOutput,
-              staticPresentation: staticPresentation,
-              onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
-              onDimensionsChanged: (size) => runtime.reportDimensions(
-                size.width.round(),
-                size.height.round(),
+          initialProgress: initialProgress,
+          onProgressChanged: onProgressChanged,
+          onProgressFlush: onProgressFlush,
+          initialFavorite: initialFavorite,
+          onFavoriteChanged: onFavoriteChanged,
+          onDownloadRequested: onDownloadRequested,
+          onFirstPresentationFrame: onFirstPresentationFrame,
+          initiallyImmersive: initiallyImmersive,
+          initialSettings: initialReaderSettings,
+          onSettingsChanged: onReaderSettingsChanged,
+          onModeSettingsChanged: onReaderModeSettingsChanged,
+          onOpenGlobalReadingSettings: onOpenGlobalReadingSettings,
+          onOpenSourceWebView: onOpenSourceWebView,
+          onOpenExternalBrowser: onOpenExternalBrowser,
+          canReadPreviousChapter: canReadPreviousChapter,
+          canReadNextChapter: canReadNextChapter,
+          onChapterBoundaryRequested: onChapterBoundaryRequested,
+          pageSubtitleBuilder: (asset) {
+            final current = record.pages[asset.index];
+            final uri = current.uri;
+            final displayName = !uri.hasScheme ||
+                    uri.scheme == 'file' || uri.scheme == 'content'
+                ? current.displayName
+                : '第 ${asset.index + 1} 页';
+            return '$displayName · ${_importedPageFormat(current).label}';
+          },
+          artifactPageBuilder: (
+            context,
+            asset,
+            reportFirstFrame,
+            runtime,
+          ) {
+            final page = record.pages[asset.index];
+            final format = _importedPageFormat(page);
+            final image = PickedImage(
+              file: XFile(page.sourceId),
+              format: format,
+              displayName: page.displayName,
+              sourceId: page.sourceId,
+              byteLength: page.byteLength,
+              readBytes: byteLoaders[page.sourceId] ??
+                  (_isRemoteMediaUri(page.uri)
+                      ? () => Future<Uint8List>.error(
+                            StateError(
+                              'remote page bytes are owned by the Reader artifact',
+                            ),
+                          )
+                      : () => readLocalImageSource(page.sourceId)),
+            );
+            return ColoredBox(
+              color: Colors.black,
+              child: LocalImagePlayer(
+                key: ValueKey<String>(
+                  'folder-image:${page.sourceId}:${format.name}:${asset.index}',
+                ),
+                image: image,
+                presentationBytesLoader: (_, token) =>
+                    runtime.loadPresentationBytes(token),
+                presentationFileLoader: runtime.openEncodedPresentationFile,
+                onRecoverPresentationFailure: onPagePresentationRecovery == null
+                    ? runtime.recoverPresentationFailure
+                    : (error, authority) async {
+                        if (await onPagePresentationRecovery!(
+                          asset,
+                          error,
+                          userInitiated: false,
+                        )) {
+                          return true;
+                        }
+                        return runtime.recoverPresentationFailure(
+                          error,
+                          authority,
+                        );
+                      },
+                onRetry: onPagePresentationRecovery == null
+                    ? runtime.retryPresentation
+                    : null,
+                onRetryWithError: onPagePresentationRecovery == null
+                    ? null
+                    : (error) async {
+                        if (error != null &&
+                            await onPagePresentationRecovery!(
+                              asset,
+                              error,
+                              userInitiated: true,
+                            )) {
+                          return true;
+                        }
+                        return runtime.retryPresentation();
+                      },
+                onPreviewStateChanged: onPreviewStateChanged,
+                onFirstFrame: reportFirstFrame,
+                downloadIdentity: runtime.pageStream.identity,
+                traceClock: runtime.clock,
+                traceSink: runtime.traceSink,
+                traceSessionId: runtime.sessionId,
+                demandRevision: runtime.demandRevision,
+                playback: runtime.playback,
+                pageStream: runtime.pageStream,
+                pageOutput: runtime.pageOutput,
+                staticPresentation: staticPresentation,
+                onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
+                onDimensionsChanged: (size) => runtime.reportDimensions(
+                  size.width.round(),
+                  size.height.round(),
+                ),
+                fit: runtime.mediaFit,
               ),
-              fit: runtime.mediaFit,
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

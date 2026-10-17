@@ -200,6 +200,16 @@ def _check_duplicate_parameters(path: Path, source: str) -> None:
         before = source[max(0, start - 120):start]
         if re.search(r'[A-Za-z_]\w*(?:\s*<[^;{}()]*>)?\s*$', before) is None:
             continue
+        # A colon may terminate the true arm of a conditional expression.
+        # Only a constructor declaration can introduce an initializer list.
+        if re.match(r'\s*:', after):
+            classes = re.findall(r'\bclass\s+([A-Za-z_]\w*)', source)
+            constructors = '|'.join(re.escape(name) for name in classes)
+            if not constructors or re.search(
+                rf'(?:^|[;{{}}])\s*(?:const\s+)?(?:{constructors})'
+                r'(?:\.[A-Za-z_]\w*)?\s*$', before,
+            ) is None:
+                continue
         segments = _top_level_segments(source[start + 1:end])
         if any(re.match(r'\s*[A-Za-z_]\w*\s*:', segment) for segment in segments):
             continue

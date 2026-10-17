@@ -41,6 +41,7 @@ final class LocalMediaDocumentResponse {
     required this.rangeSupported,
     required this.partial,
     required this.close,
+    this.completeFilePath,
   });
 
   final Stream<List<int>> bytes;
@@ -49,6 +50,16 @@ final class LocalMediaDocumentResponse {
   final String revision;
   final bool rangeSupported;
   final bool partial;
+  final Future<void> Function() close;
+  /// Pinned descriptor for a whole document starting at byte zero.
+  final String? completeFilePath;
+}
+
+/// Source-owned file capability, held until the native consumer has exited.
+final class LocalMediaDocumentFileLease {
+  const LocalMediaDocumentFileLease({required this.path, required this.close});
+
+  final String path;
   final Future<void> Function() close;
 }
 
@@ -161,6 +172,8 @@ final class LocalMediaBridge {
         directStart >= 0 &&
         (directEndExclusive == null ||
             (directEndExclusive is int && directEndExclusive >= directStart));
+    Future<void>? closing;
+    Future<void> close() => closing ??= _closeDocumentHandle(handleId);
     return LocalMediaDocumentResponse(
       bytes: _readDocumentStream(
         handleId,
@@ -168,14 +181,69 @@ final class LocalMediaBridge {
         directStart: hasDirectDescriptor ? directStart : null,
         directEndExclusive:
             hasDirectDescriptor ? directEndExclusive as int? : null,
+        close: close,
       ),
       rangeStart: rangeStart,
       totalLength: totalLength as int?,
       revision: revision,
       rangeSupported: rangeSupported,
       partial: partial,
-      close: () => _closeDocumentHandle(handleId),
+      close: close,
+      completeFilePath: hasDirectDescriptor &&
+              !partial && rangeStart == 0 && directStart == 0 &&
+              totalLength != null && directEndExclusive == totalLength
+          ? directPath : null,
     );
+  }
+
+  /// Opens only a local content document. Providers without a complete seekable
+  /// descriptor are spooled to a temporary file owned by this lease.
+  Future<LocalMediaDocumentFileLease> openDocumentFile(String sourceUri) async {
+    if (Uri.parse(sourceUri).scheme != 'content') {
+      throw ArgumentError.value(sourceUri, 'sourceUri', 'must be a content URI');
+    }
+    final response = await openDocument(sourceUri);
+    Directory? temporary;
+    var transferred = false;
+    try {
+      final path = response.completeFilePath;
+      if (path != null) {
+        final stat = await File(path).stat();
+        if (stat.type == FileSystemEntityType.file &&
+            stat.size == response.totalLength) {
+          transferred = true;
+          return LocalMediaDocumentFileLease(path: path, close: response.close);
+        }
+      }
+      temporary = await Directory.systemTemp.createTemp('zic_document_');
+      final file = File('${temporary.path}/image');
+      final sink = file.openWrite();
+      try {
+        await sink.addStream(response.bytes);
+      } finally {
+        await sink.close();
+      }
+      if (response.totalLength != null &&
+          await file.length() != response.totalLength) {
+        throw StateError('Local document ended before its declared length');
+      }
+      await response.close();
+      final directory = temporary;
+      Future<void>? closing;
+      transferred = true;
+      return LocalMediaDocumentFileLease(
+        path: file.path,
+        close: () => closing ??= directory.delete(recursive: true).then((_) {}),
+      );
+    } finally {
+      if (!transferred) {
+        try {
+          await response.close();
+        } finally {
+          await temporary?.delete(recursive: true);
+        }
+      }
+    }
   }
 
   Stream<List<int>> _readDocumentStream(
@@ -183,6 +251,7 @@ final class LocalMediaBridge {
     String? directPath,
     int? directStart,
     int? directEndExclusive,
+    Future<void> Function()? close,
   }) async* {
     try {
       if (directPath != null && directStart != null) {
@@ -235,7 +304,7 @@ final class LocalMediaBridge {
         yield chunk;
       }
     } finally {
-      await _closeDocumentHandle(handleId);
+      await (close?.call() ?? _closeDocumentHandle(handleId));
     }
   }
 

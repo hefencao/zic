@@ -24,6 +24,7 @@
 ```text
 apps/app/                  Flutter composition root、导航和产品页面
 packages/domain/           领域 identity、值对象和不可变实体
+packages/comic_translation/ 本地 OCR、文字翻译、模型管理与独立译文覆层
 packages/catalog/          漫画源、manifest、稳定 catalog/cache identity
 packages/resource_cache/   封面、详情、搜索和元数据响应缓存
 packages/transport/        可取消、可分块 encoded-byte transport 合同
@@ -74,6 +75,7 @@ Flutter host 位于 `apps/app/`，不要在仓库根目录执行 `flutter create
 cd apps/app
 flutter pub get
 python3 ../../tool/prepare_rhttp_android.py
+python3 ../../tool/prepare_translation_android.py
 flutter run --no-pub -d android
 ```
 

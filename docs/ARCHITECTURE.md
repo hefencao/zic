@@ -205,6 +205,10 @@ composition关闭先drain媒体生产者、平台retain及decode/source-write，
 cache invalidation、session reset 与 network re-admission 全部留在 Pipeline/composition owner。
 
 ### Home 组合与生命周期
+
+Debug 模式下，首页顶栏应用名的单击打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
+测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
+
 - Reader native media/process prewarm 只能是 acceleration hint：
   可以在章节 materialization 同时启动，但章节准备/route readiness MUST NOT await prewarm；
   真实 decode worker/texture capability 在需要时自行 join/retry，并保留错误 authority。
@@ -1059,7 +1063,7 @@ DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 cur
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺寸只作兜底，预热失败可重试且不得改变 demand/playback 语义。adaptive profile 不得借此改写 NetLane、download/decode window 或 prefetch owner。手势缩放是纯 presentation 行为：
 `ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0，两个倍率均由独立 slider 调整 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
-所有页面一起缩放）。全局 Reader presentation/gesture 偏好由 App preferences 按布局保存为两个独立 `ReaderModeSettings`：paged 与 continuous 的连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界和 zoom decode boost 可以分别取值；
+所有页面一起缩放）。paged 插入/移除缩放容器时由同一 keyed content 保留 PageHost、媒体与装饰层的 State；1x 不挂载缩放手势识别器。全局 Reader presentation/gesture 偏好由 App preferences 按布局保存为两个独立 `ReaderModeSettings`：paged 与 continuous 的连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界和 zoom decode boost 可以分别取值；
 只适用于单一布局的分页方向、纵向拼接仍各自保持单一 owner，系统栏等真正全局 UI policy 也不复制。高置信 adaptive profile 可按漫画类型覆盖长按启用默认，
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
@@ -1124,6 +1128,45 @@ writer尚未ready/启动失败时persistent store只保留每章latest checkpoin
 reload 在开始阶段捕获的 entries/SavedComic snapshot如果在 enrichment期间已被 write-through mutation超越，
 结束时不得覆盖更新后的 mounted projection，download snapshot也必须基于最终可见 entries。
 inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统直接终止只提供 best effort。
+
+### 漫画翻译旁路
+
+`comic_translation` 拥有 OCR、文字翻译、模型安装、内容寻址缓存和文字覆层；App 的
+`ComicTranslationReaderExtension` 组合该旁路与当前章节。`ReaderPresentationExtensionHost`
+拥有旁路生命周期，Reader 仅转发 `ReaderObs`、已消歧单击并消费装饰层和控件。
+开启翻译、切换后端和查看原文不更换媒体 provider、Pipeline session、播放 cursor 或 texture。
+App 的页装饰层独立订阅旁路变更，使已挂载页接收异步初始化与配置替换后的会话；媒体 child 保持同一实例。
+底栏第三项翻译按钮单击切换、长按打开面板；重试在左上、设置在右上，左下翻译开关仅保留控件与无障碍名称；上一行显示“翻译指示器”标签和可直接切换的独立药丸，按漫画保存常驻/处理中/关闭模式。启用和显示选项变化保留会话及有效结果；启用重放最新视口，推理配置变化才重建。
+长按面板以独立药丸直接选择本漫画原文语言；语言与指示器共用字号、高度、内边距和选项间距，每项按内容宽度显示。覆盖按 source/comic 保存，不改全局默认。自动模式把确认的日/韩语与 OCR 模型版本独立记忆；手动选择优先，回到自动时清除旧判断。
+未知语言只对一块正文以 960px 分析尺度采样、每个识别器最多六个文字区域比较可信脚本证据；无字、仅汉字/英文或冲突样本保持未定，后续有正文页再判定。
+当前页阶段由旁路只读状态投影到 Reader 视口右上角，仅绘制当前阶段的一个图标，OCR 与翻译分别使用扫描与翻译图标，工作时附进度环；逻辑尺寸与安全边距不随图片分辨率或放大变换缩放。页号仅在 App 拥有的 Debug 模式开启时显示，其变更只更新呈现。
+常驻模式保留完成/异常提示；处理中模式仅在等待图片、排队、读缓存、OCR 或翻译时显示，终态隐藏，不新增计时器或任务状态。具体阶段保留在无障碍名称和长按面板中；旧显示开关偏好仍有效。
+
+`PipelineReaderSession.openSealedPageFile()` 只打开当前 authority 的完整 artifact 租约，miss
+不会下载或重试；若普通 promoted handoff 已在持久化，读取只等待该既有提交。
+fresh-source quarantine 中的历史呈现不能作为 OCR 输入。源自本地文件的
+图片仍由来源拥有；`LocalMediaBridge.openDocumentFile()` 保留完整文档描述符，不能直接表示整图时
+由本地来源桥生成临时文件，租约释放时删除。输入租约覆盖内容摘要、OCR 和缓存操作，并在所有成功、失败、取消路径退出后释放。
+OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语言、上下文、协议/提示词版本和拟声词策略。
+缓存 JSON/base64 编解码和 OCR artifact 摘要在既有存储 worker 完成，向旁路返回 typed artifact 与摘要；命中缓存不加载推理模型。自动识别协议单独隔离旧的 auto OCR 缓存，显式语言身份保持兼容。
+可见页可在其他页面推理期间独立检查完整输入与持久缓存；该检查不调用模型，miss 仍回到原串行推理队列，hit 直接发布译文并跳过重复任务。关闭等待推理和缓存检查全部退出后释放租约。App 将缓存命中、模型调用和就绪耗时写入有界 Trace，不记录正文或凭据。
+气泡分组的文字蒙版展开、位置边界、覆盖率和凹度只在单次 resolution 内计算一次；该临时几何缓存不跨页或跨调用保留，避免请求、上下文与覆层中的成对比较重复扫描密集蒙版。
+翻译仅准备当前可见页和最多后续四张已有缓存的静态页，不扩大现有 encoded/decode 水位。
+重复视口观察不重排同代正在处理的页面，准备图片/缓存、OCR 与翻译阶段沿同一次任务推进。
+
+Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
+不在 Flutter UI isolate 或 Android platform 主线程推理。
+Hy-MT 的优化运行库加载前，独立的基线 ISA JNI 库读取系统 AArch64 HWCAP，核对 ARMv8.2-A/DotProd 编译所需能力；不兼容设备显式报告不可用，不加载优化库或回退远程。
+Engine registry 拥有模型租约与有界保温：相同翻译后端跨漫画/语言复用，OCR 仅切换识别器并保留 detector。关闭翻译或退出会话后，最后租约等待已提交调用实际退出，再保温最多 30 秒；超时回收。
+App 向 registry 转发后台和内存压力：后台停止旁路新工作并在实际调用退出后卸载，恢复时重放观察；内存压力回收模型驻留但保留有效租约与内容缓存。会话更换不继承前一本漫画的上下文。
+本地整页文字以气泡列表传入 worker，各气泡独立生成；可与源行对应的译文换行保留为段落，气泡内部不注入可见分隔符。
+协议版本参与译文缓存身份，所有调用继续使用同一 engine registry 串行边界。
+远程 OpenAI-compatible/DeepL 仅接收文字，无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入
+共享 `NetLane`，容量覆盖响应正文的真实退出；尚未执行即被调度器撤销的请求通过自身 key 的退休通知完成取消，不等待其他任务；文字后端直接传播取消，不将其视为可重试错误。API key 单独保存在 App 私有 secrets 文件，
+不进入偏好、翻译 artifact 或库备份。普通设置保存全局默认，Reader 设置可按 source/comic 覆盖翻译策略。
+DeepL 空白 `model_type` 归一为现有 `latency_optimized` 默认，并以同一值生成请求和缓存身份；未知非空值仍报错。
+覆层保持 `IgnorePointer`；原文查看复用 Reader 的单击判定，命中气泡后暂隐译文 1.5 秒。
+同一图片与视口更新章节字号时，覆层保留上一份完整布局，待替代布局准备完成后切换；图片身份或视口几何变化不能借用旧布局。
 
 ## 5. 页面角色、窗口与优先级
 - Reader route 进入 `inactive/hidden/paused/detached` 后，用户播放状态不变，但 Pipeline playback MUST 临时视为 paused；

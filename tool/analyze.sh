@@ -28,6 +28,7 @@ for rel in \
 done
 
 for rel in \
+  packages/comic_translation \
   packages/reader \
   packages/pipeline_runtime \
   packages/pipeline_native \

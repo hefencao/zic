@@ -11,6 +11,7 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
   REQUIRE_TOOLCHAINS=1
 fi
 
+python3 "$ROOT/tool/test_dart_structure_conditional.py"
 python3 "$ROOT/tool/check_repo.py"
 python3 "$ROOT/tool/check_documentation.py"
 python3 "$ROOT/tool/check_dart_structure.py"
@@ -363,6 +364,7 @@ if command -v flutter >/dev/null 2>&1; then
   "$ROOT/tool/test_dart.sh"
   "$ROOT/tool/test_flutter.sh"
   ZIC_ANDROID_NATIVE=0 "$ROOT/tool/build_android.sh" debug
+  python3 "$ROOT/tool/check_android_translation.py" --apk "$ROOT/apps/app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
   echo "Flutter SDK is required" >&2
   exit 1

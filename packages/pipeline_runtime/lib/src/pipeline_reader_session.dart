@@ -1979,6 +1979,52 @@ final class PipelineReaderSession {
     return !path.endsWith('.webp') && !path.endsWith('.gif');
   }
 
+  /// Read-only sidecar ingress. Opens only an already complete, authoritative
+  /// artifact; a miss never schedules transport, decode, retry or presentation.
+  Future<PipelineEncodedPresentationFileLease?> openSealedPageFile(
+    PageAsset asset,
+    MediaLoadToken token,
+  ) async {
+    token.throwIfCancelled();
+    if (_disposed) return null;
+    final cache = _artifactCacheManager;
+    if (cache == null) return null;
+    final id = readerPageDownloadId(chapter, asset);
+    // A retained historical carrier is a visual fallback, not OCR authority.
+    if (cache.requiresFreshSource(id)) return null;
+    final download = _transferRuntime.findSession(id);
+    if (download != null) {
+      // Promoted is published before the ordinary durable handoff finishes.
+      // Join only that existing commit so a stationary page cannot miss its
+      // sole completeness notification and wait forever for another snapshot.
+      await _transferRuntime.artifactCacheHandoff?.waitForPendingCommit(download.id);
+      token.throwIfCancelled();
+      if (_disposed || cache.requiresFreshSource(id)) return null;
+    }
+    final read = await cache.openPresentationFile(
+      id,
+      control: _MediaLoadTaskControl(token),
+    );
+    if (read == null) return null;
+    if (token.isCancelled || _disposed || cache.requiresFreshSource(id)) {
+      await read.release();
+      token.throwIfCancelled();
+      return null;
+    }
+    return PipelineEncodedPresentationFileLease(
+      path: read.path,
+      length: read.length,
+      cacheIdentity: read.cacheIdentity,
+      width: read.width,
+      height: read.height,
+      authority: PipelinePresentationArtifactAuthority(
+        storageId: read.storageId,
+        generation: read.generation,
+      ),
+      release: read.release,
+    );
+  }
+
   Future<PipelineEncodedPresentationFileLease?> openEncodedPresentationFile(
     PageAsset asset,
     MediaLoadToken token,

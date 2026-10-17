@@ -7,6 +7,7 @@ environment:
 workspace:
   - apps/app
   - packages/domain
+  - packages/comic_translation
   - packages/downloads
   - packages/downloads_bridge
   - packages/catalog

@@ -259,6 +259,8 @@
 ## 1. 产品范围
 zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、
 partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
+首页应用名 MUST 仅在 Debug 模式响应诊断操作：单击打开翻译测试，长按打开已展开且翻译测试置顶的诊断项页。
+翻译测试 MUST 提供翻译设置入口；单次测试语言 MUST NOT 改变阅读默认。
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 
@@ -1318,6 +1320,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   来源 WebView 打开和系统浏览器打开；Web 入口只在 App composition 能给出合法 HTTP(S) 漫画页 capability 时提供。
 - 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并在 paged/continuous 各自保存。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
+  分页进出放大 MUST 保留同页媒体与装饰层的挂载状态，不能因缩放容器变化重建它们；1x MUST NOT 挂载会抢占翻页的缩放识别器。
 - 长按放大移动方式 MUST 可设置为拖动或聚焦。拖动模式内容位移 = 手指累计位移 × 拖动比率（默认 1.0，即按放大后分辨率 1:1 跟随；
   比率可设 0.25–4），聚焦模式保持手指下的内容点始终位于手指处（位移 = p·(1−s)）。拖动实现 MUST 以长按起点平移为基准应用一次累计位移，MUST NOT 逐帧重复累加导致失控。
 - "最大可视"边界约束（默认开启、可设置关闭）MUST 按实际显示图片矩形计算，而非页面控件矩形：contain 留边时以图片边缘为准——缩放后图片能覆盖视口的轴，一侧越界则对侧不得越界；不能覆盖的轴保持图片居中。
@@ -1465,6 +1468,41 @@ Flutter generic `ImageCache` 仍可服务非 Reader 图片和 provider decode ba
 当统一owner因预算回收speculative raster后，MUST由该owner同时拒绝同identity的speculative re-admission，直到claim提升为deadline/protected；Pipeline MUST NOT另存far-eviction tombstone或被动revalidation状态。
 mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHost listener MUST NOT绕过owner denial重新申请first-frame grant。
 `clearPresentationRasters()` / memory pressure MUST只清residency而保留现有demand claim；被clear的speculative identity MUST进入同一owner-side admission denial，deadline/protected claim MAY按当前需求恢复。
+
+### 2.5 漫画翻译
+
+- 翻译默认 MUST 关闭；设置 MUST 提供本地 OCR、本地 Hy-MT/CTranslate2、OpenAI-compatible 与 DeepL 的显式配置，
+  支持 API profile、语言、上下文、拟声词与原文清除策略；漫画可覆盖全局翻译默认。
+- Reader 底栏第三项翻译按钮 MUST 单击切换本漫画翻译、长按打开面板。重试 MUST 在左上、设置在右上，翻译开关 MUST 在左下且不显示文字标签，保留无障碍名称。启用变化 MUST 保留会话与有效结果，开启时消费最新视口；推理配置替换 MUST 关闭旧会话。
+  当前已挂载页 MUST 接收初始化和配置变更后的翻译输出，不得依赖切页刷新。
+- 长按面板 MUST 以独立药丸提供本漫画原文语言快捷选择并按 source/comic 持久化，MUST NOT 改全局默认；手动选择优先。语言和指示器药丸 MUST 共用字号、高度、内边距及选项间距，每项按内容宽度显示，MUST NOT 填满剩余行宽。
+  自动模式 MUST 按 OCR 模型版本记忆已确认的日/韩语；重新从手动选择自动时清除旧判断。未知语言采样 MUST 有界，不能每页完整运行两套 OCR；无字、纯汉字/英文及冲突证据 MUST NOT 固化语言。
+- 开启翻译时 MUST 默认在阅读视口右上角常驻显示当前阶段的单个图标；准备、OCR、翻译、就绪与异常 MUST 可区分，工作时 MUST 有进度环。页号 MUST 仅在应用 Debug 模式开启时显示；尺寸 MUST 独立于图片分辨率与缩放。
+  可见指示器 MUST 保留含具体阶段的无障碍名称，长按面板 MUST 提供详细状态。
+  翻译开关上一行 MUST 显示“翻译指示器”标签与可直接切换的独立药丸，提供常驻/处理中/关闭模式并按漫画保存，保留旧显示偏好。处理中模式 MUST 仅在等待图片、排队、读缓存、OCR 或翻译时显示，所有终态隐藏；显示选项 MUST NOT 重建会话或触发推理。
+  相同视口重复观察 MUST NOT 把正在处理的同代页面降回排队或重复提交。
+- DeepL 空白 `model_type` MUST 使用既有 `latency_optimized` 默认并统一请求与缓存身份；未知非空类型 MUST 报错。
+- 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
+  不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
+- OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
+  本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
+  Hy-MT 优化运行库及其依赖加载前 MUST 以基线 ISA 检查 CPU 是否支持编译所需的 ARMv8.2-A/DotProd 能力；不支持 MUST 返回不可用。
+- 模型驻留 MUST 由统一 engine registry 管理。相同翻译模型跨语言/漫画 MUST 可复用，日/韩 OCR 切换 MUST 保留 detector 并只驻留一个识别器。
+  最后租约/禁用后的模型 MAY 保温最多 30 秒；进入后台或内存压力 MUST 在正在执行的调用实际退出后回收。后台 MUST 停止新翻译工作，恢复后按有效观察继续；切书 MUST 清除前书上下文。
+- 本地翻译 MUST 保留可与源行对应的段落换行，不得在 OCR 行间注入可见分隔符；协议改变 MUST 更新译文缓存身份。
+- 动图 MUST 保持原图播放并显示翻译不支持状态。静态页图片 MUST 先于译文独立呈现。
+- OCR/译文缓存 MUST 绑定内容摘要与完整引擎配置，禁止仅因 URL、长度或 page index 相同而复用。
+  离开 Reader MUST NOT 删除有效内容缓存；重新进入并满足相同内容与配置时 MUST 复用持久结果。
+  当前可见页恢复持久缓存 MUST NOT 等待其他页推理。并行缓存检查 MUST NOT 调用模型；miss MUST 归回串行推理，hit MUST 避免重复提交；关闭 MUST 等待所有检查与输入租约实际退出。Trace MUST 区分缓存命中和推理调用且不记录正文或凭据。
+  大型缓存 JSON/base64 编解码与 OCR 摘要 MUST 在存储 worker 完成，MUST NOT 阻塞 Reader 的界面线程；缓存命中 MUST NOT 为展示结果加载模型。
+  切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
+- 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。
+  排队中被调度器撤销的请求 MUST 完成取消，不得等待无关任务或保持未完成的 Future；文字后端 MUST NOT 重试已取消的请求。
+- API key MUST 独立本机保存，不进入库备份、普通偏好或 OCR/译文 artifact。
+  远程请求 MUST 仅携带 OCR 文字及用户配置的上下文/提示词。
+- 翻译覆层 MUST 复用图片坐标与缩放旋转，保持 IgnorePointer；气泡单击查看原文 MUST 复用 Reader
+  既有手势消歧，不抢占翻页、双击或长按。命中气泡后暂隐 1.5 秒。
+  同一图片与视口因章节字号更新重排时 MUST 保留完整旧译文直至替代布局就绪，避免闪回原图；图片身份或视口变化 MUST NOT 复用不兼容几何。
 
 ## 3. Pipeline 与角色合同
 

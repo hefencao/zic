@@ -1,0 +1,77 @@
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:9.3.1' }
+}
+
+group = 'dev.zic.comic_translation'
+version = '0.1.0'
+
+apply plugin: 'com.android.library'
+
+def translationNativeRoot = System.getenv('ZIC_TRANSLATION_NATIVE_ROOT') ?:
+    rootProject.projectDir.toPath().resolve('../../../.deps/comic_translation_native').normalize().toString()
+def translationRuntime = file("$translationNativeRoot/runtime")
+def translationVersions = new File(translationRuntime, 'versions.json')
+def translationRevision = translationVersions.exists() ?
+    java.security.MessageDigest.getInstance('SHA-256').digest(translationVersions.bytes).encodeHex().toString() : 'missing'
+def translationNotices = layout.buildDirectory.dir('generated/translationAssets')
+
+android {
+    namespace = 'dev.zic.comic_translation'
+    compileSdk = 37
+    defaultConfig {
+        minSdk = 24
+        consumerProguardFiles 'consumer-rules.pro'
+        externalNativeBuild {
+            cmake {
+                arguments "-DZIC_TRANSLATION_RUNTIME=${translationRuntime}",
+                    "-DZIC_TRANSLATION_RUNTIME_REVISION=${translationRevision}"
+            }
+        }
+    }
+    sourceSets {
+        main.java.srcDirs += 'ppocr-sdk/src/main/java'
+        main.assets.srcDir(translationNotices.get().asFile)
+    }
+    externalNativeBuild {
+        cmake {
+            path = 'src/main/cpp/CMakeLists.txt'
+            version = '3.22.1'
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    packaging {
+        jniLibs.pickFirsts += ['**/libc++_shared.so']
+    }
+}
+
+dependencies {
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+    implementation 'org.opencv:opencv:4.13.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    implementation 'androidx.core:core-ktx:1.15.0'
+    testImplementation 'junit:junit:4.13.2'
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+def prepareTranslationNotices = tasks.register('prepareTranslationNotices', Copy) {
+    into(translationNotices.map { it.dir('third_party/comic_translation') })
+    from('../LICENSE') { rename { 'vibevenera-LICENSE' } }
+    from('ppocr-sdk/LICENSE') { rename { 'ppocr-LICENSE' } }
+    from(new File(translationRuntime, 'versions.json'))
+    from(new File(translationRuntime, 'licenses')) { into 'dependencies' }
+    ['ctranslate2', 'sentencepiece', 'llama'].each { library ->
+        from(new File(translationRuntime, "$library/LICENSE")) {
+            rename { "$library-LICENSE" }
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn(prepareTranslationNotices) }

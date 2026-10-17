@@ -11,6 +11,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
  */
 internal object DeferredAndroidPlugins {
     private val pluginClassNames = mapOf(
+        "comic_translation" to "dev.zic.comic_translation.ComicTranslationPlugin",
         "file_selector_android" to
             "dev.flutter.packages.file_selector_android.FileSelectorAndroidPlugin",
         "local_media_bridge" to "dev.zic.localmedia.LocalMediaBridgePlugin",
