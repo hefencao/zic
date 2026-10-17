@@ -770,6 +770,25 @@ void main() {
     expect(() => engine.identityFor(request), throwsStateError);
   });
 
+  test('DeepL propagates cancellation without submitting another request', () async {
+    final adapter = _DeepLAdapter.generated((options) {
+      throw DioException(requestOptions: options, type: DioExceptionType.cancel);
+    });
+    final client = Dio()..httpClientAdapter = adapter;
+    addTearDown(() => client.close(force: true));
+    final engine = DeepLComicTranslationEngine(
+      endpoint: 'https://api-free.deepl.com/v2/translate',
+      apiKey: 'test', client: client,
+    );
+    final request = ComicTranslationRequest(
+      ocr: _ocrArtifact([_ocrRegion('test', 'Hello', 0, 1)]),
+      targetLanguage: 'zh-CN', previousPages: const [],
+    );
+    await expectLater(engine.translate(request), throwsA(isA<DioException>().having(
+      (error) => error.type, 'type', DioExceptionType.cancel)));
+    expect(adapter.requests, hasLength(1));
+  });
+
   test('DeepL batches at 50 ordered texts', () async {
     final request = ComicTranslationRequest(
       ocr: _ocrArtifact(List.generate(51, (index) => _positionedRegion(

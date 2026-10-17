@@ -34,7 +34,7 @@ def main() -> None:
     parser.add_argument('--apk', type=Path, required=True)
     args = parser.parse_args()
     required = [
-        'zic_translation', 'zic_hymt', 'ctranslate2', 'sentencepiece',
+        'zic_translation_cpu', 'zic_translation', 'zic_hymt', 'ctranslate2', 'sentencepiece',
         'llama', 'ggml', 'ggml-base', 'ggml-cpu', 'onnxruntime',
         'onnxruntime4j_jni', 'opencv_java4', 'c++_shared',
     ]
@@ -43,7 +43,7 @@ def main() -> None:
         for name in apk.namelist():
             if name.startswith('classes') and name.endswith('.dex'):
                 classes.update(dex_classes(apk.read(name)))
-        for name in ['ComicTranslationPlugin', 'LocalTranslationNative', 'LocalHyMtNative']:
+        for name in ['ComicTranslationPlugin', 'LocalTranslationNative', 'LocalHyMtNative', 'LocalTranslationCpu']:
             descriptor = f'Ldev/zic/comic_translation/{name};'
             assert descriptor in classes, f'Missing unrenamed Android entry: {descriptor}'
         for name in [
@@ -61,6 +61,8 @@ def main() -> None:
             body = apk.read(f'lib/arm64-v8a/lib{library}.so')
             for method in ['create', 'translate', 'destroy']:
                 assert f'Java_dev_zic_comic_1translation_{native}_{method}'.encode() in body, (library, method)
+        probe = apk.read('lib/arm64-v8a/libzic_translation_cpu.so')
+        assert b'Java_dev_zic_comic_1translation_LocalTranslationCpu_capabilities' in probe
         assert apk.read('assets/flutter_assets/packages/comic_translation/assets/opencc.txt')
         notices = 'assets/third_party/comic_translation'
         versions = json.loads(apk.read(f'{notices}/versions.json'))

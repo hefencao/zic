@@ -1156,12 +1156,13 @@ OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语�
 
 Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
 不在 Flutter UI isolate 或 Android platform 主线程推理。
+Hy-MT 的优化运行库加载前，独立的基线 ISA JNI 库读取系统 AArch64 HWCAP，核对 ARMv8.2-A/DotProd 编译所需能力；不兼容设备显式报告不可用，不加载优化库或回退远程。
 Engine registry 拥有模型租约与有界保温：相同翻译后端跨漫画/语言复用，OCR 仅切换识别器并保留 detector。关闭翻译或退出会话后，最后租约等待已提交调用实际退出，再保温最多 30 秒；超时回收。
 App 向 registry 转发后台和内存压力：后台停止旁路新工作并在实际调用退出后卸载，恢复时重放观察；内存压力回收模型驻留但保留有效租约与内容缓存。会话更换不继承前一本漫画的上下文。
 本地整页文字以气泡列表传入 worker，各气泡独立生成；可与源行对应的译文换行保留为段落，气泡内部不注入可见分隔符。
 协议版本参与译文缓存身份，所有调用继续使用同一 engine registry 串行边界。
 远程 OpenAI-compatible/DeepL 仅接收文字，无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入
-共享 `NetLane`，容量覆盖响应正文的真实退出。API key 单独保存在 App 私有 secrets 文件，
+共享 `NetLane`，容量覆盖响应正文的真实退出；尚未执行即被调度器撤销的请求通过自身 key 的退休通知完成取消，不等待其他任务；文字后端直接传播取消，不将其视为可重试错误。API key 单独保存在 App 私有 secrets 文件，
 不进入偏好、翻译 artifact 或库备份。普通设置保存全局默认，Reader 设置可按 source/comic 覆盖翻译策略。
 DeepL 空白 `model_type` 归一为现有 `latency_optimized` 默认，并以同一值生成请求和缓存身份；未知非空值仍报错。
 覆层保持 `IgnorePointer`；原文查看复用 Reader 的单击判定，命中气泡后暂隐译文 1.5 秒。

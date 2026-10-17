@@ -130,7 +130,7 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
           .where((model) => model.id == _localModel).firstOrNull;
       if (model == null) throw StateError('请先下载或导入本地翻译模型');
       if (!await LocalComicTranslationEngine.isNativeAvailable(model)) {
-        throw StateError('当前构建未包含所选模型的本地运行时');
+        throw StateError('当前设备或构建不支持所选模型，请更换模型或使用 API 后端');
       }
     }
     await _saveProfile();
@@ -203,7 +203,7 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                   initialValue: _source,
                   decoration: const InputDecoration(labelText: '源语言'),
                   items: const [
-                    DropdownMenuItem(value: 'auto', child: Text('自动（韩语请单独选择）')),
+                    DropdownMenuItem(value: 'auto', child: Text('自动（日语 / 韩语）')),
                     DropdownMenuItem(value: 'ja', child: Text('日语')),
                     DropdownMenuItem(value: 'ko', child: Text('韩语')),
                     DropdownMenuItem(value: 'en', child: Text('英语')),

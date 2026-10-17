@@ -84,4 +84,24 @@ void main() {
     await lane.idle().timeout(const Duration(seconds: 3));
     expect(lane.active, 0);
   });
+
+  test('scheduler cancellation completes queued requests before unrelated work exits', () async {
+    final hold = Completer<void>();
+    lane.submit(key: 'hold', priority: 1000, task: (_) => hold.future);
+    try {
+      final request = client.httpClientAdapter.fetch(
+        RequestOptions(path: endpoint()), null, null);
+      final cancelled = expectLater(request, throwsA(isA<DioException>().having(
+        (error) => error.type, 'type', DioExceptionType.cancel)));
+      expect(lane.queued, 1);
+      lane.cancelAll();
+      await cancelled.timeout(const Duration(seconds: 1));
+      expect(hold.isCompleted, isFalse);
+      expect(lane.active, 1);
+      expect(responses, isEmpty);
+    } finally {
+      if (!hold.isCompleted) hold.complete();
+    }
+    await lane.idle();
+  });
 }

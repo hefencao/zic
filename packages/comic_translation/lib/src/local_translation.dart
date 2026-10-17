@@ -68,7 +68,8 @@ final class LocalComicTranslationEngine
     }
     if (!await isNativeAvailable(model)) {
       throw StateError(
-        '${model.engine} native runtime is not included in this build',
+        '${model.engine} native runtime is unavailable on this device or build; '
+        'select a compatible model or API backend',
       );
     }
   }

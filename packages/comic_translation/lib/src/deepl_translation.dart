@@ -179,6 +179,7 @@ final class DeepLComicTranslationEngine
           }),
         );
       } on DioException catch (error) {
+        if (error.type == DioExceptionType.cancel) rethrow;
         final status = error.response?.statusCode;
         final transient = status == null || status == 408 || status == 429 ||
             status == 500 || status == 502 || status == 503 || status == 504;

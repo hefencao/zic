@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Complete scheduler-cancelled queued API/model requests without waiting for unrelated tasks and stop DeepL from retrying cancelled requests. Probe AArch64 CPU capabilities through a baseline JNI library before loading the DotProd-compiled Hy-MT runtime; incompatible devices report unavailable. Correct the settings label to describe automatic Japanese/Korean detection.
+
 - Use independent pill choices for Reader source languages and indicator modes, with matching typography, height, padding and spacing. Size each option to its contents.
 
 - Move the labeled translation indicator pill above the comic translation switch. Remove the switch's visible label while preserving its accessibility name and per-comic behavior.

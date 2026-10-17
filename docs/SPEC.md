@@ -1486,6 +1486,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
 - OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
   本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
+  Hy-MT 优化运行库及其依赖加载前 MUST 以基线 ISA 检查 CPU 是否支持编译所需的 ARMv8.2-A/DotProd 能力；不支持 MUST 返回不可用。
 - 模型驻留 MUST 由统一 engine registry 管理。相同翻译模型跨语言/漫画 MUST 可复用，日/韩 OCR 切换 MUST 保留 detector 并只驻留一个识别器。
   最后租约/禁用后的模型 MAY 保温最多 30 秒；进入后台或内存压力 MUST 在正在执行的调用实际退出后回收。后台 MUST 停止新翻译工作，恢复后按有效观察继续；切书 MUST 清除前书上下文。
 - 本地翻译 MUST 保留可与源行对应的段落换行，不得在 OCR 行间注入可见分隔符；协议改变 MUST 更新译文缓存身份。
@@ -1496,6 +1497,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   大型缓存 JSON/base64 编解码与 OCR 摘要 MUST 在存储 worker 完成，MUST NOT 阻塞 Reader 的界面线程；缓存命中 MUST NOT 为展示结果加载模型。
   切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
 - 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。
+  排队中被调度器撤销的请求 MUST 完成取消，不得等待无关任务或保持未完成的 Future；文字后端 MUST NOT 重试已取消的请求。
 - API key MUST 独立本机保存，不进入库备份、普通偏好或 OCR/译文 artifact。
   远程请求 MUST 仅携带 OCR 文字及用户配置的上下文/提示词。
 - 翻译覆层 MUST 复用图片坐标与缩放旋转，保持 IgnorePointer；气泡单击查看原文 MUST 复用 Reader

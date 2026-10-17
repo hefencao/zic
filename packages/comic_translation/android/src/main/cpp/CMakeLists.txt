@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(zic_comic_translation LANGUAGES C CXX)
 
+add_library(zic_translation_cpu SHARED comic_translation_cpu.cpp)
+target_compile_features(zic_translation_cpu PRIVATE cxx_std_17)
+
 # arm64 builds require the pinned on-device runtime. Other ABIs retain OCR/API
 # support. Model files remain user-installed data rather than APK assets.
 set(_require_local OFF)

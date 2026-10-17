@@ -13,12 +13,7 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 private object LocalHyMtNative {
-    val loadFailure = try {
-        System.loadLibrary("zic_hymt")
-        null
-    } catch (error: UnsatisfiedLinkError) {
-        error
-    }
+    val loadFailure = HyMtRuntimeLoader.load()
 
     external fun create(
         modelPath: String,

@@ -110,6 +110,11 @@ final class ScheduledDioAdapter implements HttpClientAdapter {
         }
       },
     );
+    // A queued task can retire without ever receiving a cancellation token.
+    // Observe this key's actual retirement, independently of unrelated work.
+    unawaited(lane.idleKeys([key]).then((_) async {
+      if (!result.isCompleted) await cancel();
+    }));
     return result.future;
   }
 
