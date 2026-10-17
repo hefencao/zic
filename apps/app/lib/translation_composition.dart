@@ -360,81 +360,105 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   }
 
   Future<void> _edit(BuildContext context, String status) async {
+    const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => ListenableBuilder(
         listenable: _settings,
-        builder: (_, __) => SafeArea(child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                IconButton(tooltip: '重试当前页', icon: const Icon(Icons.refresh),
-                  onPressed: () {
-                    Navigator.pop(sheetContext);
-                    final current = _observation?.currentIndex;
-                    if (current != null) _session?.retry(_identity(current));
-                  }),
-                Expanded(child: ListTile(title: const Text('漫画翻译'), subtitle: Text(status))),
-                IconButton(tooltip: '翻译模型与 API', icon: const Icon(Icons.settings_outlined),
-                  onPressed: () {
-                    Navigator.pop(sheetContext);
-                    Navigator.of(context).push(MaterialPageRoute<void>(
-                      builder: (_) => ComicTranslationSettingsScreen(
-                        sourceId: _chapter.sourceId, comicId: _chapter.comicId),
-                    ));
-                  }),
-              ]),
-            ),
-            ListenableBuilder(
-              listenable: _session?.detectedLanguageListenable ?? this,
-              builder: (_, __) {
-                final detected = _session?.detectedLanguageListenable.value;
-                const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
-                final selected = _preferences['sourceLanguage'] as String;
-                return Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(selected == 'auto' && detected != null
-                        ? '原文语言 · 已识别为${languages[detected] ?? detected}' : '原文语言',
-                      style: Theme.of(context).textTheme.titleSmall),
-                    const SizedBox(height: 6),
-                    Wrap(spacing: 8, children: [for (final entry in languages.entries)
-                      ChoiceChip(label: Text(entry.value), selected: selected == entry.key,
-                        onSelected: (_) async {
+        builder: (_, __) => ListenableBuilder(
+          listenable: _session?.detectedLanguageListenable ?? this,
+          builder: (_, __) {
+            final theme = Theme.of(sheetContext);
+            final selected = _preferences['sourceLanguage'] as String;
+            final detected = _session?.detectedLanguageListenable.value;
+            final subtitle = selected == 'auto' && detected != null
+                ? '$status · ${languages[detected] ?? detected}' : status;
+            return SafeArea(child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Row(children: [
+                  IconButton(tooltip: '重试当前页', icon: const Icon(Icons.refresh),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      final current = _observation?.currentIndex;
+                      if (current != null) _session?.retry(_identity(current));
+                    }),
+                  Expanded(child: Column(children: [
+                    Text('漫画翻译', style: theme.textTheme.titleMedium),
+                    Text(subtitle, textAlign: TextAlign.center, maxLines: 2,
+                      overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+                  ])),
+                  IconButton(tooltip: '翻译模型与 API', icon: const Icon(Icons.settings_outlined),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => ComicTranslationSettingsScreen(
+                          sourceId: _chapter.sourceId, comicId: _chapter.comicId),
+                      ));
+                    }),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Text('原文', style: theme.textTheme.bodyMedium),
+                  const SizedBox(width: 8),
+                  for (final entry in languages.entries)
+                    Expanded(child: Semantics(selected: selected == entry.key,
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          foregroundColor: selected == entry.key
+                              ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                        ),
+                        onPressed: () async {
                           Navigator.pop(sheetContext);
                           await _settings.setComic(_chapter.sourceId, _chapter.comicId,
                             {'sourceLanguage': entry.key});
-                        }),
-                    ]),
-                  ]),
-                );
-              },
-            ),
-            Row(children: [
-              Expanded(child: SwitchListTile(
-                contentPadding: const EdgeInsets.only(left: 16),
-                title: const Text('翻译本漫画'),
-                value: _session?.enabled == true,
-                onChanged: (enabled) async {
-                  Navigator.pop(sheetContext);
-                  await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
-                },
-              )),
-              Expanded(child: SwitchListTile(
-                key: const ValueKey('reader-translation-indicator-toggle'),
-                contentPadding: const EdgeInsets.only(left: 8, right: 16),
-                title: const Text('显示翻译指示器'),
-                value: _preferences['showIndicator'] != false,
-                onChanged: (visible) => _settings.setComic(
-                  _chapter.sourceId, _chapter.comicId, {'showIndicator': visible}),
-              )),
-            ]),
-          ],
-        )),
+                        },
+                        child: Text(entry.value, maxLines: 1, softWrap: false,
+                          style: TextStyle(fontWeight: selected == entry.key ? FontWeight.bold : null,
+                            decoration: selected == entry.key ? TextDecoration.underline : null)),
+                      ),
+                    )),
+                ]),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Expanded(child: _sheetToggle(label: '翻译本漫画',
+                    value: _session?.enabled == true,
+                    onChanged: (enabled) async {
+                      Navigator.pop(sheetContext);
+                      await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
+                    },
+                  )),
+                  const SizedBox(width: 16),
+                  Expanded(child: _sheetToggle(
+                    key: const ValueKey('reader-translation-indicator-toggle'),
+                    label: '显示指示器',
+                    value: _preferences['showIndicator'] != false,
+                    onChanged: (visible) => _settings.setComic(
+                      _chapter.sourceId, _chapter.comicId, {'showIndicator': visible}),
+                  )),
+                ]),
+              ]),
+            ));
+          },
+        ),
       ),
     );
   }
+
+  Widget _sheetToggle({Key? key, required String label, required bool value,
+      required ValueChanged<bool> onChanged}) => MergeSemantics(child: InkWell(
+    key: key,
+    onTap: () => onChanged(!value),
+    child: Row(children: [
+      Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14))),
+      const SizedBox(width: 8),
+      Switch(value: value, onChanged: onChanged, padding: EdgeInsets.zero),
+    ]),
+  ));
 
   @override
   Future<void> close() => _closing ??= _close();
