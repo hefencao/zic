@@ -1,5 +1,48 @@
 part of 'translation_overlay.dart';
 
+// Typography belongs to this immutable page, never to later page arrivals.
+double? _pageBodyFontRatio(ComicTranslationArtifact artifact) {
+  if (artifact.imageWidth <= 0 || artifact.imageHeight <= 0) return null;
+  final language = artifact.sourceLanguage.split(RegExp('[-_]')).first.toLowerCase();
+  final squareGlyphs = {'ja', 'ko', 'zh'}.contains(language);
+  final samples = <({double ratio, double weight})>[];
+  for (final region in artifact.regions) {
+    final characters = region.sourceText.replaceAll(RegExp(r'\s'), '').runes.length;
+    if (region.kind == ComicTextKind.soundEffect || characters < 4) continue;
+    final points = region.sourceMaskPolygons.isEmpty
+        ? region.polygon : region.sourceMaskPolygons.expand((polygon) => polygon);
+    var left = double.infinity;
+    var top = double.infinity;
+    var right = double.negativeInfinity;
+    var bottom = double.negativeInfinity;
+    for (final point in points) {
+      if (!point.x.isFinite || !point.y.isFinite) continue;
+      left = math.min(left, point.x);
+      right = math.max(right, point.x);
+      top = math.min(top, point.y);
+      bottom = math.max(bottom, point.y);
+    }
+    if (right <= left || bottom <= top) continue;
+    final width = (right - left) * artifact.imageWidth;
+    final height = (bottom - top) * artifact.imageHeight;
+    final vertical = region.orientation == ComicTextOrientation.vertical;
+    final size = comicTextSourceFontSize(
+      crossExtent: vertical ? width : height,
+      mainExtent: vertical ? height : width,
+      decodedCharacters: characters, bodyContext: true, squareGlyphs: squareGlyphs,
+    );
+    samples.add((ratio: size / artifact.imageWidth, weight: characters.clamp(1, 12).toDouble()));
+  }
+  samples.sort((a, b) => a.ratio.compareTo(b.ratio));
+  final total = samples.fold(0.0, (sum, sample) => sum + sample.weight);
+  var cumulative = 0.0;
+  for (final sample in samples) {
+    cumulative += sample.weight;
+    if (cumulative >= total / 2) return sample.ratio;
+  }
+  return null;
+}
+
 extension _ComicTranslationGeometry on _ComicTranslationPainter {
   _TranslationBlockGeometry? _blockGeometry(
     _TranslationLayoutBlock block,
@@ -132,11 +175,15 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
         weight: decodedCharacters.toDouble(),
       );
     });
-    final local = _dominantFontSize(samples);
-    final reference = bodyBlock ? bodyFontRatio : null;
-    return reference == null
-        ? local
-        : math.max(local, reference * _layoutImageRect!.width);
+    return _dominantFontSize(samples);
+  }
+
+  double _preferredFontSize(_TranslationLayoutBlock block, List<Rect> regionBounds) {
+    final local = _sourceFontSize(block, regionBounds);
+    final reference = _isBodyBlock(block) ? bodyFontRatio : null;
+    // A rendering preference must never feed bubble bounds or group membership.
+    return (reference == null ? local
+        : math.max(local, reference * _layoutImageRect!.width)) * fontScale;
   }
 
   bool _isBodyBlock(_TranslationLayoutBlock block) {

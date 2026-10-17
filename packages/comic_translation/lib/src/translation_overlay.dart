@@ -123,7 +123,8 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
           _layoutScheduled = !completed;
           if (completed) {
             widget.onDiagnostic?.call({'stage': 'layout-ready',
-              'contentDigest': painter.artifact.contentDigest});
+              'contentDigest': painter.artifact.contentDigest,
+              'blocks': painter.describePreparedBlocks()});
             setState(() {});
           }
           if (!completed) scheduleNext();
@@ -217,24 +218,21 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     final identity = widget.identity;
     final pageState = session != null && session.enabled ? session.listenable(identity) : null;
     final fontScaleState = session?.fontScaleListenable;
-    final bodyFontState = session?.bodyFontRatioListenable;
     return Stack(
       fit: StackFit.passthrough,
       children: [
         widget.child,
-        if (pageState != null && fontScaleState != null && bodyFontState != null) Positioned.fill(
+        if (pageState != null && fontScaleState != null) Positioned.fill(
           child: IgnorePointer(
             child: RepaintBoundary(
               child: AnimatedBuilder(
                 animation: Listenable.merge([
                   pageState,
                   fontScaleState,
-                  bodyFontState,
                 ]),
                 builder: (context, _) {
                   final state = pageState.value;
                   final fontScale = fontScaleState.value;
-                  final bodyFontRatio = bodyFontState.value;
                   final artifact = state.artifact;
                   if (state.phase != ComicTranslationPhase.ready ||
                       artifact == null) {
@@ -260,6 +258,8 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                   final hasCleanOverlay =
                       showCleanOverlay && _cleanOverlayOpaque;
                   final current = _painter;
+                  final bodyFontRatio = current?.artifact == artifact
+                      ? current!.bodyFontRatio : _pageBodyFontRatio(artifact);
                   final layoutCompatible =
                       current != null &&
                       current.pageIndex == widget.pageIndex &&

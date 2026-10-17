@@ -44,7 +44,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(controller.peekSourceAt(point), isTrue, reason: 'the block is available again after 1.5 seconds');
     await tester.pump(const Duration(milliseconds: 1600));
-    (session.bodyFontRatioListenable as ValueNotifier<double?>).value = 0.03;
+    (session.fontScaleListenable as ValueNotifier<double>).value = 1.03;
     await tester.pump();
     expect(controller.peekSourceAt(point), isTrue,
       reason: 'a font-metric update must keep the painted translation until its replacement is ready');
@@ -131,14 +131,14 @@ void main() {
     if (changeTheme) {
       await paint(dark: true);
     } else {
-      (session.bodyFontRatioListenable as ValueNotifier<double?>).value = 0.03;
+      (session.fontScaleListenable as ValueNotifier<double>).value = 1.03;
       await tester.pump();
     }
     expect(controller.peekSourceAt(first), isTrue,
       reason: 'an already painted balloon must remain until the replacement layout is ready');
     expect(diagnostics.lastWhere((event) => event['stage'] == 'layout-started')['retained'], isTrue);
     if (!changeTheme) {
-      (session.bodyFontRatioListenable as ValueNotifier<double?>).value = null;
+      (session.fontScaleListenable as ValueNotifier<double>).value = 1;
       await tester.pump();
     }
     await tester.pump(const Duration(milliseconds: 1600));
@@ -150,7 +150,7 @@ void main() {
     }
     expect(secondVisible, isTrue, reason: 'the replacement must eventually finish every balloon');
     await tester.pump(const Duration(milliseconds: 1600));
-    (session.bodyFontRatioListenable as ValueNotifier<double?>).value = 0.04;
+    (session.fontScaleListenable as ValueNotifier<double>).value = 1.04;
     await tester.pump();
     expect(controller.peekSourceAt(first), isTrue);
     await tester.pump();

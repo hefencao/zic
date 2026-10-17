@@ -51,8 +51,7 @@ class _TranslationLayoutSearch {
          (value, next) => value.expandToInclude(next),
        ),
        availableBounds = bounds,
-       preferredFont = painter._sourceFontSize(block, regionBounds) *
-           painter.fontScale,
+       preferredFont = painter._preferredFontSize(block, regionBounds),
        body = painter._isBodyBlock(block),
        insideBubble = insideBubble;
 

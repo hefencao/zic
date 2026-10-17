@@ -101,6 +101,16 @@ class _ComicTranslationPainter extends CustomPainter {
   bool hasPreparedBlocksFor(Size size) =>
       _layoutImageRect == _imageRect(size) && layoutCache.prepared.isNotEmpty;
 
+  List<Map<String, Object?>> describePreparedBlocks() => [
+    for (final block in _layoutBlocks()) if (layoutCache.prepared[block.key] case final prepared?) {
+      'key': block.key,
+      'regions': block.regions.map((region) => region.region.ocrRegionId).toList(),
+      'bounds': [prepared.geometry.bounds.left, prepared.geometry.bounds.top,
+        prepared.geometry.bounds.right, prepared.geometry.bounds.bottom],
+      'fontSize': prepared.fontSize,
+    },
+  ];
+
   bool isPreparedFor(Size size) {
     _syncVisualStyle();
     if (_layoutImageRect != _imageRect(size)) return false;

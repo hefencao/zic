@@ -61,8 +61,6 @@ final class ComicTranslationSession {
   final Map<String, Map<int, ComicTranslationArtifact>> _readyPages = {};
   final ValueNotifier<double> _fontScale = ValueNotifier(1);
   final ValueNotifier<String?> _detectedLanguage;
-  final ValueNotifier<double?> _bodyFontRatio = ValueNotifier(null);
-  final Map<String, ({double ratio, double weight})> _bodyFontSamples = {};
   bool _fontScaleResolved = false;
   int _generation = 0;
   Set<String> _retainedKeys = const {};
@@ -77,8 +75,6 @@ final class ComicTranslationSession {
   bool get backendReady => engines.ready;
 
   ValueListenable<double> get fontScaleListenable => _fontScale;
-
-  ValueListenable<double?> get bodyFontRatioListenable => _bodyFontRatio;
 
   void _availabilityChanged() {
     if (_disposed) return;
@@ -506,7 +502,6 @@ final class ComicTranslationSession {
       _readyPages.putIfAbsent(identity.chapterId, () => {})[identity.pageIndex] =
           translation;
       _updateFontScale(translation);
-      _updateBodyFontRatio(translation);
       _setStateIfCurrentGeneration(
         identity,
         ticket,
@@ -550,48 +545,6 @@ final class ComicTranslationSession {
         ? 1
         : samples.reduce((sum, value) => sum + value) / samples.length;
     _fontScaleResolved = true;
-  }
-
-  void _updateBodyFontRatio(ComicTranslationArtifact artifact) {
-    final sourceLanguage = artifact.sourceLanguage
-        .split(RegExp('[-_]')).first.toLowerCase();
-    final squareGlyphs = {'ja', 'ko', 'zh'}.contains(sourceLanguage);
-    for (final region in artifact.regions) {
-      final characters = region.sourceText
-          .replaceAll(RegExp(r'\s'), '').runes.length;
-      if (region.kind == ComicTextKind.soundEffect || characters < 4) continue;
-      final points = region.sourceMaskPolygons.isEmpty
-          ? region.polygon
-          : region.sourceMaskPolygons.expand((polygon) => polygon).toList();
-      final xs = points.map((point) => point.x * artifact.imageWidth);
-      final ys = points.map((point) => point.y * artifact.imageHeight);
-      final width = xs.reduce(math.max) - xs.reduce(math.min);
-      final height = ys.reduce(math.max) - ys.reduce(math.min);
-      final vertical = region.orientation == ComicTextOrientation.vertical;
-      final size = comicTextSourceFontSize(
-        crossExtent: vertical ? width : height,
-        mainExtent: vertical ? height : width,
-        decodedCharacters: characters,
-        bodyContext: true,
-        squareGlyphs: squareGlyphs,
-      );
-      _bodyFontSamples['${artifact.contentDigest}/${region.ocrRegionId}'] = (
-        ratio: size / artifact.imageWidth,
-        weight: characters.clamp(1, 12).toDouble(),
-      );
-    }
-    final samples = _bodyFontSamples.values.toList()
-      ..sort((a, b) => a.ratio.compareTo(b.ratio));
-    if (samples.isEmpty) return;
-    final total = samples.fold(0.0, (sum, sample) => sum + sample.weight);
-    var cumulative = 0.0;
-    for (final sample in samples) {
-      cumulative += sample.weight;
-      if (cumulative >= total / 2) {
-        _bodyFontRatio.value = sample.ratio;
-        return;
-      }
-    }
   }
 
   List<ComicTranslationContextEntry> _translationContext(
@@ -687,7 +640,6 @@ final class ComicTranslationSession {
     }
     _fontScale.dispose();
     _detectedLanguage.dispose();
-    _bodyFontRatio.dispose();
     if (_running) await _pumpDone?.future;
     await Future.wait(_cacheProbes.values);
     await _releaseEngines();
