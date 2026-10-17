@@ -74,6 +74,29 @@ class ORTSessionManager(
         }
     }
 
+    fun selectRecognition(recModelPath: String, modelFiles: Boolean) {
+        recSession?.close()
+        recSession = null
+        val opts = OrtSession.SessionOptions().apply {
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            setIntraOpNumThreads(config.numThreads)
+        }
+        try {
+            val ortEnv = env ?: throw OCRError.ModelLoadFailed("recognition", Exception("Environment not initialized"))
+            val session = if (modelFiles) ortEnv.createSession(recModelPath, opts)
+                else ortEnv.createSession(readModelAsset(recModelPath), opts)
+            try {
+                recInputName = session.inputNames.iterator().next()
+                recSession = session
+            } catch (t: Throwable) {
+                session.close()
+                throw t
+            }
+        } finally {
+            opts.close()
+        }
+    }
+
     fun runDetection(input: FloatArray, shape: LongArray): Pair<FloatArray, LongArray> {
         val session = detSession
             ?: throw OCRError.ModelLoadFailed("detection", Exception("Session not initialized"))

@@ -83,6 +83,13 @@ class PaddleOCR private constructor(
         return recognizeResult { engine.run(bitmap, maxAnalysisSide) }
     }
 
+    suspend fun recognizeSample(bitmap: Bitmap, maxAnalysisSide: Int): OCRRunResult =
+        recognizeResult { engine.run(bitmap, maxAnalysisSide, recognitionLimit = 6) }
+
+    suspend fun selectRecognition(context: Context, modelPath: String, configPath: String) {
+        withContext(Dispatchers.IO) { engine.selectRecognition(context, modelPath, configPath) }
+    }
+
     suspend fun recognize(imageBytes: ByteArray): OCRRunResult {
         if (imageBytes.isEmpty()) {
             throw OCRError.InvalidImage()

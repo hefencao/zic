@@ -36,7 +36,7 @@ class OCREngine(
 ) {
     private val ortManager = ORTSessionManager(context, engineConfig)
     private val detectionEngine: DetectionEngine
-    private val recognitionEngine: RecognitionEngine
+    private var recognitionEngine: RecognitionEngine
     val coldLoadTimeMs: Long get() = ortManager.coldLoadTimeMs
 
     init {
@@ -52,9 +52,15 @@ class OCREngine(
         recognitionEngine = RecognitionEngine(ortManager, configured.characterList)
     }
 
-    fun run(bitmap: Bitmap, maxAnalysisSide: Int? = null): OCREngineResult {
+    fun selectRecognition(context: Context, recModelPath: String, configPath: String) {
+        val configured = ModelConfig.parse(context, configPath, true)
+        ortManager.selectRecognition(recModelPath, true)
+        recognitionEngine = RecognitionEngine(ortManager, configured.characterList)
+    }
+
+    fun run(bitmap: Bitmap, maxAnalysisSide: Int? = null, recognitionLimit: Int? = null): OCREngineResult {
         val srcMat = BitmapUtils.bitmapToBGRMat(bitmap)
-        return runWithOwnedMat(srcMat, maxAnalysisSide)
+        return runWithOwnedMat(srcMat, maxAnalysisSide, recognitionLimit)
     }
 
     fun run(imageBytes: ByteArray): OCREngineResult {
@@ -69,9 +75,10 @@ class OCREngine(
     private fun runWithOwnedMat(
         srcMat: org.opencv.core.Mat,
         maxAnalysisSide: Int?,
+        recognitionLimit: Int? = null,
     ): OCREngineResult {
         return try {
-            run(srcMat, maxAnalysisSide)
+            run(srcMat, maxAnalysisSide, recognitionLimit)
         } finally {
             srcMat.release()
         }
@@ -80,6 +87,7 @@ class OCREngine(
     private fun run(
         srcMat: org.opencv.core.Mat,
         maxAnalysisSide: Int?,
+        recognitionLimit: Int?,
     ): OCREngineResult {
         val totalStart = System.currentTimeMillis()
         val detResult = detectionEngine.detect(srcMat, maxAnalysisSide)
@@ -105,7 +113,9 @@ class OCREngine(
         }
 
         // 2. Sort boxes
-        val sortedBoxes = BoxSorter.sortInReadingOrder(boxes)
+        val sortedBoxes = BoxSorter.sortInReadingOrder(boxes).let {
+            if (recognitionLimit == null) it else it.take(recognitionLimit)
+        }
 
         // 3. Crop and recognize text regions
         var totalRecPreMs = 0L

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 
+import 'package:crypto/crypto.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'models.dart';
@@ -101,18 +102,19 @@ final class ComicTranslationStore {
     required String engineId,
     required String modelVersion,
     required String sourceLanguage,
-  }) async {
-    final payload = await _call('findOcr', [
-      _ocrKey(contentDigest, engineId, modelVersion, sourceLanguage),
-    ]) as String?;
-    return payload == null
-        ? null
-        : ComicOcrArtifact.fromJson(
-            Map<String, dynamic>.from(jsonDecode(payload) as Map),
-          );
-  }
+  }) async => (await findOcrEntry(contentDigest: contentDigest, engineId: engineId,
+      modelVersion: modelVersion, sourceLanguage: sourceLanguage))?.artifact;
 
-  Future<void> storeOcr(ComicOcrArtifact artifact) => _call('storeOcr', [
+  Future<({ComicOcrArtifact artifact, String digest})?> findOcrEntry({
+    required String contentDigest,
+    required String engineId,
+    required String modelVersion,
+    required String sourceLanguage,
+  }) async => await _call('findOcr', [
+      _ocrKey(contentDigest, engineId, modelVersion, sourceLanguage),
+    ]) as ({ComicOcrArtifact artifact, String digest})?;
+
+  Future<String> storeOcr(ComicOcrArtifact artifact) async => await _call('storeOcr', [
     _ocrKey(
       artifact.contentDigest,
       artifact.engineId,
@@ -123,8 +125,8 @@ final class ComicTranslationStore {
     artifact.engineId,
     artifact.modelVersion,
     artifact.sourceLanguage,
-    jsonEncode(artifact.toJson()),
-  ]);
+    artifact,
+  ]) as String;
 
   Future<ComicTranslationArtifact?> findTranslation({
     required String ocrDigest,
@@ -133,7 +135,7 @@ final class ComicTranslationStore {
     required String targetLanguage,
     required String contextDigest,
   }) async {
-    final payload = await _call('findTranslation', [
+    return await _call('findTranslation', [
       _translationKey(
         ocrDigest,
         engineId,
@@ -145,12 +147,7 @@ final class ComicTranslationStore {
       engineId,
       modelVersion,
       targetLanguage,
-    ]) as String?;
-    return payload == null
-        ? null
-        : ComicTranslationArtifact.fromJson(
-            Map<String, dynamic>.from(jsonDecode(payload) as Map),
-          );
+    ]) as ComicTranslationArtifact?;
   }
 
   Future<void> storeTranslation(ComicTranslationArtifact artifact) =>
@@ -168,7 +165,7 @@ final class ComicTranslationStore {
         artifact.modelVersion,
         artifact.targetLanguage,
         artifact.contextDigest,
-        jsonEncode(artifact.toJson()),
+        artifact,
       ]);
 
   Future<void> clear() => _call('clear', const []);
@@ -335,21 +332,27 @@ Object? _executeStoreOperation(
         'UPDATE ocr_artifacts SET accessed_at = ? WHERE cache_key = ?;',
         [now, arguments[0]],
       );
-      return rows.first[0] as String;
+      final payload = rows.first[0] as String;
+      return (
+        artifact: ComicOcrArtifact.fromJson(Map<String, dynamic>.from(jsonDecode(payload) as Map)),
+        digest: sha256.convert(utf8.encode(payload)).toString(),
+      );
     case 'storeOcr':
+      final artifact = arguments.last as ComicOcrArtifact;
+      final payload = jsonEncode(artifact.toJson());
       db.execute('''
         INSERT OR REPLACE INTO ocr_artifacts
           (cache_key, content_digest, engine_id, model_version,
            source_language, payload, updated_at, accessed_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-      ''', [...arguments, now, now]);
+      ''', [...arguments.take(arguments.length - 1), payload, now, now]);
       db.execute('''
         DELETE FROM ocr_artifacts WHERE rowid IN (
           SELECT rowid FROM ocr_artifacts ORDER BY accessed_at DESC
           LIMIT -1 OFFSET 2048
         );
       ''');
-      return null;
+      return sha256.convert(utf8.encode(payload)).toString();
     case 'findTranslation':
       var rows = db.select(
         'SELECT payload, cache_key FROM translation_artifacts '
@@ -369,14 +372,16 @@ Object? _executeStoreOperation(
         'UPDATE translation_artifacts SET accessed_at = ? WHERE cache_key = ?;',
         [now, rows.first[1]],
       );
-      return rows.first[0] as String;
+      return ComicTranslationArtifact.fromJson(
+        Map<String, dynamic>.from(jsonDecode(rows.first[0] as String) as Map));
     case 'storeTranslation':
+      final artifact = arguments.last as ComicTranslationArtifact;
       db.execute('''
         INSERT OR REPLACE INTO translation_artifacts
           (cache_key, content_digest, ocr_digest, engine_id, model_version,
            target_language, context_digest, payload, updated_at, accessed_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-      ''', [...arguments, now, now]);
+      ''', [...arguments.take(arguments.length - 1), jsonEncode(artifact.toJson()), now, now]);
       db.execute('''
         DELETE FROM translation_artifacts WHERE rowid IN (
           SELECT rowid FROM translation_artifacts ORDER BY accessed_at DESC

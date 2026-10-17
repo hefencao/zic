@@ -1137,6 +1137,8 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 开启翻译、切换后端和查看原文不更换媒体 provider、Pipeline session、播放 cursor 或 texture。
 App 的页装饰层独立订阅旁路变更，使已挂载页接收异步初始化与配置替换后的会话；媒体 child 保持同一实例。
 底栏按钮单击只切换漫画翻译，长按打开设置面板。仅切换启用状态时保留翻译会话与已完成结果，并重放最新视口观察；配置变化才关闭旧会话并重建。
+长按面板直接选择本漫画原文语言，覆盖按 source/comic 保存，不改全局默认。自动模式把确认的日/韩语与 OCR 模型版本独立记忆；手动选择优先，回到自动时清除旧判断。
+未知语言只对一块正文以 960px 分析尺度采样、每个识别器最多六个文字区域比较可信脚本证据；无字、仅汉字/英文或冲突样本保持未定，后续有正文页再判定。
 当前页阶段由旁路只读状态投影到 Reader 视口右上角，使用逻辑像素与安全边距，不随图片分辨率或放大变换缩放。
 
 `PipelineReaderSession.openSealedPageFile()` 只打开当前 authority 的完整 artifact 租约，miss
@@ -1145,11 +1147,15 @@ fresh-source quarantine 中的历史呈现不能作为 OCR 输入。源自本地
 图片仍由来源拥有；`LocalMediaBridge.openDocumentFile()` 保留完整文档描述符，不能直接表示整图时
 由本地来源桥生成临时文件，租约释放时删除。输入租约覆盖内容摘要、OCR 和缓存操作，并在所有成功、失败、取消路径退出后释放。
 OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语言、上下文、协议/提示词版本和拟声词策略。
+缓存 JSON/base64 编解码和 OCR artifact 摘要在既有存储 worker 完成，向旁路返回 typed artifact 与摘要；命中缓存不加载推理模型。自动识别协议单独隔离旧的 auto OCR 缓存，显式语言身份保持兼容。
+气泡分组的文字蒙版展开、位置边界、覆盖率和凹度只在单次 resolution 内计算一次；该临时几何缓存不跨页或跨调用保留，避免请求、上下文与覆层中的成对比较重复扫描密集蒙版。
 翻译仅准备当前可见页和最多后续四张已有缓存的静态页，不扩大现有 encoded/decode 水位。
 重复视口观察不重排同代正在处理的页面，准备图片/缓存、OCR 与翻译阶段沿同一次任务推进。
 
 Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
 不在 Flutter UI isolate 或 Android platform 主线程推理。
+Engine registry 拥有模型租约与有界保温：相同翻译后端跨漫画/语言复用，OCR 仅切换识别器并保留 detector。关闭翻译或退出会话后，最后租约等待已提交调用实际退出，再保温最多 30 秒；超时回收。
+App 向 registry 转发后台和内存压力：后台停止旁路新工作并在实际调用退出后卸载，恢复时重放观察；内存压力回收模型驻留但保留有效租约与内容缓存。会话更换不继承前一本漫画的上下文。
 本地整页文字以气泡列表传入 worker，各气泡独立生成；可与源行对应的译文换行保留为段落，气泡内部不注入可见分隔符。
 协议版本参与译文缓存身份，所有调用继续使用同一 engine registry 串行边界。
 远程 OpenAI-compatible/DeepL 仅接收文字，无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入

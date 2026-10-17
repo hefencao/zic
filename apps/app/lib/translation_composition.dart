@@ -131,6 +131,11 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         enabled: preferences['enabled'] == true,
         sourceLanguage: preferences['sourceLanguage'] as String,
         targetLanguage: preferences['targetLanguage'] as String,
+        detectedSourceLanguage: _settings.detectedLanguage(_chapter.sourceId, _chapter.comicId,
+          ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? ''),
+        onSourceLanguageDetected: (language) => _settings.rememberLanguage(
+          _chapter.sourceId, _chapter.comicId, language,
+          ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? ''),
         policy: ComicTranslationPolicy(
           contextPages: preferences['contextPages'] as int,
           translateSoundEffects: preferences['translateSoundEffects'] == true,
@@ -273,7 +278,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         ComicTranslationPhase.waitingForImage => '等待完整图片',
         ComicTranslationPhase.queued => '等待翻译',
         ComicTranslationPhase.loadingCache => '准备图片与缓存',
-        ComicTranslationPhase.recognizing => '正在识别文字',
+        ComicTranslationPhase.recognizing => _session?.effectiveSourceLanguage == 'auto'
+            ? '正在判断语言与识别文字' : '正在识别文字',
         ComicTranslationPhase.translating => '正在翻译',
         ComicTranslationPhase.ready => state!.artifact?.regions.isEmpty == true
             ? '本页未识别到文字' : '译文已就绪',
@@ -363,6 +369,30 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                 await _settings.setComic(_chapter.sourceId, _chapter.comicId, {
                   'enabled': enabled,
                 });
+              },
+            ),
+            ListenableBuilder(
+              listenable: _session?.detectedLanguageListenable ?? this,
+              builder: (_, __) {
+                final detected = _session?.detectedLanguageListenable.value;
+                const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
+                final selected = _preferences['sourceLanguage'] as String;
+                return Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(selected == 'auto' && detected != null
+                        ? '原文语言 · 已识别为${languages[detected] ?? detected}' : '原文语言',
+                      style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 8, children: [for (final entry in languages.entries)
+                      ChoiceChip(label: Text(entry.value), selected: selected == entry.key,
+                        onSelected: (_) async {
+                          Navigator.pop(sheetContext);
+                          await _settings.setComic(_chapter.sourceId, _chapter.comicId,
+                            {'sourceLanguage': entry.key});
+                        }),
+                    ]),
+                  ]),
+                );
               },
             ),
             ListTile(

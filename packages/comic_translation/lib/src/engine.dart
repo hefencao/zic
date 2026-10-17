@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+
 import 'grouping.dart';
 import 'models.dart';
 
@@ -572,13 +574,29 @@ abstract interface class ComicTextTranslationEngine {
   Future<void> unload();
 }
 
+/// Optional recognition switching that retains the shared detection model.
+abstract interface class ComicOcrLanguageSwitcher {
+  String recognitionKey(String sourceLanguage);
+  String modelVersionForLanguage(String sourceLanguage);
+  Future<void> selectLanguage(String sourceLanguage);
+}
+
 /// Runtime adapters are registered by the model/backend layer. Keeping this
 /// registry free of a silent network fallback makes local/remote selection an
 /// explicit user decision.
 final class ComicTranslationEngineRegistry {
-  ComicTranslationEngineRegistry();
+  ComicTranslationEngineRegistry({this.idleRetention = Duration.zero});
 
-  static final instance = ComicTranslationEngineRegistry();
+  static final instance = ComicTranslationEngineRegistry(idleRetention: const Duration(seconds: 30));
+
+  final Duration idleRetention;
+  final ValueNotifier<bool> _workPaused = ValueNotifier(false);
+  ValueListenable<bool> get workPaused => _workPaused;
+
+  Future<void> setBackground(bool background) {
+    _workPaused.value = background;
+    return background ? trimMemory() : Future<void>.value();
+  }
 
   _EngineConfiguration _configuration = const _EngineConfiguration();
   final Map<ComicTranslationEnginePair, _EngineLeaseState> _leases = {};
@@ -626,6 +644,8 @@ final class ComicTranslationEngineRegistry {
       pair,
       () => _EngineLeaseState(pair),
     );
+    state.idleTimer?.cancel();
+    state.idleTimer = null;
     state.users++;
     return state.pair;
   });
@@ -645,7 +665,11 @@ final class ComicTranslationEngineRegistry {
   ) => _serializeOcr(() async {
     final state = _lease(pair);
     await _ensureOcrLoaded(state, sourceLanguage);
-    return pair.ocr.recognize(input);
+    final result = await pair.ocr.recognize(input);
+    if (pair.ocr case final ComicOcrLanguageSwitcher switcher) {
+      state.ocrLanguage = switcher.recognitionKey(sourceLanguage);
+    }
+    return result;
   });
 
   Future<void> loadTranslator(ComicTranslationEnginePair pair) =>
@@ -666,6 +690,7 @@ final class ComicTranslationEngineRegistry {
   Future<ComicTranslationResult> translateConfigured(
     ComicTranslationRequest request,
   ) => _serializeTranslator(() async {
+    if (workPaused.value) throw StateError('Translation is paused in the background');
     final translator = _configuration.translationEngine;
     if (translator == null) {
       throw StateError('Comic translation backend is not configured');
@@ -695,65 +720,115 @@ final class ComicTranslationEngineRegistry {
           state.users--;
           return;
         }
-        Object? failure;
-        StackTrace? failureStack;
-        try {
-          await _serializeOcr(() async {
-            final successor = identical(_activeOcr, state)
-                ? _ocrSuccessor(state)
-                : null;
-            if (state.ocrLoaded && successor != null) {
-              successor.ocrLoaded = true;
-              successor.ocrLanguage = state.ocrLanguage;
-              state.ocrLoaded = false;
-              state.ocrLanguage = null;
-              _activeOcr = successor;
-              return;
-            }
-            try {
-              if (state.ocrLoaded) await state.pair.ocr.unload();
-            } finally {
-              state.ocrLoaded = false;
-              state.ocrLanguage = null;
-              if (identical(_activeOcr, state)) _activeOcr = null;
-            }
+        if (idleRetention > Duration.zero && !workPaused.value) {
+          await _ocrTail;
+          await _translatorTail;
+          state.users = 0;
+          state.idleTimer = Timer(idleRetention, () {
+            unawaited(_serialized<void>(() async {
+              if (state.users == 0 && _leases[pair] == state) await _retire(state);
+            }).catchError((Object error) => debugPrint('Translation model release: $error')));
           });
-        } catch (error, stackTrace) {
-          failure = error;
-          failureStack = stackTrace;
+          return;
+        }
+        await _retire(state);
+      });
+
+  Future<void> _retire(_EngineLeaseState state) async {
+    state.idleTimer?.cancel();
+    state.idleTimer = null;
+    final pair = state.pair;
+    Object? failure;
+    StackTrace? failureStack;
+    try {
+      await _serializeOcr(() async {
+        final successor = identical(_activeOcr, state)
+            ? _ocrSuccessor(state)
+            : null;
+        if (state.ocrLoaded && successor != null) {
+          successor.ocrLoaded = true;
+          successor.ocrLanguage = state.ocrLanguage;
+          state.ocrLoaded = false;
+          state.ocrLanguage = null;
+          _activeOcr = successor;
+          return;
         }
         try {
-          await _serializeTranslator(() async {
-            final successor = identical(_activeTranslator, state)
-                ? _translatorSuccessor(state)
-                : null;
-            if (state.translatorLoaded && successor != null) {
-              successor.translatorLoaded = true;
-              state.translatorLoaded = false;
-              _activeTranslator = successor;
-              return;
-            }
-            try {
-              if (state.translatorLoaded) {
-                await state.pair.translator.unload();
-              }
-            } finally {
-              state.translatorLoaded = false;
-              if (identical(_activeTranslator, state)) {
-                _activeTranslator = null;
-              }
-            }
-          });
-        } catch (error, stackTrace) {
-          failure ??= error;
-          failureStack ??= stackTrace;
-        }
-        state.users = 0;
-        _leases.remove(pair);
-        if (failure != null) {
-          Error.throwWithStackTrace(failure, failureStack!);
+          if (state.ocrLoaded) await state.pair.ocr.unload();
+        } finally {
+          state.ocrLoaded = false;
+          state.ocrLanguage = null;
+          if (identical(_activeOcr, state)) _activeOcr = null;
         }
       });
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStack = stackTrace;
+    }
+    try {
+      await _serializeTranslator(() async {
+        final successor = identical(_activeTranslator, state)
+            ? _translatorSuccessor(state)
+            : null;
+        if (state.translatorLoaded && successor != null) {
+          successor.translatorLoaded = true;
+          state.translatorLoaded = false;
+          _activeTranslator = successor;
+          return;
+        }
+        try {
+          if (state.translatorLoaded) {
+            await state.pair.translator.unload();
+          }
+        } finally {
+          state.translatorLoaded = false;
+          if (identical(_activeTranslator, state)) {
+            _activeTranslator = null;
+          }
+        }
+      });
+    } catch (error, stackTrace) {
+      failure ??= error;
+      failureStack ??= stackTrace;
+    }
+    state.users = 0;
+    _leases.remove(pair);
+    if (failure != null) {
+      Error.throwWithStackTrace(failure, failureStack!);
+    }
+  }
+
+  Future<void> trimMemory() => _serialized(() async {
+    final states = _leases.values.toList();
+    for (final state in states) {
+      state.idleTimer?.cancel();
+      state.idleTimer = null;
+    }
+    await _serializeOcr(() async {
+      for (final state in states) {
+        if (!state.ocrLoaded) continue;
+        try {
+          await state.pair.ocr.unload();
+        } finally {
+          state.ocrLoaded = false;
+          state.ocrLanguage = null;
+          if (identical(_activeOcr, state)) _activeOcr = null;
+        }
+      }
+    });
+    await _serializeTranslator(() async {
+      for (final state in states) {
+        if (!state.translatorLoaded) continue;
+        try {
+          await state.pair.translator.unload();
+        } finally {
+          state.translatorLoaded = false;
+          if (identical(_activeTranslator, state)) _activeTranslator = null;
+        }
+      }
+    });
+    _leases.removeWhere((_, state) => state.users == 0);
+  });
 
   _EngineLeaseState? _ocrSuccessor(_EngineLeaseState state) {
     for (final candidate in _leases.values) {
@@ -781,19 +856,28 @@ final class ComicTranslationEngineRegistry {
     _EngineLeaseState state,
     String sourceLanguage,
   ) async {
+    if (workPaused.value) throw StateError('Translation is paused in the background');
+    final ocr = state.pair.ocr;
+    final key = switch (ocr) {
+      ComicOcrLanguageSwitcher switcher => switcher.recognitionKey(sourceLanguage),
+      _ => sourceLanguage,
+    };
     final active = _activeOcr;
     if (identical(active, state) &&
         state.ocrLoaded &&
-        state.ocrLanguage == sourceLanguage) {
+        state.ocrLanguage == key) {
       return;
     }
     if (active?.ocrLoaded == true &&
         identical(active!.pair.ocr, state.pair.ocr) &&
-        active.ocrLanguage == sourceLanguage) {
+        (active.ocrLanguage == key || ocr is ComicOcrLanguageSwitcher)) {
+      if (active.ocrLanguage != key) {
+        await (ocr as ComicOcrLanguageSwitcher).selectLanguage(sourceLanguage);
+      }
       active.ocrLoaded = false;
       active.ocrLanguage = null;
       state.ocrLoaded = true;
-      state.ocrLanguage = sourceLanguage;
+      state.ocrLanguage = key;
       _activeOcr = state;
       return;
     }
@@ -810,13 +894,14 @@ final class ComicTranslationEngineRegistry {
     }
     await state.pair.ocr.load(sourceLanguage);
     state.ocrLoaded = true;
-    state.ocrLanguage = sourceLanguage;
+    state.ocrLanguage = key;
     _activeOcr = state;
   }
 
   Future<void> _ensureTranslatorLoaded(
     _EngineLeaseState state,
   ) async {
+    if (workPaused.value) throw StateError('Translation is paused in the background');
     final active = _activeTranslator;
     if (identical(active, state) && state.translatorLoaded) return;
     if (active?.translatorLoaded == true &&
@@ -891,6 +976,7 @@ final class _EngineConfiguration {
 final class _EngineLeaseState {
   final ComicTranslationEnginePair pair;
   int users = 0;
+  Timer? idleTimer;
   bool ocrLoaded = false;
   String? ocrLanguage;
   bool translatorLoaded = false;

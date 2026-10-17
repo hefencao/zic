@@ -63,6 +63,7 @@ class ComicTranslationOcrPlugin(
         when (call.method) {
             "load" -> execute(result) { load(call); null }
             "recognize" -> execute(result) { recognize(call) }
+            "selectLanguage" -> execute(result) { selectRecognition(call.argument<String>("sourceLanguage")!!); null }
             "unload" -> execute(result) { unload(); null }
             else -> result.notImplemented()
         }
@@ -116,19 +117,17 @@ class ComicTranslationOcrPlugin(
     private suspend fun selectRecognition(sourceLanguage: String) {
         val target = recognitionFor(sourceLanguage)
         if (activeRecognition == target) return
-        ocr!!.release()
-        ocr = null
         activeRecognition = ""
-        ocr = if (target == "korean") {
-            createOcr(modelPaths.koreanRecognition, modelPaths.koreanConfig)
+        if (target == "korean") {
+            ocr!!.selectRecognition(appContext, modelPaths.koreanRecognition, modelPaths.koreanConfig)
         } else {
-            createOcr(modelPaths.defaultRecognition, modelPaths.defaultConfig)
+            ocr!!.selectRecognition(appContext, modelPaths.defaultRecognition, modelPaths.defaultConfig)
         }
         activeRecognition = target
     }
 
     private suspend fun recognize(call: MethodCall): Map<String, Any?> {
-        selectRecognition(call.argument<String>("sourceLanguage")!!)
+        val requestedLanguage = call.argument<String>("sourceLanguage")!!
         val analysisSide = call.argument<Number>("maxAnalysisSide")!!.toInt()
         require(analysisSide >= MIN_ANALYSIS_WIDTH) {
             "OCR analysis side must be at least $MIN_ANALYSIS_WIDTH"
@@ -139,6 +138,8 @@ class ComicTranslationOcrPlugin(
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             error("Unsupported image: ${file.path}")
         }
+        val detectedLanguage = if (requestedLanguage == "auto") detectLanguage(file, bounds) else null
+        selectRecognition(detectedLanguage ?: requestedLanguage)
         val minAnalysisWidth = minOf(
             MIN_EFFECTIVE_ANALYSIS_WIDTH,
             maxOf(MIN_ANALYSIS_WIDTH, analysisSide / 3),
@@ -164,7 +165,30 @@ class ComicTranslationOcrPlugin(
         }
         val recognizer = if (activeRecognition == "korean")
             "korean-ppocrv5-mobile" else "ppocrv6-small"
-        return page.toMap(recognizer)
+        return page.toMap(recognizer) + ("sourceLanguage" to (detectedLanguage ?: requestedLanguage))
+    }
+
+    private suspend fun detectLanguage(file: File, bounds: BitmapFactory.Options): String? {
+        val height = minOf(bounds.outHeight, maxOf(960, bounds.outWidth * 2))
+        val top = ((bounds.outHeight - height) * 0.2).toInt()
+        val sample = sampleFor(maxOf(bounds.outWidth, height), 960)
+        val decoder = BitmapRegionDecoder.newInstance(file.path, false)
+        val bitmap = try {
+            decoder.decodeRegion(Rect(0, top, bounds.outWidth, top + height), bitmapOptions(sample))
+                ?: error("Unsupported image: ${file.path}")
+        } finally {
+            decoder.recycle()
+        }
+        try {
+            selectRecognition("ja")
+            val standard = ocr!!.recognizeSample(bitmap, 960).results
+            selectRecognition("ko")
+            val korean = ocr!!.recognizeSample(bitmap, 960).results
+            return ComicOcrLanguage.choose(standard.map { it.text to it.confidence.toDouble() },
+                korean.map { it.text to it.confidence.toDouble() })
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     private suspend fun recognizeSingle(

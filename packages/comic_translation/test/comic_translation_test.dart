@@ -63,6 +63,8 @@ void main() {
     expect(firstState.artifact!.regions.single.foregroundArgb, 0xFF202020);
     expect(firstState.artifact!.regions.single.bubbleGroupId, 3);
     expect(firstState.cleanOverlayPng, [1, 2, 3]);
+    expect(firstState.artifact!.ocrDigest, translator.lastRequest!.ocr.digest,
+      reason: 'worker preparation must preserve the existing content-cache identity');
     expect(firstState.artifact!.regions.single.bubblePolygon, isNotEmpty);
     expect(firstState.artifact!.regions.single.bubbleCandidatePolygon, isNotEmpty);
     expect(firstState.artifact!.regions.single.sourceMaskPolygons.single, hasLength(4));
@@ -249,6 +251,117 @@ void main() {
     expect(translator.unloads, 1);
   });
 
+  test('language recognizers share detection and do not reload for the same script group', () async {
+    final ocr = _SwitchingOcrEngine();
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = _TranslationEngine();
+    final pair = await registry.acquire();
+    await registry.loadOcr(pair, 'ja');
+    await registry.loadOcr(pair, 'en');
+    await registry.loadOcr(pair, 'ko');
+    expect(ocr.loads, 1);
+    expect(ocr.switches, 1);
+    expect(ocr.unloads, 0);
+    await registry.release(pair);
+    expect(ocr.unloads, 1);
+  });
+
+  testWidgets('idle model retention survives a comic language switch and expires', (tester) async {
+    final ocr = _OcrEngine();
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry(idleRetention: const Duration(seconds: 30))
+      ..ocrEngine = ocr..translationEngine = translator;
+    final first = await registry.acquire();
+    await registry.loadOcr(first, 'ja');
+    await registry.loadTranslator(first);
+    await registry.release(first);
+    await tester.pump(const Duration(seconds: 20));
+    expect(ocr.unloads, 0);
+    expect(translator.unloads, 0);
+    final korean = await registry.acquire();
+    await registry.loadOcr(korean, 'ko');
+    await registry.loadTranslator(korean);
+    expect(ocr.loads, 2);
+    expect(translator.loads, 1, reason: 'source-language changes share the translator weights');
+    await registry.release(korean);
+    await tester.pump(const Duration(seconds: 31));
+    expect(ocr.unloads, 2);
+    expect(translator.unloads, 1);
+    await registry.trimMemory();
+  });
+
+  test('background trim waits for OCR exit and resumes from its stored result', () async {
+    final image = File('${temp.path}/background-ocr.bin');
+    await image.writeAsBytes(List<int>.filled(283, 29));
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'background',
+      comicId: 'comic', chapterId: 'chapter', pageIndex: 0, mediaKind: ComicTranslationMediaKind.staticImage);
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    final ocr = _OcrEngine(recognizeStarted: started, recognizeGate: gate);
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator;
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry);
+    addTearDown(() async {
+      if (!gate.isCompleted) gate.complete();
+      await session.close();
+    });
+    session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+    await started.future;
+    var trimmed = false;
+    final trimming = registry.setBackground(true).then((_) { trimmed = true; });
+    await Future<void>.delayed(Duration.zero);
+    expect(trimmed, isFalse);
+    expect(ocr.unloads, 0);
+    gate.complete();
+    await trimming;
+    expect(ocr.unloads, 1);
+    expect(translator.calls, 0);
+    await registry.setBackground(false);
+    await _waitFor(session, identity);
+    expect(ocr.calls, 1, reason: 'completed OCR remains cached across background cancellation');
+    expect(translator.calls, 1);
+  });
+
+  test('automatic source language is learned once and applies to subsequent pages', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var i = 0; i < 2; i++) {
+      final image = File('${temp.path}/language-$i.bin');
+      await image.writeAsBytes(List<int>.filled(291 + i, 37));
+      pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'language',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: i, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final ocr = _OcrEngine(detectedSourceLanguage: 'ko');
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = _TranslationEngine();
+    final learned = <String>[];
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'auto', targetLanguage: 'zh-CN',
+      engines: registry, onSourceLanguageDetected: (language) async { learned.add(language); });
+    addTearDown(session.close);
+    session.reportPages(current: [pages.first], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(session, pages.first);
+    session.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(session, pages.last);
+    expect(session.effectiveSourceLanguage, 'ko');
+    expect(learned, ['ko']);
+    expect(ocr.languages, ['auto', 'ko']);
+  });
+
+  test('blank OCR does not guess a source language or load a translator', () async {
+    final image = File('${temp.path}/blank-language.bin');
+    await image.writeAsBytes(List<int>.filled(311, 41));
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'blank',
+      comicId: 'comic', chapterId: 'chapter', pageIndex: 0, mediaKind: ComicTranslationMediaKind.staticImage);
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = _OcrEngine(regions: const [])..translationEngine = translator;
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'auto', targetLanguage: 'zh-CN', engines: registry);
+    addTearDown(session.close);
+    session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+    final state = await _waitFor(session, identity);
+    expect(state.artifact!.regions, isEmpty);
+    expect(session.effectiveSourceLanguage, 'auto');
+    expect(translator.loads, 0);
+    expect(translator.calls, 0);
+  });
+
   test('engine generations switch without waiting for older leases', () async {
     final firstOcr = _OcrEngine(version: 'first');
     final firstTranslator = _TranslationEngine();
@@ -331,11 +444,12 @@ void main() {
     expect(translator.unloads, 1);
   });
 
-  test('release waits for recognize calls already queued on the lease', () async {
+  for (final retention in [Duration.zero, const Duration(seconds: 30)]) {
+  test('release waits for queued recognition before retaining for $retention', () async {
     final started = Completer<void>();
     final gate = Completer<void>();
     final ocr = _OcrEngine(recognizeStarted: started, recognizeGate: gate);
-    final registry = ComicTranslationEngineRegistry()
+    final registry = ComicTranslationEngineRegistry(idleRetention: retention)
       ..ocrEngine = ocr
       ..translationEngine = _TranslationEngine();
     final pair = await registry.acquire();
@@ -363,8 +477,11 @@ void main() {
     await Future.wait([first, second]);
     await release;
     expect(ocr.calls, 2);
+    if (retention > Duration.zero) expect(ocr.unloads, 0);
+    await registry.trimMemory();
     expect(ocr.unloads, 1);
   });
+  }
 
   test('translation survives a new session with different live context', () async {
     final firstImage = File('${temp.path}/context-page-0.bin');
@@ -1705,11 +1822,13 @@ final class _DeepLAdapter implements HttpClientAdapter {
   }
 }
 
-final class _OcrEngine implements ComicOcrEngine {
+class _OcrEngine implements ComicOcrEngine {
   final String version;
   final List<ComicOcrRegion>? regions;
   final Completer<void>? recognizeStarted;
   final Completer<void>? recognizeGate;
+  final String? detectedSourceLanguage;
+  final List<String> languages = [];
   int calls = 0;
   int loads = 0;
   int unloads = 0;
@@ -1719,6 +1838,7 @@ final class _OcrEngine implements ComicOcrEngine {
     this.regions,
     this.recognizeStarted,
     this.recognizeGate,
+    this.detectedSourceLanguage,
   });
 
   @override
@@ -1736,13 +1856,14 @@ final class _OcrEngine implements ComicOcrEngine {
   @override
   Future<ComicOcrArtifact> recognize(ComicOcrInput input) async {
     calls++;
+    languages.add(input.sourceLanguage);
     if (recognizeStarted?.isCompleted == false) recognizeStarted!.complete();
     if (recognizeGate != null) await recognizeGate!.future;
     return ComicOcrArtifact(
       contentDigest: input.contentDigest,
       engineId: id,
       modelVersion: modelVersion,
-      sourceLanguage: input.sourceLanguage,
+      sourceLanguage: detectedSourceLanguage ?? input.sourceLanguage,
       imageWidth: 100,
       imageHeight: 100,
       mediaKind: ComicTranslationMediaKind.staticImage,
@@ -1794,6 +1915,19 @@ final class _OcrEngine implements ComicOcrEngine {
 
   @override
   Future<void> unload() async => unloads++;
+}
+
+final class _SwitchingOcrEngine extends _OcrEngine implements ComicOcrLanguageSwitcher {
+  int switches = 0;
+
+  @override
+  String recognitionKey(String language) => language == 'ko' ? 'korean' : 'default';
+
+  @override
+  String modelVersionForLanguage(String language) => modelVersion;
+
+  @override
+  Future<void> selectLanguage(String language) async { switches++; }
 }
 
 final class _TranslationEngine implements ComicTextTranslationEngine {

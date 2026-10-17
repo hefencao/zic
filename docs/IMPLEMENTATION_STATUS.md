@@ -195,8 +195,8 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
-- 漫画翻译：`comic_translation` 提供 PaddleOCR、Hy-MT/CTranslate2、OpenAI-compatible/DeepL、内容缓存与覆层；本地按气泡生成并保留段落，DeepL 空类型用既有默认。Debug 首页名点击测试、长按诊断；测试页直达设置并独立选语言。底栏翻译单击开关、长按设置；启用变化保留会话，已挂载页独立订阅会话替换，右上角显示当前页阶段。
-  分页进出放大保留媒体/装饰层 State；章节字号替换期间保留完整旧译文。重复观察不重排活动翻译；内容缓存跨 Reader/数据库重开复用。extension 只消费完整页/本地租约，HTTP 由共享 NetLane 覆盖正文退出。arm64 源码 runtime、APK 依赖/JNI/notices 与最新验证/剩余验收见 `docs/IMPLEMENTATION_STATE.json`。
+- 漫画翻译：PaddleOCR、Hy-MT/CTranslate2、OpenAI-compatible/DeepL、内容缓存/覆层；本地气泡保留段落，DeepL 空类型用默认。Debug 首页名点击测试、长按诊断。Reader 单击开关、长按本漫画语言/设置，右上角页号/阶段；自动日/韩语有界采样并按漫画/模型记忆。OCR 切换复用 detector，翻译模型跨书复用、最后租约保温 30 秒，后台/内存压力回收。
+  已挂载页订阅会话；启用变化保留结果，放大保留媒体/覆层，字号重排保留译文；重复观察不重排活动翻译。缓存编解码/摘要由 worker 执行，分组几何在单次调用复用，内容跨 Reader/数据库重开复用。extension 只读完整页/本地租约；NetLane 覆盖正文退出。arm64/APK/JNI/notices、最新验证与剩余验收见 `docs/IMPLEMENTATION_STATE.json`。
 
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。

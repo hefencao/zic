@@ -12,6 +12,12 @@ void main() {
       settings.values['targetLanguage'] = 'en';
       await settings.setComic('source-a', 'comic', {'targetLanguage': 'zh-TW'});
       await settings.setComic('source-a', 'comic', {'enabled': true});
+      await settings.setComic('source-a', 'comic', {'sourceLanguage': 'ja'});
+      await settings.setComic('source-a', 'korean', {'sourceLanguage': 'ko'});
+      var notifications = 0;
+      settings.addListener(() { notifications++; });
+      await settings.rememberLanguage('source-a', 'automatic', 'ko', 'ocr-v1');
+      expect(notifications, 0, reason: 'learning a language must not rebuild an active session');
       expect(settings.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
       expect(settings.forComic('source-b', 'comic')['targetLanguage'], 'en');
       expect(settings.forComic('source-b', 'comic')['enabled'], isFalse);
@@ -24,6 +30,15 @@ void main() {
       expect(restored.forComic('source-a', 'comic')['enabled'], isTrue);
       expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
       expect(restored.forComic('source-b', 'comic')['targetLanguage'], 'en');
+      expect(restored.forComic('source-a', 'comic')['sourceLanguage'], 'ja');
+      expect(restored.forComic('source-a', 'korean')['sourceLanguage'], 'ko');
+      expect(restored.values['sourceLanguage'], 'auto');
+      expect(restored.detectedLanguage('source-a', 'automatic', 'ocr-v1'), 'ko');
+      expect(restored.detectedLanguage('source-b', 'automatic', 'ocr-v1'), isNull);
+      expect(restored.detectedLanguage('source-a', 'automatic', 'ocr-v2'), isNull);
+      await restored.setComic('source-a', 'automatic', {'sourceLanguage': 'ja'});
+      await restored.setComic('source-a', 'automatic', {'sourceLanguage': 'auto'});
+      expect(restored.detectedLanguage('source-a', 'automatic', 'ocr-v1'), isNull);
       final plain = await File('${directory.path}/comic_translation_settings.json').readAsString();
       expect(plain, isNot(contains('private-')));
       await secrets.init(directory.path);

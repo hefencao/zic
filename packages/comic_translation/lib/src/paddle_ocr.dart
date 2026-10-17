@@ -7,12 +7,13 @@ import 'ocr_model_manager.dart';
 import 'models.dart';
 
 final class AndroidPaddleComicOcrEngine
-    implements ComicOcrEngine, ComicOcrEngineDiagnostics {
+    implements ComicOcrEngine, ComicOcrEngineDiagnostics, ComicOcrLanguageSwitcher {
   static const _channel = MethodChannel('dev.zic/comic_translation_ocr');
   static const _analysisSide = 1600;
 
   final ComicOcrModelManager models;
   ComicOcrRunMetrics? _lastRunMetrics;
+  String _recognition = 'default';
 
   AndroidPaddleComicOcrEngine(this.models);
 
@@ -30,7 +31,22 @@ final class AndroidPaddleComicOcrEngine
   bool get supportsAnimatedPosterFrame => false;
 
   @override
-  Future<void> load(String sourceLanguage) => _channel.invokeMethod('load', {
+  String recognitionKey(String sourceLanguage) => sourceLanguage == 'auto'
+      ? _recognition : sourceLanguage.split(RegExp('[-_]')).first == 'ko' ? 'korean' : 'default';
+
+  @override
+  String modelVersionForLanguage(String sourceLanguage) => sourceLanguage == 'auto'
+      ? '$modelVersion:auto-script-v1' : modelVersion;
+
+  @override
+  Future<void> selectLanguage(String sourceLanguage) async {
+    await _channel.invokeMethod<void>('selectLanguage', {'sourceLanguage': sourceLanguage});
+    _recognition = sourceLanguage.split(RegExp('[-_]')).first == 'ko' ? 'korean' : 'default';
+  }
+
+  @override
+  Future<void> load(String sourceLanguage) async {
+    await _channel.invokeMethod<void>('load', {
     'detModelPath': models.pathOf('det.onnx'),
     'recModelPath': models.pathOf('rec.onnx'),
     'recConfigPath': models.pathOf('rec.yml'),
@@ -39,7 +55,9 @@ final class AndroidPaddleComicOcrEngine
     'maxAnalysisSide': _analysisSide,
     'threads': Platform.numberOfProcessors.clamp(2, 4),
     'sourceLanguage': sourceLanguage,
-  });
+    });
+    _recognition = sourceLanguage.split(RegExp('[-_]')).first == 'ko' ? 'korean' : 'default';
+  }
 
   @override
   Future<ComicOcrArtifact> recognize(ComicOcrInput input) async {
@@ -53,6 +71,7 @@ final class AndroidPaddleComicOcrEngine
     final width = value['width'] as int;
     final height = value['height'] as int;
     final cleanOverlayPng = value['cleanOverlayPng'] as Uint8List?;
+    _recognition = (value['recognizer'] as String).startsWith('korean') ? 'korean' : 'default';
     _lastRunMetrics = ComicOcrRunMetrics(
       recognizer: value['recognizer'] as String,
       tileCount: value['tiles'] as int,
@@ -149,11 +168,12 @@ final class AndroidPaddleComicOcrEngine
         bubbleCandidatePolygon: bubbleCandidatePolygon,
       );
     }).toList();
+    final sourceLanguage = value['sourceLanguage'] as String? ?? input.sourceLanguage;
     return ComicOcrArtifact(
       contentDigest: input.contentDigest,
       engineId: id,
-      modelVersion: modelVersion,
-      sourceLanguage: input.sourceLanguage,
+      modelVersion: modelVersionForLanguage(sourceLanguage),
+      sourceLanguage: sourceLanguage,
       imageWidth: width,
       imageHeight: height,
       mediaKind: input.identity.mediaKind,

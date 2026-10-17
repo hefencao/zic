@@ -95,6 +95,37 @@ final class ComicTextGrouping {
     required this.sourceLanguage,
   });
 
+  List<ResolvedComicTextGroup<T>> resolve<T>(List<ComicTextRegion<T>> regions) =>
+      _pass().resolve(regions);
+
+  List<String> diagnoseRelations<T>(List<ComicTextRegion<T>> regions,
+      Map<String, String?> unitIds, {
+        bool? relatedFilter, Set<int> regionIndices = const {},
+      }) => _pass().diagnoseRelations(regions, unitIds,
+        relatedFilter: relatedFilter, regionIndices: regionIndices);
+
+  _ComicTextGroupingPass _pass() => _ComicTextGroupingPass(
+    imageWidth: imageWidth, imageHeight: imageHeight, sourceLanguage: sourceLanguage);
+}
+
+// Geometry belongs to one resolution. Repeated pair/container comparisons must
+// not flatten and rescan dense source masks, or retain a previous page's data.
+final class _ComicTextGroupingPass {
+  final int imageWidth;
+  final int imageHeight;
+  final String sourceLanguage;
+  final Map<Object, List<NormalizedPoint>> _points = Map.identity();
+  final Map<List<NormalizedPoint>, _Bounds> _bounds = Map.identity();
+  final Map<Object, double> _coverage = Map.identity();
+  final Map<List<NormalizedPoint>, double> _concavity = Map.identity();
+  final Map<String, int> _characters = {};
+
+  _ComicTextGroupingPass({
+    required this.imageWidth,
+    required this.imageHeight,
+    required this.sourceLanguage,
+  });
+
   List<ResolvedComicTextGroup<T>> resolve<T>(
     List<ComicTextRegion<T>> regions,
   ) {
@@ -577,7 +608,10 @@ final class ComicTextGrouping {
     return sameId ? distance * .96 : distance;
   }
 
-  double _bubbleCoverage<T>(ComicTextRegion<T> region) {
+  double _bubbleCoverage<T>(ComicTextRegion<T> region) =>
+      _coverage.putIfAbsent(region, () => _measureBubbleCoverage(region));
+
+  double _measureBubbleCoverage<T>(ComicTextRegion<T> region) {
     final bubble = region.bubblePolygon;
     if (bubble == null) return 1;
     final points = _positionPoints(region);
@@ -596,7 +630,10 @@ final class ComicTextGrouping {
         samples.length;
   }
 
-  double _concavityWeight(List<NormalizedPoint> polygon) {
+  double _concavityWeight(List<NormalizedPoint> polygon) =>
+      _concavity.putIfAbsent(polygon, () => _measureConcavity(polygon));
+
+  double _measureConcavity(List<NormalizedPoint> polygon) {
     final solidity = _polygonArea(polygon) /
         _polygonArea(_convexHull(polygon));
     final confidence = ((1 - solidity - .02) / .14).clamp(0.0, 1.0);
@@ -686,11 +723,11 @@ final class ComicTextGrouping {
     return cluster[cluster.length ~/ 2];
   }
 
-  int _characterCount(String text) => text
+  int _characterCount(String text) => _characters.putIfAbsent(text, () => text
       .replaceAll(RegExp(r'\s'), '')
       .runes
       .length
-      .clamp(1, 1000);
+      .clamp(1, 1000));
 
   double _characterSize<T>(_RegionBox<T> box, bool vertical) {
     final characters = _characterCount(box.region.text);
@@ -796,37 +833,28 @@ final class ComicTextGrouping {
   }
 
   _RegionBox<T> _box<T>(ComicTextRegion<T> region) {
-    final points = region.polygon;
-    final xs = points.map((point) => point.x * imageWidth);
-    final ys = points.map((point) => point.y * imageHeight);
+    final bounds = _polygonBounds(region.polygon);
     return _RegionBox(
-      region,
-      xs.reduce(_min),
-      ys.reduce(_min),
-      xs.reduce(_max),
-      ys.reduce(_max),
+      region, bounds.left, bounds.top, bounds.right, bounds.bottom,
     );
   }
 
   _RegionBox<T> _positionBox<T>(ComicTextRegion<T> region) {
-    final points = _positionPoints(region);
-    final xs = points.map((point) => point.x * imageWidth);
-    final ys = points.map((point) => point.y * imageHeight);
+    final bounds = _polygonBounds(_positionPoints(region));
     return _RegionBox(
-      region,
-      xs.reduce(_min),
-      ys.reduce(_min),
-      xs.reduce(_max),
-      ys.reduce(_max),
+      region, bounds.left, bounds.top, bounds.right, bounds.bottom,
     );
   }
 
   List<NormalizedPoint> _positionPoints<T>(ComicTextRegion<T> region) =>
-      region.sourceMaskPolygons.isEmpty
+      _points.putIfAbsent(region, () => region.sourceMaskPolygons.isEmpty
           ? region.polygon
-          : region.sourceMaskPolygons.expand((polygon) => polygon).toList();
+          : region.sourceMaskPolygons.expand((polygon) => polygon).toList());
 
-  _Bounds _polygonBounds(List<NormalizedPoint> polygon) {
+  _Bounds _polygonBounds(List<NormalizedPoint> polygon) =>
+      _bounds.putIfAbsent(polygon, () => _measurePolygonBounds(polygon));
+
+  _Bounds _measurePolygonBounds(List<NormalizedPoint> polygon) {
     final xs = polygon.map((point) => point.x * imageWidth);
     final ys = polygon.map((point) => point.y * imageHeight);
     return _Bounds(

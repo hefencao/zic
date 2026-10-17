@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:catalog/catalog.dart';
+import 'package:comic_translation/comic_translation.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
@@ -220,11 +221,18 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   void didHaveMemoryPressure() {
     if (_disposed) return;
     (_services?.cacheCoordinator ?? _bootstrapCache).clearPresentationRasters();
+    unawaited(ComicTranslationEngineRegistry.instance.trimMemory());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_disposed) return;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ComicTranslationEngineRegistry.instance.setBackground(false));
+    } else if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(ComicTranslationEngineRegistry.instance.setBackground(true));
+    }
     final clock = SystemClock();
     _debugTrace.record(
       traceEvent(
