@@ -114,7 +114,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
-    await tester.runAsync(() => tester.tap(find.widgetWithText(TextButton, '韩语')));
+    await tester.runAsync(() => tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('reader-translation-source-language')), matching: find.text('韩语'))));
     await tester.runAsync(ComicTranslationSettings.instance.flush);
     await tester.pumpAndSettle();
     expect(session()!.sourceLanguage, 'ko');
@@ -122,7 +123,8 @@ void main() {
     expect(tester.state(find.byType(_Media)), same(media));
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
-    await tester.runAsync(() => tester.tap(find.widgetWithText(TextButton, '自动')));
+    await tester.runAsync(() => tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('reader-translation-source-language')), matching: find.text('自动'))));
     await tester.runAsync(ComicTranslationSettings.instance.flush);
     await tester.pumpAndSettle();
     expect(session()!.sourceLanguage, 'auto');

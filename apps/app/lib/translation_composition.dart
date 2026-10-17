@@ -350,6 +350,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
 
   Future<void> _edit(BuildContext context, String status) async {
     const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
+    const indicatorModes = {'always': '常驻', 'processing': '处理中', 'off': '关闭'};
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -359,12 +360,26 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
           listenable: _session?.detectedLanguageListenable ?? this,
           builder: (_, __) {
             final theme = Theme.of(sheetContext);
+            ChoiceChip pill(String label, bool isSelected, ValueChanged<bool> onSelected) => ChoiceChip(
+              label: Text(label, maxLines: 1, softWrap: false),
+              selected: isSelected,
+              showCheckmark: false,
+              shape: const StadiumBorder(),
+              labelStyle: theme.textTheme.labelLarge,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              labelPadding: EdgeInsets.zero,
+              visualDensity: VisualDensity.standard,
+              materialTapTargetSize: MaterialTapTargetSize.padded,
+              onSelected: onSelected,
+            );
             final selected = _preferences['sourceLanguage'] as String;
+            final indicatorMode = _preferences['showIndicator'] == false ? 'off'
+                : _preferences['indicatorOnlyWhileProcessing'] == true ? 'processing' : 'always';
             final detected = _session?.detectedLanguageListenable.value;
             final subtitle = selected == 'auto' && detected != null
                 ? '$status · ${languages[detected] ?? detected}' : status;
             return SafeArea(child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 Row(children: [
                   IconButton(tooltip: '重试当前页', icon: const Icon(Icons.refresh),
@@ -391,51 +406,37 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                 Row(children: [
                   Text('原文', style: theme.textTheme.bodyMedium),
                   const SizedBox(width: 8),
-                  for (final entry in languages.entries)
-                    Expanded(child: Semantics(selected: selected == entry.key,
-                      child: TextButton(
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 48),
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          foregroundColor: selected == entry.key
-                              ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
-                        ),
-                        onPressed: () async {
+                  Flexible(child: Semantics(label: '原文语言', child: Wrap(
+                    key: const ValueKey('reader-translation-source-language'),
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (final entry in languages.entries)
+                        pill(entry.value, selected == entry.key, (_) async {
                           Navigator.pop(sheetContext);
                           await _settings.setComic(_chapter.sourceId, _chapter.comicId,
                             {'sourceLanguage': entry.key});
-                        },
-                        child: Text(entry.value, maxLines: 1, softWrap: false,
-                          style: TextStyle(fontWeight: selected == entry.key ? FontWeight.bold : null,
-                            decoration: selected == entry.key ? TextDecoration.underline : null)),
-                      ),
-                    )),
+                        }),
+                    ],
+                  ))),
                 ]),
                 const SizedBox(height: 4),
                 Row(children: [
                   Text('翻译指示器', style: theme.textTheme.bodyMedium),
-                  const SizedBox(width: 16),
-                  Expanded(child: Semantics(label: '翻译指示器', child: SegmentedButton<String>(
+                  const SizedBox(width: 8),
+                  Flexible(child: Semantics(label: '翻译指示器', child: Wrap(
                     key: const ValueKey('reader-translation-indicator-mode'),
-                    showSelectedIcon: false,
-                    style: SegmentedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      minimumSize: const Size(0, 40),
-                      textStyle: const TextStyle(fontSize: 13),
-                    ),
-                    selected: {_preferences['showIndicator'] == false ? 'off'
-                        : _preferences['indicatorOnlyWhileProcessing'] == true ? 'processing' : 'always'},
-                    segments: const [
-                      ButtonSegment(value: 'always', label: Text('常驻', maxLines: 1, softWrap: false)),
-                      ButtonSegment(value: 'processing', label: Text('处理中', maxLines: 1, softWrap: false)),
-                      ButtonSegment(value: 'off', label: Text('关闭', maxLines: 1, softWrap: false)),
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (final entry in indicatorModes.entries)
+                        pill(entry.value, indicatorMode == entry.key, (_) {
+                          _settings.setComic(_chapter.sourceId, _chapter.comicId, {
+                            'showIndicator': entry.key != 'off',
+                            'indicatorOnlyWhileProcessing': entry.key == 'processing',
+                          });
+                        }),
                     ],
-                    onSelectionChanged: (modes) {
-                      final mode = modes.single;
-                      _settings.setComic(_chapter.sourceId, _chapter.comicId, {
-                        'showIndicator': mode != 'off', 'indicatorOnlyWhileProcessing': mode == 'processing',
-                      });
-                    },
                   ))),
                 ]),
                 const SizedBox(height: 4),

@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Use independent pill choices for Reader source languages and indicator modes, with matching typography, height, padding and spacing. Size each option to its contents.
+
 - Move the labeled translation indicator pill above the comic translation switch. Remove the switch's visible label while preserving its accessibility name and per-comic behavior.
 
 - Add a direct segmented pill for per-comic always/processing-only/off translation indicators without replacing the translation session or restarting inference. Draw only the current stage icon, with a progress ring during work; show page numbers only in the app Debug mode. Processing-only mode hides terminal states and reappears for new work. Preserve existing visibility preferences and stage descriptions in accessibility and the settings sheet.
