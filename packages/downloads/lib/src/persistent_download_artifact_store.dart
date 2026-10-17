@@ -485,6 +485,15 @@ final class PersistentDownloadArtifactStore
         );
       });
 
+  @override
+  Future<void> _copyStructuredCompanion(String source, String destination,
+      {required String storageRootId}) =>
+      _copyCompanionLocators([source], destination, storageRootId: storageRootId);
+
+  @override
+  Future<void> _deleteStructuredCompanion(String source) =>
+      _withStorageWriteQuantum(() => _deleteCompanionData(source));
+
   /// Moves one sealed physical replica while preserving [replicaId].
   ///
   /// Destination bytes are materialized and fully read-back verified before
@@ -653,6 +662,8 @@ final class PersistentDownloadArtifactStore
               effectiveDestinationLocator,
               control: control,
             );
+            await _copyCompanionData(sourceAliases, effectiveDestinationLocator,
+              storageRootId: effectiveDestinationRoot, control: control);
             control?.throwIfCancelled();
             final moved = await _index.commitArtifactReplicaMigration(
               replicaId: normalizedReplicaId,
@@ -7557,6 +7568,7 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<void> _deleteArtifactSidecar(String path) async {
+    await _deleteCompanionData(path);
     final parsed = parseSafRecordPath(path);
     if (parsed != null) {
       if (safTreeIo == null || safTreeUri != parsed.treeUri) return;
@@ -7568,6 +7580,9 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<bool> _artifactSidecarExists(String path) async {
+    for (final suffix in ['', '.zic-old']) {
+      if (await _bytes.exists(_companionLocator(path, suffix))) return true;
+    }
     final parsed = parseSafRecordPath(path);
     if (parsed != null) {
       if (safTreeIo == null || safTreeUri != parsed.treeUri) return true;

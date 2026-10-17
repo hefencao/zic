@@ -4009,6 +4009,10 @@ void main() {
     expect(singleChapterPaths, contains('航海王/001.png'));
     expect(singleChapterPaths, contains('航海王/.zic.json'));
     expect(singleChapterPaths, isNot(contains('航海王/第 1 话/001.png')));
+    final firstManifest = entry1.chapter.toManifest();
+    final firstId = readerPageDownloadId(firstManifest, firstManifest.pages.single);
+    final companion = Uint8List.fromList([19, 27, 45]);
+    await service.artifactStore.writeArtifactCompanion(firstId, companion);
 
     // 2. Download second chapter: should auto-migrate ch-01 to subfolder and save ch-02 to subfolder
     final entry2 = ImportedLibraryEntry(
@@ -4059,6 +4063,9 @@ void main() {
     expect(multiChapterPaths, contains('航海王/第 1 话/001.png'));
     expect(multiChapterPaths, contains('航海王/第 2 话/001.png'));
     expect(multiChapterPaths, isNot(contains('航海王/001.png')));
+    expect(memoryStorage['航海王/第 1 话/001.png.zic-data'], companion);
+    expect(memoryStorage, isNot(contains('航海王/001.png.zic-data')));
+    expect(await service.artifactStore.readArtifactCompanion(firstId), companion);
 
     final entry3 = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -8371,6 +8378,9 @@ void main() {
       canonicalUri: Uri.parse('https://example.test/unknown-image'),
     );
     await service.storePromotedArtifact(id: id, bytes: webpBytes);
+    final originalPath = (await service.artifactStore.index.get(id.key))!.path;
+    final companion = Uint8List.fromList([17, 32, 59]);
+    await service.artifactStore.writeArtifactCompanion(id, companion);
     await service.artifactStore.mirrorPromotedToSafIfConfigured(
       id,
       entry: entry,
@@ -8382,6 +8392,8 @@ void main() {
     expect(record, isNotNull);
     expect(record!.path, endsWith('/未知格式漫画/001.webp'));
     expect(await File(record.path).readAsBytes(), webpBytes);
+    expect(await service.artifactStore.readArtifactCompanion(id), companion);
+    expect(await File('$originalPath.zic-data').exists(), isFalse);
   });
 
   test('mirrorPromotedToSafIfConfigured rejects non-image .bin payload for structured download', () async {

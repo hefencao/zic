@@ -1,16 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'models.dart';
 
+part 'translation_archive.dart';
+
 final class ComicTranslationStore {
   ComicTranslationStore._();
 
   static final instance = ComicTranslationStore._();
+
+  static Future<bool> existsAt(String dataPath) => File('$dataPath/comic_translation.db').exists();
 
   SendPort? _worker;
   Future<void>? _initializing;
@@ -170,6 +176,14 @@ final class ComicTranslationStore {
 
   Future<void> clear() => _call('clear', const []);
 
+  /// Portable page results contain OCR/geometry and translated text, never
+  /// credentials. Import still requires the digest of the pinned image body.
+  Future<Uint8List?> exportPage(String contentDigest) async =>
+      await _call('exportPage', [contentDigest]) as Uint8List?;
+
+  Future<int> restorePage(Uint8List bytes, {required String contentDigest}) async =>
+      await _call('restorePage', [bytes, contentDigest]) as int;
+
   Future<void> close() async {
     final initializing = _initializing;
     if (initializing != null) await initializing;
@@ -309,6 +323,10 @@ Object? _executeStoreOperation(
 ) {
   final now = DateTime.now().millisecondsSinceEpoch;
   switch (operation) {
+    case 'exportPage':
+      return _exportTranslationPage(db, arguments.single as String);
+    case 'restorePage':
+      return _restoreTranslationPage(db, arguments[0] as Uint8List, arguments[1] as String);
     case 'findContentDigest':
       final rows = db.select('''
         SELECT content_digest FROM page_content

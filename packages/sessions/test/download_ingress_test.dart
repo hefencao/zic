@@ -9,6 +9,54 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('unlinked resident path replays the retained immutable descriptor', () async {
+    final temp = await Directory.systemTemp.createTemp('resident_unlinked_file_');
+    final file = File('${temp.path}/resident.webp');
+    final bytes = <int>[...'RIFF....WEBP'.codeUnits,
+      ...List<int>.generate(4096, (index) => index & 0xff)];
+    await file.writeAsBytes(bytes);
+    final descriptor = await file.open();
+    addTearDown(() async {
+      await descriptor.close();
+      await temp.delete(recursive: true);
+    });
+    final session = DownloadSession(
+      id: DownloadId(content: const ContentId(sourceId: 'source', comicId: 'comic',
+        chapterId: 'chapter', pageId: 'unlinked'), sourceRevision: 'r1', canonicalUri: file.uri),
+      artifact: Artifact(partialPath: '${temp.path}/cache.part', finalPath: file.path),
+      clock: _Clock(),
+    );
+    Stream<List<int>> bound(int start, int endExclusive) async* {
+      await descriptor.setPosition(start);
+      yield await descriptor.read(endExclusive - start);
+    }
+    session.bindResidentImmutableAuthority(validators: const Validators(), totalLength: bytes.length,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache, metadataPrefix: bytes.sublist(0, 64),
+      residentReplayDirectFilePath: file.path, residentReplayAccessMode: 'direct',
+      residentReplayRangeChunks: (start, endExclusive) async => bound(start, endExclusive));
+    await file.delete();
+    final factory = _BackgroundFileFactory();
+    var replays = 0;
+    final registry = DownloadIngressProjectionRegistry(
+      sources: SourcePool(factory: factory, budgetFor: (_) => bytes.length + 1024),
+      scopePrefix: 'unlinked', residentReplayRangeSourceWithControl:
+        (physical, start, endExclusive, {required control}) async {
+          replays++;
+          expect(identical(physical, session), isTrue);
+          control.throwIfCancelled();
+          return physical.residentReplayRangeChunks!(start, endExclusive);
+        },
+    );
+    addTearDown(registry.dispose);
+    final projection = registry.get(session);
+    await registry.settled(session.id);
+    expect(replays, 1);
+    expect(projection.snapshot.failure, isNull);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.sealed, isTrue);
+    expect(factory.created.last.bytes, orderedEquals(bytes));
+  });
+
   test(
     'resident initial hydration uses generation direct file in background',
     () async {

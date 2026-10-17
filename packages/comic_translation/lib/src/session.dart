@@ -12,9 +12,26 @@ import 'models.dart';
 import 'policy.dart';
 import 'store.dart';
 
+part 'chapter_task.dart';
+
 const _translationArtifactVersion = 'artifact-v6';
 
 final class ComicTranslationSession {
+  static final _ocrTasks = <String, Future<({ComicOcrArtifact artifact, String digest})>>{};
+  static final _translationTasks = <String, Future<ComicTranslationArtifact>>{};
+
+  static Future<T> _joinWork<T>(Map<String, Future<T>> tasks, String key,
+      Future<T> Function() run) {
+    final existing = tasks[key];
+    if (existing != null) return existing;
+    late final Future<T> task;
+    task = Future<T>.sync(run).whenComplete(() {
+      if (identical(tasks[key], task)) tasks.remove(key);
+    });
+    tasks[key] = task;
+    return task;
+  }
+
   ComicTranslationPolicy _policy;
   ComicTranslationPolicy get policy => _policy;
   final ComicTranslationInputResolver inputResolver;
@@ -386,15 +403,53 @@ final class ComicTranslationSession {
       final ocrEngine = pair.ocr;
       final translator = pair.translator;
       final language = effectiveSourceLanguage;
-      final cachedOcr = await ComicTranslationStore.instance.findOcrEntry(
+      final ocrVersion = '${switch (ocrEngine) {
+        ComicOcrLanguageSwitcher switcher => switcher.modelVersionForLanguage(language),
+        _ => ocrEngine.modelVersion,
+      }}${policy.ocrParameters.cacheSuffix}';
+      var archiveRead = false;
+      var archiveRestored = false;
+      Future<void> restoreArchive() async {
+        if (archiveRead || input.archive == null) return;
+        archiveRead = true;
+        try {
+          final bytes = await input.archive!.read();
+          if (bytes == null || !_isActive(ticket)) return;
+          final count = await ComicTranslationStore.instance.restorePage(bytes,
+            contentDigest: input.contentDigest);
+          archiveRestored = count > 0;
+          _diagnose(identity, {'stage': 'archive-restored', 'variants': count});
+        } on Object catch (error) {
+          _diagnose(identity, {'stage': 'archive-read-failed', 'errorType': error.runtimeType.toString()});
+        }
+      }
+      Future<({ComicOcrArtifact artifact, String digest})?> findOcr() =>
+          ComicTranslationStore.instance.findOcrEntry(
         contentDigest: input.contentDigest,
         engineId: ocrEngine.id,
-        modelVersion: '${switch (ocrEngine) {
-          ComicOcrLanguageSwitcher switcher => switcher.modelVersionForLanguage(language),
-          _ => ocrEngine.modelVersion,
-        }}${policy.ocrParameters.cacheSuffix}',
+        modelVersion: ocrVersion,
         sourceLanguage: language,
       );
+      var cachedOcr = await findOcr();
+      if (cachedOcr == null) {
+        await restoreArchive();
+        if (!_isActive(ticket)) return;
+        if (archiveRead) cachedOcr = await findOcr();
+      }
+      if (cachedOcr == null && archiveRestored && language == 'auto') {
+        final candidates = <({ComicOcrArtifact artifact, String digest})>[];
+        for (final savedLanguage in ['ja', 'ko']) {
+          final version = switch (ocrEngine) {
+            ComicOcrLanguageSwitcher switcher => switcher.modelVersionForLanguage(savedLanguage),
+            _ => ocrEngine.modelVersion,
+          };
+          final saved = await ComicTranslationStore.instance.findOcrEntry(
+            contentDigest: input.contentDigest, engineId: ocrEngine.id,
+            modelVersion: '$version${policy.ocrParameters.cacheSuffix}', sourceLanguage: savedLanguage);
+          if (saved != null) candidates.add(saved);
+        }
+        if (candidates.length == 1) cachedOcr = candidates.single;
+      }
       if (!_isActive(ticket)) return;
       _diagnose(identity, {'stage': 'ocr-cache', 'hit': cachedOcr != null,
         'cacheOnly': cacheOnly,
@@ -404,8 +459,6 @@ final class ComicTranslationSession {
       var ocrDigest = cachedOcr?.digest;
       if (ocr == null && cacheOnly) return;
       if (ocr == null) {
-        _diagnose(identity, {'stage': 'ocr-started', 'sourceLanguage': language,
-          ...policy.ocrParameters.toSettings()});
         _setStateIfActive(
           identity,
           ticket,
@@ -413,26 +466,34 @@ final class ComicTranslationSession {
             ComicTranslationPhase.recognizing,
           ),
         );
-        ocr = await engines.recognize(
-          pair,
-          language,
-          ComicOcrInput(
-            identity: identity,
-            filePath: input.file.path,
-            contentDigest: input.contentDigest,
-            sourceLanguage: language,
-            maxAnalysisSide: policy.maxAnalysisSide,
-            parameters: policy.ocrParameters,
-            animatedMode: AnimatedTranslationMode.posterFrame,
-          ),
-        );
-        if (ocr.contentDigest != input.contentDigest) {
-          throw StateError('OCR result content digest does not match input');
-        }
-        if (policy.ocrParameters.cacheSuffix.isNotEmpty) {
-          ocr = ocr.withModelVersion('${ocr.modelVersion}${policy.ocrParameters.cacheSuffix}');
-        }
-        ocrDigest = await ComicTranslationStore.instance.storeOcr(ocr);
+        final workKey = jsonEncode([input.contentDigest, ocrEngine.id, ocrVersion, language]);
+        if (_ocrTasks.containsKey(workKey)) _diagnose(identity, {'stage': 'ocr-shared'});
+        final prepared = await _joinWork(_ocrTasks, workKey, () async {
+          _diagnose(identity, {'stage': 'ocr-started', 'sourceLanguage': language,
+            ...policy.ocrParameters.toSettings()});
+          var recognized = await engines.recognize(
+            pair,
+            language,
+            ComicOcrInput(
+              identity: identity,
+              filePath: input.file.path,
+              contentDigest: input.contentDigest,
+              sourceLanguage: language,
+              maxAnalysisSide: policy.maxAnalysisSide,
+              parameters: policy.ocrParameters,
+              animatedMode: AnimatedTranslationMode.posterFrame,
+            ),
+          );
+          if (recognized.contentDigest != input.contentDigest) {
+            throw StateError('OCR result content digest does not match input');
+          }
+          if (policy.ocrParameters.cacheSuffix.isNotEmpty) {
+            recognized = recognized.withModelVersion('${recognized.modelVersion}${policy.ocrParameters.cacheSuffix}');
+          }
+          return (artifact: recognized, digest: await ComicTranslationStore.instance.storeOcr(recognized));
+        });
+        ocr = prepared.artifact;
+        ocrDigest = prepared.digest;
       }
       if (!_isActive(ticket)) return;
       if (sourceLanguage == 'auto' && ocr.sourceLanguage != 'auto' &&
@@ -441,6 +502,7 @@ final class ComicTranslationSession {
         await onSourceLanguageDetected?.call(ocr.sourceLanguage);
         if (!_isActive(ticket)) return;
       }
+      final sourceOcr = ocr;
       final digest = ocrDigest!;
       final context = translator.contextMode ==
               ComicTranslationContextMode.previousPages
@@ -454,7 +516,7 @@ final class ComicTranslationSession {
           ]).toList())))
           .toString();
       final request = ComicTranslationRequest(
-        ocr: ocr,
+        ocr: sourceOcr,
         targetLanguage: targetLanguage,
         previousPages: context,
         translateSoundEffects: policy.translateSoundEffects,
@@ -465,17 +527,23 @@ final class ComicTranslationSession {
       final translationModelVersion =
           '$_translationArtifactVersion:${engineIdentity.modelVersion}:'
           'sfx=${policy.translateSoundEffects}';
-      var translation = await ComicTranslationStore.instance.findTranslation(
+      Future<ComicTranslationArtifact?> findTranslation() => ComicTranslationStore.instance.findTranslation(
         ocrDigest: digest,
         engineId: engineIdentity.id,
         modelVersion: translationModelVersion,
         targetLanguage: targetLanguage,
         contextDigest: contextDigest,
       );
+      var translation = await findTranslation();
+      if (translation == null && !archiveRead) {
+        await restoreArchive();
+        if (!_isActive(ticket)) return;
+        if (archiveRead) translation = await findTranslation();
+      }
       final translationCached = translation != null;
       _diagnose(identity, {'stage': 'translation-cache', 'hit': translationCached,
         'cacheOnly': cacheOnly,
-        'ocrDigest': digest, 'sourceLanguage': ocr.sourceLanguage,
+        'ocrDigest': digest, 'sourceLanguage': sourceOcr.sourceLanguage,
         'engineId': engineIdentity.id, 'modelVersion': translationModelVersion,
         'targetLanguage': targetLanguage});
       if (translation == null && cacheOnly) return;
@@ -488,45 +556,51 @@ final class ComicTranslationSession {
             ComicTranslationPhase.translating,
           ),
         );
-        if (request.units.isNotEmpty) {
-          _diagnose(identity, {'stage': 'translation-started', 'unitCount': request.units.length});
-        }
-        final result = request.units.isEmpty
-            ? const ComicTranslationResult({}) : await engines.translate(pair, request);
-        final translatedRegions = request.expandUnitTranslations(result);
-        final regions = ocr.regions.map((region) {
-          return ComicTranslatedRegion(
-            ocrRegionId: region.id,
-            sourceText: region.text,
-            translatedText: translatedRegions[region.id]!,
-            polygon: region.polygon,
-            orientation: region.orientation,
-            kind: region.kind,
-            readingOrder: region.readingOrder,
-            sourceMaskPolygons: region.sourceMaskPolygons,
-            backgroundArgb: region.backgroundArgb,
-            foregroundArgb: region.foregroundArgb,
-            bubbleGroupId: region.bubbleGroupId,
-            bubblePolygon: region.bubblePolygon,
-            bubbleCandidatePolygon: region.bubbleCandidatePolygon,
-            frameSpan: region.frameSpan,
+        final workKey = jsonEncode([digest, engineIdentity.id, translationModelVersion,
+          targetLanguage, contextDigest]);
+        if (_translationTasks.containsKey(workKey)) _diagnose(identity, {'stage': 'translation-shared'});
+        translation = await _joinWork<ComicTranslationArtifact>(_translationTasks, workKey, () async {
+          if (request.units.isNotEmpty) {
+            _diagnose(identity, {'stage': 'translation-started', 'unitCount': request.units.length});
+          }
+          final result = request.units.isEmpty
+              ? const ComicTranslationResult({}) : await engines.translate(pair, request);
+          final translatedRegions = request.expandUnitTranslations(result);
+          final regions = sourceOcr.regions.map((region) {
+            return ComicTranslatedRegion(
+              ocrRegionId: region.id,
+              sourceText: region.text,
+              translatedText: translatedRegions[region.id]!,
+              polygon: region.polygon,
+              orientation: region.orientation,
+              kind: region.kind,
+              readingOrder: region.readingOrder,
+              sourceMaskPolygons: region.sourceMaskPolygons,
+              backgroundArgb: region.backgroundArgb,
+              foregroundArgb: region.foregroundArgb,
+              bubbleGroupId: region.bubbleGroupId,
+              bubblePolygon: region.bubblePolygon,
+              bubbleCandidatePolygon: region.bubbleCandidatePolygon,
+              frameSpan: region.frameSpan,
+            );
+          }).toList();
+          final artifact = ComicTranslationArtifact(
+            contentDigest: input.contentDigest,
+            ocrDigest: digest,
+            engineId: engineIdentity.id,
+            modelVersion: translationModelVersion,
+            sourceLanguage: sourceOcr.sourceLanguage,
+            targetLanguage: targetLanguage,
+            contextDigest: contextDigest,
+            imageWidth: sourceOcr.imageWidth,
+            imageHeight: sourceOcr.imageHeight,
+            mediaKind: sourceOcr.mediaKind,
+            animatedMode: sourceOcr.animatedMode,
+            regions: regions,
           );
-        }).toList();
-        translation = ComicTranslationArtifact(
-          contentDigest: input.contentDigest,
-          ocrDigest: digest,
-          engineId: engineIdentity.id,
-          modelVersion: translationModelVersion,
-          sourceLanguage: ocr.sourceLanguage,
-          targetLanguage: targetLanguage,
-          contextDigest: contextDigest,
-          imageWidth: ocr.imageWidth,
-          imageHeight: ocr.imageHeight,
-          mediaKind: ocr.mediaKind,
-          animatedMode: ocr.animatedMode,
-          regions: regions,
-        );
-        await ComicTranslationStore.instance.storeTranslation(translation);
+          await ComicTranslationStore.instance.storeTranslation(artifact);
+          return artifact;
+        });
       }
       // Once a remote request has completed, publish its immutable result even
       // if page-retention bookkeeping changed while the request was in flight.
@@ -541,11 +615,22 @@ final class ComicTranslationSession {
         ComicTranslationPageState(
           ComicTranslationPhase.ready,
           artifact: translation,
-          cleanOverlayPng: policy.useCleanOverlay ? ocr.cleanOverlayPng : null,
+          cleanOverlayPng: policy.useCleanOverlay ? sourceOcr.cleanOverlayPng : null,
         ),
       );
       _diagnose(identity, {'stage': 'ready', 'cached': translationCached,
         'elapsedMicros': watch.elapsedMicroseconds});
+      // Publish first so portable persistence cannot delay the visible result.
+      // The input lease and close barrier still cover this optional write.
+      if (input.archive?.write case final write?) {
+        try {
+          final bytes = await ComicTranslationStore.instance.exportPage(input.contentDigest);
+          if (bytes != null) await write(bytes);
+          _diagnose(identity, {'stage': 'archive-saved', 'available': bytes != null});
+        } on Object catch (error) {
+          _diagnose(identity, {'stage': 'archive-write-failed', 'errorType': error.runtimeType.toString()});
+        }
+      }
     } finally {
       await input.release();
     }

@@ -170,6 +170,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     CacheRec record,
   );
   Future<Uint8List> _readArtifactBytes(String path);
+  Future<void> _copyStructuredCompanion(String source, String destination,
+      {required String storageRootId});
+  Future<void> _deleteStructuredCompanion(String source);
   Future<Map<String, CacheRec>> indexedRecords();
   Future<ArtifactReplicaMigrationResult> migrateArtifactReplica({
     required DownloadId id,
@@ -3176,6 +3179,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           }
         }
         try {
+          await _copyStructuredCompanion(record.path, destinationPath, storageRootId: treeUri);
           await _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
             oldAccessLocator: record.path,
             oldStorageRootId: record.storageRootId,
@@ -3201,6 +3205,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       var moved = false;
       if (!candidate.destinationExisted) {
         await destinationFile.parent.create(recursive: true);
+        await _copyStructuredCompanion(record.path, destinationFile.path,
+          storageRootId: record.storageRootId);
         await sourceFile.rename(destinationFile.path);
         moved = true;
         final movedProof = await _artifactProof(destinationFile.path);
@@ -3247,7 +3253,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           }
           rethrow;
         }
+        await _deleteStructuredCompanion(record.path);
       } else {
+        await _copyStructuredCompanion(record.path, destinationFile.path,
+          storageRootId: record.storageRootId);
         await _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
           oldAccessLocator: record.path,
           oldStorageRootId: record.storageRootId,
@@ -3628,6 +3637,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         if (safExists) {
           final proof = await _artifactProof(recordPath);
           if (_proofMatchesRecord(proof, rec)) {
+            await _copyStructuredCompanion(rec.path, recordPath,
+              storageRootId: entry == null ? treeUri : storageRootIdFor(entry));
             await _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
               oldAccessLocator: rec.path,
               oldStorageRootId: rec.storageRootId,
@@ -3690,6 +3701,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
             expectedChecksum: rec.checksum,
             expectedChecksumAlgorithm: rec.checksumAlgorithm,
             commit: () async {
+              await _copyStructuredCompanion(rec.path, recordPath,
+                storageRootId: committed.storageRootId);
               if (placement?.mode == DownloadPlacementMode.overwrite) {
                 await _index.replacePathBindings(
                   record: committed,
@@ -3737,6 +3750,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           if (destExists) {
             final proof = await _artifactProof(destFile.path);
             if (_proofMatchesRecord(proof, rec)) {
+              await _copyStructuredCompanion(rec.path, destFile.path,
+                storageRootId: storageRootIdFor(entry));
               await _commitAuthoritySwitchWithObsoleteSealedCleanup<void>(
                 oldAccessLocator: rec.path,
                 oldStorageRootId: rec.storageRootId,
@@ -3780,6 +3795,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           if (!await destFile.parent.exists()) {
             await destFile.parent.create(recursive: true);
           }
+          await _copyStructuredCompanion(rec.path, destFile.path,
+            storageRootId: storageRootIdFor(entry));
           await local.rename(destFile.path);
           final committed = rec.copyWith(
             path: destFile.path,
@@ -3806,6 +3823,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
             }
             rethrow;
           }
+          await _deleteStructuredCompanion(rec.path);
         });
       }
     }
@@ -3863,7 +3881,11 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     await _serializeStructuredWrite(targetPath, () async {
       if (await _bytes.exists(targetPath)) {
         final targetProof = await _artifactProof(targetPath);
-        if (_proofMatchesRecord(targetProof, siblingRecord)) return;
+        if (_proofMatchesRecord(targetProof, siblingRecord)) {
+          await _copyStructuredCompanion(siblingPath, targetPath,
+            storageRootId: storageRootIdFor(entry));
+          return;
+        }
         throw Failure(
           code: ErrorCode.artifactCorruption,
           message: 'materialized target contains different bytes: $targetPath',
@@ -3891,6 +3913,8 @@ mixin _PersistentDownloadStructuredPlacementMixin {
               'materialized target failed content verification: $targetPath',
         );
       }
+      await _copyStructuredCompanion(siblingPath, targetPath,
+        storageRootId: storageRootIdFor(entry));
     });
     return targetPath;
   }

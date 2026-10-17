@@ -368,7 +368,13 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
       presentationExtensionFactory: (pipeline) => ComicTranslationReaderExtension(
-        pipeline, appPreferences: widget.preferences),
+        pipeline, appPreferences: widget.preferences,
+        artifactStore: _downloadComposition?.artifactStore,
+        onPretranslateChapter: () => AppTranslationChapterJobs.instance.start(current,
+          prepare: () async => (
+            entry: await _downloadCommands.downloadChapterForTranslation(current),
+            composition: _downloadComposition,
+          ), trace: widget.debugTrace)),
       adaptiveMetadata: versionSource == null
           ? null
           : AdaptiveReaderMetadata(

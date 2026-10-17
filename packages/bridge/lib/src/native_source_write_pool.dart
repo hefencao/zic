@@ -469,6 +469,10 @@ final class _NativeSourceWriteWorker {
         throw StateError('native source write worker exited before responding');
       }
       if (value is int) return value;
+      if (value is List && value.length == 5 && value[0] == 'file-read-failed') {
+        throw FileSystemException(value[1] as String, value[2] as String?,
+          value[3] == null ? null : OSError(value[3] as String, value[4] as int));
+      }
       throw StateError('invalid native source write response: $value');
     } finally {
       if (identical(_activeResponse, completed)) {
@@ -591,6 +595,11 @@ void _nativeSourceWriteWorkerEntry(List<Object?> arguments) {
         calloc.free(outData);
       }
     } on Object catch (error) {
+      if (operation == _NativeSourceWriteOperation.appendFileRange && error is FileSystemException) {
+        reply.send(['file-read-failed', error.message, error.path,
+          error.osError?.message, error.osError?.errorCode]);
+        return;
+      }
       reply.send('native source write failed: $error');
     }
   });

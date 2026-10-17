@@ -7,6 +7,82 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(ComicTranslationOverlayController.clearRetainedLayouts);
+
+  testWidgets('history reentry reuses complete layout with size, font and style isolation', (tester) async {
+    await tester.runAsync(() async {
+      final temp = await Directory.systemTemp.createTemp('zic-layout-reentry-');
+      await ComicTranslationStore.instance.init(temp.path);
+      final identity = await _cachePage(temp, 0, large: false);
+      final events = <Map<String, Object?>>[];
+      ComicTranslationSession createSession() => ComicTranslationSession(
+        enabled: true, sourceLanguage: 'ja', targetLanguage: 'en',
+        engines: ComicTranslationEngineRegistry()
+          ..ocrEngine = _CachedOcr()..translationEngine = _CachedTranslator());
+      var session = createSession();
+      Future<void> paint({double width = 300, bool dark = false}) => tester.pumpWidget(MaterialApp(
+        theme: ThemeData(brightness: dark ? Brightness.dark : Brightness.light),
+        themeAnimationDuration: Duration.zero,
+        home: Center(child: SizedBox(width: width, height: 400,
+          child: ComicTranslationOverlay(session: session, identity: identity,
+            onDiagnostic: events.add, child: const ColoredBox(color: Colors.white)))),
+      ));
+      try {
+        session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+        await _waitReady(session, identity);
+        await paint();
+        await _finishLayout(tester, events, 1);
+        final original = events.last['blocks'];
+        await tester.pumpWidget(const SizedBox.shrink());
+        await session.close();
+        session = createSession();
+        session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+        await _waitReady(session, identity);
+        events.clear();
+        await paint();
+        expect(events.where((event) => event['stage'] == 'layout-started'), isEmpty);
+        expect(events.single['reused'], isTrue);
+        expect(events.single['blocks'], original);
+
+        events.clear();
+        await paint(width: 250);
+        await _finishLayout(tester, events, 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+        events.clear();
+        await paint();
+        expect(events.single['reused'], isTrue,
+          reason: 'resizing a consumer cannot mutate the retained completed layout');
+        expect(events.single['blocks'], original);
+
+        (session.fontScaleListenable as ValueNotifier<double>).value = 1.02;
+        events.clear();
+        await tester.pump();
+        expect(events.single['stage'], 'layout-started');
+        await _finishLayout(tester, events, 1);
+        events.clear();
+        await paint(width: 250);
+        expect(events.single['stage'], 'layout-started');
+        await _finishLayout(tester, events, 1);
+        events.clear();
+        await paint(width: 250, dark: true);
+        expect(events.single['stage'], 'layout-started');
+        await _finishLayout(tester, events, 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+        ComicTranslationOverlayController.clearRetainedLayouts();
+        events.clear();
+        await paint(width: 250, dark: true);
+        expect(events.single['stage'], 'layout-started',
+          reason: 'background/pressure clearing releases retained text plans');
+        await _finishLayout(tester, events, 1);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await session.close();
+        await ComicTranslationStore.instance.close();
+        await temp.delete(recursive: true);
+      }
+    });
+  });
+
   testWidgets('later cached pages cannot reflow a visible page or change its groups', (tester) async {
     await tester.runAsync(() async {
       final temp = await Directory.systemTemp.createTemp('zic-layout-stability-');

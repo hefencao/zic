@@ -334,6 +334,12 @@ final class ComicTranslatedRegion {
 }
 
 final class ComicTranslationArtifact {
+  final String? _layoutFingerprint;
+  static final _computedLayoutFingerprints = Expando<String>();
+  String get layoutFingerprint => _layoutFingerprint ??
+      (_computedLayoutFingerprints[this] ??=
+          sha256.convert(utf8.encode(jsonEncode(toJson()))).toString());
+
   final String contentDigest;
   final String ocrDigest;
   final String engineId;
@@ -348,6 +354,7 @@ final class ComicTranslationArtifact {
   final List<ComicTranslatedRegion> regions;
 
   const ComicTranslationArtifact({
+    String? layoutFingerprint,
     required this.contentDigest,
     required this.ocrDigest,
     required this.engineId,
@@ -360,10 +367,11 @@ final class ComicTranslationArtifact {
     required this.mediaKind,
     required this.animatedMode,
     required this.regions,
-  });
+  }) : _layoutFingerprint = layoutFingerprint;
 
-  factory ComicTranslationArtifact.fromJson(Map<String, dynamic> json) =>
-      ComicTranslationArtifact(
+  factory ComicTranslationArtifact.fromJson(Map<String, dynamic> json) {
+    final artifact = ComicTranslationArtifact(
+        layoutFingerprint: sha256.convert(utf8.encode(jsonEncode(json))).toString(),
         contentDigest: json['contentDigest'] as String,
         ocrDigest: json['ocrDigest'] as String,
         engineId: json['engineId'] as String,
@@ -385,6 +393,10 @@ final class ComicTranslationArtifact {
                 ))
             .toList(),
       );
+    // Store decoding runs in its worker. Retained rendering must distinguish
+    // actual translated geometry/text, including a new result under one model.
+    return artifact;
+  }
 
   Map<String, dynamic> toJson() => {
     'contentDigest': contentDigest,

@@ -33,6 +33,275 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('portable page results restore after database clear without OCR or translation', () async {
+    final image = File('${temp.path}/portable-page.bin');
+    await image.writeAsBytes([31, 71, 92]);
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+      sourceKey: 'archive', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final ocr = _OcrEngine(version: 'archive-v1');
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = ocr..translationEngine = translator;
+    Uint8List? saved;
+    final events = <Map<String, Object?>>[];
+    ComicTranslationSession create({ComicTranslationPolicy policy = const ComicTranslationPolicy(),
+        String sourceLanguage = 'ja'}) =>
+      ComicTranslationSession(enabled: true, sourceLanguage: sourceLanguage, targetLanguage: 'zh-CN',
+        engines: registry, policy: policy, onDiagnostic: (_, event) => events.add(event),
+        inputResolver: ComicTranslationInputResolver(openFile: (_) async => ComicTranslationInputFile(
+          path: image.path, release: () {}, archive: ComicTranslationArchiveAccess(
+            read: () async => saved, write: (bytes) async => saved = bytes))));
+    Future<ComicTranslationPageState> run(ComicTranslationSession session) async {
+      session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+      await _waitFor(session, identity);
+      final state = session.listenable(identity).value;
+      await session.close();
+      return state;
+    }
+
+    final original = await run(create());
+    expect(saved, isNotNull);
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    await ComicTranslationStore.instance.clear();
+    final restored = await run(create());
+    expect(restored.artifact!.toJson(), original.artifact!.toJson());
+    expect(restored.cleanOverlayPng, original.cleanOverlayPng);
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    expect(ocr.loads, 1, reason: 'archive restoration must not load a model');
+    expect(events.any((event) => event['stage'] == 'archive-restored'), isTrue);
+    await ComicTranslationStore.instance.clear();
+    await run(create(sourceLanguage: 'auto'));
+    expect(ocr.calls, 1, reason: 'a validated single saved language can restore automatic mode');
+    expect(translator.calls, 1);
+
+    await run(create(policy: const ComicTranslationPolicy(
+      ocrParameters: ComicOcrParameters(recognitionThreshold: 0.6))));
+    expect(ocr.calls, 2, reason: 'saved results cannot bypass changed OCR configuration');
+    expect(translator.calls, 2);
+    await image.writeAsBytes([31, 71, 93]);
+    await run(create());
+    expect(ocr.calls, 3, reason: 'the actual image digest must reject the former page archive');
+    expect(translator.calls, 3);
+    expect(events.any((event) => event['stage'] == 'archive-read-failed'), isTrue);
+  });
+
+  test('archive validation rejects a corrupt batch before inserting any result', () async {
+    final image = File('${temp.path}/archive-validation.bin');
+    await image.writeAsBytes([62, 17, 82]);
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+      sourceKey: 'archive-validation', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()..translationEngine = _TranslationEngine());
+    session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(session, identity);
+    final artifact = session.listenable(identity).value.artifact!;
+    await session.close();
+    final bytes = (await ComicTranslationStore.instance.exportPage(artifact.contentDigest))!;
+    await ComicTranslationStore.instance.clear();
+    final envelope = jsonDecode(utf8.decode(bytes)) as Map;
+    final invalid = Map<String, dynamic>.from(artifact.toJson())..['contentDigest'] = 'other';
+    (envelope['translations'] as List).add(jsonEncode(invalid));
+    await expectLater(ComicTranslationStore.instance.restorePage(
+      Uint8List.fromList(utf8.encode(jsonEncode(envelope))), contentDigest: artifact.contentDigest), throwsStateError);
+    expect(await ComicTranslationStore.instance.findTranslation(ocrDigest: artifact.ocrDigest,
+      engineId: artifact.engineId, modelVersion: artifact.modelVersion,
+      targetLanguage: artifact.targetLanguage, contextDigest: artifact.contextDigest), isNull);
+    await expectLater(ComicTranslationStore.instance.restorePage(bytes,
+      contentDigest: 'different-image'), throwsStateError);
+    (envelope['translations'] as List).removeLast();
+    final ocr = envelope['ocr'] as Map;
+    ocr[ocr.keys.first] = '${ocr.values.first} ';
+    await expectLater(ComicTranslationStore.instance.restorePage(
+      Uint8List.fromList(utf8.encode(jsonEncode(envelope))), contentDigest: artifact.contentDigest), throwsStateError);
+    expect(await ComicTranslationStore.instance.restorePage(bytes, contentDigest: artifact.contentDigest), 1);
+  });
+
+  test('chapter task shares models and reuses results with a bounded context', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var index = 0; index < 5; index++) {
+      final image = File('${temp.path}/chapter-task-$index.bin');
+      await image.writeAsBytes([17, 42, index]);
+      pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+        sourceKey: 'chapter-task', comicId: 'comic', chapterId: 'chapter',
+        pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final ocr = _OcrEngine(version: 'chapter-task-v1');
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = ocr..translationEngine = translator;
+    for (var run = 0; run < 2; run++) {
+      final task = ComicTranslationChapterTask(pages: pages,
+        sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+        inputResolver: const ComicTranslationInputResolver());
+      await task.completion.timeout(const Duration(seconds: 10));
+      expect(task.state.value.phase, ComicTranslationChapterPhase.complete);
+      expect(task.state.value.completedPages, 5);
+      expect(ocr.calls, 5);
+      expect(translator.calls, 5, reason: 'a repeated chapter task reads persisted results');
+      expect(translator.lastRequest!.previousPages.map((page) => page.pageIndex), [2, 3]);
+      await task.close();
+    }
+    expect(ocr.loads, 1);
+    expect(translator.loads, 1);
+    expect(ocr.unloads, 1);
+    expect(translator.unloads, 1);
+  });
+
+  test('chapter cancellation drains the in-flight model and never starts the next page', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var index = 0; index < 2; index++) {
+      final image = File('${temp.path}/chapter-cancel-$index.bin');
+      await image.writeAsBytes([43, 12, index]);
+      pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+        sourceKey: 'chapter-cancel', comicId: 'comic', chapterId: 'chapter',
+        pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    final ocr = _OcrEngine(version: 'chapter-cancel-v1');
+    final translator = _TranslationEngine(translateStarted: started, translateGate: gate);
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = ocr..translationEngine = translator;
+    final task = ComicTranslationChapterTask(pages: pages,
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+      inputResolver: const ComicTranslationInputResolver());
+    await started.future;
+    var drained = false;
+    final cancellation = task.cancel().then((_) => drained = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(task.state.value.phase, ComicTranslationChapterPhase.cancelling);
+    expect(drained, isFalse);
+    expect(ocr.unloads, 0);
+    expect(translator.unloads, 0);
+    gate.complete();
+    await cancellation;
+    expect(task.state.value.phase, ComicTranslationChapterPhase.cancelled);
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    expect(ocr.unloads, 1);
+    expect(translator.unloads, 1);
+    await task.close();
+  });
+
+  test('chapter cache hits drain page archive leases before advancing or cancelling', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var index = 0; index < 2; index++) {
+      final file = File('${temp.path}/chapter-archive-$index.bin');
+      await file.writeAsBytes([71, 39, index]);
+      pages.add(ComicTranslationPageIdentity(imageKey: file.uri.toString(),
+        sourceKey: 'chapter-archive', comicId: 'comic', chapterId: 'chapter',
+        pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final entered = Completer<void>();
+    final gate = Completer<void>();
+    var opened = 0;
+    var released = 0;
+    final ocr = _OcrEngine(version: 'chapter-archive-v1');
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = ocr..translationEngine = translator;
+    final warm = ComicTranslationChapterTask(pages: [pages.first],
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+      inputResolver: const ComicTranslationInputResolver());
+    await warm.completion;
+    await warm.close();
+    final task = ComicTranslationChapterTask(pages: pages,
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: registry,
+      inputResolver: ComicTranslationInputResolver(openFile: (identity) async {
+        opened++;
+        return ComicTranslationInputFile(path: File.fromUri(Uri.parse(identity.imageKey)).path,
+          release: () => released++, archive: ComicTranslationArchiveAccess(
+            read: () async => null, write: (_) async {
+              if (!entered.isCompleted) entered.complete();
+              await gate.future;
+            }));
+      }));
+    await entered.future;
+    expect(opened, 1);
+    expect(task.state.value.completedPages, 0);
+    var drained = false;
+    final cancelling = task.cancel().then((_) => drained = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    expect(released, 0);
+    expect(ocr.unloads, 1);
+    gate.complete();
+    await cancelling;
+    expect(task.state.value.phase, ComicTranslationChapterPhase.cancelled);
+    expect(opened, 1);
+    expect(released, 1);
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    await task.close();
+  });
+
+  test('chapter task reports a missing complete input without hanging', () async {
+    final task = ComicTranslationChapterTask(pages: const [
+      ComicTranslationPageIdentity(imageKey: 'not-downloaded', sourceKey: 'missing',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+        mediaKind: ComicTranslationMediaKind.staticImage),
+    ], sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      inputResolver: ComicTranslationInputResolver(openFile: (_) async => null),
+      engines: ComicTranslationEngineRegistry()
+        ..ocrEngine = _OcrEngine()..translationEngine = _TranslationEngine());
+    await task.completion.timeout(const Duration(seconds: 5));
+    expect(task.state.value.phase, ComicTranslationChapterPhase.failed);
+    expect(task.state.value.completedPages, 0);
+    expect(task.state.value.error, isA<StateError>());
+    await task.close();
+  });
+
+  test('Reader and chapter work share identical inference through cancellation', () async {
+    final image = File('${temp.path}/chapter-reader-shared.bin');
+    await image.writeAsBytes([70, 19, 82]);
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+      sourceKey: 'chapter-reader', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final ocrStarted = Completer<void>();
+    final ocrGate = Completer<void>();
+    final mtGate = Completer<void>();
+    final sharedOcr = Completer<void>();
+    final sharedMt = Completer<void>();
+    void diagnostic(ComicTranslationPageIdentity _, Map<String, Object?> event) {
+      if (event['stage'] == 'ocr-shared' && !sharedOcr.isCompleted) sharedOcr.complete();
+      if (event['stage'] == 'translation-shared' && !sharedMt.isCompleted) sharedMt.complete();
+    }
+    final ocr = _OcrEngine(version: 'chapter-reader-shared-v1',
+      recognizeStarted: ocrStarted, recognizeGate: ocrGate);
+    final translator = _TranslationEngine(translateGate: mtGate);
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = ocr..translationEngine = translator;
+    final reader = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: registry, onDiagnostic: diagnostic);
+    reader.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+    await ocrStarted.future;
+    final task = ComicTranslationChapterTask(pages: [identity], sourceLanguage: 'ja',
+      targetLanguage: 'zh-CN', engines: registry, onDiagnostic: diagnostic,
+      inputResolver: const ComicTranslationInputResolver());
+    await sharedOcr.future.timeout(const Duration(seconds: 5));
+    ocrGate.complete();
+    await sharedMt.future.timeout(const Duration(seconds: 5));
+    var cancelled = false;
+    final cancellation = task.cancel().then((_) => cancelled = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(cancelled, isFalse);
+    mtGate.complete();
+    await cancellation;
+    expect((await _waitFor(reader, identity)).artifact!.regions.single.translatedText, '你好');
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    expect(task.state.value.phase, ComicTranslationChapterPhase.cancelled);
+    await task.close();
+    await reader.close();
+    expect(ocr.unloads, 1);
+    expect(translator.unloads, 1);
+  });
+
   test('static page is recognized, translated and reused by content digest', () async {
     final image = File('${temp.path}/page.bin');
     await image.writeAsBytes(List<int>.generate(256, (i) => i));

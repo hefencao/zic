@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
@@ -500,25 +501,40 @@ final class DownloadIngressProjectionRegistry {
       projection.beginSynchronizedReplay();
       final directFilePath = session.residentReplayDirectFilePath;
       if (directFilePath != null && directFilePath.isNotEmpty) {
-        final rebuilt = await projection.rebuildFromDirectFile(
-          epoch: epoch,
-          metadataPrefix: session.readSourceMetadataPrefix(),
-          path: directFilePath,
-          endExclusive: target,
-          sealed: target == total,
-          control: control,
-        );
-        control.throwIfCancelled();
-        if (session.epoch != epoch || !session.residentIngressDeferred) return;
-        if (rebuilt) {
-          projection.publishSynchronizedReplayPrefix();
+        try {
+          final rebuilt = await projection.rebuildFromDirectFile(
+            epoch: epoch,
+            metadataPrefix: session.readSourceMetadataPrefix(),
+            path: directFilePath,
+            endExclusive: target,
+            sealed: target == total,
+            control: control,
+          );
+          control.throwIfCancelled();
+          if (session.epoch != epoch || !session.residentIngressDeferred) return;
+          if (rebuilt) {
+            projection.publishSynchronizedReplayPrefix();
+            _recordResidentHydration(
+              entry,
+              action: 'completed-direct-file-background',
+              start: current,
+              endExclusive: target,
+            );
+            return;
+          }
+        } on FileSystemException {
+          control.throwIfCancelled();
+          if (session.epoch != epoch || !session.residentIngressDeferred) return;
+          // Moving a sealed image can unlink its former path while the bound
+          // descriptor still owns the exact immutable body. Reuse that lease,
+          // never look up a replacement generation or start another transfer.
+          if (session.residentReplayRangeChunks == null) rethrow;
           _recordResidentHydration(
             entry,
-            action: 'completed-direct-file-background',
+            action: 'direct-file-unavailable-bound-replay',
             start: current,
             endExclusive: target,
           );
-          return;
         }
       }
     }

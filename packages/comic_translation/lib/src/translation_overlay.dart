@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -18,6 +19,10 @@ part 'translation_text_layout.dart';
 /// Receives already-disambiguated Reader taps; the overlay never owns gestures.
 final class ComicTranslationOverlayController {
   final Set<_ComicTranslationOverlayState> _layers = {};
+
+  /// Retains only completed text layout, never image bytes or model leases.
+  /// The application clears this bounded reuse tier on background/pressure.
+  static void clearRetainedLayouts() => _RetainedTranslationLayouts.clear();
 
   bool peekSourceAt(Offset globalPosition) {
     for (final layer in _layers) {
@@ -83,7 +88,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
 
   void _scheduleLayoutPreparation(_ComicTranslationPainter painter, Size size, {required bool retained}) {
     if (_layoutScheduled &&
-        identical(_layoutTaskPainter, painter) &&
+        identical(_layoutTaskPainter?.layoutCache, painter.layoutCache) &&
         _layoutTaskSize == size) {
       return;
     }
@@ -131,6 +136,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
           if (!mounted || generation != _layoutGeneration) return;
           _layoutScheduled = !completed;
           if (completed) {
+            _RetainedTranslationLayouts.remember(painter, size);
             widget.onDiagnostic?.call({'stage': 'layout-ready',
               'contentDigest': painter.artifact.contentDigest,
               'blocks': painter.describePreparedBlocks()});
@@ -277,7 +283,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                       current.fit == widget.fit &&
                       current.fontScale == fontScale &&
                       current.bodyFontRatio == bodyFontRatio;
-                  final painter =
+                  var painter =
                       layoutCompatible &&
                           current.background == background &&
                           current.foreground == foreground &&
@@ -302,9 +308,21 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                               : _TranslationLayoutCache(),
                         );
                   _painter = painter;
+                  var checkedRetained = false;
                   return LayoutBuilder(
                     builder: (context, constraints) {
                       final size = constraints.biggest;
+                      if (!layoutCompatible && !checkedRetained) {
+                        checkedRetained = true;
+                        final cached = _RetainedTranslationLayouts.find(painter, size);
+                        if (cached != null) {
+                          painter = painter.withLayoutCache(cached);
+                          _painter = painter;
+                          widget.onDiagnostic?.call({'stage': 'layout-ready',
+                            'contentDigest': artifact.contentDigest, 'reused': true,
+                            'blocks': painter.describePreparedBlocks()});
+                        }
+                      }
                       final prepared = painter.isPreparedFor(size);
                       final previous = _displayPainter;
                       // Already visible balloons also survive when the rest of

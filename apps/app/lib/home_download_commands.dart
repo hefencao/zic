@@ -261,9 +261,16 @@ final class HomeDownloadCommands {
   ) =>
       _runChapterTransfer(entry, retry: true);
 
+  Future<ImportedLibraryEntry> downloadChapterForTranslation(ImportedLibraryEntry entry) async {
+    late ImportedLibraryEntry resolved;
+    await _runChapterTransfer(entry, retry: false, onResolved: (current) => resolved = current);
+    return resolved;
+  }
+
   Future<ChapterDownloadSnapshot> _runChapterTransfer(
     ImportedLibraryEntry entry, {
     required bool retry,
+    void Function(ImportedLibraryEntry)? onResolved,
   }) async {
     await ensureDurableServices();
     final hydrated = await session.hydrateEntry(entry);
@@ -304,6 +311,7 @@ final class HomeDownloadCommands {
     }
     final snapshot = await session.chapterDownloads.inspect(current);
     session.acceptDownloadSnapshot(snapshot);
+    onResolved?.call(current);
     return snapshot;
   }
 

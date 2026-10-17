@@ -26,6 +26,8 @@ import 'resettable_single_flight.dart';
 import 'saf_store.dart';
 import 'storage_root_access.dart';
 import 'startup_platform.dart';
+import 'translation_chapter_jobs.dart';
+import 'translation_archives.dart';
 import 'webp_demo.dart';
 
 @pragma('vm:entry-point')
@@ -221,6 +223,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   void didHaveMemoryPressure() {
     if (_disposed) return;
     (_services?.cacheCoordinator ?? _bootstrapCache).clearPresentationRasters();
+    ComicTranslationOverlayController.clearRetainedLayouts();
     unawaited(ComicTranslationEngineRegistry.instance.trimMemory());
   }
 
@@ -231,6 +234,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       unawaited(ComicTranslationEngineRegistry.instance.setBackground(false));
     } else if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      ComicTranslationOverlayController.clearRetainedLayouts();
       unawaited(ComicTranslationEngineRegistry.instance.setBackground(true));
     }
     final clock = SystemClock();
@@ -542,6 +546,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     }
 
     final queue = services.wholeComicDownloads;
+    if (AppTranslationChapterJobs.instance.hasActive) {
+      return '有正在进行的整章预翻译任务，请先取消或等待完成';
+    }
     final busyJobs = queue?.snapshot.jobs.any((job) => job.isActive) ?? false;
     if (busyJobs) {
       return '有正在进行的整本下载任务，请先暂停或等待完成';
@@ -587,6 +594,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
     Object? closeFailure;
     try {
+      await services._translationArchives?.close();
       await services.checkpointTransferPartials();
       if (queue != null) {
         await queue.close();
@@ -724,6 +732,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         ownsLibraryStore: previous.ownsLibraryStore,
         chapterDownloads: composition.chapterDownloads,
         downloadComposition: composition,
+        translationTrace: _debugTrace,
         wholeComicDownloads: wholeComicDownloads,
         cacheCoordinator: cacheCoordinator,
         platformEnvironment: platformEnvironment,
@@ -832,7 +841,16 @@ final class _AppServices {
     this.platformEnvironment,
     this.storageRoot,
     this.storageRootAccessAliasProof,
-  });
+    TraceSink translationTrace = const NoopTraceSink(),
+  }) {
+    final composition = downloadComposition;
+    final library = libraryStore;
+    final root = storageRoot;
+    if (composition != null && library != null && root != null) {
+      _translationArchives = TranslationDownloadArchives(composition: composition,
+        library: library, storageRoot: root, trace: translationTrace);
+    }
+  }
 
   final ImportedLibraryStore? libraryStore;
   final bool ownsLibraryStore;
@@ -843,6 +861,7 @@ final class _AppServices {
   final PlatformWholeComicQueueEnvironment? platformEnvironment;
   final String? storageRoot;
   final Future<StorageRootAccessAliasProof?>? storageRootAccessAliasProof;
+  TranslationDownloadArchives? _translationArchives;
 
   bool get hasCoreServices =>
       libraryStore != null ||
@@ -1040,6 +1059,18 @@ final class _AppServices {
     }
     Object? firstError;
     StackTrace? firstStackTrace;
+    try {
+      await AppTranslationChapterJobs.instance.cancelAll();
+    } on Object catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+    try {
+      await _translationArchives?.close();
+    } on Object catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
     try {
       await checkpointTransferPartials();
     } on Object catch (error, stackTrace) {
@@ -1550,6 +1581,7 @@ Future<_AppServices> _openServices(
       ownsLibraryStore: ownsLibraryStore,
       chapterDownloads: chapterDownloads,
       downloadComposition: downloadComposition,
+      translationTrace: debugTrace ?? const NoopTraceSink(),
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
       platformEnvironment: platformEnvironment,

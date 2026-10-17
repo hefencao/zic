@@ -28,6 +28,9 @@ void main() {
         List<int>.generate(1024 * 1024 + 17, (index) => index % 251),
       );
       await store.storePromotedArtifact(id: id, bytes: bytes);
+      final companion = Uint8List.fromList([11, 31, 52]);
+      await store.writeArtifactCompanion(id, companion);
+      expect(await store.readArtifactCompanion(id), companion);
       final before = (await store.artifactReplicasFor(id)).single;
       final bindingBefore = (await store.indexedRecords())[id.key]!;
       final sourcePath = before.accessLocator;
@@ -46,7 +49,10 @@ void main() {
       expect(result.replica.accessLocator, destination);
       expect(result.replica.storageRootId, roots.destination.path);
       expect(await File(sourcePath).exists(), isFalse);
+      expect(await File('$sourcePath.zic-data').exists(), isFalse);
       expect(await File(destination).readAsBytes(), bytes);
+      expect(await File('$destination.zic-data').readAsBytes(), companion);
+      expect(await store.readArtifactCompanion(id), companion);
       final replicas = await store.artifactReplicasFor(id);
       expect(replicas, hasLength(1));
       expect(replicas.single.replicaId, before.replicaId);
@@ -66,6 +72,23 @@ void main() {
       expect(await store.readPromoted(id), bytes);
     },
   );
+
+  test('physical eviction removes the companion in the current storage root', () async {
+    final roots = await _MigrationRoots.create('companion-delete');
+    final store = await PersistentDownloadArtifactStore.open(roots.app.path, directory: roots.source.path);
+    addTearDown(() async {
+      await store.close();
+      await roots.delete();
+    });
+    final id = _id('companion-delete');
+    await store.storePromotedArtifact(id: id, bytes: Uint8List.fromList([13, 71, 32]));
+    final path = (await store.artifactReplicasFor(id)).single.accessLocator;
+    await store.writeArtifactCompanion(id, Uint8List.fromList([61, 24]));
+    await store.evict(id);
+    expect(await File(path).exists(), isFalse);
+    expect(await File('$path.zic-data').exists(), isFalse);
+    expect(await store.readArtifactCompanion(id), isNull);
+  });
 
   test(
     'migration never overwrites mismatching pre-existing destination',
@@ -113,6 +136,32 @@ void main() {
       expect(after.accessLocator, sourcePath);
     },
   );
+
+  test('migration preserves both companions when the destination already has different data', () async {
+    final roots = await _MigrationRoots.create('companion-collision');
+    final store = await PersistentDownloadArtifactStore.open(roots.app.path, directory: roots.source.path);
+    addTearDown(() async {
+      await store.close();
+      await roots.delete();
+    });
+    final id = _id('companion-collision');
+    final image = Uint8List.fromList([1, 3, 5, 7]);
+    await store.storePromotedArtifact(id: id, bytes: image);
+    final source = (await store.artifactReplicasFor(id)).single;
+    final original = Uint8List.fromList([4, 6]);
+    final foreign = Uint8List.fromList([7, 9]);
+    await store.writeArtifactCompanion(id, original);
+    final destination = '${roots.destination.path}/occupied.bin';
+    await File(destination).writeAsBytes(image);
+    await File('$destination.zic-data').writeAsBytes(foreign);
+    await expectLater(store.migrateArtifactReplica(id: id, replicaId: source.replicaId,
+      destinationAccessLocator: destination, destinationStorageRootId: roots.destination.path),
+      throwsA(isA<StateError>()));
+    expect((await store.artifactReplicasFor(id)).single.accessLocator, source.accessLocator);
+    expect(await store.readArtifactCompanion(id), original);
+    expect(await File('$destination.zic-data').readAsBytes(), foreign);
+    expect(await File(source.accessLocator).readAsBytes(), image);
+  });
 
   test(
     'migration adopts a fully verified pre-existing destination after crash',
@@ -1363,6 +1412,8 @@ void main() {
         List<int>.generate(1024 * 1024 + 29, (index) => index % 233),
       );
       await store.storePromotedArtifact(id: id, bytes: bytes);
+      var companion = Uint8List.fromList([12, 31, 74]);
+      await store.writeArtifactCompanion(id, companion);
       final initial = (await store.artifactReplicasFor(id)).single;
       final initialPath = initial.accessLocator;
       const relativePath = 'offline/roundtrip.bin';
@@ -1383,6 +1434,15 @@ void main() {
       expect(intoSaf.replica.accessLocator, safLocator);
       expect(await File(initialPath).exists(), isFalse);
       expect(saf.storage[relativePath], bytes);
+      expect(saf.storage['$relativePath.zic-data'], companion);
+      expect(await store.readArtifactCompanion(id), companion);
+      saf.companionCommitFailures = 1;
+      await expectLater(store.writeArtifactCompanion(id, Uint8List.fromList([14, 15])), throwsStateError);
+      expect(await store.readArtifactCompanion(id), companion,
+        reason: 'a failed SAF replacement preserves the committed companion');
+      companion = Uint8List.fromList([51, 72, 91]);
+      await store.writeArtifactCompanion(id, companion);
+      expect(await store.readArtifactCompanion(id), companion);
       expect(await store.readPromoted(id), bytes);
 
       final directTarget =
@@ -1398,7 +1458,9 @@ void main() {
       expect(backToDirect.replica.replicaId, initial.replicaId);
       expect(backToDirect.replica.accessLocator, directTarget);
       expect(saf.storage.containsKey(relativePath), isFalse);
+      expect(saf.storage.containsKey('$relativePath.zic-data'), isFalse);
       expect(await File(directTarget).readAsBytes(), bytes);
+      expect(await File('$directTarget.zic-data').readAsBytes(), companion);
       final finalReplicas = await store.artifactReplicasFor(id);
       expect(finalReplicas, hasLength(1));
       expect(finalReplicas.single.replicaId, initial.replicaId);
@@ -1922,6 +1984,7 @@ final class _MemorySafTreeIo implements SafTreeIo {
   final List<({String path, SafWriteMode mode})> opens =
       <({String path, SafWriteMode mode})>[];
   int suppressedLengthCalls = 0;
+  int companionCommitFailures = 0;
   final Map<int, ({String path, int position})> _handles =
       <int, ({String path, int position})>{};
   int _nextHandle = 1;
@@ -2007,6 +2070,11 @@ final class _MemorySafTreeIo implements SafTreeIo {
 
   @override
   Future<bool> rename(String relativePath, String newRelativePath) async {
+    if (companionCommitFailures > 0 && relativePath.contains('.zic-data.zic-tmp-') &&
+        newRelativePath.endsWith('.zic-data')) {
+      companionCommitFailures--;
+      return false;
+    }
     if (!storage.containsKey(relativePath) ||
         storage.containsKey(newRelativePath)) {
       return false;

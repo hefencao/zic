@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(ComicTranslationOverlayController.clearRetainedLayouts);
+
   testWidgets('resolved taps find a translated bubble and restore it after peeking', (tester) async {
     const identity = ComicTranslationPageIdentity(
       imageKey: 'image', sourceKey: 'test', comicId: 'comic', chapterId: 'chapter',

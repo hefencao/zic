@@ -14,6 +14,7 @@ final class ResolvedComicTranslationInput {
   final int modifiedMilliseconds;
   final String contentDigest;
   final ComicTranslationMediaKind mediaKind;
+  final ComicTranslationArchiveAccess? archive;
 
   const ResolvedComicTranslationInput({
     required this.file,
@@ -22,20 +23,35 @@ final class ResolvedComicTranslationInput {
     required this.modifiedMilliseconds,
     required this.contentDigest,
     required this.mediaKind,
+    this.archive,
   });
+}
+
+/// Optional storage supplied by the file's owner. It never fetches an image.
+final class ComicTranslationArchiveAccess {
+  const ComicTranslationArchiveAccess({required this.read, this.write});
+  final Future<Uint8List?> Function() read;
+  final Future<void> Function(Uint8List bytes)? write;
 }
 
 /// A pinned, complete encoded image. The caller retains storage authority.
 final class ComicTranslationInputFile {
-  const ComicTranslationInputFile({required this.path, required this.release});
+  const ComicTranslationInputFile({required this.path, required this.release, this.archive});
   final String path;
   final FutureOr<void> Function() release;
+  final ComicTranslationArchiveAccess? archive;
 
   static Future<ComicTranslationInputFile?> openLocalUri(Uri uri) async {
     if (uri.scheme != 'file') return null;
     final file = File.fromUri(uri);
     if (!await file.exists()) return null;
-    return ComicTranslationInputFile(path: file.path, release: () {});
+    return ComicTranslationInputFile(path: file.path, release: () {},
+      archive: ComicTranslationArchiveAccess(read: () async {
+        final companion = File('${file.path}.zic-data');
+        final stat = await companion.stat();
+        if (stat.type != FileSystemEntityType.file || stat.size > 64 * 1024 * 1024) return null;
+        return companion.readAsBytes();
+      }));
   }
 }
 
@@ -76,6 +92,7 @@ final class ComicTranslationInputResolver {
         contentDigest: analysis.digest,
         mediaKind: identity.mediaKind == ComicTranslationMediaKind.animatedImage
             ? identity.mediaKind : analysis.mediaKind,
+        archive: lease.archive,
       );
     } finally {
       if (!transferred) await lease.release();
@@ -87,9 +104,7 @@ final class ComicTranslationInputResolver {
   ) async {
     final uri = Uri.tryParse(identity.imageKey);
     if (uri == null || uri.scheme != 'file') return null;
-    final file = File.fromUri(uri);
-    if (!await file.exists()) return null;
-    return ComicTranslationInputFile(path: file.path, release: () {});
+    return ComicTranslationInputFile.openLocalUri(uri);
   }
 
   static Future<({String digest, ComicTranslationMediaKind mediaKind})> _analyze(

@@ -759,6 +759,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST将该Reader-local replay视为该epoch的terminal failure，
   MUST NOT因未满足的requested length、role/priority churn或`whenComplete` tail对同一epoch自动重试；
   只有physical epoch换代 MAY重新尝试。成功attempt期间新增的更大decoder-owned target MAY在该attempt成功后合并为一次后续hydration。
+  同次 hydration 的直接文件读取发生文件系统错误时，MAY 使用已绑定同一不可变 generation 的 range capability 完成原请求；MUST 先检查取消与 epoch，MUST NOT 重新查询替代 authority 或启动传输。跨 isolate MUST 保留文件系统错误类型，native worker 容量 MUST 保持至真实退出；无绑定 capability 或其它错误 MUST 维持原失败语义。
   late projection replay默认 MUST在追平physical committed boundary期间保持source不可见；
   但已sniff为WebP的nonresident hot partial MAY先发布该Reader自己的source-appropriate最小decoder probe（remote默认256KiB），
   再在同一native source上增量追平artifact suffix并仅在稳定边界后加入live fan-out。
@@ -1486,8 +1487,14 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   翻译开关上一行 MUST 显示“翻译指示器”标签与可直接切换的独立药丸，提供常驻/处理中/关闭模式并按漫画保存，保留旧显示偏好。处理中模式 MUST 仅在等待图片、排队、读缓存、OCR 或翻译时显示，所有终态隐藏；显示选项 MUST NOT 重建会话或触发推理。
   相同视口重复观察 MUST NOT 把正在处理的同代页面降回排队或重复提交。
 - DeepL 空白 `model_type` MUST 使用既有 `latency_optimized` 默认并统一请求与缓存身份；未知非空类型 MUST 报错。
-- 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
+- Reader 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
   不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
+- 显式整章预翻译 MUST 由 App 持有并通过既有章节下载服务准备完整图片，MUST NOT 新建网络调度队列。一次 MUST 仅处理一章，当前页保存及租约释放完成后才按原始页序推进，只保留当前页和配置的前页上下文；默认 MUST 跳过动图。
+  离开 Reader MUST 保留任务；取消 MUST 停止后续页、等待实际调用退出并保留有效译文，MUST NOT 撤销共享图片下载。App services 关闭 MUST 先排空任务，活动任务期间 MUST 拒绝切换存储根；后台 MUST 暂停新推理，恢复后继续。
+  Reader 与整章任务请求相同内容、引擎及完整配置时 MUST 共用在途 OCR/翻译，MUST NOT 重复调用模型。各消费者 MUST 持有自身输入和引擎租约至实际退出，单个消费者取消 MUST NOT 提前释放共享调用容量或使其他消费者失去结果。
+- 下载后的静态图片 MUST 可携带已生成的 OCR/译文，并在本机内容缓存缺失时恢复；保存或读取 MUST NOT 因此调用推理模型或创建图片请求。恢复 MUST 校验实际图片摘要、原始 OCR payload 摘要及译文关联身份，完整验证后事务导入，MUST NOT 覆盖已有结果或忽略当前引擎/模型/参数/目标语言身份。
+  单页 companion MUST 限于 64MiB、最多八份译文配置；MUST NOT 包含 API 凭据。自动原文语言只有唯一匹配的已存日/韩 OCR 时 MAY 沿用，手动语言 MUST 优先。
+  物理下载所有者 MUST 管理 companion 的 Direct/SAF 原子替换、迁移、删除与暂存清理，MUST NOT 把它当作图片完整性证明。不同目的地数据 MUST 保留并拒绝冲突迁移。先翻译后手动下载 MUST 补存已有结果；App services 关闭及下载目录切换 MUST 排空本地保存。来源本地目录 MUST 只读，保存失败 MUST NOT 阻止已就绪译文显示。
 - OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
   本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
   Hy-MT 优化运行库及其依赖加载前 MUST 以基线 ISA 检查 CPU 是否支持编译所需的 ARMv8.2-A/DotProd 能力；不支持 MUST 返回不可用。
@@ -1504,6 +1511,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   Trace MUST 区分配置替换、布局准备/完成及原文查看，布局事件 MUST 记录尺寸、字号参数和旧绘制保留情况；布局完成 MUST 可比较分组标识、成员标识、原文范围、可用边界和实际文字范围，MUST NOT 记录正文或凭据。
   大型缓存 JSON/base64 编解码与 OCR 摘要 MUST 在存储 worker 完成，MUST NOT 阻塞 Reader 的界面线程；缓存命中 MUST NOT 为展示结果加载模型。
   OCR payload 摘要 MUST 在保存时持久化；旧记录 MUST 在首次读取时补齐，MUST NOT 因增加摘要字段清空既有 OCR 或译文。排版准备 MUST 在有界 idle 预算内批量推进测量并逐气泡发布。
+  完成排版 MAY 跨 Reader 复用，但 MUST 匹配完整译文 payload、字号、样式与视口，MUST NOT 仅凭图片或引擎元数据复用。保留 MUST 限于八页和合计 128 个文字块，MUST NOT 保留图片字节或模型租约；可变状态容器 MUST 按消费者隔离，改变视口 MUST NOT 改写保留布局。进入后台或内存压力 MUST 清空。仅可见性变化 MUST NOT 重启同一缓存正在进行的排版。
   切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
 - 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。
   排队中被调度器撤销的请求 MUST 完成取消，不得等待无关任务或保持未完成的 Future；文字后端 MUST NOT 重试已取消的请求。

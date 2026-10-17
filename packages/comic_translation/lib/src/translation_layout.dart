@@ -1,5 +1,38 @@
 part of 'translation_overlay.dart';
 
+abstract final class _RetainedTranslationLayouts {
+  static final _entries = LinkedHashMap<Object, _TranslationLayoutCache>();
+
+  static Object _key(_ComicTranslationPainter painter, Size size) {
+    return (painter.artifact.layoutFingerprint,
+      painter.fontScale, painter.bodyFontRatio, painter.fit, painter.alignment,
+      painter.background, painter.foreground, size);
+  }
+
+  static _TranslationLayoutCache? find(_ComicTranslationPainter painter, Size size) {
+    final key = _key(painter, size);
+    final cache = _entries.remove(key);
+    if (cache == null || cache.imageRect != painter._imageRect(size) ||
+        cache.search != null || cache.render != null) return null;
+    _entries[key] = cache;
+    return cache.copyCompleted();
+  }
+
+  static void remember(_ComicTranslationPainter painter, Size size) {
+    final cache = painter.layoutCache;
+    if ((cache.blocks?.length ?? 0) > 128) return;
+    final key = _key(painter, size);
+    _entries.remove(key);
+    _entries[key] = cache.copyCompleted();
+    while (_entries.length > 8 ||
+        _entries.values.fold(0, (count, item) => count + (item.blocks?.length ?? 0)) > 128) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  static void clear() => _entries.clear();
+}
+
 class _TranslationLayoutCache {
   final Map<String, _TranslationLayoutPlan> plans = {};
   final Map<String, _TranslationBlockGeometry> geometries = {};
@@ -17,6 +50,20 @@ class _TranslationLayoutCache {
   _TranslationRenderPreparation? render;
   Color? renderBackground;
   Color? renderForeground;
+
+  _TranslationLayoutCache copyCompleted() => _TranslationLayoutCache()
+    ..plans.addAll(plans)
+    ..geometries.addAll(geometries)
+    ..sourceBounds.addAll(sourceBounds)
+    ..prepared.addAll(prepared)
+    ..preparedRegionIds.addAll(preparedRegionIds)
+    ..skipped.addAll(skipped)
+    ..verticalMetrics.addAll(verticalMetrics)
+    ..horizontalWidthFactors.addAll(horizontalWidthFactors)
+    ..blocks = blocks
+    ..imageRect = imageRect
+    ..renderBackground = renderBackground
+    ..renderForeground = renderForeground;
 }
 
 class _ComicTranslationPainter extends CustomPainter {
@@ -62,6 +109,12 @@ class _ComicTranslationPainter extends CustomPainter {
               bodyFontRatio: bodyFontRatio, hasCleanOverlay: hasCleanOverlay,
               hiddenBlockKey: hiddenBlockKey, layoutCache: layoutCache,
             );
+
+  _ComicTranslationPainter withLayoutCache(_TranslationLayoutCache cache) =>
+      _ComicTranslationPainter(pageIndex: pageIndex, artifact: artifact, fit: fit,
+        alignment: alignment, background: background, foreground: foreground,
+        fontScale: fontScale, bodyFontRatio: bodyFontRatio,
+        hasCleanOverlay: hasCleanOverlay, hiddenBlockKey: hiddenBlockKey, layoutCache: cache);
 
   Rect _imageRect(Size size) {
     final sourceSize = Size(

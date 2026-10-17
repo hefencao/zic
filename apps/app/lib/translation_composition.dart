@@ -3,22 +3,22 @@ import 'dart:convert';
 
 import 'package:comic_translation/comic_translation.dart';
 import 'package:domain/domain.dart';
-import 'package:downloads_bridge/downloads_bridge.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:local_media_bridge/local_media_bridge.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:reader_runtime/reader_runtime.dart';
-import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'app_preferences.dart';
 import 'comic_translation_settings_screen.dart';
-import 'local_media_composition.dart';
-import 'startup_platform.dart';
 import 'translation_indicator.dart';
+import 'translation_chapter_jobs.dart';
+import 'translation_runtime.dart';
+import 'translation_archives.dart';
 
-Future<void>? _translationInitialization;
+export 'translation_runtime.dart' show initializeComicTranslation;
 
 typedef _ReaderTranslationConfiguration = ({
   String preferences,
@@ -26,33 +26,17 @@ typedef _ReaderTranslationConfiguration = ({
   ComicTextTranslationEngine? translator,
 });
 
-Future<void> initializeComicTranslation() =>
-    _translationInitialization ??= _initializeComicTranslation();
-
-Future<void> _initializeComicTranslation() async {
-  ComicTranslationHttp.adapterFactory = () => ScheduledDioAdapter(
-        defaultDownloadResourceCoordinator.networkLane,
-      );
-  if (defaultTargetPlatform == TargetPlatform.android) {
-    await startupPlatformChannel.invokeMethod<void>(
-      'attachPlugin',
-      const <String, Object?>{'name': 'comic_translation'},
-    );
-  }
-  final root = await getDefaultZicStorageRoot(
-    applicationSupportPath: getStartupApplicationSupportPath,
-  );
-  await ComicTranslationRuntime.instance.init('$root/translation');
-}
-
 /// App-owned sidecar. Reader forwards observations and paints its read-only output.
 final class ComicTranslationReaderExtension extends ReaderPresentationExtension {
-  ComicTranslationReaderExtension(this.pipeline, {required this.appPreferences}) {
+  ComicTranslationReaderExtension(this.pipeline, {required this.appPreferences,
+    this.onPretranslateChapter, this.artifactStore}) {
     _initialization = _initialize();
   }
 
   final PipelineReaderSession pipeline;
   final AppPreferencesController appPreferences;
+  final Future<void> Function()? onPretranslateChapter;
+  final PersistentDownloadArtifactStore? artifactStore;
   final _overlays = ComicTranslationOverlayController();
   final _currentIndex = ValueNotifier<int>(0);
   final _settings = ComicTranslationSettings.instance;
@@ -211,7 +195,10 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     final token = _inputToken;
     final lease = await pipeline.openSealedPageFile(asset, token);
     if (lease != null) {
-      return ComicTranslationInputFile(path: lease.path, release: lease.release);
+      final file = ComicTranslationInputFile(path: lease.path, release: lease.release);
+      final store = artifactStore;
+      return store == null ? file : bindTranslationArchive(file, store: store,
+        id: readerPageDownloadId(_chapter, asset));
     }
     token.throwIfCancelled();
     if (asset.uri.scheme == 'content') {
@@ -379,7 +366,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => ListenableBuilder(
-        listenable: _settings,
+        listenable: Listenable.merge([_settings, AppTranslationChapterJobs.instance]),
         builder: (_, __) => ListenableBuilder(
           listenable: _session?.detectedLanguageListenable ?? this,
           builder: (_, __) {
@@ -402,6 +389,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
             final detected = _session?.detectedLanguageListenable.value;
             final subtitle = selected == 'auto' && detected != null
                 ? '$status · ${languages[detected] ?? detected}' : status;
+            final chapterKey = AppTranslationChapterJobs.keyForManifest(_chapter);
+            final chapterJob = AppTranslationChapterJobs.instance.stateFor(chapterKey);
             return SafeArea(child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -464,7 +453,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                   ))),
                 ]),
                 const SizedBox(height: 4),
-                Align(alignment: Alignment.centerLeft, child: Semantics(label: '翻译本漫画',
+                Row(children: [Semantics(label: '翻译本漫画',
                   child: Switch(
                     key: const ValueKey('reader-translation-enable'),
                     value: _session?.enabled == true,
@@ -474,7 +463,36 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                       await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
                     },
                   ),
-                )),
+                ),
+                  const Spacer(),
+                  if (onPretranslateChapter != null) TextButton.icon(
+                    icon: Icon(chapterJob?.isActive == true ? Icons.stop_circle_outlined : Icons.playlist_add_check),
+                    label: Text(chapterJob?.isActive == true ? '取消预翻译' : '预翻译本章'),
+                    onPressed: chapterJob?.phase == ComicTranslationChapterPhase.cancelling ? null : () async {
+                      try {
+                        if (chapterJob?.isActive == true) {
+                          await AppTranslationChapterJobs.instance.cancel(chapterKey);
+                        } else {
+                          await onPretranslateChapter!();
+                        }
+                      } on Object catch (error) {
+                        if (sheetContext.mounted) ScaffoldMessenger.of(sheetContext)
+                            .showSnackBar(SnackBar(content: Text('$error')));
+                      }
+                    },
+                  ),
+                ]),
+                if (onPretranslateChapter != null) Align(alignment: Alignment.centerRight,
+                  child: Text(chapterJob == null ? '缺失图片会先下载保存' : switch (chapterJob.phase) {
+                    ComicTranslationChapterPhase.cancelling => '正在取消预翻译',
+                    ComicTranslationChapterPhase.cancelled => '已取消 · 已完成的译文仍可使用',
+                    ComicTranslationChapterPhase.failed => '预翻译失败：${chapterJob.error}',
+                    ComicTranslationChapterPhase.complete =>
+                      '本章预翻译完成${chapterJob.skippedPages == 0 ? '' : ' · 跳过${chapterJob.skippedPages}页动图'}',
+                    ComicTranslationChapterPhase.running => chapterJob.pagePhase == ComicTranslationPhase.waitingForImage
+                        ? '准备本章图片 · 取消预翻译保留下载任务'
+                        : '预翻译 ${chapterJob.completedPages}/${chapterJob.totalPages} 页',
+                  }, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
               ]),
             ));
           },
