@@ -12,9 +12,11 @@ import 'package:reader_runtime/reader_runtime.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'app_preferences.dart';
 import 'comic_translation_settings_screen.dart';
 import 'local_media_composition.dart';
 import 'startup_platform.dart';
+import 'translation_indicator.dart';
 
 Future<void>? _translationInitialization;
 
@@ -45,11 +47,12 @@ Future<void> _initializeComicTranslation() async {
 
 /// App-owned sidecar. Reader forwards observations and paints its read-only output.
 final class ComicTranslationReaderExtension extends ReaderPresentationExtension {
-  ComicTranslationReaderExtension(this.pipeline) {
+  ComicTranslationReaderExtension(this.pipeline, {required this.appPreferences}) {
     _initialization = _initialize();
   }
 
   final PipelineReaderSession pipeline;
+  final AppPreferencesController appPreferences;
   final _overlays = ComicTranslationOverlayController();
   final _currentIndex = ValueNotifier<int>(0);
   final _settings = ComicTranslationSettings.instance;
@@ -97,9 +100,10 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     final session = _session;
     if (session != null && _appliedConfiguration == _configuration(preferences)) {
       _error = null;
+      final wasEnabled = session.enabled;
       session.setEnabled(preferences['enabled'] == true);
       final observation = _observation;
-      if (session.enabled && observation != null) observe(observation);
+      if (!wasEnabled && session.enabled && observation != null) observe(observation);
       notifyListeners();
       return;
     }
@@ -110,7 +114,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   _ReaderTranslationConfiguration _configuration(Map<String, Object?> preferences) => (
     preferences: jsonEncode({
       for (final entry in preferences.entries)
-        if (entry.key != 'enabled' && entry.key != 'showIndicator') entry.key: entry.value,
+        if (entry.key != 'enabled' && entry.key != 'showIndicator' &&
+            entry.key != 'indicatorOnlyWhileProcessing') entry.key: entry.value,
     }),
     ocr: ComicTranslationEngineRegistry.instance.ocrEngine,
     translator: ComicTranslationEngineRegistry.instance.translationEngine,
@@ -332,31 +337,15 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   Widget buildStatus(BuildContext context) {
     if (_preferences['showIndicator'] == false) return const SizedBox.shrink();
     if (_session?.enabled != true && _error == null) return const SizedBox.shrink();
-    return _buildCurrentState((index, state) {
-      final phase = state?.phase;
-      final busy = _error == null && (phase == ComicTranslationPhase.queued ||
-          phase == ComicTranslationPhase.loadingCache || phase == ComicTranslationPhase.waitingForImage ||
-          phase == ComicTranslationPhase.recognizing || phase == ComicTranslationPhase.translating);
-      final status = _status(state);
-      return Semantics(liveRegion: true, label: '第${index + 1}页，$status',
-        child: ExcludeSemantics(child: Container(
-          key: const ValueKey('reader-translation-status'),
-          constraints: const BoxConstraints(maxWidth: 280),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.76),
-            borderRadius: BorderRadius.circular(16)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (busy) const SizedBox.square(dimension: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white))
-            else Icon(phase == ComicTranslationPhase.ready ? Icons.check_circle_outline : Icons.info_outline,
-              color: Colors.white, size: 14),
-            const SizedBox(width: 6),
-            Flexible(child: Text('第${index + 1}页 · $status', maxLines: 2, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 12))),
-          ]),
-        )),
-      );
-    });
+    return ListenableBuilder(listenable: appPreferences,
+      builder: (_, __) => _buildCurrentState((index, state) => ComicTranslationIndicator(
+        pageIndex: index,
+        phase: _error == null ? state?.phase : ComicTranslationPhase.failed,
+        status: _status(state),
+        showPageNumber: appPreferences.debugModeEnabled,
+        onlyWhileProcessing: _preferences['indicatorOnlyWhileProcessing'] == true,
+      )),
+    );
   }
 
   Future<void> _edit(BuildContext context, String status) async {
@@ -432,13 +421,28 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                     },
                   )),
                   const SizedBox(width: 16),
-                  Expanded(child: _sheetToggle(
-                    key: const ValueKey('reader-translation-indicator-toggle'),
-                    label: '显示指示器',
-                    value: _preferences['showIndicator'] != false,
-                    onChanged: (visible) => _settings.setComic(
-                      _chapter.sourceId, _chapter.comicId, {'showIndicator': visible}),
-                  )),
+                  Expanded(child: Semantics(label: '翻译指示器', child: SegmentedButton<String>(
+                    key: const ValueKey('reader-translation-indicator-mode'),
+                    showSelectedIcon: false,
+                    style: SegmentedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      minimumSize: const Size(0, 40),
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    selected: {_preferences['showIndicator'] == false ? 'off'
+                        : _preferences['indicatorOnlyWhileProcessing'] == true ? 'processing' : 'always'},
+                    segments: const [
+                      ButtonSegment(value: 'always', label: Text('常驻', maxLines: 1, softWrap: false)),
+                      ButtonSegment(value: 'processing', label: Text('处理中', maxLines: 1, softWrap: false)),
+                      ButtonSegment(value: 'off', label: Text('关闭', maxLines: 1, softWrap: false)),
+                    ],
+                    onSelectionChanged: (modes) {
+                      final mode = modes.single;
+                      _settings.setComic(_chapter.sourceId, _chapter.comicId, {
+                        'showIndicator': mode != 'off', 'indicatorOnlyWhileProcessing': mode == 'processing',
+                      });
+                    },
+                  ))),
                 ]),
               ]),
             ));
@@ -448,9 +452,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     );
   }
 
-  Widget _sheetToggle({Key? key, required String label, required bool value,
+  Widget _sheetToggle({required String label, required bool value,
       required ValueChanged<bool> onChanged}) => MergeSemantics(child: InkWell(
-    key: key,
     onTap: () => onChanged(!value),
     child: Row(children: [
       Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,

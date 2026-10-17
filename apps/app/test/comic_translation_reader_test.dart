@@ -4,6 +4,7 @@ import 'package:comic_translation/comic_translation.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zic/app_preferences.dart';
 import 'package:zic/reader_runtime.dart';
 import 'package:zic/startup_platform.dart';
 import 'package:zic/translation_composition.dart';
@@ -11,6 +12,8 @@ import 'package:zic/webp_demo.dart' show defaultLocalMediaPipelineFactory;
 
 void main() {
   testWidgets('a retained current page binds late translation initialization and settings', (tester) async {
+    final appPreferences = AppPreferencesController();
+    addTearDown(appPreferences.dispose);
     late Directory support;
     await tester.runAsync(() async { support = await Directory.systemTemp.createTemp('zic-translation-reader-'); });
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(startupPlatformChannel, (call) async {
@@ -47,7 +50,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: PipelineReaderSessionHost(
       chapter: chapter, factory: defaultLocalMediaPipelineFactory,
       builder: (_, pipeline) => ReaderPresentationExtensionHost(
-        pipeline: pipeline, factory: (_) => extension = ComicTranslationReaderExtension(pipeline),
+        pipeline: pipeline, factory: (_) => extension = ComicTranslationReaderExtension(
+          pipeline, appPreferences: appPreferences),
         builder: (sidecar) => ReaderRuntimeScreen(chapter: chapter, pipeline: pipeline,
           presentationExtension: sidecar,
           artifactPageBuilder: (_, asset, reportFirstFrame, runtime) => const _Media(),
@@ -74,16 +78,36 @@ void main() {
     expect(find.byType(BottomSheet), findsOneWidget,
       reason: 'the icon tooltip must not consume the settings long press');
     expect(session()!.enabled, isTrue);
-    await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('reader-translation-indicator-toggle'))));
-    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    Future<void> indicatorMode(String label) async {
+      await tester.runAsync(() => tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('reader-translation-indicator-mode')), matching: find.text(label))));
+      await tester.runAsync(ComicTranslationSettings.instance.flush);
+      await tester.pumpAndSettle();
+    }
+    await indicatorMode('处理中');
+    expect(find.byKey(const ValueKey('reader-translation-status')), findsNothing,
+      reason: 'the unavailable terminal state must not remain in processing-only mode');
+    expect(session(), same(initial), reason: 'indicator mode must not restart OCR or translation');
+    expect(ComicTranslationSettings.instance.forComic('translation-test', 'comic')['indicatorOnlyWhileProcessing'], isTrue);
+    await indicatorMode('常驻');
+    expect(find.byKey(const ValueKey('reader-translation-status')), findsOneWidget);
+    expect(session(), same(initial));
+    final pageNumber = find.descendant(of: find.byKey(const ValueKey('reader-translation-status')),
+      matching: find.text('1'));
+    expect(pageNumber, findsOneWidget);
+    appPreferences.setDebugModeEnabled(false);
     await tester.pumpAndSettle();
+    expect(pageNumber, findsNothing);
+    expect(session(), same(initial), reason: 'app Debug display changes must not replace the session');
+    appPreferences.setDebugModeEnabled(true);
+    await tester.pumpAndSettle();
+    expect(pageNumber, findsOneWidget);
+    await indicatorMode('关闭');
     expect(find.byKey(const ValueKey('reader-translation-status')), findsNothing);
     expect(session(), same(initial), reason: 'indicator visibility must not restart OCR or translation');
     expect(tester.state(find.byType(_Media)), same(media));
     expect(session()!.enabled, isTrue);
-    await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('reader-translation-indicator-toggle'))));
-    await tester.runAsync(ComicTranslationSettings.instance.flush);
-    await tester.pumpAndSettle();
+    await indicatorMode('常驻');
     expect(find.byKey(const ValueKey('reader-translation-status')), findsOneWidget);
     expect(session(), same(initial));
     Navigator.of(tester.element(find.text('翻译本漫画'))).pop();
@@ -122,13 +146,13 @@ void main() {
     ComicTranslationSettings.instance.values['comicTranslationBackend'] = 'deepl';
     await tester.runAsync(ComicTranslationSettings.instance.save);
     await tester.pump();
-    expect(find.textContaining('翻译初始化失败'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('翻译初始化失败')), findsOneWidget);
     ComicTranslationSettings.instance.values['comicTranslationBackend'] = 'openaiCompatible';
     await tester.runAsync(ComicTranslationSettings.instance.save);
     await tester.pump();
     expect(session(), same(valid));
     expect(session()!.enabled, isTrue);
-    expect(find.textContaining('翻译初始化失败'), findsNothing);
+    expect(find.bySemanticsLabel(RegExp('翻译初始化失败')), findsNothing);
     expect(tester.state(find.byType(_Media)), same(media));
     await cleanup();
   });

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:comic_translation/comic_translation.dart';
@@ -15,6 +16,7 @@ void main() {
       await settings.setComic('source-a', 'comic', {'showIndicator': false});
       await settings.setComic('source-a', 'comic', {'sourceLanguage': 'ja'});
       await settings.setComic('source-a', 'korean', {'sourceLanguage': 'ko'});
+      await settings.setComic('source-a', 'korean', {'indicatorOnlyWhileProcessing': true});
       var notifications = 0;
       settings.addListener(() { notifications++; });
       await settings.rememberLanguage('source-a', 'automatic', 'ko', 'ocr-v1');
@@ -26,11 +28,18 @@ void main() {
       await secrets.init(directory.path);
       await secrets.setApiKey('openai', 'private-openai-key');
       await secrets.setApiKey('deepl', 'private-deepl-key');
+      final settingsFile = File('${directory.path}/comic_translation_settings.json');
+      final saved = jsonDecode(await settingsFile.readAsString()) as Map;
+      (saved['settings'] as Map).remove('indicatorOnlyWhileProcessing');
+      await settingsFile.writeAsString(jsonEncode(saved));
       final restored = ComicTranslationSettings();
       await restored.init(directory.path);
       expect(restored.forComic('source-a', 'comic')['enabled'], isTrue);
       expect(restored.forComic('source-a', 'comic')['showIndicator'], isFalse);
       expect(restored.forComic('source-b', 'comic')['showIndicator'], isTrue);
+      expect(restored.forComic('source-a', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
+      expect(restored.forComic('source-b', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
+      expect(restored.forComic('source-a', 'korean')['indicatorOnlyWhileProcessing'], isTrue);
       expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
       expect(restored.forComic('source-b', 'comic')['targetLanguage'], 'en');
       expect(restored.forComic('source-a', 'comic')['sourceLanguage'], 'ja');
