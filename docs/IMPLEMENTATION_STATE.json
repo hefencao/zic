@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-17T12:28:46Z",
-  "objective": "追溯VibeVenera字号权重，修复同轮廓分组排版重叠并核验Namaniku5/13",
-  "status": "verified_device",
+  "updated_at": "2026-10-17T12:49:07Z",
+  "objective": "定位Namaniku7页跨线叹词字号缩小，保留5/13页隔离验收",
+  "status": "partial",
   "scope": [
     "main：漫画翻译排版稳定性，保留OCR修正聚类/缓存/后端及用户设置",
     "Reader/Pipeline/NetLane所有权和取消真实退出边界保持",
@@ -161,11 +161,11 @@
     "rust_tests": 25,
     "android_jvm_tests": "110 cached/0 failures;upstream Robolectric36/34 and ByteBuddy25 unverified",
     "native_runtime": "3ABI native layout/Debug/Release/APK closure pass",
-    "device": "72b4041044e:5 inside contour/no overlap/isolated peek;13 2 exact layouts;14 cache hits/0calls/failures.",
+    "device": "Release4041044e:5/13/peek acceptance retained;7 r17 preferred18.94->4.09,available width .28x;no code change.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "Shared-contour layout repair;112 records/summary byte-identical."
+    "scope": "Page7 diagnosis;source unchanged/prior full gates retained;112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -177,18 +177,18 @@
     "comic_translation_migration": {
       "status": "partial",
       "current_contract": "Reader3rd tap/hold;JA/KO memory/shared models/cache/NetLane retained. Page-local font;source-only grouping. Separable groups sharing a contour reserve space/hit areas by original gaps,including untranslated groups. Trace source/available/text bounds.",
-      "diagnosis": "Vibe2242819 weights advance to compensate narrow glyphs;851a3af corrects missed OCR character counts geometrically. Render helper differs from grouping;weights retained. Page5 separate body r11/r12 and mark r13 shared layout space. Page13 prior reflow followed render-prior update;regrouping unproven.",
+      "diagnosis": "Vibe2242819 narrow-glyph advance/851a3af missed-character compensation retained;grouping differs.5 shared layout fixed;13 prior reflow was render-prior update,regrouping unproven.7 r17 crosses contour;reserving its cell then hard contour clipping shrinks preferred18.94 to4.09 (width .28x).",
       "accepted": "82 translation tests/full gates pass. Release4041044e:5 mark/body inside bubble,disjoint;13 four groups disjoint/idle15s/14-return 2 exact layouts.14 OCR/MT cache hits;0inference/config/failure. Isolated source-peek/restoration passes widgets and device.",
-      "performance": "Retain prior KO27 OCR/MT cache hits/0calls;190.6/162.7ms. Namaniku5 entry65.6->9.3ms/reentry8.1ms.",
+      "performance": "Prior KO27 cache190.6/162.7ms;Namaniku5 entry65.6->9.3ms/reentry8.1ms retained.",
       "remaining_acceptance": [
-        "Broader OCR-count grouping/short-text font quality,including JA待つて/緒に行きましよう,remain open.",
+        "Page7 crossing-contour r17 shrinks to22%;repair pending. Broader grouping/short-text font quality,including JA待つて/緒に行きましよう,remain open.",
         "Real DeepL/CTranslate2 modeldir/Windows pwsh/non-DotProd device unverified."
       ],
       "mainline": "Local main;translation branch merged;shared-contour repair included;not pushed;settings retained."
     }
   },
   "remaining": [
-    "Translation:broader OCR-count grouping/short-text quality and real DeepL/CTranslate2/Windows/non-DotProd remain open.",
+    "Translation:page7 crossing-contour r17 compressed after partition,repair pending;broader grouping/font quality and real DeepL/CTranslate2/Windows/non-DotProd remain open.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",
