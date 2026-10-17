@@ -3,7 +3,6 @@
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
-
 ### 调度与传输 (NetLane & Transport)
 - 页面网络调度由共享 NetLane 唯一调度：保持 normal 5、current 高优先级保留槽 1。
 - 历史阶段演进基线（已合入稳定架构）：dev.192, dev.195, dev.196, dev.197, dev.198, dev.199, dev.200, dev.203 bounded retention, dev.268, dev.269, dev.271。
@@ -197,6 +196,7 @@
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
 - 漫画翻译：PaddleOCR/Hy-MT/CTranslate2、远程API及内容缓存/覆层。第三项单击开关/长按面板；独立药丸与日/韩记忆。档位、独立OCR参数，推理/缓存各0–8页；滑块按步长保存。原文几何分组、轮廓分区/跨线局部字号；弱伪字保留原图。并行缓存不等推理/拖动，分析/摘要/编解码在worker；排版idle1.5ms逐气泡，LRU最多8页/128块，后台/压力清除；清理后空行保留原图；远程原始空单元仅补译一次，取消不补发。
   App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/后台回收、NetLane至真实退出；验收见状态JSON。
+  远程连接/握手及临时HTTP错误统一追加至多5次重试，间隔2/5/15/30/60秒；Retry-After可延长至5分钟。只重发失败批次，等待不占NetLane；全消费者退出/离页/后台唤醒等待，快速返回重放新需求，单方退出保留共享请求。页/章节显示重试与失败进度，Trace脱敏；鉴权/证书/格式/发送接收超时不重试，缓存身份保持。
 
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。

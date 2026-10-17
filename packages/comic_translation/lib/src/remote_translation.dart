@@ -14,7 +14,6 @@ final class OpenAiCompatibleComicTranslationEngine
   static const _maxBatchUnits = 16;
   static const _maxBatchCharacters = 960;
   static const _batchConcurrency = 2;
-  static const _maxAttempts = 3;
 
   final String endpoint;
   final String model;
@@ -238,46 +237,37 @@ final class OpenAiCompatibleComicTranslationEngine
     void Function(String value) onResponse,
   ) async {
     var includeResponseFormat = _responseFormatSupported != false;
-    Object? lastError;
-    StackTrace? lastStack;
-    for (var attempt = 0; attempt < _maxAttempts; attempt++) {
-      try {
-        final response = await client.post<dynamic>(
-          endpoint.trim(),
-          data: {
-            'model': model.trim(),
-            'temperature': 0,
-            if (includeResponseFormat)
-              'response_format': {'type': 'json_object'},
-            'messages': messages,
-          },
-        );
-        final rawData = response.data;
-        if (rawData == null) {
-          throw const FormatException('Translation response is empty');
+    return ComicTranslationHttp.retry(() async {
+      while (true) {
+        ComicTranslationHttp.checkActive();
+        try {
+          final response = await client.post<dynamic>(
+            endpoint.trim(),
+            data: {
+              'model': model.trim(),
+              'temperature': 0,
+              if (includeResponseFormat)
+                'response_format': {'type': 'json_object'},
+              'messages': messages,
+            },
+          );
+          final rawData = response.data;
+          if (rawData == null) {
+            throw const FormatException('Translation response is empty');
+          }
+          if (includeResponseFormat) _responseFormatSupported = true;
+          onResponse(_prettyResponse(rawData));
+          return rawData;
+        } on DioException catch (error) {
+          if (includeResponseFormat && _rejectsResponseFormat(error)) {
+            _responseFormatSupported = false;
+            includeResponseFormat = false;
+            continue;
+          }
+          rethrow;
         }
-        if (includeResponseFormat) _responseFormatSupported = true;
-        onResponse(_prettyResponse(rawData));
-        return rawData;
-      } on DioException catch (error, stackTrace) {
-        lastError = error;
-        lastStack = stackTrace;
-        if (includeResponseFormat && _rejectsResponseFormat(error)) {
-          _responseFormatSupported = false;
-          includeResponseFormat = false;
-          continue;
-        }
-        if (!_isTransient(error) || attempt == _maxAttempts - 1) rethrow;
-        await Future<void>.delayed(
-          Duration(milliseconds: 350 * (1 << attempt)),
-        );
-      } catch (error, stackTrace) {
-        lastError = error;
-        lastStack = stackTrace;
-        rethrow;
       }
-    }
-    Error.throwWithStackTrace(lastError!, lastStack!);
+    });
   }
 
   bool _rejectsResponseFormat(DioException error) {
@@ -287,23 +277,6 @@ final class OpenAiCompatibleComicTranslationEngine
     final message = (data is String ? data : jsonEncode(data)).toLowerCase();
     return message.contains('response_format') ||
         message.contains('json_object');
-  }
-
-  bool _isTransient(DioException error) {
-    if (error.type == DioExceptionType.receiveTimeout ||
-        error.type == DioExceptionType.sendTimeout ||
-        error.type == DioExceptionType.cancel ||
-        error.type == DioExceptionType.badCertificate) {
-      return false;
-    }
-    final status = error.response?.statusCode;
-    return status == null ||
-        status == 408 ||
-        status == 429 ||
-        status == 500 ||
-        status == 502 ||
-        status == 503 ||
-        status == 504;
   }
 
   String _prettyResponse(dynamic value) => value is String

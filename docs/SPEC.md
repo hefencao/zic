@@ -1516,6 +1516,10 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。
 - 所有翻译 API/模型下载 MUST 经共享 NetLane；取消 MUST 传到实际 HTTP 请求且容量保持至响应退出。
   排队中被调度器撤销的请求 MUST 完成取消，不得等待无关任务或保持未完成的 Future；文字后端 MUST NOT 重试已取消的请求。
+- 文字后端 MUST 统一拥有连接/握手中断、连接超时及 HTTP 408/429/500/502/503/504 的有界重试，最多追加五次，默认间隔 2/5/15/30/60 秒；整章任务与 Reader MUST NOT 叠加重试。
+  `Retry-After` 秒数或 HTTP 日期 MAY 延长等待，超过五分钟 MUST 返回失败，MUST NOT 提前重发。取消、证书校验失败、发送/接收超时、鉴权及格式错误 MUST 直接失败。
+  MUST 仅重发失败批次并保留同次调用已成功的批次与已保存页面；等待 MUST NOT 占用 NetLane 容量。一个共享消费者退出 MUST NOT 撤销其他消费者的重试；全部退出、不再保留该页或后台暂停 MUST 立即结束等待且不发起下一次请求，正在执行的调用 MUST 等待真实退出。页面快速返回 MUST 重放新需求，MUST NOT 发布旧需求的取消错误。
+  页/章节状态 MUST 提供只读重试次数与间隔，失败仍显示处理进度；Trace MUST 记录重试间隔、次数、错误类型及状态码，MUST NOT 包含正文或凭据。重试策略变化 MUST NOT 使有效 OCR/译文缓存失效。
 - API key MUST 独立本机保存，不进入库备份、普通偏好或 OCR/译文 artifact。
   远程请求 MUST 仅携带 OCR 文字及用户配置的上下文/提示词。
 - 翻译覆层 MUST 复用图片坐标与缩放旋转，保持 IgnorePointer；气泡单击查看原文 MUST 复用 Reader

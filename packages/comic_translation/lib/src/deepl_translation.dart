@@ -12,7 +12,6 @@ final class DeepLComicTranslationEngine
   static const _maxBatchUnits = 50;
   static const _maxRequestBytes = 120 * 1024;
   static const _maxContextBytes = 12 * 1024;
-  static const _maxAttempts = 2;
   static const _defaultModelType = 'latency_optimized';
   static const _modelTypes = {
     'latency_optimized',
@@ -167,27 +166,14 @@ final class DeepLComicTranslationEngine
   Future<Response<dynamic>> _post(
     Dio client,
     Map<String, dynamic> body,
-  ) async {
-    for (var attempt = 0; ; attempt++) {
-      try {
-        return await client.post<dynamic>(
-          _translateEndpoint.toString(),
-          data: body,
-          options: Options(headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'DeepL-Auth-Key ${apiKey.trim()}',
-          }),
-        );
-      } on DioException catch (error) {
-        if (error.type == DioExceptionType.cancel) rethrow;
-        final status = error.response?.statusCode;
-        final transient = status == null || status == 408 || status == 429 ||
-            status == 500 || status == 502 || status == 503 || status == 504;
-        if (!transient || attempt + 1 >= _maxAttempts) rethrow;
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-    }
-  }
+  ) => ComicTranslationHttp.retry(() => client.post<dynamic>(
+    _translateEndpoint.toString(),
+    data: body,
+    options: Options(headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'DeepL-Auth-Key ${apiKey.trim()}',
+    }),
+  ));
 
   Map<String, List<String>> _decodeBatch(
     ComicTranslationRequest request,

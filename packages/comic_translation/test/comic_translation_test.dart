@@ -351,6 +351,181 @@ void main() {
     expect(translator.unloads, 1);
   });
 
+  test('chapter cancellation interrupts HTTP backoff and never opens the next page', () async {
+    final image = File('${temp.path}/chapter-http-cancel.bin');
+    await image.writeAsBytes([88, 31, 9]);
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+      sourceKey: 'http-cancel', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final retrying = Completer<void>();
+    final adapter = _DeepLAdapter.generated((options) => throw DioException(
+      requestOptions: options, error: const HandshakeException('Connection terminated during handshake')));
+    final previousAdapter = ComicTranslationHttp.adapterFactory;
+    ComicTranslationHttp.adapterFactory = () => adapter;
+    addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+    final ocr = _OcrEngine(version: 'http-cancel-v1');
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr
+      ..translationEngine = OpenAiCompatibleComicTranslationEngine(
+        endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '');
+    var opened = 0;
+    var released = 0;
+    final task = ComicTranslationChapterTask(pages: [identity, identity],
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+      inputResolver: ComicTranslationInputResolver(openFile: (_) async {
+        opened++;
+        return ComicTranslationInputFile(path: image.path, release: () => released++);
+      }), onDiagnostic: (_, event) {
+        if (event['stage'] == 'translation-retry' && !retrying.isCompleted) retrying.complete();
+      });
+    await retrying.future.timeout(const Duration(seconds: 5));
+    expect(task.state.value.retry?.attempt, 1);
+    await task.cancel().timeout(const Duration(seconds: 1));
+    expect(task.state.value.phase, ComicTranslationChapterPhase.cancelled);
+    expect(task.state.value.retry, isNull);
+    expect(adapter.requests, hasLength(1));
+    expect(opened, 1);
+    expect(released, 1);
+    expect(ocr.unloads, 1);
+    await task.close();
+  });
+
+  for (final cancelChapter in [false, true]) {
+    test('HTTP backoff survives a shared ${cancelChapter ? 'chapter' : 'Reader'} cancellation', () async {
+      final image = File('${temp.path}/shared-http-$cancelChapter.bin');
+      await image.writeAsBytes([89, 32, cancelChapter ? 1 : 0]);
+      final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+        sourceKey: 'shared-http-$cancelChapter', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+        mediaKind: ComicTranslationMediaKind.staticImage);
+      final retrying = Completer<void>();
+      final shared = Completer<void>();
+      var calls = 0;
+      final adapter = _DeepLAdapter.generated((options) {
+        if (++calls == 1) throw DioException(requestOptions: options,
+          error: const HandshakeException('Connection terminated during handshake'));
+        return {'translations': {'u0': ['你好']}};
+      });
+      final previousAdapter = ComicTranslationHttp.adapterFactory;
+      ComicTranslationHttp.adapterFactory = () => adapter;
+      addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+      final ocr = _OcrEngine(version: 'shared-http-$cancelChapter-v1');
+      final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr
+        ..translationEngine = OpenAiCompatibleComicTranslationEngine(
+          endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '');
+      void diagnostic(ComicTranslationPageIdentity _, Map<String, Object?> event) {
+        if (event['stage'] == 'translation-retry' && !retrying.isCompleted) retrying.complete();
+        if (event['stage'] == 'translation-shared' && !shared.isCompleted) shared.complete();
+      }
+      final reader = ComicTranslationSession(enabled: true, sourceLanguage: 'ja',
+        targetLanguage: 'zh-CN', engines: registry, onDiagnostic: diagnostic);
+      reader.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);
+      await retrying.future.timeout(const Duration(seconds: 5));
+      final task = ComicTranslationChapterTask(pages: [identity], sourceLanguage: 'ja',
+        targetLanguage: 'zh-CN', engines: registry, onDiagnostic: diagnostic,
+        inputResolver: const ComicTranslationInputResolver());
+      await shared.future.timeout(const Duration(seconds: 5));
+      expect(task.state.value.retry?.attempt, 1, reason: 'late joiners see the active retry');
+      if (cancelChapter) {
+        final cancelled = task.cancel();
+        expect((await _waitFor(reader, identity)).artifact?.regions.single.translatedText, '你好');
+        await cancelled;
+        expect(task.state.value.phase, ComicTranslationChapterPhase.cancelled);
+      } else {
+        reader.setEnabled(false);
+        await task.completion.timeout(const Duration(seconds: 5));
+        expect(task.state.value.phase, ComicTranslationChapterPhase.complete);
+        expect(task.state.value.completedPages, 1);
+        expect(reader.listenable(identity).value.phase, ComicTranslationPhase.disabled);
+      }
+      expect(calls, 2);
+      expect(ocr.calls, 1);
+      await task.close();
+      await reader.close();
+      expect(ocr.unloads, 1);
+    });
+  }
+
+  test('background entry wakes HTTP backoff and resumes from cached OCR', () async {
+    final image = File('${temp.path}/background-http.bin');
+    await image.writeAsBytes([90, 33, 8]);
+    final identity = ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+      sourceKey: 'background-http', comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final retrying = Completer<void>();
+    var calls = 0;
+    final adapter = _DeepLAdapter.generated((options) {
+      if (++calls == 1) throw DioException(requestOptions: options,
+        type: DioExceptionType.connectionError);
+      return {'translations': {'u0': ['你好']}};
+    });
+    final previousAdapter = ComicTranslationHttp.adapterFactory;
+    ComicTranslationHttp.adapterFactory = () => adapter;
+    addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+    final ocr = _OcrEngine(version: 'background-http-v1');
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr
+      ..translationEngine = OpenAiCompatibleComicTranslationEngine(
+        endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '');
+    final task = ComicTranslationChapterTask(pages: [identity], sourceLanguage: 'ja',
+      targetLanguage: 'zh-CN', engines: registry,
+      inputResolver: const ComicTranslationInputResolver(), onDiagnostic: (_, event) {
+        if (event['stage'] == 'translation-retry' && !retrying.isCompleted) retrying.complete();
+      });
+    await retrying.future.timeout(const Duration(seconds: 5));
+    await registry.setBackground(true).timeout(const Duration(seconds: 1));
+    expect(calls, 1);
+    expect(ocr.unloads, 1);
+    expect(task.state.value.phase, ComicTranslationChapterPhase.running);
+    await registry.setBackground(false);
+    await task.completion.timeout(const Duration(seconds: 5));
+    expect(task.state.value.phase, ComicTranslationChapterPhase.complete);
+    expect(calls, 2);
+    expect(ocr.calls, 1);
+    await task.close();
+  });
+
+  for (final returnImmediately in [false, true]) {
+    test('page demand retires stale HTTP backoff with immediate return $returnImmediately', () async {
+      final pages = <ComicTranslationPageIdentity>[];
+      for (var index = 0; index < 2; index++) {
+        final image = File('${temp.path}/http-demand-$returnImmediately-$index.bin');
+        await image.writeAsBytes([91, returnImmediately ? 1 : 0, index]);
+        pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(),
+          sourceKey: 'http-demand-$returnImmediately', comicId: 'comic', chapterId: 'chapter',
+          pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+      }
+      final retrying = Completer<void>();
+      var calls = 0;
+      final adapter = _DeepLAdapter.generated((options) {
+        if (++calls == 1) throw DioException(requestOptions: options,
+          type: DioExceptionType.connectionError);
+        return {'translations': {'u0': ['你好']}};
+      });
+      final previousAdapter = ComicTranslationHttp.adapterFactory;
+      ComicTranslationHttp.adapterFactory = () => adapter;
+      addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+      final ocr = _OcrEngine(version: 'http-demand-$returnImmediately-v1');
+      final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr
+        ..translationEngine = OpenAiCompatibleComicTranslationEngine(
+          endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '');
+      final reader = ComicTranslationSession(enabled: true, sourceLanguage: 'ja',
+        targetLanguage: 'zh-CN', engines: registry,
+        policy: const ComicTranslationPolicy(prefetchPages: 0, cachePrefetchPages: 0),
+        onDiagnostic: (_, event) {
+          if (event['stage'] == 'translation-retry' && !retrying.isCompleted) retrying.complete();
+        });
+      reader.reportPages(current: [pages.first], interaction: ComicTranslationInteraction.idle);
+      await retrying.future.timeout(const Duration(seconds: 5));
+      reader.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+      if (returnImmediately) reader.reportPages(current: [pages.first],
+        interaction: ComicTranslationInteraction.idle);
+      final target = returnImmediately ? pages.first : pages.last;
+      final ready = await _waitFor(reader, target).timeout(const Duration(seconds: 1));
+      expect(ready.artifact?.regions.single.translatedText, '你好');
+      expect(calls, 2);
+      expect(ocr.calls, returnImmediately ? 1 : 2);
+      await reader.close();
+    });
+  }
+
   test('static page is recognized, translated and reused by content digest', () async {
     final image = File('${temp.path}/page.bin');
     await image.writeAsBytes(List<int>.generate(256, (i) => i));
@@ -1134,6 +1309,43 @@ void main() {
     String version(String prompt) => engine(prompt).identityFor(request).modelVersion;
     expect(version(' names '), version('names'));
     expect(version('formal'), isNot(version('casual')));
+  });
+
+  testWidgets('remote retry preserves successful batches and only repeats a failed batch', (tester) async {
+    final request = ComicTranslationRequest(ocr: _ocrArtifact([]), targetLanguage: 'zh-CN',
+      previousPages: const [], units: [for (var index = 0; index < 17; index++)
+        ComicTranslationUnit(id: 'r$index', regionIds: ['r$index'], sourceLines: ['$index'],
+          orientation: ComicTextOrientation.horizontal, bandRegionIds: [['r$index']])]);
+    final calls = <String, int>{};
+    final adapter = _DeepLAdapter.generated((options) {
+      final messages = (options.data as Map)['messages'] as List;
+      final units = (jsonDecode((messages.last as Map)['content'] as String) as Map)['units'] as List;
+      final first = ((units.first as Map)['sourceLines'] as List).single as String;
+      calls[first] = (calls[first] ?? 0) + 1;
+      if (first == '16' && calls[first]! < 3) throw DioException(requestOptions: options,
+        error: const HandshakeException('Connection terminated during handshake'));
+      return {'translations': {for (final unit in units)
+        (unit as Map)['id']: ['译文${(unit['sourceLines'] as List).single}']}};
+    });
+    final previousAdapter = ComicTranslationHttp.adapterFactory;
+    ComicTranslationHttp.adapterFactory = () => adapter;
+    addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+    final engine = OpenAiCompatibleComicTranslationEngine(
+      endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '');
+    final work = engine.translate(request);
+    Future<void> flushHttp() async {
+      for (var index = 0; index < 4; index++) await tester.pump(Duration.zero);
+    }
+    await flushHttp();
+    expect(calls, {'0': 1, '16': 1});
+    await tester.pump(const Duration(seconds: 2));
+    await flushHttp();
+    expect(calls, {'0': 1, '16': 2});
+    await tester.pump(const Duration(seconds: 5));
+    await flushHttp();
+    expect((await work).translations, {for (var index = 0; index < 17; index++)
+      'r$index': ['译文$index']});
+    expect(calls, {'0': 1, '16': 3});
   });
 
   for (final repair in [false, true]) {

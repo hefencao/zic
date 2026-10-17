@@ -302,7 +302,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         ComicTranslationPhase.loadingCache => '准备图片与缓存',
         ComicTranslationPhase.recognizing => _session?.effectiveSourceLanguage == 'auto'
             ? '正在判断语言与识别文字' : '正在识别文字',
-        ComicTranslationPhase.translating => '正在翻译',
+        ComicTranslationPhase.translating => state?.retry == null
+            ? '正在翻译' : _retryStatus(state!.retry!),
         ComicTranslationPhase.ready => state!.artifact?.regions.isEmpty == true
             ? '本页未识别到文字' : '译文已就绪',
         ComicTranslationPhase.unsupportedMedia => '暂不支持动图翻译',
@@ -310,6 +311,9 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         ComicTranslationPhase.failed => '翻译失败：${state?.error}',
         _ => _session?.enabled == true ? '翻译已开启' : '翻译已关闭',
       };
+
+  String _retryStatus(ComicTranslationRetryState retry) =>
+      '连接异常 · ${retry.delay.inSeconds}秒后重试（${retry.attempt}/${retry.maxRetries}）';
 
   Widget _buildCurrentState(Widget Function(int index, ComicTranslationPageState? state) builder) {
     final session = _session;
@@ -486,12 +490,14 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                   child: Text(chapterJob == null ? '缺失图片会先下载保存' : switch (chapterJob.phase) {
                     ComicTranslationChapterPhase.cancelling => '正在取消预翻译',
                     ComicTranslationChapterPhase.cancelled => '已取消 · 已完成的译文仍可使用',
-                    ComicTranslationChapterPhase.failed => '预翻译失败：${chapterJob.error}',
+                    ComicTranslationChapterPhase.failed =>
+                      '预翻译 ${chapterJob.completedPages}/${chapterJob.totalPages} 页 · 失败：${chapterJob.error}',
                     ComicTranslationChapterPhase.complete =>
                       '本章预翻译完成${chapterJob.skippedPages == 0 ? '' : ' · 跳过${chapterJob.skippedPages}页动图'}',
                     ComicTranslationChapterPhase.running => chapterJob.pagePhase == ComicTranslationPhase.waitingForImage
                         ? '准备本章图片 · 取消预翻译保留下载任务'
-                        : '预翻译 ${chapterJob.completedPages}/${chapterJob.totalPages} 页',
+                        : '预翻译 ${chapterJob.completedPages}/${chapterJob.totalPages} 页'
+                          '${chapterJob.retry == null ? '' : ' · ${_retryStatus(chapterJob.retry!)}'}',
                   }, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
               ]),
             ));

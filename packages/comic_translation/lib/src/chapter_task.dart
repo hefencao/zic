@@ -10,6 +10,7 @@ final class ComicTranslationChapterState {
     this.skippedPages = 0,
     this.pageIndex = 0,
     this.pagePhase = ComicTranslationPhase.queued,
+    this.retry,
     this.error,
   });
 
@@ -19,6 +20,7 @@ final class ComicTranslationChapterState {
   final int skippedPages;
   final int pageIndex;
   final ComicTranslationPhase pagePhase;
+  final ComicTranslationRetryState? retry;
   final Object? error;
 
   bool get isActive => phase == ComicTranslationChapterPhase.running ||
@@ -71,7 +73,7 @@ final class ComicTranslationChapterTask {
 
   void _publish(ComicTranslationChapterPhase phase, {
     int? completedPages, int? skippedPages, int? pageIndex,
-    ComicTranslationPhase? pagePhase, Object? error,
+    ComicTranslationPhase? pagePhase, Object? error, ComicTranslationRetryState? retry,
   }) {
     final previous = state.value;
     state.value = ComicTranslationChapterState(
@@ -80,6 +82,7 @@ final class ComicTranslationChapterTask {
       skippedPages: skippedPages ?? previous.skippedPages,
       pageIndex: pageIndex ?? previous.pageIndex,
       pagePhase: pagePhase ?? previous.pagePhase, error: error,
+      retry: retry,
     );
   }
 
@@ -93,7 +96,7 @@ final class ComicTranslationChapterTask {
         void changed() {
           final page = output.value;
           if (!_cancelled) _publish(ComicTranslationChapterPhase.running,
-            pageIndex: index, pagePhase: page.phase);
+            pageIndex: index, pagePhase: page.phase, retry: page.retry);
           if (switch (page.phase) {
             ComicTranslationPhase.ready || ComicTranslationPhase.failed ||
             ComicTranslationPhase.unavailable || ComicTranslationPhase.waitingForImage ||

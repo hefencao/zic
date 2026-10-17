@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'engine.dart';
 import 'grouping.dart';
+import 'http_client.dart';
 import 'input_resolver.dart';
 import 'models.dart';
 import 'policy.dart';
@@ -18,7 +19,7 @@ const _translationArtifactVersion = 'artifact-v6';
 
 final class ComicTranslationSession {
   static final _ocrTasks = <String, Future<({ComicOcrArtifact artifact, String digest})>>{};
-  static final _translationTasks = <String, Future<ComicTranslationArtifact>>{};
+  static final _translationTasks = <String, _SharedTranslationWork>{};
 
   static Future<T> _joinWork<T>(Map<String, Future<T>> tasks, String key,
       Future<T> Function() run) {
@@ -77,6 +78,7 @@ final class ComicTranslationSession {
   final Map<String, ComicTranslationPageIdentity> _identities = {};
   final Map<String, _QueuedTranslation> _queue = {};
   final Map<String, Future<void>> _cacheProbes = {};
+  final Set<_SharedTranslationWork> _translationWork = {};
   final Map<String, int> _cacheProbeGenerations = {};
   final Map<String, Map<int, ComicTranslationArtifact>> _readyPages = {};
   final ValueNotifier<double> _fontScale = ValueNotifier(1);
@@ -106,6 +108,7 @@ final class ComicTranslationSession {
   void _availabilityChanged() {
     if (_disposed) return;
     _generation++;
+    _notifyTranslationActivity();
     _submissionTimer?.cancel();
     _queue.clear();
     if (!engines.workPaused.value) {
@@ -130,6 +133,7 @@ final class ComicTranslationSession {
     _enabled = value;
     if (!value) {
       _generation++;
+      _notifyTranslationActivity();
       _submissionTimer?.cancel();
       _queue.clear();
       _retainedKeys = const {};
@@ -167,9 +171,11 @@ final class ComicTranslationSession {
     if (!_enabled || _disposed || engines.workPaused.value || current.isEmpty) {
       _queue.clear();
       _retainedKeys = const {};
+      _notifyTranslationActivity();
       return;
     }
     _retainedKeys = _retainedPageKeys();
+    _notifyTranslationActivity();
     _queue.removeWhere((key, _) => !_retainedKeys.contains(key));
     for (final identity in _current) {
       final artifact = _states[identity.key]?.value.artifact;
@@ -207,6 +213,7 @@ final class ComicTranslationSession {
   void invalidate(ComicTranslationPageIdentity identity) {
     if (_disposed) return;
     _generation++;
+    _notifyTranslationActivity();
     _readyPages[identity.chapterId]?.remove(identity.pageIndex);
     _setState(identity, const ComicTranslationPageState(ComicTranslationPhase.waitingForImage));
     if (_enabled) reportPages(current: _current, near: _near, interaction: _interaction);
@@ -345,14 +352,15 @@ final class ComicTranslationSession {
           if (!_isActive(ticket) || _states[item.identity.key]?.value.artifact != null) continue;
           await _process(item.identity, ticket);
         } catch (error) {
-          _setStateIfActive(
-            item.identity,
-            ticket,
-            ComicTranslationPageState(
-              ComicTranslationPhase.failed,
-              error: error,
-            ),
-          );
+          if (error is ComicTranslationHttpRetiredException && _isActive(ticket)) {
+            // A page can leave and return while retired backoff is unwinding.
+            // Replay its fresh demand rather than showing a stale cancellation.
+            _queue[item.identity.key] = item;
+            _setState(item.identity, const ComicTranslationPageState(ComicTranslationPhase.queued));
+          } else {
+            _setStateIfActive(item.identity, ticket,
+              ComicTranslationPageState(ComicTranslationPhase.failed, error: error));
+          }
         } finally {
           _processing = null;
         }
@@ -559,7 +567,7 @@ final class ComicTranslationSession {
         final workKey = jsonEncode([digest, engineIdentity.id, translationModelVersion,
           targetLanguage, contextDigest]);
         if (_translationTasks.containsKey(workKey)) _diagnose(identity, {'stage': 'translation-shared'});
-        translation = await _joinWork<ComicTranslationArtifact>(_translationTasks, workKey, () async {
+        translation = await _joinTranslationWork(identity, ticket, workKey, () async {
           if (request.units.isNotEmpty) {
             _diagnose(identity, {'stage': 'translation-started', 'unitCount': request.units.length});
           }
@@ -638,6 +646,40 @@ final class ComicTranslationSession {
 
   void _diagnose(ComicTranslationPageIdentity identity, Map<String, Object?> details) {
     onDiagnostic?.call(identity, details);
+  }
+
+  Future<ComicTranslationArtifact> _joinTranslationWork(
+    ComicTranslationPageIdentity identity, _ProcessTicket ticket, String key,
+    Future<ComicTranslationArtifact> Function() run,
+  ) async {
+    final work = _translationTasks.putIfAbsent(key, _SharedTranslationWork.new);
+    void changed(ComicTranslationRetryState? retry) {
+      if (!_isCurrentGeneration(ticket)) return;
+      _setState(identity, ComicTranslationPageState(ComicTranslationPhase.translating,
+        retry: retry));
+      if (retry != null) _diagnose(identity, {'stage': 'translation-retry',
+        'attempt': retry.attempt, 'maxRetries': retry.maxRetries,
+        'delayMillis': retry.delay.inMilliseconds, 'errorType': retry.errorType,
+        'statusCode': retry.statusCode});
+    }
+    final consumer = (active: () => _isActive(ticket), changed: changed);
+    work.consumers.add(consumer);
+    _translationWork.add(work);
+    if (work.scope.retryState != null) changed(work.scope.retryState);
+    final result = work.result ??= work.scope.run(run).whenComplete(() {
+      if (identical(_translationTasks[key], work)) _translationTasks.remove(key);
+    });
+    try {
+      return await result;
+    } finally {
+      work.consumers.remove(consumer);
+      _translationWork.remove(work);
+      work.scope.activityChanged();
+    }
+  }
+
+  void _notifyTranslationActivity() {
+    for (final work in _translationWork.toList()) work.scope.activityChanged();
   }
 
   void _updateFontScale(ComicTranslationArtifact artifact) {
@@ -749,6 +791,7 @@ final class ComicTranslationSession {
     _disposed = true;
     _enabled = false;
     _generation++;
+    _notifyTranslationActivity();
     _submissionTimer?.cancel();
     engines.workPaused.removeListener(_availabilityChanged);
     await _cacheSubscription?.cancel();
@@ -784,6 +827,20 @@ final class ComicTranslationSession {
     await Future.wait(_cacheProbes.values);
     if (!_enabled && !_disposed) await _releaseEngines();
   }
+}
+
+final class _SharedTranslationWork {
+  final consumers = <({bool Function() active,
+    void Function(ComicTranslationRetryState?) changed})>{};
+  Future<ComicTranslationArtifact>? result;
+  late final scope = ComicTranslationHttpRetryScope(
+    isActive: () => consumers.any((consumer) => consumer.active()),
+    onChanged: (state) {
+      for (final consumer in consumers.toList()) {
+        if (consumer.active()) consumer.changed(state);
+      }
+    },
+  );
 }
 
 final class _ProcessTicket {

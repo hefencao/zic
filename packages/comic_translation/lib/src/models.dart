@@ -414,17 +414,30 @@ final class ComicTranslationArtifact {
   };
 }
 
+final class ComicTranslationRetryState {
+  const ComicTranslationRetryState({required this.attempt,
+    required this.maxRetries, required this.delay, this.errorType = '', this.statusCode});
+
+  final int attempt;
+  final int maxRetries;
+  final Duration delay;
+  final String errorType;
+  final int? statusCode;
+}
+
 final class ComicTranslationPageState {
   final ComicTranslationPhase phase;
   final ComicTranslationArtifact? artifact;
   final Uint8List? cleanOverlayPng;
   final Object? error;
+  final ComicTranslationRetryState? retry;
 
   const ComicTranslationPageState(
     this.phase, {
     this.artifact,
     this.cleanOverlayPng,
     this.error,
+    this.retry,
   });
 
   static const disabled = ComicTranslationPageState(
