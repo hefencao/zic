@@ -205,6 +205,10 @@ composition关闭先drain媒体生产者、平台retain及decode/source-write，
 cache invalidation、session reset 与 network re-admission 全部留在 Pipeline/composition owner。
 
 ### Home 组合与生命周期
+
+Debug 模式下，首页顶栏应用名的单击打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
+测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
+
 - Reader native media/process prewarm 只能是 acceleration hint：
   可以在章节 materialization 同时启动，但章节准备/route readiness MUST NOT await prewarm；
   真实 decode worker/texture capability 在需要时自行 join/retry，并保留错误 authority。
@@ -1141,10 +1145,13 @@ OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语�
 翻译仅准备当前可见页和最多后续四张已有缓存的静态页，不扩大现有 encoded/decode 水位。
 
 Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
-不在 Flutter UI isolate 或 Android platform 主线程推理。远程 OpenAI-compatible/DeepL 仅接收文字，
-无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入
+不在 Flutter UI isolate 或 Android platform 主线程推理。
+本地整页文字以气泡列表传入 worker，各气泡独立生成；可与源行对应的译文换行保留为段落，气泡内部不注入可见分隔符。
+协议版本参与译文缓存身份，所有调用继续使用同一 engine registry 串行边界。
+远程 OpenAI-compatible/DeepL 仅接收文字，无本地后端时不自动改用远程。`downloads_bridge.ScheduledDioAdapter` 将 API 和模型下载接入
 共享 `NetLane`，容量覆盖响应正文的真实退出。API key 单独保存在 App 私有 secrets 文件，
 不进入偏好、翻译 artifact 或库备份。普通设置保存全局默认，Reader 设置可按 source/comic 覆盖翻译策略。
+DeepL 空白 `model_type` 归一为现有 `latency_optimized` 默认，并以同一值生成请求和缓存身份；未知非空值仍报错。
 覆层保持 `IgnorePointer`；原文查看复用 Reader 的单击判定，命中气泡后暂隐译文 1.5 秒。
 
 ## 5. 页面角色、窗口与优先级

@@ -13,6 +13,7 @@ final class DeepLComicTranslationEngine
   static const _maxRequestBytes = 120 * 1024;
   static const _maxContextBytes = 12 * 1024;
   static const _maxAttempts = 2;
+  static const _defaultModelType = 'latency_optimized';
   static const _modelTypes = {
     'latency_optimized',
     'quality_optimized',
@@ -30,7 +31,7 @@ final class DeepLComicTranslationEngine
   DeepLComicTranslationEngine({
     required this.endpoint,
     required this.apiKey,
-    this.modelType = 'latency_optimized',
+    this.modelType = _defaultModelType,
     Dio? client,
   }) : _client = client,
        _ownsClient = client == null;
@@ -56,6 +57,7 @@ final class DeepLComicTranslationEngine
 
   String get _validatedModelType {
     final value = modelType.trim();
+    if (value.isEmpty) return _defaultModelType;
     if (!_modelTypes.contains(value)) {
       throw StateError('Unsupported DeepL model type: $value');
     }

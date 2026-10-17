@@ -338,8 +338,8 @@ void main() {
           final texts = (arguments['texts'] as List).cast<String>();
           expect(texts, hasLength(1));
           final prompt = texts.single;
-          if (prompt.contains('あっ | これですね')) {
-            return ['啊就是这个吧'];
+          if (prompt.contains('あっ\nこれですね')) {
+            return ['啊\n就是这个吧'];
           }
           expect(prompt, contains('上文（仅供参考）：'));
           expect(prompt, contains('原文：おはよう'));
@@ -422,7 +422,7 @@ void main() {
         previousPages: const [],
       ),
     );
-    expect(groupedResult.translations['regions:r13,r14'], ['啊就是这个吧']);
+    expect(groupedResult.translations['regions:r13,r14'], ['啊', '就是这个吧']);
     expect(
       LocalComicTranslationEngine(manager, selectedModelId: hy.id).contextMode,
       ComicTranslationContextMode.previousPages,

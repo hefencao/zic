@@ -259,6 +259,8 @@
 ## 1. 产品范围
 zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、
 partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
+首页应用名 MUST 仅在 Debug 模式响应诊断操作：单击打开翻译测试，长按打开已展开且翻译测试置顶的诊断项页。
+翻译测试 MUST 提供翻译设置入口；单次测试语言 MUST NOT 改变阅读默认。
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 
@@ -1470,10 +1472,12 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 
 - 翻译默认 MUST 关闭；设置 MUST 提供本地 OCR、本地 Hy-MT/CTranslate2、OpenAI-compatible 与 DeepL 的显式配置，
   支持 API profile、语言、上下文、拟声词与原文清除策略；漫画可覆盖全局翻译默认。
+- DeepL 空白 `model_type` MUST 使用既有 `latency_optimized` 默认并统一请求与缓存身份；未知非空类型 MUST 报错。
 - 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
   不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
 - OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
   本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
+- 本地翻译 MUST 保留可与源行对应的段落换行，不得在 OCR 行间注入可见分隔符；协议改变 MUST 更新译文缓存身份。
 - 动图 MUST 保持原图播放并显示翻译不支持状态。静态页图片 MUST 先于译文独立呈现。
 - OCR/译文缓存 MUST 绑定内容摘要与完整引擎配置，禁止仅因 URL、长度或 page index 相同而复用。
   切页、禁用、换配置和离开 Reader MUST 拒绝迟到的旧代结果，并等待输入/引擎使用实际退出后释放资源。

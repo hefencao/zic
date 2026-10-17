@@ -526,6 +526,30 @@ void main() {
     );
   });
 
+  test('DeepL blank model type uses the explicit default for request and identity', () async {
+    final request = ComicTranslationRequest(
+      ocr: _ocrArtifact([_ocrRegion('test', 'Hello', 0, 1)]),
+      targetLanguage: 'zh-CN',
+      previousPages: const [],
+    );
+    final adapter = _DeepLAdapter({'translations': const [{'text': '你好'}]});
+    final engine = DeepLComicTranslationEngine(
+      endpoint: 'https://api-free.deepl.com/v2/translate',
+      modelType: ' \n\t ',
+      apiKey: 'secret',
+      client: Dio()..httpClientAdapter = adapter,
+    );
+    final defaultEngine = DeepLComicTranslationEngine(
+      endpoint: engine.endpoint,
+      apiKey: 'secret',
+    );
+    expect(engine.identityFor(request).modelVersion,
+        defaultEngine.identityFor(request).modelVersion);
+    final result = await engine.translate(request);
+    expect((adapter.request!.data as Map)['model_type'], 'latency_optimized');
+    expect(result.translations[request.units.single.id], ['你好']);
+  });
+
   test('DeepL rejects unknown model types instead of changing semantics', () {
     final engine = DeepLComicTranslationEngine(
       endpoint: 'https://api-free.deepl.com/v2/translate',

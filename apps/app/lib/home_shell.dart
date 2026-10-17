@@ -18,6 +18,7 @@ import 'package:downloads_bridge/downloads_bridge.dart';
 import 'app_preferences.dart';
 import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
+import 'comic_translation_test_screen.dart';
 import 'dialog_actions.dart';
 import 'debug_trace.dart';
 import 'debug_trace_export.dart';
@@ -1681,7 +1682,15 @@ final class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       resizeToAvoidBottomInset: _navigationIndex != 2,
       appBar: AppBar(
-        title: Text(
+        title: _navigationIndex == 0 && _debugModeEnabled
+            ? Tooltip(message: '翻译测试；长按打开开发与媒体诊断', child: InkWell(
+                key: homeDiagnosticsKey,
+                onTap: _openTranslationTest,
+                onLongPress: _openDiagnostics,
+                child: const Padding(padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                  child: Text('zic')),
+              ))
+            : Text(
           switch (_navigationIndex) {
             0 => 'zic',
             1 => '书架',

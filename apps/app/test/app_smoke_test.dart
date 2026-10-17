@@ -49,7 +49,7 @@ Future<void> _expandDiagnostics(WidgetTester tester) async {
   final diagnostics = find.byKey(homeDiagnosticsKey);
   await _pumpUntilFound(tester, diagnostics);
   await tester.ensureVisible(diagnostics);
-  await tester.tap(diagnostics);
+  await tester.longPress(diagnostics);
   await tester.pumpAndSettle();
 }
 
@@ -198,7 +198,7 @@ void main() {
     expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
     expect(find.byKey(bundledWebpEntryKey), findsOneWidget);
     expect(find.byKey(localWebpImportKey), findsOneWidget);
-    expect(find.byKey(homeFolderImportActionKey), findsOneWidget);
+    expect(find.byKey(homeFolderImportActionKey, skipOffstage: false), findsOneWidget);
   });
 
   testWidgets('static entry pushes its keyed route', (tester) async {

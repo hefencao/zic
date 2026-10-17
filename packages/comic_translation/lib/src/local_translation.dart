@@ -45,7 +45,7 @@ final class LocalComicTranslationEngine
       modelVersion:
           '${pipeline.map((model) => model.runtimeKey).join('>')}:'
           'package-v${ComicLocalTranslationModel.schemaVersion}:'
-          'group-local-protocol-v6',
+          'group-local-protocol-v${pipeline.any((model) => model.engine == ComicLocalTranslationModel.hyMtGgufEngine) ? 7 : 6}',
     );
   }
 
@@ -126,7 +126,7 @@ final class LocalComicTranslationEngine
       for (var i = 0; i < active.length; i++) {
         next[active[i]] =
             model.engine == ComicLocalTranslationModel.hyMtGgufEngine
-            ? _normalizeHyMtOutput(raw[i])
+            ? _normalizeHyMtUnitOutput(raw[i], request.units[active[i]])
             : raw[i].trim();
       }
       _lastRawResponses = [
@@ -146,11 +146,13 @@ final class LocalComicTranslationEngine
         ];
         continue;
       }
-      translations[request.units[i].id] = [traditional
-          ? OpenCC.simplifiedToTraditional(
-              OpenCC.traditionalToSimplified(texts[i]),
-            )
-          : OpenCC.traditionalToSimplified(texts[i])];
+      final lines = texts[i].split('\n');
+      final output = pipeline.last.engine == ComicLocalTranslationModel.hyMtGgufEngine &&
+              lines.length == request.units[i].sourceLines.length
+          ? lines : [texts[i]];
+      translations[request.units[i].id] = [for (final line in output) traditional
+          ? OpenCC.simplifiedToTraditional(OpenCC.traditionalToSimplified(line))
+          : OpenCC.traditionalToSimplified(line)];
     }
     _lastRunMetrics = ComicTextTranslationRunMetrics(
       elapsed: timer.elapsed,
@@ -263,7 +265,14 @@ final class LocalComicTranslationEngine
       'zh';
 
   static String _hyMtUnitText(ComicTranslationUnit unit) =>
-      unit.sourceLines.join(' | ');
+      unit.sourceLines.join('\n');
+
+  static String _normalizeHyMtUnitOutput(String output, ComicTranslationUnit unit) {
+    final lines = output.split(RegExp(r'[\r\n]+')).map(_normalizeHyMtOutput)
+        .where((line) => line.isNotEmpty).toList();
+    return lines.length == unit.sourceLines.length
+        ? lines.join('\n') : _normalizeHyMtOutput(output);
+  }
 
   static String _normalizeHyMtOutput(String output) {
     // Hy-MT occasionally exposes SentencePiece's word-boundary marker or

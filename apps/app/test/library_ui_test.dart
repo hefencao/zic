@@ -1333,7 +1333,8 @@ void main() {
 
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
-    await _tapVisible(tester, find.byKey(homeDiagnosticsKey));
+    await tester.longPress(find.byKey(homeDiagnosticsKey));
+    await tester.pump(const Duration(milliseconds: 320));
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsEntryKey));
     await tester.scrollUntilVisible(
       find.byKey(libraryDiagnosticsEntryKey),

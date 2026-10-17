@@ -1,6 +1,6 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- 分支 `feat/vibevenera-translation`，版本 `0.31.0-dev.331` / `0.31.0+331`：`comic_translation` 和 App 旁路提供翻译；Reader 仅转发观察/已消歧手势，完整输入由 `openSealedPageFile()`/本地文档租约提供，HTTP 共用 NetLane；验证见状态 JSON。兼容基准保持 dev.196、dev.197、dev.198、dev.199 与 dev.203 bounded 语义。
+- 分支 `feat/vibevenera-translation`，版本 `0.31.0-dev.331` / `0.31.0+331`：翻译复用完整页/本地租约及 NetLane；Reader 仅转发观察/已消歧手势。Debug 首页名点击翻译测试、长按诊断；测试页直达设置并独立选语言。本地按气泡生成并保留段落；动图不翻译。DeepL 空类型用既有默认。验证见状态 JSON；兼容基准 dev.196、dev.197、dev.198、dev.199、dev.203 bounded 语义不变。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。

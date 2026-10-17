@@ -272,14 +272,6 @@ extension _HomeShellViews on _HomeShellState {
                         '${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
               ),
             ),
-            const SizedBox(height: 12),
-            ExpansionTile(
-              key: homeDiagnosticsKey,
-              tilePadding: EdgeInsets.zero,
-              title: const Text('开发与媒体诊断'),
-              subtitle: const Text('普通阅读无需使用'),
-              children: <Widget>[_buildImportAndDemoCards()],
-            ),
           ],
         ],
       ),
@@ -366,9 +358,37 @@ extension _HomeShellViews on _HomeShellState {
     );
   }
 
-  Widget _buildImportAndDemoCards() {
+  void _openTranslationTest() => unawaited(Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => const ComicTranslationTestScreen()),
+  ));
+
+  void _openDiagnostics() => unawaited(Navigator.of(context).push(
+    MaterialPageRoute<void>(builder: (_) => StatefulBuilder(builder: (context, update) => Scaffold(
+        appBar: AppBar(title: const Text('开发与媒体诊断')),
+        body: SingleChildScrollView(padding: const EdgeInsets.all(16),
+          child: _buildImportAndDemoCards(importWebp: () async {
+            final pending = _importWebp();
+            update(() {});
+            try {
+              await pending;
+            } finally {
+              if (context.mounted) update(() {});
+            }
+          })),
+      ))),
+  ));
+
+  Widget _buildImportAndDemoCards({Future<void> Function()? importWebp}) {
     return Column(
       children: <Widget>[
+        HomeActionCard(
+          key: comicTranslationTestEntryKey,
+          icon: Icons.translate,
+          title: '翻译测试',
+          subtitle: '测试文字、整页 OCR 与翻译耗时。',
+          onTap: _openTranslationTest,
+        ),
+        const SizedBox(height: 10),
         HomeActionCard(
           key: libraryDiagnosticsEntryKey,
           icon: Icons.rule_folder_outlined,
@@ -389,7 +409,7 @@ extension _HomeShellViews on _HomeShellState {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : null,
-          onTap: _picking || _pickingFolder ? null : _importWebp,
+          onTap: _picking || _pickingFolder ? null : importWebp ?? _importWebp,
         ),
         const SizedBox(height: 10),
         HomeActionCard(

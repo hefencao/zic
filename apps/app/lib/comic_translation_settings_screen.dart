@@ -1,12 +1,11 @@
 import 'dart:async';
 
 import 'package:comic_translation/comic_translation.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import 'comic_translation_test_actions.dart';
 import 'directory_picker.dart';
 import 'saf_store.dart';
-import 'startup_platform.dart';
 import 'translation_composition.dart';
 
 const comicTranslationSettingsKey = ValueKey('comic-translation-settings');
@@ -388,41 +387,17 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
 
   Future<void> _testConnection() async {
     await _save();
-    final timer = Stopwatch()..start();
-    final result = await ComicTranslationEngineRegistry.instance.translateConfigured(
-      ComicTranslationRequest(
-        ocr: const ComicOcrArtifact(
-          contentDigest: 'connection-test', engineId: 'test', modelVersion: '1', sourceLanguage: 'en',
-          imageWidth: 1, imageHeight: 1, mediaKind: ComicTranslationMediaKind.staticImage,
-          animatedMode: AnimatedTranslationMode.posterFrame,
-          regions: [ComicOcrRegion(id: 'test', polygon: [], text: 'Hello', confidence: 1,
-            orientation: ComicTextOrientation.horizontal, kind: ComicTextKind.dialogue,
-            readingOrder: 0, sourceMaskPolygons: [])],
-        ),
-        targetLanguage: _target, previousPages: const [],
-      ),
+    final result = await testComicTranslationText(
+      sourceLanguage: _source, targetLanguage: _target, backend: _backend, localModel: _localModel,
     );
-    if (mounted) setState(() => _result = '${timer.elapsedMilliseconds} ms\n${result.translations}');
+    if (mounted) setState(() => _result = result);
   }
 
   Future<void> _benchmark() async {
     await _save();
-    await attachAndroidPlugin('file_selector_android');
-    final file = await openFile(acceptedTypeGroups: [const XTypeGroup(
-      label: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'],
-      mimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
-    )]);
-    if (file == null) return;
-    final result = await benchmarkComicTranslationImage(
-      copyImage: file.saveTo,
-      sourceLanguage: _source,
-      targetLanguage: _target,
-      runTranslation: _backend != 'none',
+    final result = await selectComicTranslationTestImage(
+      sourceLanguage: _source, targetLanguage: _target, runTranslation: _backend != 'none',
     );
-    final sample = result.samples.single;
-    if (mounted) setState(() => _result =
-        'OCR ${sample.ocrTime.inMilliseconds} ms · 翻译 ${sample.translationTime.inMilliseconds} ms\n'
-        '${sample.regionCount} 个区域 · RSS ${(result.maxObservedRss / 1048576).round()} MB\n'
-        '${sample.sourceTexts.join('\n')}\n${sample.translatedTexts.join('\n')}');
+    if (mounted && result != null) setState(() => _result = result);
   }
 }

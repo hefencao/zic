@@ -46,6 +46,12 @@ def main() -> None:
         for name in ['ComicTranslationPlugin', 'LocalTranslationNative', 'LocalHyMtNative']:
             descriptor = f'Ldev/zic/comic_translation/{name};'
             assert descriptor in classes, f'Missing unrenamed Android entry: {descriptor}'
+        for name in [
+            'TensorInfo', 'TensorInfo$OnnxTensorType', 'OnnxJavaType',
+            'OnnxTensor', 'OnnxMap', 'OnnxSequence', 'MapInfo', 'SequenceInfo',
+        ]:
+            descriptor = f'Lai/onnxruntime/{name};'
+            assert descriptor in classes, f'Missing unrenamed ONNX JNI type: {descriptor}'
         for library in required:
             name = f'lib/arm64-v8a/lib{library}.so'
             body = apk.read(name)
