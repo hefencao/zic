@@ -15,7 +15,8 @@ import 'store.dart';
 const _translationArtifactVersion = 'artifact-v6';
 
 final class ComicTranslationSession {
-  final ComicTranslationPolicy policy;
+  ComicTranslationPolicy _policy;
+  ComicTranslationPolicy get policy => _policy;
   final ComicTranslationInputResolver inputResolver;
   final ComicTranslationEngineRegistry engines;
   final String sourceLanguage;
@@ -30,11 +31,12 @@ final class ComicTranslationSession {
     String? detectedSourceLanguage,
     this.onSourceLanguageDetected,
     this.onDiagnostic,
-    this.policy = const ComicTranslationPolicy(),
+    ComicTranslationPolicy policy = const ComicTranslationPolicy(),
     this.inputResolver = const ComicTranslationInputResolver(),
     ComicTranslationEngineRegistry? engines,
     Stream<String>? imageChanges,
-  }) : engines = engines ?? ComicTranslationEngineRegistry.instance,
+  }) : _policy = policy,
+       engines = engines ?? ComicTranslationEngineRegistry.instance,
        _enabled = enabled,
        _detectedLanguage = ValueNotifier(detectedSourceLanguage) {
     _cacheSubscription = imageChanges?.listen(_onCacheChanged);
@@ -45,6 +47,7 @@ final class ComicTranslationSession {
   bool _running = false;
   bool _disposed = false;
   ComicTranslationEnginePair? _enginePair;
+  Future<ComicTranslationEnginePair>? _acquiringEngines;
   Timer? _submissionTimer;
   late final StreamSubscription<String>? _cacheSubscription;
   Completer<void>? _pumpDone;
@@ -73,6 +76,13 @@ final class ComicTranslationSession {
       ? _detectedLanguage.value ?? 'auto' : sourceLanguage;
 
   bool get backendReady => engines.ready;
+
+  bool setPrefetchPages({required int pages, required int cachedPages}) {
+    if (_disposed || policy.prefetchPages == pages && policy.cachePrefetchPages == cachedPages) return false;
+    _policy = policy.withPrefetch(pages: pages, cachedPages: cachedPages);
+    reportPages(current: _current, near: _near, interaction: _interaction);
+    return true;
+  }
 
   ValueListenable<double> get fontScaleListenable => _fontScale;
 
@@ -144,7 +154,19 @@ final class ComicTranslationSession {
     }
     _retainedKeys = _retainedPageKeys();
     _queue.removeWhere((key, _) => !_retainedKeys.contains(key));
+    for (final identity in _current) {
+      final artifact = _states[identity.key]?.value.artifact;
+      if (artifact != null) _updateFontScale(artifact);
+    }
     final delay = policy.submissionDelay(interaction);
+    // Reading complete cached results is independent of the interaction delay
+    // and serial inference. The idle current page already owns the serial path.
+    for (final identity in [
+      if (_running || delay != Duration.zero) ..._current,
+      ..._near.take(policy.cachePrefetchPages),
+    ]) {
+      _probeCache(identity);
+    }
     if (delay == Duration.zero) {
       _submitVisiblePages();
     } else {
@@ -157,7 +179,12 @@ final class ComicTranslationSession {
     if (!_enabled || state?.phase != ComicTranslationPhase.waitingForImage) {
       return;
     }
-    _enqueue(identity, 1000);
+    _probeCache(identity);
+    if (_current.any((page) => page.key == identity.key)) {
+      _enqueue(identity, 1000);
+    } else if (_near.take(policy.prefetchPages).any((page) => page.key == identity.key)) {
+      _enqueue(identity, 500);
+    }
   }
 
   void invalidate(ComicTranslationPageIdentity identity) {
@@ -191,7 +218,8 @@ final class ComicTranslationSession {
 
   Set<String> _retainedPageKeys() => {
     for (final identity in _current) identity.key,
-    for (final identity in _near.take(policy.prefetchPages)) identity.key,
+    for (final identity in _near.take(math.max(policy.prefetchPages, policy.cachePrefetchPages)))
+      identity.key,
   };
 
   void _enqueue(ComicTranslationPageIdentity identity, int priority) {
@@ -232,18 +260,17 @@ final class ComicTranslationSession {
     state.value = const ComicTranslationPageState(
       ComicTranslationPhase.queued,
     );
-    if (_running && _current.any((page) => page.key == identity.key)) {
-      _probeCurrentCache(identity);
-    }
     unawaited(_pump());
   }
 
-  void _probeCurrentCache(ComicTranslationPageIdentity identity) {
-    if (_disposed || !_enabled || engines.workPaused.value || _enginePair == null ||
+  void _probeCache(ComicTranslationPageIdentity identity) {
+    if (_disposed || !_enabled || engines.workPaused.value || !engines.ready ||
+        identity.mediaKind == ComicTranslationMediaKind.animatedImage ||
         _processing?.identityKey == identity.key || _cacheProbes.containsKey(identity.key) ||
         _cacheProbeGenerations[identity.key] == _generation ||
         _states[identity.key]?.value.artifact != null) return;
     final ticket = _ProcessTicket(generation: _generation, identityKey: identity.key);
+    _identities[identity.key] = identity;
     _cacheProbeGenerations[identity.key] = _generation;
     late final Future<void> task;
     // Cache preparation may run beside inference; it never calls a model.
@@ -252,12 +279,16 @@ final class ComicTranslationSession {
     }).whenComplete(() {
       _cacheProbes.remove(identity.key);
       final state = _states[identity.key]?.value;
+      if (state?.phase == ComicTranslationPhase.waitingForImage) {
+        _cacheProbeGenerations.remove(identity.key);
+      }
       if (_isActive(ticket) && state?.phase == ComicTranslationPhase.loadingCache) {
         _setState(identity, const ComicTranslationPageState(ComicTranslationPhase.queued));
       }
-      if (ticket.generation != _generation && _current.any((page) => page.key == identity.key)) {
-        _probeCurrentCache(identity);
+      if (ticket.generation != _generation && _retainedKeys.contains(identity.key)) {
+        _probeCache(identity);
       }
+      if (!_disposed && _enabled && _queue.isNotEmpty) unawaited(_pump());
     });
     _cacheProbes[identity.key] = task;
   }
@@ -326,6 +357,8 @@ final class ComicTranslationSession {
     final watch = Stopwatch()..start();
     _setStateIfActive(identity, ticket, const ComicTranslationPageState(ComicTranslationPhase.loadingCache));
     final input = await inputResolver.resolve(identity);
+    _diagnose(identity, {'stage': 'input-ready', 'available': input != null,
+      'cacheOnly': cacheOnly, 'elapsedMicros': watch.elapsedMicroseconds});
     if (input == null) {
       _setStateIfActive(
         identity,
@@ -348,23 +381,18 @@ final class ComicTranslationSession {
         );
         return;
       }
-      final pair = _enginePair ??= await engines.acquire();
+      final pair = await _acquireEngines();
       if (!_isActive(ticket)) return;
-      if (!cacheOnly) {
-        for (final current in _current) {
-          _probeCurrentCache(current);
-        }
-      }
       final ocrEngine = pair.ocr;
       final translator = pair.translator;
       final language = effectiveSourceLanguage;
       final cachedOcr = await ComicTranslationStore.instance.findOcrEntry(
         contentDigest: input.contentDigest,
         engineId: ocrEngine.id,
-        modelVersion: switch (ocrEngine) {
+        modelVersion: '${switch (ocrEngine) {
           ComicOcrLanguageSwitcher switcher => switcher.modelVersionForLanguage(language),
           _ => ocrEngine.modelVersion,
-        },
+        }}${policy.ocrParameters.cacheSuffix}',
         sourceLanguage: language,
       );
       if (!_isActive(ticket)) return;
@@ -376,7 +404,8 @@ final class ComicTranslationSession {
       var ocrDigest = cachedOcr?.digest;
       if (ocr == null && cacheOnly) return;
       if (ocr == null) {
-        _diagnose(identity, {'stage': 'ocr-started', 'sourceLanguage': language});
+        _diagnose(identity, {'stage': 'ocr-started', 'sourceLanguage': language,
+          ...policy.ocrParameters.toSettings()});
         _setStateIfActive(
           identity,
           ticket,
@@ -393,11 +422,15 @@ final class ComicTranslationSession {
             contentDigest: input.contentDigest,
             sourceLanguage: language,
             maxAnalysisSide: policy.maxAnalysisSide,
+            parameters: policy.ocrParameters,
             animatedMode: AnimatedTranslationMode.posterFrame,
           ),
         );
         if (ocr.contentDigest != input.contentDigest) {
           throw StateError('OCR result content digest does not match input');
+        }
+        if (policy.ocrParameters.cacheSuffix.isNotEmpty) {
+          ocr = ocr.withModelVersion('${ocr.modelVersion}${policy.ocrParameters.cacheSuffix}');
         }
         ocrDigest = await ComicTranslationStore.instance.storeOcr(ocr);
       }
@@ -501,7 +534,7 @@ final class ComicTranslationSession {
       if (!_isCurrentGeneration(ticket)) return;
       _readyPages.putIfAbsent(identity.chapterId, () => {})[identity.pageIndex] =
           translation;
-      _updateFontScale(translation);
+      if (_current.any((page) => page.key == identity.key)) _updateFontScale(translation);
       _setStateIfCurrentGeneration(
         identity,
         ticket,
@@ -646,9 +679,19 @@ final class ComicTranslationSession {
   }
 
   Future<void> _releaseEngines() async {
+    await _acquiringEngines;
     final pair = _enginePair;
     _enginePair = null;
+    _acquiringEngines = null;
     if (pair != null) await engines.release(pair);
+  }
+
+  Future<ComicTranslationEnginePair> _acquireEngines() {
+    final pair = _enginePair;
+    if (pair != null) return Future.value(pair);
+    return _acquiringEngines ??= engines.acquire()
+        .then((pair) => _enginePair = pair)
+        .whenComplete(() => _acquiringEngines = null);
   }
 
   Future<void> _releaseDisabledEngines() async {

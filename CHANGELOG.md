@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Preload neighboring translation caches alongside inference and restore cached visible pages during interaction delays. Combine media probing and SHA-256 in one input worker; persist OCR payload digests with a non-destructive additive upgrade. Batch layout preparation within a 1.5ms idle budget, yielding after each balloon. Add speed/quality presets, independent OCR parameters and separate inference/cache lookahead settings; preserve default cache identities and loaded models when changing thresholds.
+
 - Derive the OCR quality-filter size reference from reliable non-sound-effect recognition so weak large art cannot define its own exemption threshold. Preserve tiny weak independent marks only when reliable body evidence exists; retain ordinary short answers, balloon text and reliable small lettering. Advance the translation artifact version while retaining OCR cache identity, rendering fonts and grouping.
 
 - Preserve drawings behind uncertain singleton OCR results that fill an independent contour, rather than trusting every detected closed shape as a dialogue balloon. Extend weak outside-balloon digit filtering to short numeric runs; retain reliable numbers, roomy short answers and text sharing a dialogue contour. Advance the translation artifact version without changing OCR, font estimation or grouping.

@@ -53,7 +53,7 @@ class ComicTranslationOcrPlugin(
     private lateinit var modelPaths: _ModelPaths
     private lateinit var engineConfig: EngineConfig
     private var activeRecognition = ""
-    private var maxAnalysisSide = 1600
+    private var ocrConfig = PaddleOCRConfig()
 
     init {
         channel.setMethodCallHandler(this)
@@ -73,7 +73,15 @@ class ComicTranslationOcrPlugin(
         OpenCVUtils.init()
         ocr?.release()
         val maxSide = call.argument<Number>("maxAnalysisSide")!!.toInt()
-        maxAnalysisSide = maxSide
+        ocrConfig = PaddleOCRConfig(
+            detLimitSideLen = maxSide,
+            detLimitType = "max",
+            detMaxSideLimit = maxSide,
+            detBoxThresh = 0.45f,
+            detUnclipRatio = 1.4f,
+            recScoreThresh = 0.35f,
+            recBatchSize = 4,
+        )
         engineConfig = EngineConfig(call.argument<Number>("threads")!!.toInt())
         modelPaths = _ModelPaths(
             detection = call.argument<String>("detModelPath")!!,
@@ -92,15 +100,7 @@ class ComicTranslationOcrPlugin(
 
     private suspend fun createOcr(recognition: String, config: String) = PaddleOCR.create(
         appContext,
-        PaddleOCRConfig(
-            detLimitSideLen = maxAnalysisSide,
-            detLimitType = "max",
-            detMaxSideLimit = maxAnalysisSide,
-            detBoxThresh = 0.45f,
-            detUnclipRatio = 1.4f,
-            recScoreThresh = 0.35f,
-            recBatchSize = 4,
-        ),
+        ocrConfig,
         engineConfig,
         modelPaths.detection,
         recognition,
@@ -129,8 +129,22 @@ class ComicTranslationOcrPlugin(
     private suspend fun recognize(call: MethodCall): Map<String, Any?> {
         val requestedLanguage = call.argument<String>("sourceLanguage")!!
         val analysisSide = call.argument<Number>("maxAnalysisSide")!!.toInt()
-        require(analysisSide >= MIN_ANALYSIS_WIDTH) {
-            "OCR analysis side must be at least $MIN_ANALYSIS_WIDTH"
+        require(analysisSide in MIN_ANALYSIS_WIDTH..4096) {
+            "OCR analysis side must be in $MIN_ANALYSIS_WIDTH..4096"
+        }
+        val detectionThreshold = call.argument<Number>("detectionThreshold")?.toFloat() ?: 0.45f
+        val recognitionThreshold = call.argument<Number>("recognitionThreshold")?.toFloat() ?: 0.35f
+        val unclipRatio = call.argument<Number>("unclipRatio")?.toFloat() ?: 1.4f
+        require(detectionThreshold in 0.1f..0.9f && recognitionThreshold in 0.1f..0.9f &&
+            unclipRatio in 1f..3f) { "Invalid OCR thresholds" }
+        val nextConfig = ocrConfig.copy(
+            detBoxThresh = detectionThreshold,
+            recScoreThresh = recognitionThreshold,
+            detUnclipRatio = unclipRatio,
+        )
+        if (nextConfig != ocrConfig) {
+            ocr!!.configure(nextConfig)
+            ocrConfig = nextConfig
         }
         val file = File(call.argument<String>("filePath")!!)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -102,8 +102,12 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       _error = null;
       final wasEnabled = session.enabled;
       session.setEnabled(preferences['enabled'] == true);
+      final schedulingChanged = session.setPrefetchPages(
+        pages: preferences['translationPrefetchPages'] as int,
+        cachedPages: preferences['translationCachePrefetchPages'] as int,
+      );
       final observation = _observation;
-      if (!wasEnabled && session.enabled && observation != null) observe(observation);
+      if ((!wasEnabled || schedulingChanged) && session.enabled && observation != null) observe(observation);
       notifyListeners();
       return;
     }
@@ -126,6 +130,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     preferences: jsonEncode({
       for (final key in ['sourceLanguage', 'targetLanguage', 'contextPages',
           'translateSoundEffects', 'useCleanOverlay']) key: preferences[key],
+      ...ComicOcrParameters.fromSettings(preferences).toSettings(),
     }),
     ocr: ComicTranslationEngineRegistry.instance.ocrEngine,
     translator: ComicTranslationEngineRegistry.instance.translationEngine,
@@ -154,6 +159,9 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
           ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? ''),
         onDiagnostic: _recordDiagnostic,
         policy: ComicTranslationPolicy(
+          ocrParameters: ComicOcrParameters.fromSettings(preferences),
+          prefetchPages: preferences['translationPrefetchPages'] as int,
+          cachePrefetchPages: preferences['translationCachePrefetchPages'] as int,
           contextPages: preferences['contextPages'] as int,
           translateSoundEffects: preferences['translateSoundEffects'] == true,
           useCleanOverlay: preferences['useCleanOverlay'] == true,
@@ -233,7 +241,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         if (coverage.fraction > 0) coverage.pageIndex,
     };
     final near = <int>[
-      for (var offset = 1; offset <= 4; offset++)
+      for (var offset = 1; offset <= session.policy.prefetchPages ||
+          offset <= session.policy.cachePrefetchPages; offset++)
         if (observation.currentIndex + offset < _chapter.pages.length &&
             !current.contains(observation.currentIndex + offset))
           observation.currentIndex + offset,

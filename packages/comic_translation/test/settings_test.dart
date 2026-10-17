@@ -65,4 +65,43 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  test('quality presets and custom OCR overrides survive restart per comic', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-translation-settings-');
+    try {
+      final settings = ComicTranslationSettings();
+      await settings.init(directory.path);
+      settings.values.addAll({
+        ...ComicTranslationQuality.precise.settings,
+        'translationQuality': 'precise',
+        'comicTranslationBackend': 'openaiCompatible',
+        'comicTranslationRemoteModel': 'configured-model',
+      });
+      await settings.setComic('source', 'comic', {
+        ...ComicTranslationQuality.fast.settings,
+        'translationQuality': 'custom',
+        'ocrRecognitionThreshold': .55,
+      });
+      final restored = ComicTranslationSettings();
+      await restored.init(directory.path);
+      final comic = restored.forComic('source', 'comic');
+      expect(ComicOcrParameters.fromSettings(comic).maxAnalysisSide, 1024);
+      expect(ComicOcrParameters.fromSettings(comic).recognitionThreshold, .55);
+      expect(comic['translationQuality'], 'custom');
+      expect(comic['contextPages'], 0);
+      expect(comic['translationPrefetchPages'], 2);
+      expect(comic['translationCachePrefetchPages'], 4);
+      final other = restored.forComic('source', 'other');
+      expect(ComicOcrParameters.fromSettings(other).maxAnalysisSide, 2240);
+      expect(other['contextPages'], 4);
+      expect(other['translationQuality'], 'precise');
+      expect(other['comicTranslationBackend'], 'openaiCompatible');
+      expect(other['comicTranslationRemoteModel'], 'configured-model');
+      expect(comic['comicTranslationRemoteModel'], 'configured-model');
+      settings.dispose();
+      restored.dispose();
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
 }

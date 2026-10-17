@@ -27,7 +27,7 @@ import com.paddle.ocr.util.BitmapUtils
 
 class OCREngine(
     context: Context,
-    private val config: PaddleOCRConfig,
+    private var config: PaddleOCRConfig,
     engineConfig: EngineConfig,
     detModelAsset: String = "models/det/inference.onnx",
     recModelAsset: String = "models/rec/inference.onnx",
@@ -50,6 +50,11 @@ class OCREngine(
         }
         detectionEngine = DetectionEngine(ortManager, config)
         recognitionEngine = RecognitionEngine(ortManager, configured.characterList)
+    }
+
+    fun configure(value: PaddleOCRConfig) {
+        config = value
+        detectionEngine.configure(value)
     }
 
     fun selectRecognition(context: Context, recModelPath: String, configPath: String) {

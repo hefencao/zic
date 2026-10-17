@@ -4,6 +4,7 @@ import 'dart:io';
 import 'benchmark.dart';
 import 'local_model_manager.dart';
 import 'models.dart';
+import 'ocr_parameters.dart';
 
 /// Imports from a direct directory or a platform-owned read capability (SAF).
 /// Only the validated manifest's exact files are materialized and verified.
@@ -44,6 +45,7 @@ Future<ComicTranslationBenchmarkResult> benchmarkComicTranslationImage({
   required String sourceLanguage,
   required String targetLanguage,
   required bool runTranslation,
+  ComicOcrParameters ocrParameters = const ComicOcrParameters(),
 }) async {
   final temporary = await Directory.systemTemp.createTemp('zic-translation-benchmark-');
   try {
@@ -56,6 +58,7 @@ Future<ComicTranslationBenchmarkResult> benchmarkComicTranslationImage({
     return await ComicTranslationBenchmark().run(
       pages: [identity], sourceLanguage: sourceLanguage, targetLanguage: targetLanguage,
       runTranslation: runTranslation,
+      ocrParameters: ocrParameters,
     );
   } finally {
     await temporary.delete(recursive: true);

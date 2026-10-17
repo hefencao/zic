@@ -254,6 +254,7 @@ void _storeWorker(List<Object> init) async {
       model_version TEXT NOT NULL,
       source_language TEXT NOT NULL,
       payload TEXT NOT NULL,
+      payload_digest TEXT,
       updated_at INTEGER NOT NULL,
       accessed_at INTEGER NOT NULL
     );
@@ -274,6 +275,12 @@ void _storeWorker(List<Object> init) async {
         ocr_digest, engine_id, model_version, target_language, accessed_at
       );
   ''');
+  if (!db.select('PRAGMA table_info(ocr_artifacts);')
+      .any((column) => column['name'] == 'payload_digest')) {
+    // Additive upgrade: existing payloads and their translation identities stay
+    // valid. Compute their digest once, on first access after the upgrade.
+    db.execute('ALTER TABLE ocr_artifacts ADD COLUMN payload_digest TEXT;');
+  }
   final commands = ReceivePort();
   ready.send(commands.sendPort);
   await for (final message in commands) {
@@ -324,7 +331,7 @@ Object? _executeStoreOperation(
       return null;
     case 'findOcr':
       final rows = db.select(
-        'SELECT payload FROM ocr_artifacts WHERE cache_key = ?;',
+        'SELECT payload, payload_digest FROM ocr_artifacts WHERE cache_key = ?;',
         arguments,
       );
       if (rows.isEmpty) return null;
@@ -333,26 +340,33 @@ Object? _executeStoreOperation(
         [now, arguments[0]],
       );
       final payload = rows.first[0] as String;
+      final savedDigest = rows.first[1] as String?;
+      final digest = savedDigest ?? sha256.convert(utf8.encode(payload)).toString();
+      if (savedDigest == null) {
+        db.execute('UPDATE ocr_artifacts SET payload_digest = ? WHERE cache_key = ?;',
+          [digest, arguments[0]]);
+      }
       return (
         artifact: ComicOcrArtifact.fromJson(Map<String, dynamic>.from(jsonDecode(payload) as Map)),
-        digest: sha256.convert(utf8.encode(payload)).toString(),
+        digest: digest,
       );
     case 'storeOcr':
       final artifact = arguments.last as ComicOcrArtifact;
       final payload = jsonEncode(artifact.toJson());
+      final digest = sha256.convert(utf8.encode(payload)).toString();
       db.execute('''
         INSERT OR REPLACE INTO ocr_artifacts
           (cache_key, content_digest, engine_id, model_version,
-           source_language, payload, updated_at, accessed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-      ''', [...arguments.take(arguments.length - 1), payload, now, now]);
+           source_language, payload, payload_digest, updated_at, accessed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+      ''', [...arguments.take(arguments.length - 1), payload, digest, now, now]);
       db.execute('''
         DELETE FROM ocr_artifacts WHERE rowid IN (
           SELECT rowid FROM ocr_artifacts ORDER BY accessed_at DESC
           LIMIT -1 OFFSET 2048
         );
       ''');
-      return sha256.convert(utf8.encode(payload)).toString();
+      return digest;
     case 'findTranslation':
       var rows = db.select(
         'SELECT payload, cache_key FROM translation_artifacts '

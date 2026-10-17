@@ -66,6 +66,9 @@ final class AndroidPaddleComicOcrEngine
         'filePath': input.filePath,
         'sourceLanguage': input.sourceLanguage,
         'maxAnalysisSide': input.maxAnalysisSide,
+        'detectionThreshold': input.parameters.detectionThreshold,
+        'recognitionThreshold': input.parameters.recognitionThreshold,
+        'unclipRatio': input.parameters.unclipRatio,
       }))!,
     );
     final width = value['width'] as int;

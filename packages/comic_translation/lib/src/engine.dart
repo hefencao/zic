@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'grouping.dart';
 import 'models.dart';
+import 'ocr_parameters.dart';
 
 final class ComicOcrInput {
   final ComicTranslationPageIdentity identity;
@@ -12,6 +13,7 @@ final class ComicOcrInput {
   final String contentDigest;
   final String sourceLanguage;
   final int maxAnalysisSide;
+  final ComicOcrParameters parameters;
   final AnimatedTranslationMode animatedMode;
 
   const ComicOcrInput({
@@ -20,6 +22,7 @@ final class ComicOcrInput {
     required this.contentDigest,
     required this.sourceLanguage,
     required this.maxAnalysisSide,
+    this.parameters = const ComicOcrParameters(),
     required this.animatedMode,
   });
 }

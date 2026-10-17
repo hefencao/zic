@@ -24,7 +24,7 @@ import org.opencv.core.Mat
 
 class DetectionEngine(
     private val ortManager: ORTSessionManager,
-    private val config: PaddleOCRConfig,
+    private var config: PaddleOCRConfig,
 ) {
     data class DetectionResult(
         val boxes: List<OCRBox>,
@@ -34,6 +34,10 @@ class DetectionEngine(
         val timeMs: Long,
         val inputShape: List<Int>,
     )
+
+    fun configure(value: PaddleOCRConfig) {
+        config = value
+    }
 
     fun detect(bitmap: Bitmap, maxAnalysisSide: Int? = null): DetectionResult {
         return detect {

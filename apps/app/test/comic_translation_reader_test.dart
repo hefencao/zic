@@ -71,6 +71,14 @@ void main() {
     expect(session()!.enabled, isTrue);
     expect(tester.state(find.byType(_Media)), same(media));
     expect(session(), same(initial), reason: 'the enabled preference does not replace the translation session');
+    await tester.runAsync(() => ComicTranslationSettings.instance.setComic('translation-test', 'comic', {
+      'translationPrefetchPages': 0, 'translationCachePrefetchPages': 8, 'translationQuality': 'custom',
+    }));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(session(), same(initial), reason: 'lookahead and preset labels do not invalidate translation results');
+    expect(session()!.policy.prefetchPages, 0);
+    expect(session()!.policy.cachePrefetchPages, 8);
     await tester.tap(find.byType(_Media));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));

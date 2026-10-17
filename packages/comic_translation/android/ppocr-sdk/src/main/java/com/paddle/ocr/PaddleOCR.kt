@@ -86,6 +86,12 @@ class PaddleOCR private constructor(
     suspend fun recognizeSample(bitmap: Bitmap, maxAnalysisSide: Int): OCRRunResult =
         recognizeResult { engine.run(bitmap, maxAnalysisSide, recognitionLimit = 6) }
 
+    // The owning worker serializes configuration with recognition. Model
+    // sessions remain resident when only preprocessing/acceptance changes.
+    fun configure(config: PaddleOCRConfig) {
+        engine.configure(config)
+    }
+
     suspend fun selectRecognition(context: Context, modelPath: String, configPath: String) {
         withContext(Dispatchers.IO) { engine.selectRecognition(context, modelPath, configPath) }
     }

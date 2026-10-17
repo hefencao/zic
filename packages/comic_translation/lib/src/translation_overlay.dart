@@ -103,7 +103,16 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
           if (!mounted || generation != _layoutGeneration) return;
           late final bool completed;
           try {
-            completed = painter.prepareNext(size);
+            var done = false;
+            final prepared = painter.layoutCache.prepared.length;
+            final budget = Stopwatch()..start();
+            // Amortize idle-task scheduling without occupying a whole frame.
+            // Publish each completed balloon before continuing the next one.
+            do {
+              done = painter.prepareNext(size);
+            } while (!done && budget.elapsedMicroseconds < 1500 &&
+                painter.layoutCache.prepared.length == prepared);
+            completed = done;
           } catch (error, stack) {
             if (mounted && generation == _layoutGeneration) {
               _layoutScheduled = false;

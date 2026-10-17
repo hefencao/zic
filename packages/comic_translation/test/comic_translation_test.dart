@@ -13,6 +13,7 @@ import 'package:comic_translation/src/engine.dart';
 import 'package:comic_translation/src/grouping.dart';
 import 'package:comic_translation/src/input_resolver.dart';
 import 'package:comic_translation/src/models.dart';
+import 'package:comic_translation/src/ocr_parameters.dart';
 import 'package:comic_translation/src/policy.dart';
 import 'package:comic_translation/src/remote_translation.dart';
 import 'package:comic_translation/src/runtime.dart';
@@ -182,6 +183,97 @@ void main() {
     expect(translator.calls, 1);
     expect(events.where((event) => event['stage'] == 'ready'), hasLength(1),
       reason: 'a late cache probe must not replace the same visible artifact a second time');
+  });
+
+  test('cached neighbors are ready before current inference exits', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var i = 0; i < 2; i++) {
+      final image = File('${temp.path}/neighbor-cache-$i.bin');
+      await image.writeAsBytes(List<int>.filled(457 + i, 91));
+      pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'neighbors',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: i,
+        mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final seed = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()..translationEngine = _TranslationEngine());
+    seed.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(seed, pages.last);
+    final expectedScale = seed.fontScaleListenable.value;
+    await seed.close();
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    final translator = _TranslationEngine(translateStarted: started, translateGate: gate);
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()..translationEngine = translator);
+    addTearDown(() async {
+      if (!gate.isCompleted) gate.complete();
+      await session.close();
+    });
+    session.reportPages(current: [pages.first], near: [pages.last], interaction: ComicTranslationInteraction.idle);
+    await started.future.timeout(const Duration(seconds: 2));
+    final prepared = await _waitFor(session, pages.last).timeout(const Duration(seconds: 2));
+    expect(gate.isCompleted, isFalse);
+    expect(session.fontScaleListenable.value, 1,
+      reason: 'a speculative cache hit cannot choose the visible page typography');
+    session.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.dragging);
+    expect(session.listenable(pages.last).value.artifact, same(prepared.artifact));
+    expect(session.fontScaleListenable.value, expectedScale);
+    expect(translator.calls, 1, reason: 'a cached neighbor must not enter the model queue');
+  });
+
+  test('dragging restores cache before inference submission is allowed', () async {
+    final image = File('${temp.path}/drag-cache.bin');
+    await image.writeAsBytes(List<int>.filled(487, 97));
+    final page = ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'drag-cache',
+      comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final registry = ComicTranslationEngineRegistry()
+      ..ocrEngine = _OcrEngine()..translationEngine = _TranslationEngine();
+    final seed = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry);
+    seed.reportPages(current: [page], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(seed, page);
+    await seed.close();
+    final ocr = _OcrEngine();
+    final translator = _TranslationEngine();
+    registry.configure(ocrEngine: ocr, translationEngine: translator);
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: registry, policy: const ComicTranslationPolicy(dragSubmissionDelay: Duration(days: 1)));
+    addTearDown(session.close);
+    session.reportPages(current: [page], interaction: ComicTranslationInteraction.dragging);
+    await _waitFor(session, page).timeout(const Duration(seconds: 2));
+    expect(ocr.calls, 0);
+    expect(ocr.loads, 0);
+    expect(translator.calls, 0);
+  });
+
+  test('each OCR parameter isolates results and default cache remains reusable', () async {
+    final image = File('${temp.path}/analysis-options.bin');
+    await image.writeAsBytes(List<int>.filled(491, 101));
+    final page = ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'analysis-options',
+      comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+      mediaKind: ComicTranslationMediaKind.staticImage);
+    final ocr = _OcrEngine();
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator;
+    const parameters = [ComicOcrParameters(), ComicOcrParameters(maxAnalysisSide: 2240),
+      ComicOcrParameters(detectionThreshold: .65), ComicOcrParameters(recognitionThreshold: .55),
+      ComicOcrParameters(unclipRatio: 1.7)];
+    final digests = <String>{};
+    for (var pass = 0; pass < 2; pass++) {
+      for (final options in parameters) {
+        final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+          engines: registry, policy: ComicTranslationPolicy(ocrParameters: options));
+        session.reportPages(current: [page], interaction: ComicTranslationInteraction.idle);
+        final result = await _waitFor(session, page);
+        digests.add(result.artifact!.ocrDigest);
+        await session.close();
+      }
+      expect(ocr.calls, parameters.length);
+      expect(translator.calls, parameters.length);
+    }
+    expect(digests, hasLength(parameters.length));
+    expect(ocr.inputs.map((input) => input.maxAnalysisSide), parameters.map((p) => p.maxAnalysisSide));
+    expect(ocr.inputs.map((input) => input.parameters), orderedEquals(parameters));
   });
 
   test('open bubble explores nearby candidate after text grouping', () {
@@ -2098,6 +2190,7 @@ class _OcrEngine implements ComicOcrEngine {
   final Completer<void>? recognizeGate;
   final String? detectedSourceLanguage;
   final List<String> languages = [];
+  final List<ComicOcrInput> inputs = [];
   int calls = 0;
   int loads = 0;
   int unloads = 0;
@@ -2125,6 +2218,7 @@ class _OcrEngine implements ComicOcrEngine {
   @override
   Future<ComicOcrArtifact> recognize(ComicOcrInput input) async {
     calls++;
+    inputs.add(input);
     languages.add(input.sourceLanguage);
     if (recognizeStarted?.isCompleted == false) recognizeStarted!.complete();
     if (recognizeGate != null) await recognizeGate!.future;

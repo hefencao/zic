@@ -41,6 +41,7 @@ Future<String?> selectComicTranslationTestImage({
   required String sourceLanguage,
   required String targetLanguage,
   required bool runTranslation,
+  ComicOcrParameters? ocrParameters,
 }) async {
   await attachAndroidPlugin('file_selector_android');
   final file = await openFile(acceptedTypeGroups: [const XTypeGroup(
@@ -53,6 +54,7 @@ Future<String?> selectComicTranslationTestImage({
     sourceLanguage: sourceLanguage,
     targetLanguage: targetLanguage,
     runTranslation: runTranslation,
+    ocrParameters: ocrParameters ?? ComicOcrParameters.fromSettings(ComicTranslationSettings.instance.values),
   );
   final sample = result.samples.single;
   final metrics = sample.translationMetrics;

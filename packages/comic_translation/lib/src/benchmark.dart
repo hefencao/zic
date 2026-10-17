@@ -7,6 +7,7 @@ import 'engine.dart';
 import 'grouping.dart';
 import 'input_resolver.dart';
 import 'models.dart';
+import 'ocr_parameters.dart';
 
 final class ComicTranslationBenchmarkSample {
   final ComicTranslationPageIdentity identity;
@@ -96,9 +97,11 @@ final class ComicTranslationBenchmark {
     required String sourceLanguage,
     required String targetLanguage,
     int maxAnalysisSide = 1600,
+    ComicOcrParameters? ocrParameters,
     bool runTranslation = true,
     bool diagnoseGrouping = true,
   }) async {
+    final parameters = ocrParameters ?? ComicOcrParameters(maxAnalysisSide: maxAnalysisSide);
     final translationMeasured =
         runTranslation && engines.translationEngine != null;
     final benchmarkEngines = translationMeasured
@@ -145,7 +148,8 @@ final class ComicTranslationBenchmark {
               filePath: resolved.file.path,
               contentDigest: resolved.contentDigest,
               sourceLanguage: sourceLanguage,
-              maxAnalysisSide: maxAnalysisSide,
+              maxAnalysisSide: parameters.maxAnalysisSide,
+              parameters: parameters,
               animatedMode: AnimatedTranslationMode.posterFrame,
             ),
           );

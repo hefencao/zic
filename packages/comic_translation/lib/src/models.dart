@@ -197,6 +197,13 @@ final class ComicOcrArtifact {
 
   String get digest => sha256.convert(utf8.encode(jsonEncode(toJson()))).toString();
 
+  ComicOcrArtifact withModelVersion(String version) => ComicOcrArtifact(
+    contentDigest: contentDigest, engineId: engineId, modelVersion: version,
+    sourceLanguage: sourceLanguage, imageWidth: imageWidth, imageHeight: imageHeight,
+    mediaKind: mediaKind, animatedMode: animatedMode, regions: regions,
+    cleanOverlayPng: cleanOverlayPng,
+  );
+
   factory ComicOcrArtifact.fromJson(Map<String, dynamic> json) =>
       ComicOcrArtifact(
         contentDigest: json['contentDigest'] as String,

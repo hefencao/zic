@@ -35,6 +35,13 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
   String _source = 'auto';
   String _target = 'zh-CN';
   int _contextPages = 2;
+  ComicTranslationQuality _quality = ComicTranslationQuality.balanced;
+  int _analysisSide = 1600;
+  double _detectionThreshold = .45;
+  double _recognitionThreshold = .35;
+  double _unclipRatio = 1.4;
+  int _prefetchPages = 4;
+  int _cachePrefetchPages = 4;
   bool _enabled = false;
   bool _soundEffects = false;
   bool _cleanOverlay = true;
@@ -62,11 +69,43 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
     _enabled = comic['enabled'] == true;
     _source = comic['sourceLanguage'] as String;
     _target = comic['targetLanguage'] as String;
-    _contextPages = comic['contextPages'] as int;
+    _loadTuning(comic);
     _soundEffects = comic['translateSoundEffects'] == true;
     _cleanOverlay = comic['useCleanOverlay'] == true;
     if (_remote) _selectBackendProfile();
   }
+
+  void _loadTuning(Map<String, Object?> values) {
+    _quality = ComicTranslationQuality.values.where((q) => q.name == values['translationQuality'])
+        .firstOrNull ?? ComicTranslationQuality.custom;
+    final ocr = ComicOcrParameters.fromSettings(values);
+    _analysisSide = ocr.maxAnalysisSide;
+    _detectionThreshold = ocr.detectionThreshold;
+    _recognitionThreshold = ocr.recognitionThreshold;
+    _unclipRatio = ocr.unclipRatio;
+    _contextPages = values['contextPages'] as int? ?? 2;
+    _prefetchPages = values['translationPrefetchPages'] as int? ?? 4;
+    _cachePrefetchPages = values['translationCachePrefetchPages'] as int? ?? 4;
+    if (_quality != ComicTranslationQuality.custom &&
+        !_quality.settings.entries.every((entry) => _tuning[entry.key] == entry.value)) {
+      _quality = ComicTranslationQuality.custom;
+    }
+  }
+
+  Map<String, Object?> get _tuning => {
+    ...ComicOcrParameters(maxAnalysisSide: _analysisSide,
+      detectionThreshold: _detectionThreshold, recognitionThreshold: _recognitionThreshold,
+      unclipRatio: _unclipRatio).toSettings(),
+    'translationQuality': _quality.name,
+    'translationPrefetchPages': _prefetchPages,
+    'translationCachePrefetchPages': _cachePrefetchPages,
+    'contextPages': _contextPages,
+  };
+
+  void _custom(VoidCallback update) => setState(() {
+    update();
+    _quality = ComicTranslationQuality.custom;
+  });
 
   ComicTranslationRemoteProfile _draft() => ComicTranslationRemoteProfile(
         id: _profileId,
@@ -144,7 +183,7 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
       'enabled': _enabled,
       'sourceLanguage': _source,
       'targetLanguage': _target,
-      'contextPages': _contextPages,
+      ..._tuning,
       'translateSoundEffects': _soundEffects,
       'useCleanOverlay': _cleanOverlay,
     };
@@ -181,7 +220,10 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
   @override
   Widget build(BuildContext context) => Scaffold(
         key: comicTranslationSettingsKey,
-        appBar: AppBar(title: Text(_isComic ? '本漫画翻译设置' : '翻译模型与 API')),
+        appBar: AppBar(title: Text(_isComic ? '本漫画翻译设置' : '翻译模型与 API'), actions: [
+          IconButton(tooltip: '保存翻译设置', icon: const Icon(Icons.check),
+            onPressed: _working ? null : () => _run(() async { await _ready; await _save(); })),
+        ]),
         body: FutureBuilder<void>(
           future: _ready,
           builder: (context, snapshot) {
@@ -227,11 +269,64 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                   onChanged: (value) => setState(() => _soundEffects = value)),
                 SwitchListTile(title: const Text('清除原文背景'), value: _cleanOverlay,
                   onChanged: (value) => setState(() => _cleanOverlay = value)),
+                const ListTile(title: Text('翻译档位'), contentPadding: EdgeInsets.zero),
+                Wrap(spacing: 8, runSpacing: 4, children: [
+                  for (final entry in const {
+                    ComicTranslationQuality.fast: '快速', ComicTranslationQuality.balanced: '均衡',
+                    ComicTranslationQuality.precise: '精细', ComicTranslationQuality.custom: '自定义',
+                  }.entries)
+                    ChoiceChip(label: Text(entry.value), selected: _quality == entry.key,
+                      showCheckmark: false, shape: const StadiumBorder(),
+                      onSelected: _working ? null : (_) => setState(() => _loadTuning({
+                        ..._tuning, ...entry.key.settings, 'translationQuality': entry.key.name,
+                      }))),
+                ]),
+                Text(switch (_quality) {
+                  ComicTranslationQuality.fast => '1024 px OCR · 不附前页上下文 · 提前翻译 2 页',
+                  ComicTranslationQuality.balanced => '1600 px OCR · 前 2 页上下文 · 提前翻译 4 页',
+                  ComicTranslationQuality.precise => '2240 px OCR · 前 4 页上下文 · 提前翻译 6 页',
+                  ComicTranslationQuality.custom => '按下方参数处理。已完成的译文优先使用缓存。',
+                }, style: Theme.of(context).textTheme.bodySmall),
                 ListTile(title: const Text('前页上下文'), trailing: DropdownButton<int>(
                   value: _contextPages,
                   items: [for (var i = 0; i <= 4; i++) DropdownMenuItem(value: i, child: Text('$i 页'))],
-                  onChanged: (value) => setState(() => _contextPages = value!),
+                  onChanged: (value) => _custom(() => _contextPages = value!),
                 )),
+                for (final cached in [false, true]) ListTile(
+                  title: Text(cached ? '提前加载译文缓存' : '提前翻译'),
+                  trailing: DropdownButton<int>(value: cached ? _cachePrefetchPages : _prefetchPages,
+                    items: [for (var i = 0; i <= 8; i++)
+                      DropdownMenuItem(value: i, child: Text(i == 0 ? '仅当前页' : '$i 页'))],
+                    onChanged: (value) => _custom(() {
+                      if (cached) { _cachePrefetchPages = value!; } else { _prefetchPages = value!; }
+                    })),
+                ),
+                ExpansionTile(title: const Text('OCR 参数'),
+                  subtitle: Text('$_analysisSide px · 检测 ${_detectionThreshold.toStringAsFixed(2)} · '
+                    '识别 ${_recognitionThreshold.toStringAsFixed(2)}'),
+                  tilePadding: EdgeInsets.zero,
+                  children: [
+                    ListTile(title: const Text('分析分辨率'), trailing: Text('$_analysisSide px')),
+                    Slider(value: _analysisSide.toDouble(), min: 320, max: 4096, divisions: 59,
+                      label: '$_analysisSide px', onChanged: _working ? null :
+                        (value) => _custom(() => _analysisSide = value.round())),
+                    const Padding(padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Text('分辨率越高越利于识别细字，同时增加耗时与内存占用。')),
+                    for (final recognition in [false, true]) ...[
+                      ListTile(title: Text(recognition ? '识别置信度下限' : '检测阈值'),
+                        subtitle: Text(recognition ? '提高可减少误识别，也可能漏掉模糊对白。' : '提高可减少候选文字框，也可能漏字。'),
+                        trailing: Text((recognition ? _recognitionThreshold : _detectionThreshold).toStringAsFixed(2))),
+                      Slider(value: recognition ? _recognitionThreshold : _detectionThreshold,
+                        min: .1, max: .9, divisions: 16,
+                        onChanged: _working ? null : (value) => _custom(() {
+                          if (recognition) { _recognitionThreshold = value; } else { _detectionThreshold = value; }
+                        })),
+                    ],
+                    ListTile(title: const Text('文字框扩展倍率'), trailing: Text(_unclipRatio.toStringAsFixed(1))),
+                    Slider(value: _unclipRatio, min: 1, max: 3, divisions: 20,
+                      onChanged: _working ? null : (value) => _custom(() => _unclipRatio = value)),
+                  ],
+                ),
                 const Divider(),
                 ListTile(
                   title: const Text('本地 OCR 模型'),
@@ -397,6 +492,7 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
     await _save();
     final result = await selectComicTranslationTestImage(
       sourceLanguage: _source, targetLanguage: _target, runTranslation: _backend != 'none',
+      ocrParameters: ComicOcrParameters.fromSettings(_tuning),
     );
     if (mounted && result != null) setState(() => _result = result);
   }

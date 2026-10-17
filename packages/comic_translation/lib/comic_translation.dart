@@ -8,6 +8,7 @@ export 'src/local_model_manager.dart';
 export 'src/local_translation.dart';
 export 'src/models.dart';
 export 'src/ocr_model_manager.dart';
+export 'src/ocr_parameters.dart';
 export 'src/paddle_ocr.dart';
 export 'src/policy.dart';
 export 'src/remote_translation.dart';

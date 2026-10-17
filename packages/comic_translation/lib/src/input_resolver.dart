@@ -46,7 +46,8 @@ final class ComicTranslationInputResolver {
     ComicTranslationPageIdentity identity,
   )? openFile;
 
-  static final Map<String, Future<String>> _digestTasks = {};
+  static final Map<String, Future<({String digest, ComicTranslationMediaKind mediaKind})>>
+      _analysisTasks = {};
 
   Future<ResolvedComicTranslationInput?> resolve(
     ComicTranslationPageIdentity identity,
@@ -59,12 +60,8 @@ final class ComicTranslationInputResolver {
       final stat = await file.stat();
       if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
       final modified = stat.modified.millisecondsSinceEpoch;
-      final mediaKind =
-          identity.mediaKind == ComicTranslationMediaKind.animatedImage
-              ? ComicTranslationMediaKind.animatedImage
-              : await Isolate.run(() => _detectMediaKind(file.path));
       // Digest the actual pinned body; URL/length/mtime are not content proof.
-      final digest = await _digest(file, stat.size, modified);
+      final analysis = await _analyze(file, stat.size, modified);
       final verified = await file.stat();
       if (verified.size != stat.size ||
           verified.modified.millisecondsSinceEpoch != modified) {
@@ -76,8 +73,9 @@ final class ComicTranslationInputResolver {
         release: lease.release,
         size: stat.size,
         modifiedMilliseconds: modified,
-        contentDigest: digest,
-        mediaKind: mediaKind,
+        contentDigest: analysis.digest,
+        mediaKind: identity.mediaKind == ComicTranslationMediaKind.animatedImage
+            ? identity.mediaKind : analysis.mediaKind,
       );
     } finally {
       if (!transferred) await lease.release();
@@ -94,17 +92,21 @@ final class ComicTranslationInputResolver {
     return ComicTranslationInputFile(path: file.path, release: () {});
   }
 
-  static Future<String> _digest(File file, int size, int modified) {
+  static Future<({String digest, ComicTranslationMediaKind mediaKind})> _analyze(
+    File file, int size, int modified,
+  ) {
     final key = '${file.path}\u0000$size\u0000$modified';
-    final existing = _digestTasks[key];
+    final existing = _analysisTasks[key];
     if (existing != null) return existing;
-    late final Future<String> task;
-    task = Isolate.run(() async =>
-        (await sha256.bind(File(file.path).openRead()).first).toString())
+    late final Future<({String digest, ComicTranslationMediaKind mediaKind})> task;
+    task = Isolate.run(() async => (
+        digest: (await sha256.bind(File(file.path).openRead()).first).toString(),
+        mediaKind: _detectMediaKind(file.path),
+      ))
       .whenComplete(() {
-        if (identical(_digestTasks[key], task)) _digestTasks.remove(key);
+        if (identical(_analysisTasks[key], task)) _analysisTasks.remove(key);
       });
-    _digestTasks[key] = task;
+    _analysisTasks[key] = task;
     return task;
   }
 }

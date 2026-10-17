@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-17T15:59:08Z",
-  "objective": "修复Namaniku12页眼下与拟声词误译，保留正常对白及既有排版",
-  "status": "verified_device",
+  "updated_at": "2026-10-17T16:46:56Z",
+  "objective": "优化译文缓存、整章预翻译、OCR档位及译文随下载保存/加载",
+  "status": "partial",
   "scope": [
-    "main：翻译OCR噪声过滤；保留分组/字号/缓存owner及用户设置",
-    "Reader/Pipeline/NetLane所有权和取消真实退出边界保持",
+    "main：缓存/排版/OCR档位；整章与下载译文继续实现",
+    "Reader/Pipeline/NetLane与取消真实退出边界保持",
     "原112条验收及summary逐字保留"
   ],
   "preserve": [
@@ -145,27 +145,27 @@
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
   "current_device_installation": {
-    "verified_for_current_change": true,
+    "verified_for_current_change": false,
     "serial": "72b08a1c",
-    "apk_sha256": "dbf317e21c79028997dc375cb94c5b7389d28f497ec427df23ef2322b3df21c1",
-    "observation": "Minified Release/PID28154;12 drawings/12s,6 visual,reentry cache pass;settings retained."
+    "apk_sha256": "f5154910021997d26d02f6e1712820122b3a073f870eace985f271b6a8e87a47",
+    "observation": "Release/PID30390 installed;cache/parameters acceptance running;API/model unchanged."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
     "exit_code": 0,
     "analyzers": 28,
     "dart_flutter_tests": {
-      "passed": 2497,
+      "passed": 2502,
       "skipped": 3
     },
     "rust_tests": 25,
-    "android_jvm_tests": "110 cached/0 failures;owned Gradle targets pass;upstream Robolectric36/34+ByteBuddy25 unverified",
+    "android_jvm_tests": "110 owned/0 failures;4 Gradle targets pass;upstream Robolectric/ByteBuddy unverified",
     "native_runtime": "3ABI staged native layout and Debug/Release APK builds pass;arm64 translation closures pass",
-    "device": "Releasedbf317e2:12 drawings/12s/4 identical layouts;6 visual pass.12 reentry OCR/MT hits,42.4/37.0ms ready;0new calls/config/failures.",
+    "device": "Baseline12:cached ready35.5ms;layout522.1ms from session reuse;0 OCR/MT. New acceptance running.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "Fresh full gates/builds;88 translation tests incl.2 old-code-red regressions;71 OCR entries replayed.112 records/summary byte-identical."
+    "scope": "Fresh28 analyzers/28 suites,93 translation tests incl.cache concurrency/font/OCR keys/schema1;112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,19 +176,20 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "Reader controls/JA-KO memory/shared models/NetLane retained. Source geometry/cells/crossing fonts/peek. Weak outside digits,contour glyphs and tiny isolated marks stay original;SFX-off filters weak oversized art via reliable body. Empty overlay;artifact-v6,OCR unchanged.",
-      "diagnosis": "12:eye strokes=1用/.396,13x10px;right SFX=H7/.434,118x167px. Weak large art dominated filter-size reference;reliable recognition fixes threshold. Tiny weak marks require reliable body evidence. Rendering font/grouping unchanged.",
-      "accepted": "88 tests;71 OCR entries:only12(auto/JA) changed6->4 units,5 dialogue lines kept. Releasedbf317e2:12 drawings/12s/4 identical layouts,6 pass;12 history OCR/MT hits42.4/37.0ms,0new calls/config/failures.5/7/8/13 prior acceptance retained.",
-      "performance": "Prior KO27 cache190.6/162.7ms;Namaniku5 entry65.6->9.3ms/reentry8.1ms retained.",
+      "current_contract": "JA/KO memory/shared models/NetLane retained. Quick/balanced/precise/custom OCR/context/lookahead;model/API independent. Cached current/near bypass inference/drag. SHA+media worker,digest backfill,idle layout batching;default keys unchanged.",
+      "diagnosis": "12 H7/.434 and tiny eye1用/.396 filtered via reliable body;group/font unchanged. Cache precedes slow layout;speculative pages cannot choose font scale. OCR thresholds update loaded detector;no extra resident model.",
+      "accepted": "93 translation/2502 full tests;3ABI Debug/Release+arm64 closure+25 Rust+110 JVM pass. Cache concurrency,visible font,5 OCR keys,schema1 and settings covered. Prior5/6/7/8/12/13 visuals retained.",
+      "performance": "Baseline12:cache35.5ms,reuse to layout522.1ms,0new calls;new measurement pending. Prior KO27 190.6/162.7ms,5 entry9.3ms retained.",
       "remaining_acceptance": [
-        "Broader grouping/font/SFX quality and JA待つて/緒に行きましよう remain open.",
-        "Real DeepL/CTranslate2 modeldir/Windows pwsh/non-DotProd device unverified."
+        "New Release cache/parameters/visual acceptance running.",
+        "Whole-chapter pretranslation and downloaded translation sidecar save/load remain to implement.",
+        "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."
       ],
-      "mainline": "Local main;translation merged;OCR noise fix included;not pushed;settings retained."
+      "mainline": "Local main;cache/OCR stage;device acceptance running;not pushed."
     }
   },
   "remaining": [
-    "Translation:broader OCR/grouping/font/SFX quality,real DeepL/CTranslate2/Windows/non-DotProd remain open;6/12 drawing and8 lettering repairs plus5/7/13 regressions accepted.",
+    "Translation:whole-chapter pretranslation and downloaded translations pending;cache/OCR presets implemented,device acceptance running. Broader quality/backends open;prior scoped repairs accepted.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",
