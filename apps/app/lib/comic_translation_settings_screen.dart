@@ -319,12 +319,13 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                       Slider(value: recognition ? _recognitionThreshold : _detectionThreshold,
                         min: .1, max: .9, divisions: 16,
                         onChanged: _working ? null : (value) => _custom(() {
-                          if (recognition) { _recognitionThreshold = value; } else { _detectionThreshold = value; }
+                          final threshold = (value * 100).round() / 100;
+                          if (recognition) { _recognitionThreshold = threshold; } else { _detectionThreshold = threshold; }
                         })),
                     ],
                     ListTile(title: const Text('文字框扩展倍率'), trailing: Text(_unclipRatio.toStringAsFixed(1))),
                     Slider(value: _unclipRatio, min: 1, max: 3, divisions: 20,
-                      onChanged: _working ? null : (value) => _custom(() => _unclipRatio = value)),
+                      onChanged: _working ? null : (value) => _custom(() => _unclipRatio = (value * 10).round() / 10)),
                   ],
                 ),
                 const Divider(),

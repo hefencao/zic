@@ -5,8 +5,8 @@ const _archiveVariantLimit = 8;
 
 Uint8List? _exportTranslationPage(Database db, String contentDigest) {
   final translations = db.select('''
-    SELECT payload, ocr_digest FROM translation_artifacts WHERE content_digest = ?
-    ORDER BY accessed_at DESC, updated_at DESC LIMIT ?;
+    SELECT cache_key, payload, ocr_digest FROM translation_artifacts WHERE content_digest = ?
+    ORDER BY accessed_at DESC, updated_at DESC, cache_key LIMIT ?;
   ''', [contentDigest, _archiveVariantLimit]);
   if (translations.isEmpty) return null;
   final ocrByDigest = <String, String>{};
@@ -23,7 +23,7 @@ Uint8List? _exportTranslationPage(Database db, String contentDigest) {
     }
     ocrByDigest[digest] = payload;
   }
-  final selected = <String>[];
+  final selected = <({String key, String payload})>[];
   final ocr = <String, String>{};
   var characters = 0;
   for (final row in translations) {
@@ -35,12 +35,18 @@ Uint8List? _exportTranslationPage(Database db, String contentDigest) {
     if (characters + added > _archiveByteLimit ~/ 2) continue;
     characters += added;
     ocr[digest] = payload;
-    selected.add(translation);
+    selected.add((key: row['cache_key'] as String, payload: translation));
   }
   if (selected.isEmpty) return null;
+  // Recency selects the bounded set, but must not change its encoded order.
+  // Otherwise an ordinary cache read defeats the owner's identical-write skip.
+  selected.sort((a, b) => a.key.compareTo(b.key));
+  final ocrKeys = ocr.keys.toList()..sort();
   final bytes = Uint8List.fromList(utf8.encode(jsonEncode({
     'format': 'zic-page-translation', 'version': 1,
-    'contentDigest': contentDigest, 'ocr': ocr, 'translations': selected,
+    'contentDigest': contentDigest,
+    'ocr': {for (final digest in ocrKeys) digest: ocr[digest]},
+    'translations': selected.map((entry) => entry.payload).toList(),
   })));
   return bytes.length > _archiveByteLimit ? null : bytes;
 }

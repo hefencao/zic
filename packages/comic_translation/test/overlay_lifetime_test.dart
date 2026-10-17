@@ -1,9 +1,68 @@
+import 'dart:ui' as ui;
+
 import 'package:comic_translation/comic_translation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   setUp(ComicTranslationOverlayController.clearRetainedLayouts);
+
+  testWidgets('invisible translations never clear their source image', (tester) async {
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder).drawColor(Colors.white, BlendMode.src);
+    final picture = recorder.endRecording();
+    final image = await tester.runAsync(() => picture.toImage(1, 1));
+    final data = await tester.runAsync(() => image!.toByteData(format: ui.ImageByteFormat.png));
+    image!.dispose();
+    picture.dispose();
+    const identity = ComicTranslationPageIdentity(
+      imageKey: 'padding', sourceKey: 'test', comicId: 'comic', chapterId: 'chapter',
+      pageIndex: 0, mediaKind: ComicTranslationMediaKind.staticImage,
+    );
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'en');
+    final page = session.listenable(identity) as ValueNotifier<ComicTranslationPageState>;
+    page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+      cleanOverlayPng: data!.buffer.asUint8List(),
+      artifact: ComicTranslationArtifact(
+        contentDigest: '0123456789abcdef', ocrDigest: 'ocr', engineId: 'test', modelVersion: '1',
+        sourceLanguage: 'ja', targetLanguage: 'en', contextDigest: '', imageWidth: 300, imageHeight: 400,
+        mediaKind: ComicTranslationMediaKind.staticImage, animatedMode: AnimatedTranslationMode.posterFrame,
+        regions: [for (var i = 0; i < 3; i++) ComicTranslatedRegion(
+          ocrRegionId: 'r$i', sourceText: '文字',
+          translatedText: i == 1 ? 'Hello' : comicTranslationBreakMarker,
+          polygon: [NormalizedPoint(0.2, 0.1 + i * 0.25), NormalizedPoint(0.8, 0.1 + i * 0.25),
+            NormalizedPoint(0.8, 0.2 + i * 0.25), NormalizedPoint(0.2, 0.2 + i * 0.25)],
+          orientation: ComicTextOrientation.horizontal, kind: ComicTextKind.dialogue, readingOrder: i,
+          sourceMaskPolygons: [], bubbleGroupId: i == 0 ? 0 : 1)],
+      ),
+    );
+    final controller = ComicTranslationOverlayController();
+    const mediaKey = ValueKey('padding-media');
+    await tester.pumpWidget(MaterialApp(home: Center(child: SizedBox(width: 300, height: 400,
+      child: ComicTranslationOverlay(session: session, identity: identity, controller: controller,
+        child: const ColoredBox(key: mediaKey, color: Colors.red)),
+    ))));
+    final bounds = tester.getRect(find.byKey(mediaKey));
+    final translatedPoint = bounds.topLeft + Offset(bounds.width * 0.5, bounds.height * 0.4);
+    var prepared = false;
+    for (var i = 0; i < 300 && !prepared; i++) {
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 16));
+      prepared = controller.peekSourceAt(translatedPoint);
+    }
+    expect(prepared, isTrue, reason: 'visible translations must still finish');
+    await tester.pump(const Duration(milliseconds: 1600));
+    final clip = tester.widget<ClipPath>(find.descendant(
+      of: find.byType(ComicTranslationOverlay), matching: find.byType(ClipPath)));
+    final path = clip.clipper!.getClip(const Size(300, 400));
+    expect(path.contains(const Offset(150, 160)), isTrue);
+    expect(path.contains(const Offset(150, 60)), isFalse,
+      reason: 'an entirely invisible unit must preserve its original image');
+    expect(path.contains(const Offset(150, 260)), isFalse,
+      reason: 'a padded line beside valid text must also preserve its original image');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await session.close();
+  });
 
   testWidgets('resolved taps find a translated bubble and restore it after peeking', (tester) async {
     const identity = ComicTranslationPageIdentity(

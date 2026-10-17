@@ -11,6 +11,7 @@ import 'package:comic_translation/src/bubble_boundary.dart';
 import 'package:comic_translation/src/deepl_translation.dart';
 import 'package:comic_translation/src/engine.dart';
 import 'package:comic_translation/src/grouping.dart';
+import 'package:comic_translation/src/http_client.dart';
 import 'package:comic_translation/src/input_resolver.dart';
 import 'package:comic_translation/src/models.dart';
 import 'package:comic_translation/src/ocr_parameters.dart';
@@ -86,6 +87,54 @@ void main() {
     expect(ocr.calls, 3, reason: 'the actual image digest must reject the former page archive');
     expect(translator.calls, 3);
     expect(events.any((event) => event['stage'] == 'archive-read-failed'), isTrue);
+  });
+
+  test('page archive bytes stay stable when only variant access order changes', () async {
+    const content = 'stable-page-archive';
+    final store = ComicTranslationStore.instance;
+    final results = <ComicTranslationArtifact>[];
+    for (var index = 0; index < 2; index++) {
+      final ocr = ComicOcrArtifact(contentDigest: content, engineId: 'stable-ocr',
+        modelVersion: 'v$index', sourceLanguage: 'ja', imageWidth: 20, imageHeight: 30,
+        mediaKind: ComicTranslationMediaKind.staticImage,
+        animatedMode: AnimatedTranslationMode.posterFrame, regions: const []);
+      final digest = await store.storeOcr(ocr);
+      final result = ComicTranslationArtifact(contentDigest: content, ocrDigest: digest,
+        engineId: 'stable-translator', modelVersion: 'v1', sourceLanguage: 'ja',
+        targetLanguage: 'zh-CN', contextDigest: '$index', imageWidth: 20, imageHeight: 30,
+        mediaKind: ComicTranslationMediaKind.staticImage,
+        animatedMode: AnimatedTranslationMode.posterFrame, regions: const []);
+      results.add(result);
+      await store.storeTranslation(result);
+    }
+    final original = (await store.exportPage(content))!;
+    for (var index = 0; index < results.length; index++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final result = results[index];
+      await store.findOcr(contentDigest: content, engineId: 'stable-ocr',
+        modelVersion: 'v$index', sourceLanguage: 'ja');
+      await store.findTranslation(ocrDigest: result.ocrDigest, engineId: result.engineId,
+        modelVersion: result.modelVersion, targetLanguage: result.targetLanguage,
+        contextDigest: result.contextDigest);
+      expect(await store.exportPage(content), original,
+        reason: 'reading an unchanged variant must not rewrite a downloaded companion');
+    }
+    for (var index = 2; index < 10; index++) {
+      final result = ComicTranslationArtifact.fromJson({
+        ...results.first.toJson(), 'contextDigest': '$index',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await store.storeTranslation(result);
+    }
+    final changed = (await store.exportPage(content))!;
+    expect(changed, isNot(original));
+    final envelope = jsonDecode(utf8.decode(changed)) as Map;
+    final variants = (envelope['translations'] as List)
+        .map((payload) => jsonDecode(payload as String) as Map).toList();
+    expect(variants, hasLength(8));
+    expect(variants.map((variant) => variant['contextDigest']).toSet(),
+      {for (var index = 2; index < 10; index++) '$index'},
+      reason: 'stable serialization still selects the eight most recent variants');
   });
 
   test('archive validation rejects a corrupt batch before inserting any result', () async {
@@ -1086,6 +1135,72 @@ void main() {
     expect(version(' names '), version('names'));
     expect(version('formal'), isNot(version('casual')));
   });
+
+  for (final repair in [false, true]) {
+  test(repair ? 'remote translation repairs only empty units once'
+      : 'valid remote translation never needs an extra request', () async {
+    final request = ComicTranslationRequest(
+      ocr: _ocrArtifact([
+        _ocrRegion('good', 'ありがとう', 0, 0, left: .7),
+        _ocrRegion('empty', 'ごめん', 1, 1),
+      ]),
+      targetLanguage: 'zh-CN', previousPages: const [],
+    );
+    expect(request.units, hasLength(2));
+    var calls = 0;
+    final adapter = _DeepLAdapter.generated((options) {
+      calls++;
+      return {'translations': calls == 1
+          ? {'u0': ['谢谢'], 'u1': repair ? <String>[] : ['抱歉']}
+          : {'u0': ['抱歉']}};
+    });
+    final previousAdapter = ComicTranslationHttp.adapterFactory;
+    ComicTranslationHttp.adapterFactory = () => adapter;
+    addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+    final engine = OpenAiCompatibleComicTranslationEngine(
+      endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '',
+    );
+    final result = await engine.translate(request);
+    expect(result.translations, {
+      request.units[0].id: ['谢谢'], request.units[1].id: ['抱歉'],
+    });
+    expect(adapter.requests, hasLength(repair ? 2 : 1));
+    final messages = (adapter.requests.last.data as Map)['messages'] as List;
+    final body = jsonDecode((messages.last as Map)['content'] as String) as Map;
+    expect(body['units'], repair
+        ? [{'id': 'u0', 'sourceLines': request.units[1].sourceLines}]
+        : [for (var i = 0; i < request.units.length; i++)
+            {'id': 'u$i', 'sourceLines': request.units[i].sourceLines}]);
+    if (repair) expect((messages.first as Map)['content'], contains('nonempty'));
+  });
+  }
+
+  for (final cancelAt in [0, 1, 2]) {
+    test('remote empty-unit repair stays bounded with cancellation at $cancelAt', () async {
+      final request = ComicTranslationRequest(
+        ocr: _ocrArtifact([_ocrRegion('empty', 'ごめん', 0, 0)]),
+        targetLanguage: 'zh-CN', previousPages: const [],
+      );
+      var calls = 0;
+      final adapter = _DeepLAdapter.generated((options) {
+        calls++;
+        if (calls == cancelAt) {
+          throw DioException(requestOptions: options, type: DioExceptionType.cancel);
+        }
+        return {'translations': {'u0': [' ']}};
+      });
+      final previousAdapter = ComicTranslationHttp.adapterFactory;
+      ComicTranslationHttp.adapterFactory = () => adapter;
+      addTearDown(() => ComicTranslationHttp.adapterFactory = previousAdapter);
+      final engine = OpenAiCompatibleComicTranslationEngine(
+        endpoint: 'https://example.com/v1/chat/completions', model: 'test', apiKey: '',
+      );
+      await expectLater(engine.translate(request), cancelAt == 0
+          ? throwsFormatException : throwsA(isA<DioException>().having(
+              (error) => error.type, 'type', DioExceptionType.cancel)));
+      expect(adapter.requests, hasLength(cancelAt == 1 ? 1 : 2));
+    });
+  }
 
   test('DeepL profile backend survives persistence and old profiles migrate', () {
     const profile = ComicTranslationRemoteProfile(
@@ -2242,6 +2357,50 @@ void main() {
       unit.id: const ['等等……。'],
     }));
     expect(expanded['ellipsis'], '等等・・・');
+  });
+
+  test('post-cleanup blank lines preserve source without failing the page', () {
+    final request = ComicTranslationRequest(
+      ocr: _ocrArtifact([
+        _ocrRegion('drawing', 'て', 0, 0),
+        _ocrRegion('right', 'ごめん', 1, 1),
+        _ocrRegion('left', '有希ちゃん', 2, 1),
+      ]),
+      targetLanguage: 'zh-CN',
+      previousPages: const [],
+      units: const [
+        ComicTranslationUnit(id: 'drawing', regionIds: ['drawing'],
+          sourceLines: ['て'], orientation: ComicTextOrientation.horizontal,
+          bandRegionIds: [['drawing']]),
+        ComicTranslationUnit(id: 'dialogue', regionIds: ['right', 'left'],
+          sourceLines: ['ごめん', '有希ちゃん'], orientation: ComicTextOrientation.vertical,
+          bandRegionIds: [['right', 'left']]),
+      ],
+    );
+    final expanded = request.expandUnitTranslations(ComicTranslationResult({
+      'drawing': const ['…'],
+      'dialogue': const ['抱歉', '…'],
+    }));
+    expect(expanded, {
+      'drawing': comicTranslationBreakMarker,
+      'right': '抱歉',
+      'left': comicTranslationBreakMarker,
+    });
+  });
+
+  test('missing and raw empty translation responses still fail', () {
+    final request = ComicTranslationRequest(
+      ocr: _ocrArtifact([_ocrRegion('text', 'ごめん', 0, 0)]),
+      targetLanguage: 'zh-CN',
+      previousPages: const [],
+    );
+    final id = request.units.single.id;
+    for (final lines in <List<String>>[[], [''], ['  '], ['抱歉', '']]) {
+      expect(() => request.expandUnitTranslations(
+        ComicTranslationResult({id: lines})), throwsStateError);
+    }
+    expect(() => request.expandUnitTranslations(
+      ComicTranslationResult(const {})), throwsStateError);
   });
 
   test('translation break marker survives while added punctuation is removed', () {

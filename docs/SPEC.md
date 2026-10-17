@@ -1475,7 +1475,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 - 翻译默认 MUST 关闭；设置 MUST 提供本地 OCR、本地 Hy-MT/CTranslate2、OpenAI-compatible 与 DeepL 的显式配置，
   支持 API profile、语言、上下文、拟声词与原文清除策略；漫画可覆盖全局翻译默认。
 - 设置 MUST 提供快速/均衡/精细/自定义档位及独立 OCR 参数。档位 MUST 联动分析分辨率、前页上下文与提前翻译/缓存页数，MUST NOT 隐式更换模型或 API；手动修改参数 MUST 显示自定义。
-  分析尺度 MUST 限于 320–4096px，检测/识别阈值 MUST 限于 0.1–0.9，文字框扩展倍率 MUST 限于 1–3；非默认参数 MUST 隔离 OCR 缓存，默认参数 MUST 继续复用既有内容缓存。原生参数调整 MUST 复用模型会话。
+  分析尺度 MUST 限于 320–4096px，检测/识别阈值 MUST 限于 0.1–0.9，文字框扩展倍率 MUST 限于 1–3；滑块保存 MUST 按声明步长归一化，避免浮点插值改变默认缓存身份。非默认参数 MUST 隔离 OCR 缓存，默认参数 MUST 继续复用既有内容缓存。原生参数调整 MUST 复用模型会话。
   提前翻译与提前加载缓存 MUST 分别提供零至八页配置，默认均为四页；仅调度配置或档位名称变化 MUST 保留会话与有效结果，不重新推理已有有效译文的页面。
 - Reader 底栏第三项翻译按钮 MUST 单击切换本漫画翻译、长按打开面板。重试 MUST 在左上、设置在右上，翻译开关 MUST 在左下且不显示文字标签，保留无障碍名称。启用变化 MUST 保留会话与有效结果，开启时消费最新视口；推理配置替换 MUST 关闭旧会话。
   当前已挂载页 MUST 接收初始化和配置变更后的翻译输出，不得依赖切页刷新。
@@ -1493,7 +1493,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   离开 Reader MUST 保留任务；取消 MUST 停止后续页、等待实际调用退出并保留有效译文，MUST NOT 撤销共享图片下载。App services 关闭 MUST 先排空任务，活动任务期间 MUST 拒绝切换存储根；后台 MUST 暂停新推理，恢复后继续。
   Reader 与整章任务请求相同内容、引擎及完整配置时 MUST 共用在途 OCR/翻译，MUST NOT 重复调用模型。各消费者 MUST 持有自身输入和引擎租约至实际退出，单个消费者取消 MUST NOT 提前释放共享调用容量或使其他消费者失去结果。
 - 下载后的静态图片 MUST 可携带已生成的 OCR/译文，并在本机内容缓存缺失时恢复；保存或读取 MUST NOT 因此调用推理模型或创建图片请求。恢复 MUST 校验实际图片摘要、原始 OCR payload 摘要及译文关联身份，完整验证后事务导入，MUST NOT 覆盖已有结果或忽略当前引擎/模型/参数/目标语言身份。
-  单页 companion MUST 限于 64MiB、最多八份译文配置；MUST NOT 包含 API 凭据。自动原文语言只有唯一匹配的已存日/韩 OCR 时 MAY 沿用，手动语言 MUST 优先。
+  单页 companion MUST 限于 64MiB、最多八份译文配置；MUST NOT 包含 API 凭据。最近使用 MUST 决定有界变体选择，同一集合 MUST 稳定序列化，单纯缓存访问 MUST NOT 导致 companion 重写。自动原文语言只有唯一匹配的已存日/韩 OCR 时 MAY 沿用，手动语言 MUST 优先。
   物理下载所有者 MUST 管理 companion 的 Direct/SAF 原子替换、迁移、删除与暂存清理，MUST NOT 把它当作图片完整性证明。不同目的地数据 MUST 保留并拒绝冲突迁移。先翻译后手动下载 MUST 补存已有结果；App services 关闭及下载目录切换 MUST 排空本地保存。来源本地目录 MUST 只读，保存失败 MUST NOT 阻止已就绪译文显示。
 - OCR MUST 持有完整图片租约直到本次处理实际退出；partial 和隔离中的历史 carrier MUST NOT 用作 OCR authority。
   本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
@@ -1501,6 +1501,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 - 模型驻留 MUST 由统一 engine registry 管理。相同翻译模型跨语言/漫画 MUST 可复用，日/韩 OCR 切换 MUST 保留 detector 并只驻留一个识别器。
   最后租约/禁用后的模型 MAY 保温最多 30 秒；进入后台或内存压力 MUST 在正在执行的调用实际退出后回收。后台 MUST 停止新翻译工作，恢复后按有效观察继续；切书 MUST 清除前书上下文。
 - 本地翻译 MUST 保留可与源行对应的段落换行，不得在 OCR 行间注入可见分隔符；协议改变 MUST 更新译文缓存身份。
+  文字响应 MUST 校验单元身份并拒绝原始空白或缺失行。OpenAI-compatible MAY 仅对空行单元补译一次，MUST 保留其余有效结果；补译仍空或缺失 MUST 报错，取消 MUST NOT 补发。非空响应经原文标点清理后无可显示文字时 MUST 保留对应原图，MUST NOT 阻塞其他单元或擦除该区域。
 - 气泡外低置信度独立一至三位纯数字 MUST 保留原图。低置信度单字若独占轮廓且墨迹边界框占轮廓边界框至少一半，MUST NOT 仅凭该轮廓视为对白；可靠识别、留白充足的短回答及共用轮廓的正文 MUST 继续保留翻译资格。
 - 质量过滤用的正文尺寸 MUST 优先取可靠非拟声词 OCR 样本；无可靠样本时沿用候选估计，并禁用依赖可靠参考的微小碎片过滤。气泡外低置信度、至多三字且明显小于可靠正文的独立区域 MUST 保留原图。此参考 MUST NOT 改变排版字号或气泡分组。
 - 拟声词关闭时，气泡外各行均低置信度且明显大于正文的短文字 MUST 保留原图。质量过滤 MUST NOT 仅凭字号、字数或非主语言字符丢弃文字；数字和日文汉字 MUST NOT 被视为语言不符。跳过区域 MUST NOT 清除原文或绘制译文。

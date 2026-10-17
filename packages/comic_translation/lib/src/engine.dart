@@ -381,8 +381,12 @@ final class ComicTranslationRequest {
           unit.sourceLines.map(_letters).toSet().length > 1 &&
           _letters(trimmed.first).runes.length >= trimmed.length;
       if (!repeated) {
-        return List.generate(trimmed.length, (index) =>
-            _preservePunctuation(unit.sourceLines[index], trimmed[index]));
+        return List.generate(trimmed.length, (index) {
+          final text = _preservePunctuation(unit.sourceLines[index], trimmed[index]);
+          // Nonempty model output can consist only of added punctuation. Keep
+          // the source visible, just as for padding in a shorter joined result.
+          return text.isEmpty ? comicTranslationBreakMarker : text;
+        });
       }
       final text = _preservePunctuation(
         unit.sourceLines.join(),

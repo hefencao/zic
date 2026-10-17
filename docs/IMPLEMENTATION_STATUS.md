@@ -195,8 +195,8 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
-- 漫画翻译：PaddleOCR/Hy-MT/CTranslate2、远程API及内容缓存/覆层。第三项单击开关/长按面板；独立药丸与日/韩记忆。快速/均衡/精细/自定义、OCR独立参数，推理/缓存各0–8页。原文几何分组、共用轮廓分区、跨线局部字号；弱数字/微小碎片/独占轮廓弱字保留原图。并行缓存不等推理/拖动，输入分析/摘要/编解码在worker；排版idle1.5ms/逐气泡，完成布局LRU最多8页/128块，后台/压力清除。
-  App整章任务复用既有下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出并保留结果；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker。Direct/SAF替换、迁移与删除由下载所有者管理，来源目录只读。调度/显示不清结果，默认缓存沿用；阈值不重载模型。共用MT/detector、单识别器、保温30秒/后台回收、NetLane至真实退出；验收见状态JSON。
+- 漫画翻译：PaddleOCR/Hy-MT/CTranslate2、远程API及内容缓存/覆层。第三项单击开关/长按面板；独立药丸与日/韩记忆。档位、独立OCR参数，推理/缓存各0–8页；滑块按步长保存。原文几何分组、轮廓分区/跨线局部字号；弱伪字保留原图。并行缓存不等推理/拖动，分析/摘要/编解码在worker；排版idle1.5ms逐气泡，LRU最多8页/128块，后台/压力清除；清理后空行保留原图；远程原始空单元仅补译一次，取消不补发。
+  App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/后台回收、NetLane至真实退出；验收见状态JSON。
 
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。

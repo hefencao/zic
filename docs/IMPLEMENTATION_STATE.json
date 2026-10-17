@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-17T18:09:40Z",
+  "updated_at": "2026-10-17T22:48:43Z",
   "objective": "优化译文缓存、整章预翻译、OCR档位及译文随下载保存/加载",
   "status": "partial",
   "scope": [
@@ -147,25 +147,25 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "899e79c245681b9d4e1f3a198f83fb638416106eae58458f359d854774b8fdfd",
-    "observation": "Release/PID32728;Reader12 ready,prepare/processing cancel pass;settings retained."
+    "apk_sha256": "30ede7510894332503bad9a32f5bc6c12778959d5ec7b4e2a9ba7cd5215a56fb",
+    "observation": "Release/PID15910;Reader12 ready;held magnifier/release verified;settings retained."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
     "exit_code": 0,
     "analyzers": 28,
     "dart_flutter_tests": {
-      "passed": 2515,
+      "passed": 2525,
       "skipped": 3
     },
     "rust_tests": 25,
     "android_jvm_tests": "110 owned/0 failures;4 Gradle targets pass;upstream Robolectric/ByteBuddy unverified",
-    "native_runtime": "3ABI staged native layout and Debug/Release APK builds pass;arm64 translation closures pass",
-    "device": "899e79c2:12 ready;18 chapter pages saved serially,cancel then no advance;1 new MT succeeded15.72s. Real companion2 OCR/5 MT restored in empty DB.",
+    "native_runtime": "3ABI staged native unchanged;fresh Debug/Release builds and arm64 closures pass",
+    "device": "30ede751:39 pages saved;API TLS stops index39.12 cache-ready214ms;held zoom/release stable;companion mtime unchanged across cache runs.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "28 analyzers/suites;101 translation tests;cache/chapter/archive/drain covered;112 records/summary byte-identical."
+    "scope": "28 analyzers/suites;110 translation tests;2525 full/3skip;112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,19 +176,19 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "Probes bypass inference/drag;worker SHA/JSON;LRU8p/128blocks. OCR presets retain keys. App chapter jobs reuse downloads,drain save/leases per page/cancel,retain bounded context and survive Reader;share inference. .zic-data exact-config restore;download owner handles Direct/SAF moves/deletes,manual backfill and close/root drain.",
-      "diagnosis": "12 H7/.434 and tiny eye1用/.396 filtered via reliable body;group/font unchanged. Layout copies isolate consumers. Bound-range fallback covers unavailable same-generation direct path;unlink unit passed,old device cause unproven.",
-      "accepted": "101 translation;2515 full/3skip;25 Rust/110 JVM,3ABI Debug/Release+arm64 closures pass. Prior5/6/7/8/12/13 visuals retained. Real12 companion:2 OCR/5 MT restored exactly in empty DB,0 calls.",
-      "performance": "8ab989d1,5 page12 reentries:cache-ready182-226ms,reuse-to-layout186-240ms,post-ready0.8-8.8ms;baseline522/482ms. 10s screenshots identical. Final899:18 chapter pages saved before next input,cancel stops;1 fresh MT succeeds15.72s.",
+      "current_contract": "Independent cache probes/worker SHA+JSON;LRU8p/128blocks;OCR presets/quantized defaults. App chapter jobs reuse downloads,drain each save/lease,cancel,survive Reader;share inference. Download owner handles exact-config companions,moves/deletes/backfill/close.",
+      "diagnosis": "Reliable body rejects12 eye/H7;group/font unchanged. Canonical archives avoid recency rewrites. Cleanup blanks preserve source;remote empty units repaired once,then fail;cancel never retries. Layout containers isolated;moved-path cause unproven.",
+      "accepted": "110 translation;2525 full/3skip;25 Rust/110 JVM;Debug/Release+arm64 closures pass. Prior5/6/7/8/12/13 retained. Real12 companion2 OCR/5 MT restores exactly in empty DB,0 calls;held zoom/release verified.",
+      "performance": "5 reentries:cache182-226ms,reuse-to-layout186-240ms;baseline522/482ms. Latest cold app:cache214ms,ready-to-layout235ms.12 companion mtime06:30:35.559901811 unchanged across later reads.39 pages saved;exit/cancel accepted.",
       "remaining_acceptance": [
-        "97-page completion/explicit magnifier zoom not device-verified.",
+        "97-page completion/cache-only rerun pending:real API TLS terminates,index39 failed after39 saved. Resume cache after recovery;trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T22-45-04.jsonl",
         "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."
       ],
       "mainline": "main;local only"
     }
   },
   "remaining": [
-    "Translation feature paths/gates accepted;97-page completion/explicit zoom and broader quality/backends unverified;prior scoped repairs retained.",
+    "Translation features/gates pass;39 pages saved,97-page end-to-end blocked by repeated API TLS termination;broader quality/backends unverified.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",

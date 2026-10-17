@@ -143,8 +143,9 @@ final class OpenAiCompatibleComicTranslationEngine
     ComicTranslationRequest request,
     List<ComicTranslationUnit> units,
     Dio client,
-    void Function(String value) onResponse,
-  ) async {
+    void Function(String value) onResponse, {
+    bool repairEmpty = true,
+  }) async {
     final preference = additionalPrompt.trim();
     final aliases = <String, ComicTranslationUnit>{
       for (var index = 0; index < units.length; index++)
@@ -157,6 +158,8 @@ final class OpenAiCompatibleComicTranslationEngine
       if (preference.isNotEmpty)
         'Preference: $preference Do not change unit boundaries or output format.',
       'Return JSON only: {"translations":{"u0":["text"]}}. Include every input id once. Prefer one output string per source line, but never repeat a full translation merely to match line count.',
+      if (!repairEmpty)
+        'The previous response left these units empty. Return nonempty text for each unit; when OCR is unclear, preserve its source text instead of returning an empty string or array.',
     ].join(' ');
     final messages = [
       {
@@ -192,6 +195,7 @@ final class OpenAiCompatibleComicTranslationEngine
     }
     final values = Map<String, dynamic>.from(rawTranslations);
     final translations = <String, List<String>>{};
+    final emptyUnits = <ComicTranslationUnit>[];
     for (final entry in aliases.entries) {
       final value = values[entry.key];
       if (value == null) {
@@ -215,9 +219,15 @@ final class OpenAiCompatibleComicTranslationEngine
           .map((line) => line.trim())
           .toList(growable: false);
       if (normalized.isEmpty || normalized.any((line) => line.isEmpty)) {
-        throw FormatException('Translation unit ${entry.key} is empty');
+        if (!repairEmpty) throw FormatException('Translation unit ${entry.key} is empty');
+        emptyUnits.add(entry.value);
+        continue;
       }
       translations[entry.value.id] = normalized;
+    }
+    if (emptyUnits.isNotEmpty) {
+      translations.addAll(await _translateBatch(request, emptyUnits, client,
+        onResponse, repairEmpty: false));
     }
     return translations;
   }
