@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Move the labeled translation indicator pill above the comic translation switch. Remove the switch's visible label while preserving its accessibility name and per-comic behavior.
+
 - Add a direct segmented pill for per-comic always/processing-only/off translation indicators without replacing the translation session or restarting inference. Draw only the current stage icon, with a progress ring during work; show page numbers only in the app Debug mode. Processing-only mode hides terminal states and reappears for new work. Preserve existing visibility preferences and stage descriptions in accessibility and the settings sheet.
 
 - Add Reader source-language chips scoped to each comic and remember bounded Japanese/Korean script detection per OCR model. Switch only the OCR recognizer while retaining its detector; keep shared translation models warm for up to 30 seconds after their final lease, drain them on background/memory pressure, and resume from durable results. Move cache JSON/base64 conversion and OCR artifact hashing into the storage worker. Reuse dense-mask geometry within each grouping pass to remove repeated flattening/scans from Reader entry, request/context assembly and overlay preparation.

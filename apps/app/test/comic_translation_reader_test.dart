@@ -110,7 +110,7 @@ void main() {
     await indicatorMode('常驻');
     expect(find.byKey(const ValueKey('reader-translation-status')), findsOneWidget);
     expect(session(), same(initial));
-    Navigator.of(tester.element(find.text('翻译本漫画'))).pop();
+    Navigator.of(tester.element(find.byKey(const ValueKey('reader-translation-enable')))).pop();
     await tester.pumpAndSettle();
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();

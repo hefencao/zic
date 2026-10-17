@@ -413,13 +413,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                 ]),
                 const SizedBox(height: 4),
                 Row(children: [
-                  Expanded(child: _sheetToggle(label: '翻译本漫画',
-                    value: _session?.enabled == true,
-                    onChanged: (enabled) async {
-                      Navigator.pop(sheetContext);
-                      await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
-                    },
-                  )),
+                  Text('翻译指示器', style: theme.textTheme.bodyMedium),
                   const SizedBox(width: 16),
                   Expanded(child: Semantics(label: '翻译指示器', child: SegmentedButton<String>(
                     key: const ValueKey('reader-translation-indicator-mode'),
@@ -444,6 +438,18 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                     },
                   ))),
                 ]),
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerLeft, child: Semantics(label: '翻译本漫画',
+                  child: Switch(
+                    key: const ValueKey('reader-translation-enable'),
+                    value: _session?.enabled == true,
+                    padding: EdgeInsets.zero,
+                    onChanged: (enabled) async {
+                      Navigator.pop(sheetContext);
+                      await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
+                    },
+                  ),
+                )),
               ]),
             ));
           },
@@ -451,17 +457,6 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       ),
     );
   }
-
-  Widget _sheetToggle({required String label, required bool value,
-      required ValueChanged<bool> onChanged}) => MergeSemantics(child: InkWell(
-    onTap: () => onChanged(!value),
-    child: Row(children: [
-      Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 14))),
-      const SizedBox(width: 8),
-      Switch(value: value, onChanged: onChanged, padding: EdgeInsets.zero),
-    ]),
-  ));
 
   @override
   Future<void> close() => _closing ??= _close();
