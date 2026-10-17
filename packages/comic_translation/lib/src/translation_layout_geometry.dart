@@ -1,5 +1,7 @@
 part of 'translation_overlay.dart';
 
+const _crossingBubbleOutsideFraction = .2;
+
 // Typography belongs to this immutable page, never to later page arrivals.
 double? _pageBodyFontRatio(ComicTranslationArtifact artifact) {
   if (artifact.imageWidth <= 0 || artifact.imageHeight <= 0) return null;
@@ -56,10 +58,17 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
     final sourceCenter = _sourceCenter(block, imageRect, sourceBounds);
     final bubble = _blockBubble(block, imageRect);
     final sourceFontSize = _sourceFontSize(block, regionBounds);
+    final sourceOutsideBubble = bubble == null ? 0.0
+        : _sourceOutsideBubbleFraction(regionBounds, bubble.path);
     final domain = bubble?.path ?? (Path()..addRect(
       _openBubbleBounds(sourceBounds, sourceFontSize, imageRect)));
     final layoutBounds = _blockLayoutBounds(block, imageRect, domain);
-    var bubblePath = bubble == null ? null : Path.combine(
+    // Test the original contour before reserving neighboring groups' space.
+    // Lettering already crossing that contour must not be pulled inside a
+    // narrow inscribed rectangle. Its source-anchored layout still uses the
+    // same reserved cell, so it cannot expand over the adjacent dialogue.
+    var bubblePath = bubble == null ||
+        sourceOutsideBubble >= _crossingBubbleOutsideFraction ? null : Path.combine(
       PathOperation.intersect, bubble.path, Path()..addRect(layoutBounds));
     var bounds = bubblePath == null
         ? _openBubbleBounds(sourceBounds, sourceFontSize, layoutBounds)
@@ -102,7 +111,29 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
       regionBounds,
       bounds,
       bubblePath,
+      sourceOutsideBubble,
     );
+  }
+
+  double _sourceOutsideBubbleFraction(List<Rect> regions, Path bubble) {
+    var totalArea = 0.0;
+    var outsideArea = 0.0;
+    for (final bounds in regions) {
+      final area = bounds.width * bounds.height;
+      if (area <= 0) continue;
+      var outside = 0;
+      // A bounded interior grid tolerates noisy OCR corners. Weight actual
+      // source rectangles, not the empty space between separate OCR lines.
+      for (var y = 0; y < 5; y++) {
+        for (var x = 0; x < 5; x++) {
+          if (!bubble.contains(Offset(bounds.left + bounds.width * (x + .5) / 5,
+              bounds.top + bounds.height * (y + .5) / 5))) outside++;
+        }
+      }
+      totalArea += area;
+      outsideArea += area * outside / 25;
+    }
+    return totalArea == 0 ? 0 : outsideArea / totalArea;
   }
 
   Rect _blockLayoutBounds(_TranslationLayoutBlock block, Rect imageRect, Path domain) {
@@ -227,9 +258,10 @@ extension _ComicTranslationGeometry on _ComicTranslationPainter {
     return _dominantFontSize(samples);
   }
 
-  double _preferredFontSize(_TranslationLayoutBlock block, List<Rect> regionBounds) {
+  double _preferredFontSize(_TranslationLayoutBlock block, List<Rect> regionBounds,
+      {bool useBodyReference = true}) {
     final local = _sourceFontSize(block, regionBounds);
-    final reference = _isBodyBlock(block) ? bodyFontRatio : null;
+    final reference = useBodyReference && _isBodyBlock(block) ? bodyFontRatio : null;
     // A rendering preference must never feed bubble bounds or group membership.
     return (reference == null ? local
         : math.max(local, reference * _layoutImageRect!.width)) * fontScale;

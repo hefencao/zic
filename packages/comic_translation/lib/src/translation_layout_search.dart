@@ -27,33 +27,32 @@ class _TranslationLayoutSearch {
   _TranslationLayoutSearch(
     this.painter,
     this.block,
-    Rect bounds,
-    List<Rect> regionBounds,
+    _TranslationBlockGeometry geometry,
     Rect imageRect,
-    bool insideBubble,
   ) : options = painter._layoutOptions(
          block,
-         bounds,
-         regionBounds,
+         geometry.bounds,
+         geometry.regionBounds,
          imageRect,
-         insideBubble,
+         geometry.bubblePath != null,
        ),
        sourceCharacters = block.regions.fold(
          0,
          (count, region) =>
              count + painter._characters(region.region.sourceText),
        ),
-       sourceArea = regionBounds.fold(
+       sourceArea = geometry.regionBounds.fold(
          0,
          (area, region) => area + region.width * region.height,
        ),
-       sourceBounds = regionBounds.reduce(
+       sourceBounds = geometry.regionBounds.reduce(
          (value, next) => value.expandToInclude(next),
        ),
-       availableBounds = bounds,
-       preferredFont = painter._preferredFontSize(block, regionBounds),
+       availableBounds = geometry.bounds,
+       preferredFont = painter._preferredFontSize(block, geometry.regionBounds,
+         useBodyReference: !geometry.crossesBubbleBoundary),
        body = painter._isBodyBlock(block),
-       insideBubble = insideBubble;
+       insideBubble = geometry.bubblePath != null;
 
   bool step() {
     if (_optionIndex >= options.length) {

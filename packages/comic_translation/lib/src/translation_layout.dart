@@ -115,6 +115,8 @@ class _ComicTranslationPainter extends CustomPainter {
             .map((command) => command.offset & command.fill.size)
             .reduce((value, next) => value.expandToInclude(next))),
         'fontSize': prepared.fontSize,
+        'sourceOutsideBubble': prepared.geometry.sourceOutsideBubble,
+        'crossesBubbleBoundary': prepared.geometry.crossesBubbleBoundary,
       },
     ];
   }
@@ -183,10 +185,8 @@ class _ComicTranslationPainter extends CustomPainter {
         layoutCache.search = _TranslationLayoutSearch(
           this,
           block,
-          geometry.bounds,
-          geometry.regionBounds,
+          geometry,
           imageRect,
-          geometry.bubblePath != null,
         );
         return false;
       }
@@ -278,11 +278,15 @@ class _TranslationBlockGeometry {
   final List<Rect> regionBounds;
   final Rect bounds;
   final Path? bubblePath;
+  final double sourceOutsideBubble;
+
+  bool get crossesBubbleBoundary => sourceOutsideBubble >= _crossingBubbleOutsideFraction;
 
   const _TranslationBlockGeometry(
     this.regionBounds,
     this.bounds,
     this.bubblePath,
+    this.sourceOutsideBubble,
   );
 }
 

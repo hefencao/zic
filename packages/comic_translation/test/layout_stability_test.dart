@@ -125,6 +125,7 @@ void main() {
           _layoutBounds(mark, field: 'textBounds')), isFalse);
         final bubbleBounds = Rect.fromLTWH(.18 * 400, .48 * 561.6, .14 * 400, .14 * 561.6);
         for (final block in [body, mark]) {
+          expect(block['crossesBubbleBoundary'], isFalse);
           expect(_layoutBounds(block).intersect(bubbleBounds), _layoutBounds(block),
             reason: 'reserving a smaller cell must not trigger layout outside a valid contour');
         }
@@ -153,6 +154,126 @@ void main() {
         expect(withoutMark, hasLength(1));
         expect(_layoutBounds(withoutMark.single as Map), _layoutBounds(body),
           reason: 'original text kept untranslated still reserves its source space');
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await session.close();
+      }
+    });
+  });
+
+  testWidgets('crossing-contour text retains its source size without covering dialogue', (tester) async {
+    await tester.runAsync(() async {
+      const identity = ComicTranslationPageIdentity(imageKey: 'page7', sourceKey: 'test',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: 6,
+        mediaKind: ComicTranslationMediaKind.staticImage);
+      final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN');
+      final page = session.listenable(identity) as ValueNotifier<ComicTranslationPageState>;
+      // A curved corner can cover all five core samples used to select a
+      // contour while the original lettering still straddles its outer edge.
+      final bubble = [
+        for (final point in const [Offset(62, 450), Offset(100, 415), Offset(112, 422),
+            Offset(130, 458), Offset(120, 515), Offset(77, 520), Offset(62, 493)])
+          NormalizedPoint(point.dx / 400, point.dy / 561.6),
+      ];
+      ComicTranslatedRegion region(String id, String source, String translated, Rect bounds) =>
+          ComicTranslatedRegion(ocrRegionId: id, sourceText: source, translatedText: translated,
+            polygon: _rect(bounds.left / 400, bounds.top / 561.6,
+              bounds.width / 400, bounds.height / 561.6), sourceMaskPolygons: [],
+            orientation: ComicTextOrientation.vertical, kind: ComicTextKind.dialogue,
+            readingOrder: 0, bubbleGroupId: 7, bubblePolygon: bubble);
+      page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+        artifact: ComicTranslationArtifact(contentDigest: 'page7-0123456789', ocrDigest: 'ocr',
+          engineId: 'cached', modelVersion: '1', sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+          contextDigest: '', imageWidth: 1000, imageHeight: 1404,
+          mediaKind: ComicTranslationMediaKind.staticImage, animatedMode: AnimatedTranslationMode.posterFrame,
+          regions: [
+            region('sigh', 'は', '啊', const Rect.fromLTWH(114.667, 438.91, 16, 35.2)),
+            region('body-1', '一緒に行こう', '我们一起', const Rect.fromLTWH(81.067, 463.45, 12, 40.53)),
+            region('body-2', '待っている', '出发吧', const Rect.fromLTWH(97, 463.45, 11.8, 40.53)),
+          ]));
+      final events = <Map<String, Object?>>[];
+      final controller = ComicTranslationOverlayController();
+      const mediaKey = ValueKey('crossing-contour-media');
+      try {
+        await tester.pumpWidget(MaterialApp(home: Align(alignment: Alignment.topLeft,
+          child: SizedBox(width: 400, height: 561.6,
+            child: ComicTranslationOverlay(session: session, identity: identity,
+              onDiagnostic: events.add, controller: controller,
+              child: const ColoredBox(key: mediaKey, color: Colors.white))))));
+        await _finishLayout(tester, events, 1);
+        final blocks = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List;
+        expect(blocks, hasLength(2));
+        final sigh = blocks.singleWhere((block) => (block as Map)['key'] == 'layout:sigh') as Map;
+        final body = blocks.singleWhere((block) => block != sigh) as Map;
+        expect(sigh['crossesBubbleBoundary'], isTrue);
+        expect(body['crossesBubbleBoundary'], isFalse);
+        expect(sigh['fontSize'], inInclusiveRange(15, 23),
+          reason: 'the 18.7px source must not shrink into the narrow inscribed contour cell');
+        expect((_layoutBounds(sigh, field: 'textBounds').center -
+          _layoutBounds(sigh, field: 'sourceBounds').center).distance, lessThan(9));
+        expect(_layoutBounds(sigh).overlaps(_layoutBounds(body)), isFalse);
+        expect(_layoutBounds(sigh, field: 'textBounds').overlaps(
+          _layoutBounds(body, field: 'textBounds')), isFalse);
+        final origin = tester.getTopLeft(find.byKey(mediaKey));
+        expect(controller.peekSourceAt(origin + _layoutBounds(sigh, field: 'textBounds').center), isTrue);
+        await tester.pump();
+        expect(controller.peekSourceAt(origin + _layoutBounds(sigh, field: 'textBounds').center), isFalse);
+        expect(controller.peekSourceAt(origin + _layoutBounds(body, field: 'textBounds').center), isTrue);
+
+        (session.fontScaleListenable as ValueNotifier<double>).value = 1.1;
+        await tester.pump();
+        await _finishLayout(tester, events, 2);
+        final updated = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List;
+        for (final block in blocks.cast<Map>()) {
+          final next = updated.cast<Map>().singleWhere((value) => value['key'] == block['key']);
+          expect(next['regions'], block['regions']);
+          expect(next['crossesBubbleBoundary'], block['crossesBubbleBoundary']);
+          expect(next['sourceOutsideBubble'], block['sourceOutsideBubble']);
+          expect(next['bounds'], block['bounds'],
+            reason: 'font preferences cannot change contour classification or reserved space');
+        }
+
+        final artifact = page.value.artifact!;
+        page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+          artifact: ComicTranslationArtifact.fromJson({...artifact.toJson(), 'regions': [
+            ...artifact.regions.map((region) => region.toJson()),
+            ComicTranslatedRegion(ocrRegionId: 'large', sourceText: 'あいうえおかきくけこさし',
+              translatedText: '旁白', polygon: _rect(.65, .03, .2, .55), sourceMaskPolygons: [],
+              orientation: ComicTextOrientation.vertical, kind: ComicTextKind.dialogue,
+              readingOrder: 9).toJson(),
+          ]}));
+        await tester.pump();
+        await _finishLayout(tester, events, 3);
+        final combined = events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List;
+        final nextSigh = combined.cast<Map>().singleWhere((value) => value['key'] == sigh['key']);
+        final previousSigh = updated.cast<Map>().singleWhere((value) => value['key'] == sigh['key']);
+        expect(nextSigh, previousSigh,
+          reason: 'crossing lettering uses its local source size, not a larger page body preference');
+        final metrics = events.where((event) => event['stage'] == 'layout-started').toList();
+        expect(metrics.last['bodyFontRatio'], isNot(metrics.first['bodyFontRatio']));
+
+        // One noisy corner outside a contour is not crossing lettering.
+        final cornerBubble = [
+          for (final point in const [Offset(104, 428), Offset(116, 428), Offset(141, 459),
+              Offset(141, 520), Offset(104, 520)])
+            NormalizedPoint(point.dx / 400, point.dy / 561.6),
+        ];
+        page.value = ComicTranslationPageState(ComicTranslationPhase.ready,
+          artifact: ComicTranslationArtifact.fromJson({...artifact.toJson(), 'regions': [
+            {...artifact.regions.first.toJson(),
+              'bubblePolygon': cornerBubble.map((point) => point.toJson()).toList()},
+          ]}));
+        await tester.pump();
+        await _finishLayout(tester, events, 4);
+        final corner = (events.lastWhere((event) => event['stage'] == 'layout-ready')['blocks'] as List)
+            .single as Map;
+        expect(corner['sourceOutsideBubble'], inExclusiveRange(0, .2));
+        expect(corner['crossesBubbleBoundary'], isFalse);
+        final contour = Path()..addPolygon(cornerBubble.map((point) =>
+          Offset(point.x * 400, point.y * 561.6)).toList(), true);
+        final inner = _layoutBounds(corner).deflate(.01);
+        expect([inner.topLeft, inner.topRight, inner.bottomLeft, inner.bottomRight]
+            .every(contour.contains), isTrue);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await session.close();
