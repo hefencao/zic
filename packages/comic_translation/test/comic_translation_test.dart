@@ -1589,12 +1589,53 @@ void main() {
         bubbleGroupId: 9, confidence: .7),
       _positionedRegion('digit-fragment', '7', .4, .9, .04, .04, 7,
         confidence: .7),
+      _positionedRegion('two-digit-fragment', '51', .15, .88, .16, .1, 8,
+        confidence: .6485),
+      _positionedRegion('reliable-number', '51', .6, .4, .06, .04, 9),
+      _positionedRegion('bubble-two-digit', '51', .1, .3, .04, .04, 10,
+        bubbleGroupId: 10, confidence: .5),
     ]);
     final ids = ComicTranslationUnit.fromOcr(artifact)
         .expand((unit) => unit.regionIds).toSet();
     expect(ids, containsAll(['body', 'large-reliable', 'small-uncertain',
-      'breath', 'bubble-short', 'number', 'bubble-number']));
+      'breath', 'bubble-short', 'number', 'bubble-number',
+      'reliable-number', 'bubble-two-digit']));
     expect(ids, isNot(contains('digit-fragment')));
+    expect(ids, isNot(contains('two-digit-fragment')));
+  });
+
+  test('uncertain lone marks filling a detected contour preserve the drawing', () {
+    const contour = [NormalizedPoint(.51, .09973), NormalizedPoint(.56625, .09973),
+      NormalizedPoint(.56625, .14515), NormalizedPoint(.51, .14515)];
+    ComicOcrRegion mark({double confidence = .5899, bool roomy = false}) =>
+      _positionedRegion('eye', '可', .521, .104, .045, .028, 0,
+        bubbleGroupId: 0, bubblePolygon: roomy ? const [
+          NormalizedPoint(.46, .06), NormalizedPoint(.62, .06),
+          NormalizedPoint(.62, .18), NormalizedPoint(.46, .18),
+        ] : contour, confidence: confidence, sourceMaskPolygons: const [[
+          NormalizedPoint(.51875, .1024), NormalizedPoint(.5675, .1024),
+          NormalizedPoint(.5675, .1291), NormalizedPoint(.51875, .1291),
+        ]]);
+    for (final soundEffects in [false, true]) {
+      final units = ComicTranslationUnit.fromOcr(_ocrArtifact([mark()]),
+        translateSoundEffects: soundEffects);
+      expect(units, isEmpty, reason: 'drawing noise is independent of sound effects');
+    }
+    expect(ComicTranslationUnit.fromOcr(_ocrArtifact([mark(confidence: .95)])),
+      hasLength(1), reason: 'a tight contour alone cannot reject reliable text');
+    expect(ComicTranslationUnit.fromOcr(_ocrArtifact([mark(roomy: true)])),
+      hasLength(1), reason: 'weak short answers in a roomy balloon stay eligible');
+    final shared = _ocrArtifact([mark(),
+      _positionedRegion('dialogue', 'そうですね', .52, .16, .04, .2, 1,
+        bubbleGroupId: 0, bubblePolygon: contour),
+    ]);
+    expect(ComicTranslationUnit.fromOcr(shared).expand((unit) => unit.regionIds),
+      containsAll(['eye', 'dialogue']),
+      reason: 'a separate mark sharing dialogue space is not a lone false balloon');
+    final request = ComicTranslationRequest(ocr: _ocrArtifact([mark()]),
+      targetLanguage: 'zh-CN', previousPages: const []);
+    expect(request.expandUnitTranslations(const ComicTranslationResult({}))['eye'], '',
+      reason: 'skipped drawings must not receive an erasing or text overlay');
   });
 
   test('layout and translation resolver share group key and band order', () {

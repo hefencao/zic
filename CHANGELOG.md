@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Preserve drawings behind uncertain singleton OCR results that fill an independent contour, rather than trusting every detected closed shape as a dialogue balloon. Extend weak outside-balloon digit filtering to short numeric runs; retain reliable numbers, roomy short answers and text sharing a dialogue contour. Advance the translation artifact version without changing OCR, font estimation or grouping.
+
 - Preserve the original for short, unbubbled OCR results that are both at least three times the body text size and consistently low confidence when sound-effect translation is disabled. Reject low-confidence isolated digit fragments outside balloons while retaining reliable numbers, short dialogue and balloon answers. Reuse the existing skipped-text rendering path and advance the translation artifact version; OCR cache identity and layout geometry remain unchanged.
 
 - Preserve source-anchored lettering that substantially straddles its original balloon contour, using its local source font while retaining separate space for neighboring dialogue. Detect crossing from bounded original-geometry samples before shared-contour partitioning; keep normal in-balloon text clipped and tolerate isolated noisy corners. Trace the numeric crossing decision; regress shrinkage, independent source peek and font-preference stability without changing OCR or translation cache identities.

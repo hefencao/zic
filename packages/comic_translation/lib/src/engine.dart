@@ -79,6 +79,7 @@ final class ComicTranslationUnit {
     return groups.where((group) {
       final members = group.regions.map((region) => region.value).toList();
       return _hasMeaningfulText(members) &&
+          !_isUncertainBalloonMark(members, regions) &&
           (translateSoundEffects ||
               !_likelySoundEffect(ocr, members, bodyThickness));
     }).map((group) {
@@ -102,12 +103,42 @@ final class ComicTranslationUnit {
     if (meaningful == 0) return false;
     final inBubble = regions.any((region) =>
         region.bubbleGroupId != null || region.bubblePolygon != null);
-    if (!inBubble && runes.length == 1 &&
-        runes.single >= 0x30 && runes.single <= 0x39 &&
+    if (!inBubble && runes.length <= 3 &&
+        runes.every((rune) => rune >= 0x30 && rune <= 0x39) &&
         regions.every((region) => region.confidence < .72)) {
       return false;
     }
     return inBubble || meaningful > 1 || runes.length < 3;
+  }
+
+  static bool _isUncertainBalloonMark(
+    List<ComicOcrRegion> members,
+    List<ComicOcrRegion> pageRegions,
+  ) {
+    if (members.length != 1) return false;
+    final region = members.single;
+    final contour = region.bubblePolygon;
+    if (region.confidence >= .6 || region.bubbleGroupId == null ||
+        contour == null || contour.length < 3 ||
+        region.text.runes.where(_isMeaningfulRune).length != 1 ||
+        pageRegions.any((other) => other.id != region.id &&
+            other.bubbleGroupId == region.bubbleGroupId)) {
+      return false;
+    }
+    final ink = region.sourceMaskPolygons.isEmpty
+        ? region.polygon : region.sourceMaskPolygons.expand((polygon) => polygon);
+    double boundsArea(Iterable<NormalizedPoint> points) {
+      if (points.isEmpty) return 0;
+      final xs = points.map((point) => point.x);
+      final ys = points.map((point) => point.y);
+      return (xs.reduce(math.max) - xs.reduce(math.min)) *
+          (ys.reduce(math.max) - ys.reduce(math.min));
+    }
+    // Eyes and other closed drawing details can form a false balloon. A lone,
+    // uncertain glyph filling most of that contour is insufficient evidence
+    // to erase the drawing; roomy answers and shared dialogue stay eligible.
+    final contourArea = boundsArea(contour);
+    return contourArea > 0 && boundsArea(ink) >= contourArea * .5;
   }
 
   static bool _likelySoundEffect(
