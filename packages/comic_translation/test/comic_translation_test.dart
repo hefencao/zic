@@ -11,6 +11,7 @@ import 'package:comic_translation/src/bubble_boundary.dart';
 import 'package:comic_translation/src/deepl_translation.dart';
 import 'package:comic_translation/src/engine.dart';
 import 'package:comic_translation/src/grouping.dart';
+import 'package:comic_translation/src/input_resolver.dart';
 import 'package:comic_translation/src/models.dart';
 import 'package:comic_translation/src/policy.dart';
 import 'package:comic_translation/src/remote_translation.dart';
@@ -146,6 +147,41 @@ void main() {
     gate.complete();
     await _waitFor(session, identity);
     expect(ocr.calls, 1);
+  });
+
+  test('repeated observations claim a cached page before awaiting a probe', () async {
+    final image = File('${temp.path}/cache-claim.bin');
+    await image.writeAsBytes(List<int>.filled(593, 73));
+    ComicTranslationPageIdentity page(int index) => ComicTranslationPageIdentity(
+      imageKey: image.uri.toString(), sourceKey: 'cache-claim', comicId: 'comic',
+      chapterId: 'chapter', pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage);
+    final first = page(0);
+    final second = page(1);
+    final ocr = _OcrEngine();
+    final translator = _TranslationEngine(contextMode: ComicTranslationContextMode.none);
+    final events = <Map<String, Object?>>[];
+    var secondInputs = 0;
+    final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+      engines: ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator,
+      inputResolver: ComicTranslationInputResolver(openFile: (identity) async {
+        if (identity == second) secondInputs++;
+        return ComicTranslationInputFile(path: image.path, release: () {});
+      }),
+      onDiagnostic: (identity, details) { if (identity == second) events.add(details); });
+    addTearDown(session.close);
+    session.reportPages(current: [first], interaction: ComicTranslationInteraction.idle);
+    await _waitFor(session, first);
+    await Future<void>.delayed(Duration.zero);
+    for (var i = 0; i < 2; i++) {
+      session.reportPages(current: [second], interaction: ComicTranslationInteraction.idle);
+    }
+    await _waitFor(session, second);
+    await session.close();
+    expect(secondInputs, 1, reason: 'the serial owner must be claimed before a repeated observation can probe');
+    expect(ocr.calls, 1);
+    expect(translator.calls, 1);
+    expect(events.where((event) => event['stage'] == 'ready'), hasLength(1),
+      reason: 'a late cache probe must not replace the same visible artifact a second time');
   });
 
   test('open bubble explores nearby candidate after text grouping', () {

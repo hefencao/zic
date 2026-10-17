@@ -37,6 +37,7 @@ class ComicTranslationOverlay extends StatefulWidget {
   final ComicTranslationSession? session;
   final ComicTranslationPageIdentity identity;
   final ComicTranslationOverlayController? controller;
+  final ValueChanged<Map<String, Object?>>? onDiagnostic;
   final BoxFit fit;
   int get pageIndex => identity.pageIndex;
   final Alignment alignment;
@@ -46,6 +47,7 @@ class ComicTranslationOverlay extends StatefulWidget {
     required this.session,
     required this.identity,
     this.controller,
+    this.onDiagnostic,
     this.fit = BoxFit.contain,
     super.key,
     required this.child,
@@ -79,7 +81,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     _layoutTaskSize = null;
   }
 
-  void _scheduleLayoutPreparation(_ComicTranslationPainter painter, Size size) {
+  void _scheduleLayoutPreparation(_ComicTranslationPainter painter, Size size, {required bool retained}) {
     if (_layoutScheduled &&
         identical(_layoutTaskPainter, painter) &&
         _layoutTaskSize == size) {
@@ -89,6 +91,12 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     _layoutScheduled = true;
     _layoutTaskPainter = painter;
     _layoutTaskSize = size;
+    widget.onDiagnostic?.call({
+      'stage': 'layout-started', 'contentDigest': painter.artifact.contentDigest,
+      'width': size.width, 'height': size.height,
+      'fontScale': painter.fontScale, 'bodyFontRatio': painter.bodyFontRatio,
+      'retained': retained,
+    });
     void scheduleNext() {
       unawaited(
         SchedulerBinding.instance.scheduleTask<void>(() {
@@ -114,6 +122,8 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
           if (!mounted || generation != _layoutGeneration) return;
           _layoutScheduled = !completed;
           if (completed) {
+            widget.onDiagnostic?.call({'stage': 'layout-ready',
+              'contentDigest': painter.artifact.contentDigest});
             setState(() {});
           }
           if (!completed) scheduleNext();
@@ -139,8 +149,12 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
   void _peekSource(String blockKey) {
     _sourcePeekTimer?.cancel();
     setState(() => _hiddenBlockKey = blockKey);
+    widget.onDiagnostic?.call({'stage': 'source-peek', 'active': true});
     _sourcePeekTimer = Timer(_sourcePeekDuration, () {
-      if (mounted) setState(() => _hiddenBlockKey = null);
+      if (mounted) {
+        setState(() => _hiddenBlockKey = null);
+        widget.onDiagnostic?.call({'stage': 'source-peek', 'active': false});
+      }
     });
   }
 
@@ -272,7 +286,9 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                           bodyFontRatio: bodyFontRatio,
                           hasCleanOverlay: hasCleanOverlay,
                           hiddenBlockKey: _hiddenBlockKey,
-                          layoutCache: layoutCompatible
+                          layoutCache: layoutCompatible &&
+                                  current.background == background &&
+                                  current.foreground == foreground
                               ? current.layoutCache
                               : _TranslationLayoutCache(),
                         );
@@ -281,22 +297,23 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                     builder: (context, constraints) {
                       final size = constraints.biggest;
                       final prepared = painter.isPreparedFor(size);
-                      if (!prepared) {
-                        _scheduleLayoutPreparation(painter, size);
-                      }
                       final previous = _displayPainter;
-                      // Keep the last complete layout while chapter font samples
-                      // prepare a replacement for this same image and viewport.
+                      // Already visible balloons also survive when the rest of
+                      // this page is still preparing at a font/style update.
                       final displayPainter = !prepared &&
                               previous != null &&
                               previous.artifact == artifact &&
                               previous.fit == painter.fit &&
                               previous.alignment == painter.alignment &&
-                              previous.hiddenBlockKey == _hiddenBlockKey &&
-                              previous.isPreparedFor(size)
-                          ? previous
+                              previous.hasPreparedBlocksFor(size)
+                          ? previous.withVisibility(hasCleanOverlay: hasCleanOverlay,
+                              hiddenBlockKey: _hiddenBlockKey)
                           : painter;
                       _displayPainter = displayPainter;
+                      if (!prepared) {
+                        _scheduleLayoutPreparation(painter, size,
+                          retained: !identical(displayPainter, painter));
+                      }
                       return Stack(
                         fit: StackFit.expand,
                         children: [

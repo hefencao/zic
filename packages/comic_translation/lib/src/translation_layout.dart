@@ -53,6 +53,15 @@ class _ComicTranslationPainter extends CustomPainter {
     required this.layoutCache,
   }) : super(repaint: layoutCache.repaint);
 
+  _ComicTranslationPainter withVisibility({required bool hasCleanOverlay, required String? hiddenBlockKey}) =>
+      this.hasCleanOverlay == hasCleanOverlay && this.hiddenBlockKey == hiddenBlockKey ? this
+          : _ComicTranslationPainter(
+              pageIndex: pageIndex, artifact: artifact, fit: fit, alignment: alignment,
+              background: background, foreground: foreground, fontScale: fontScale,
+              bodyFontRatio: bodyFontRatio, hasCleanOverlay: hasCleanOverlay,
+              hiddenBlockKey: hiddenBlockKey, layoutCache: layoutCache,
+            );
+
   Rect _imageRect(Size size) {
     final sourceSize = Size(
       artifact.imageWidth.toDouble(),
@@ -88,6 +97,9 @@ class _ComicTranslationPainter extends CustomPainter {
     layoutCache.painted.clear();
     layoutCache.render = null;
   }
+
+  bool hasPreparedBlocksFor(Size size) =>
+      _layoutImageRect == _imageRect(size) && layoutCache.prepared.isNotEmpty;
 
   bool isPreparedFor(Size size) {
     _syncVisualStyle();
@@ -219,6 +231,7 @@ class _ComicTranslationPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ComicTranslationPainter oldDelegate) =>
+      !identical(oldDelegate.layoutCache, layoutCache) ||
       oldDelegate.artifact != artifact ||
       oldDelegate.pageIndex != pageIndex ||
       oldDelegate.fit != fit ||

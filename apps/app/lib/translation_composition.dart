@@ -107,15 +107,25 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       notifyListeners();
       return;
     }
+    final previous = _appliedConfiguration;
+    final next = _configuration(preferences);
+    final index = _observation?.currentIndex;
+    if (previous != null && index != null && index >= 0 && index < _chapter.pages.length) {
+      _recordDiagnostic(_identity(index), {
+        'stage': 'configuration-changed',
+        'ocrChanged': !identical(previous.ocr, next.ocr),
+        'translatorChanged': !identical(previous.translator, next.translator),
+        'readerPolicyChanged': previous.preferences != next.preferences,
+      });
+    }
     _session?.setEnabled(false);
     unawaited(_reload());
   }
 
   _ReaderTranslationConfiguration _configuration(Map<String, Object?> preferences) => (
     preferences: jsonEncode({
-      for (final entry in preferences.entries)
-        if (entry.key != 'enabled' && entry.key != 'showIndicator' &&
-            entry.key != 'indicatorOnlyWhileProcessing') entry.key: entry.value,
+      for (final key in ['sourceLanguage', 'targetLanguage', 'contextPages',
+          'translateSoundEffects', 'useCleanOverlay']) key: preferences[key],
     }),
     ocr: ComicTranslationEngineRegistry.instance.ocrEngine,
     translator: ComicTranslationEngineRegistry.instance.translationEngine,
@@ -142,11 +152,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         onSourceLanguageDetected: (language) => _settings.rememberLanguage(
           _chapter.sourceId, _chapter.comicId, language,
           ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? ''),
-        onDiagnostic: (identity, details) => pipeline.trace.record(TraceEvent(
-          monotonicMicros: const SystemClock().nowMicros(), sessionId: pipeline.sessionId,
-          kind: TraceEventKind.comicTranslation,
-          payload: {'pageIndex': identity.pageIndex, ...details},
-        )),
+        onDiagnostic: _recordDiagnostic,
         policy: ComicTranslationPolicy(
           contextPages: preferences['contextPages'] as int,
           translateSoundEffects: preferences['translateSoundEffects'] == true,
@@ -166,6 +172,14 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       }
     });
     return _reloadTail;
+  }
+
+  void _recordDiagnostic(ComicTranslationPageIdentity identity, Map<String, Object?> details) {
+    pipeline.trace.record(TraceEvent(
+      monotonicMicros: const SystemClock().nowMicros(), sessionId: pipeline.sessionId,
+      kind: TraceEventKind.comicTranslation,
+      payload: {'pageIndex': identity.pageIndex, ...details},
+    ));
   }
 
   ComicTranslationPageIdentity _identity(int index) {
@@ -275,6 +289,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
         session: _session,
         identity: _identity(asset.index),
         controller: _overlays,
+        onDiagnostic: (details) => _recordDiagnostic(_identity(asset.index), details),
         fit: fit,
         child: media!,
       ),

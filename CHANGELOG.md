@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Retain already painted balloons while chapter font or theme changes prepare a complete replacement, including partially laid-out pages. Keep theme rendering caches independent, preserve other balloons during source peek, and repaint when a replacement cache has equal font metrics. Ignore profile labels and inactive backend settings when deciding whether to replace a Reader translation session. Claim each page before awaiting its cache probe so repeated viewport observations cannot read and publish the same cached result twice. Trace configuration changes, layout preparation/completion and source peek without recording text or credentials.
+
 - Complete scheduler-cancelled queued API/model requests without waiting for unrelated tasks and stop DeepL from retrying cancelled requests. Probe AArch64 CPU capabilities through a baseline JNI library before loading the DotProd-compiled Hy-MT runtime; incompatible devices report unavailable. Correct the settings label to describe automatic Japanese/Korean detection.
 
 - Use independent pill choices for Reader source languages and indicator modes, with matching typography, height, padding and spacing. Size each option to its contents.

@@ -144,6 +144,24 @@ void main() {
     await tester.pump();
     expect(session(), isNot(same(beforeKeyChange)),
       reason: 'credential-only changes must replace the captured engine configuration');
+    final beforeMetadataChange = session();
+    final activeEngine = ComicTranslationEngineRegistry.instance.translationEngine;
+    final values = ComicTranslationSettings.instance.values;
+    values['comicTranslationRemoteProfiles'] = [
+      ComicTranslationRemoteProfile(id: 'default', name: 'Renamed profile',
+        endpoint: values['comicTranslationRemoteEndpoint'] as String,
+        model: values['comicTranslationRemoteModel'] as String,
+        additionalPrompt: values['comicTranslationAdditionalPrompt'] as String).toJson(),
+      const ComicTranslationRemoteProfile(id: 'unused', name: 'Other profile',
+        endpoint: 'https://unused.invalid', model: 'other', additionalPrompt: '').toJson(),
+    ];
+    values['comicTranslationLocalModel'] = 'inactive-local-model';
+    await tester.runAsync(ComicTranslationSettings.instance.save);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(ComicTranslationEngineRegistry.instance.translationEngine, same(activeEngine));
+    expect(session(), same(beforeMetadataChange),
+      reason: 'profile labels and inactive model settings must preserve the active session and its output');
     final valid = session();
     ComicTranslationSettings.instance.values['comicTranslationBackend'] = 'deepl';
     await tester.runAsync(ComicTranslationSettings.instance.save);

@@ -293,10 +293,12 @@ final class ComicTranslationSession {
           identityKey: item.identity.key,
         );
         if (!_isActive(ticket)) continue;
-        await _cacheProbes[item.identity.key];
-        if (!_isActive(ticket) || _states[item.identity.key]?.value.artifact != null) continue;
+        // Claim before yielding so a repeated observation cannot start a cache
+        // probe for the same page between this lookup and serial processing.
         _processing = ticket;
         try {
+          await _cacheProbes[item.identity.key];
+          if (!_isActive(ticket) || _states[item.identity.key]?.value.artifact != null) continue;
           await _process(item.identity, ticket);
         } catch (error) {
           _setStateIfActive(
