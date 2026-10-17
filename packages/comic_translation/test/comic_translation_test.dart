@@ -1545,6 +1545,58 @@ void main() {
     );
   });
 
+  test('uncertain oversized lettering keeps its original with sound effects off', () {
+    for (final text in ['ガ7', 'ぜっ', '哲']) {
+      final artifact = _ocrArtifact([
+        _positionedRegion('body-1', '今日はいい日', .8, .15, .04, .24, 0,
+          bubbleGroupId: 7),
+        _positionedRegion('body-2', '散歩しよう', .7, .15, .04, .24, 1,
+          bubbleGroupId: 7),
+        _positionedRegion('body-3', 'そうですね', .6, .15, .04, .24, 2,
+          bubbleGroupId: 7),
+        _positionedRegion('body-4', 'もう夕方です', .5, .15, .04, .24, 3,
+          bubbleGroupId: 7),
+        _positionedRegion('lettering', text, .12, .18, .16, .24, 4,
+          confidence: .55),
+      ]);
+      final request = ComicTranslationRequest(ocr: artifact,
+        targetLanguage: 'zh-CN', previousPages: const []);
+      expect(request.units.expand((unit) => unit.regionIds),
+        isNot(contains('lettering')), reason: text);
+      final expanded = request.expandUnitTranslations(ComicTranslationResult({
+        for (final unit in request.units)
+          unit.id: [for (final _ in unit.sourceLines) '正文'],
+      }));
+      expect(expanded['lettering'], '', reason: text);
+      expect(ComicTranslationUnit.fromOcr(artifact, translateSoundEffects: true)
+        .expand((unit) => unit.regionIds), contains('lettering'));
+    }
+  });
+
+  test('lettering guard preserves short dialogue, reliable text and numbers', () {
+    final artifact = _ocrArtifact([
+      _positionedRegion('body', '今日はいい天気ですね', .8, .1, .04, .32, 0,
+        bubbleGroupId: 7),
+      _positionedRegion('large-reliable', 'やめろ', .1, .1, .14, .24, 1),
+      _positionedRegion('small-uncertain', 'えっ', .4, .1, .04, .08, 2,
+        confidence: .5),
+      _positionedRegion('breath', 'はぁ…', .4, .6, .04, .12, 3,
+        confidence: .5),
+      _positionedRegion('bubble-short', 'え', .7, .6, .14, .24, 4,
+        bubbleGroupId: 8, confidence: .5),
+      _positionedRegion('number', '7', .1, .5, .04, .04, 5),
+      _positionedRegion('bubble-number', '7', .1, .7, .04, .04, 6,
+        bubbleGroupId: 9, confidence: .7),
+      _positionedRegion('digit-fragment', '7', .4, .9, .04, .04, 7,
+        confidence: .7),
+    ]);
+    final ids = ComicTranslationUnit.fromOcr(artifact)
+        .expand((unit) => unit.regionIds).toSet();
+    expect(ids, containsAll(['body', 'large-reliable', 'small-uncertain',
+      'breath', 'bubble-short', 'number', 'bubble-number']));
+    expect(ids, isNot(contains('digit-fragment')));
+  });
+
   test('layout and translation resolver share group key and band order', () {
     final artifact = _ocrArtifact([
       _positionedRegion('left', '左', 0.42, 0.12, 0.08, 0.42, 0),
@@ -2168,6 +2220,7 @@ ComicOcrRegion _positionedRegion(
   ComicTextOrientation orientation = ComicTextOrientation.vertical,
   List<List<NormalizedPoint>> sourceMaskPolygons = const [],
   int backgroundArgb = 0xffffffff,
+  double confidence = .9,
 }) => ComicOcrRegion(
   id: id,
   polygon: [
@@ -2177,7 +2230,7 @@ ComicOcrRegion _positionedRegion(
     NormalizedPoint(left, top + height),
   ],
   text: text,
-  confidence: 0.9,
+  confidence: confidence,
   orientation: orientation,
   kind: ComicTextKind.dialogue,
   readingOrder: readingOrder,

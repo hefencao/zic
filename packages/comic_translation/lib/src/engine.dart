@@ -102,6 +102,11 @@ final class ComicTranslationUnit {
     if (meaningful == 0) return false;
     final inBubble = regions.any((region) =>
         region.bubbleGroupId != null || region.bubblePolygon != null);
+    if (!inBubble && runes.length == 1 &&
+        runes.single >= 0x30 && runes.single <= 0x39 &&
+        regions.every((region) => region.confidence < .72)) {
+      return false;
+    }
     return inBubble || meaningful > 1 || runes.length < 3;
   }
 
@@ -136,9 +141,16 @@ final class ComicTranslationUnit {
     final mostlyKatakana = language == 'ja' &&
         meaningful.length <= 8 &&
         katakana / meaningful.length >= 0.7;
+    // Artistic lettering can decode as ordinary kana, kanji or digits without
+    // a reliable skew. Preserve the original when a short, unbubbled result is
+    // both far larger than body text and consistently uncertain.
+    final uncertainLettering = meaningful.length <= 3 &&
+        thickness >= bodyThickness * 3 &&
+        regions.every((region) => region.confidence < .6);
     // Bubble segmentation can miss an otherwise ordinary dialogue block.
     // Size, skew or script alone is therefore not enough to suppress it.
-    return large && (oblique || mostlyKatakana) || oblique && mostlyKatakana;
+    return uncertainLettering ||
+        large && (oblique || mostlyKatakana) || oblique && mostlyKatakana;
   }
 
   static double _dominantBodyThickness(

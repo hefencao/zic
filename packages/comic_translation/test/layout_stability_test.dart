@@ -332,7 +332,7 @@ Future<ComicTranslationPageIdentity> _cachePage(Directory temp, int index, {requ
   final ocrDigest = await ComicTranslationStore.instance.storeOcr(ocr);
   await ComicTranslationStore.instance.storeTranslation(ComicTranslationArtifact(
     contentDigest: digest, ocrDigest: ocrDigest, engineId: 'cached-mt',
-    modelVersion: 'artifact-v3:1:sfx=false', sourceLanguage: 'ja', targetLanguage: 'en',
+    modelVersion: 'artifact-v4:1:sfx=false', sourceLanguage: 'ja', targetLanguage: 'en',
     contextDigest: sha256.convert(utf8.encode('[]')).toString(), imageWidth: 300, imageHeight: 400,
     mediaKind: ComicTranslationMediaKind.staticImage, animatedMode: AnimatedTranslationMode.posterFrame,
     regions: [for (final region in regions) ComicTranslatedRegion(ocrRegionId: region.id,

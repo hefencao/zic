@@ -12,7 +12,7 @@ import 'models.dart';
 import 'policy.dart';
 import 'store.dart';
 
-const _translationArtifactVersion = 'artifact-v3';
+const _translationArtifactVersion = 'artifact-v4';
 
 final class ComicTranslationSession {
   final ComicTranslationPolicy policy;
