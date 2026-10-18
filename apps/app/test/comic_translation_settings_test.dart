@@ -24,12 +24,18 @@ void main() {
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(startupPlatformChannel, null);
     });
     await tester.runAsync(initializeComicTranslation);
-    await tester.pumpWidget(const MaterialApp(home: ComicTranslationSettingsScreen(
-      sourceId: 'slider-defaults', comicId: 'comic',
-    )));
+    await tester.pumpWidget(const MaterialApp(home: ComicTranslationSettingsScreen()));
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pumpAndSettle();
+    expect(find.text('全局翻译设置'), findsOneWidget);
+    expect(find.text('OCR 参数'), findsNothing);
+    await tester.scrollUntilVisible(find.text('高级设置'), 250);
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('OCR 参数'), 250);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('OCR 参数'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('OCR 参数'));
     await tester.pumpAndSettle();
     Slider threshold(double value) => tester.widget<Slider>(find.byWidgetPredicate(
@@ -51,7 +57,7 @@ void main() {
     await tester.runAsync(() => tester.tap(find.byTooltip('保存翻译设置')));
     await tester.runAsync(ComicTranslationSettings.instance.flush);
     await tester.pumpAndSettle();
-    final saved = ComicTranslationSettings.instance.forComic('slider-defaults', 'comic');
+    final saved = ComicTranslationSettings.instance.values;
     final parameters = ComicOcrParameters.fromSettings(saved);
     expect(parameters.detectionThreshold, .45);
     expect(parameters.recognitionThreshold, .35);

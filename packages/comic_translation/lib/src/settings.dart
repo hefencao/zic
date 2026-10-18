@@ -9,6 +9,10 @@ final class ComicTranslationSettings extends ChangeNotifier {
   ComicTranslationSettings();
 
   static final instance = ComicTranslationSettings();
+  static const _ocrKeys = {'ocrMaxAnalysisSide', 'ocrDetectionThreshold',
+    'ocrRecognitionThreshold', 'ocrUnclipRatio'};
+  static const _comicKeys = {'enabled', 'sourceLanguage', 'translateSoundEffects',
+    'useCleanOverlay', 'showIndicator', 'indicatorOnlyWhileProcessing', ..._ocrKeys};
   final Map<String, Object?> values = {
     'comicTranslationBackend': 'none',
     'comicTranslationLocalModel': '',
@@ -65,19 +69,35 @@ final class ComicTranslationSettings extends ChangeNotifier {
   Map<String, Object?> forComic(String sourceId, String comicId) =>
       Map<String, Object?>.unmodifiable({
         ...values,
-        ...?_comics[jsonEncode([sourceId, comicId])],
+        // OCR follows each comic's image quality; shared resources and budgets
+        // cannot be overridden by an old per-comic settings page.
+        for (final entry in (_comics[jsonEncode([sourceId, comicId])] ?? {}).entries)
+          if (_comicKeys.contains(entry.key)) entry.key: entry.value,
       });
+
+  bool hasComicOcrOverride(String sourceId, String comicId) =>
+      _comics[jsonEncode([sourceId, comicId])]?.keys.any(_ocrKeys.contains) == true;
+
+  Future<void> resetComicOcr(String sourceId, String comicId) {
+    final comic = _comics[jsonEncode([sourceId, comicId])];
+    if (comic == null || !comic.keys.any(_ocrKeys.contains)) return Future<void>.value();
+    comic.removeWhere((key, _) => _ocrKeys.contains(key));
+    return save();
+  }
 
   Future<void> setComic(
     String sourceId,
     String comicId,
     Map<String, Object?> settings,
   ) {
+    final updates = {for (final entry in settings.entries)
+      if (_comicKeys.contains(entry.key)) entry.key: entry.value};
+    if (updates.isEmpty) return Future<void>.value();
     final key = jsonEncode([sourceId, comicId]);
-    if (settings['sourceLanguage'] == 'auto' && forComic(sourceId, comicId)['sourceLanguage'] != 'auto') {
+    if (updates['sourceLanguage'] == 'auto' && forComic(sourceId, comicId)['sourceLanguage'] != 'auto') {
       _detectedLanguages.remove(key);
     }
-    _comics[key] = {...?_comics[key], ...settings};
+    _comics[key] = {...?_comics[key], ...updates};
     return save();
   }
 

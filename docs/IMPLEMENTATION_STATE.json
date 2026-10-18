@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-17T23:17:10Z",
+  "updated_at": "2026-10-18T00:14:09Z",
   "objective": "优化译文缓存、整章预翻译、OCR档位及译文随下载保存/加载",
   "status": "partial",
   "scope": [
@@ -147,8 +147,8 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "2a1fd20a9aa791cd798fe880d701a8bbbd9cae6d2c18c4a89594803b835c85bf",
-    "observation": "Final Release2a1fd20a/PID18601;Reader12 ready. Entry/reentry and40->12 cache checks pass,23 hits/0 OCR or MT calls."
+    "apk_sha256": "b4484b9e5f0cefc1c80c657c01e68851f9a1842ef2ed9091cd5b9ac6ea668b93",
+    "observation": "Releaseb448/PID27951;Reader12 ready. Comic OCR/global isolation/folds/layout pass;original standard OCR and translation ON restored. Chapter54/97 saved."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
@@ -161,11 +161,11 @@
     "rust_tests": 25,
     "android_jvm_tests": "110 owned/0 failures;4 Gradle targets pass;upstream Robolectric/ByteBuddy unverified",
     "native_runtime": "3ABI staged native unchanged;fresh Debug/Release builds and arm64 closures pass",
-    "device": "5841 auto-recovers39->48/97,then5 retries exhaust on TLS;48 saved. Final2a1fd20a entry/reentry and40->12:23 cache hits,0 OCR/MT calls.",
+    "device": "b448:comic OCR presets/inherit/global isolation/folds/layout pass;settings restored.10 cached ready111-235ms/0 OCR or MT;both engines retained.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "28 analyzers/suites;154 translation;2569 full/3skip;112 records/summary byte-identical."
+    "scope": "Current settings/OCR code:28 analyzers,28 suites,Debug/Release/native gates and device pass.112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,19 +176,19 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "Cache probes/worker SHA+JSON;LRU8p/128blocks;OCR presets. App jobs share inference,drain saves/leases. Download owner handles companions. Failed HTTP batches retry2/5/15/30/60s,Retry-After<=5min;wait frees lane,retired demand/background wakes;cache identity unchanged.",
-      "diagnosis": "Canonical archives avoid recency rewrites;quantized sliders retain defaults;blank cleanup preserves source;empty MT units repaired once. Shared demand retirement/background wakes backoff;quick return requeues. Group/font unchanged.",
-      "accepted": "154 translation;2569 full/3skip;25 Rust/110 JVM;Debug/Release+arm64 closures pass. Real12 archive restore/held zoom accepted. Final2a entry/reentry and40->12:23 cache hits,0 OCR/MT calls.",
-      "performance": "Final2a cache ready104-236ms;12 entry/reentry112/183ms. Prior companion mtime stable.5841 ready+saved exactly0..47;index48 waits2/5/15/30/60s before TLS exhaustion.",
+      "current_contract": "Worker cache/SHA/JSON,LRU8p/128blocks;App chapter jobs share inference/drain saves. Download companions persist results. Comic panel owns language/OCR/content/indicator;OCR can inherit global. Model/target/translation quality/context/prefetch global. Advanced groups fold. HTTP retries2/5/15/30/60s;wait frees NetLane.",
+      "diagnosis": "Comic OCR overrides retain model sessions and shared budgets;reset removes4 keys. Legacy global-only comic overrides cannot apply/write. Default OCR/MT identities remain. Consumer retirement/background wakes backoff;quick return requeues. Source geometry/font unchanged.",
+      "accepted": "154 translation/2569 full+3skip/25 Rust/110 JVM,Debug/Release/arm64 gates pass. b448:comic OCR presets/inherit/global isolation/folds/cache pass;settings restored.2a:54/97 saved;Reader exit/reentry keeps task.",
+      "performance": "b448:10 cache hits/0 OCR or MT;ready111-235ms.2 config changes retain OCR/MT engines. Chapter ready+saved exactly0..53;index54 exhausts2/5/15/30/60s on TLS.",
       "remaining_acceptance": [
-        "97-page/cache-only run pending:TLS still terminates after5 retries,index48 failed;48 saved. Open trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-07-54.jsonl",
+        "97-page/cache-only run pending TLS at index54,54 saved. Trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl",
         "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."
       ],
       "mainline": "main;local only"
     }
   },
   "remaining": [
-    "Retry/demand-retirement,2569 gates and final cache checks pass;48 saved after automatic recovery,thenTLS exhausts5 retries.97-page/cache-only acceptance pending.",
+    "97-page/cache-only translation acceptance blocked by TLS after54 saved and5 retries;settings/OCR acceptance passed.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",

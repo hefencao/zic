@@ -11,7 +11,6 @@ void main() {
       final settings = ComicTranslationSettings();
       await settings.init(directory.path);
       settings.values['targetLanguage'] = 'en';
-      await settings.setComic('source-a', 'comic', {'targetLanguage': 'zh-TW'});
       await settings.setComic('source-a', 'comic', {'enabled': true});
       await settings.setComic('source-a', 'comic', {'showIndicator': false});
       await settings.setComic('source-a', 'comic', {'sourceLanguage': 'ja'});
@@ -21,7 +20,7 @@ void main() {
       settings.addListener(() { notifications++; });
       await settings.rememberLanguage('source-a', 'automatic', 'ko', 'ocr-v1');
       expect(notifications, 0, reason: 'learning a language must not rebuild an active session');
-      expect(settings.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
+      expect(settings.forComic('source-a', 'comic')['targetLanguage'], 'en');
       expect(settings.forComic('source-b', 'comic')['targetLanguage'], 'en');
       expect(settings.forComic('source-b', 'comic')['enabled'], isFalse);
       final secrets = ComicTranslationSecrets.instance;
@@ -40,7 +39,7 @@ void main() {
       expect(restored.forComic('source-a', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
       expect(restored.forComic('source-b', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
       expect(restored.forComic('source-a', 'korean')['indicatorOnlyWhileProcessing'], isTrue);
-      expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'zh-TW');
+      expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'en');
       expect(restored.forComic('source-b', 'comic')['targetLanguage'], 'en');
       expect(restored.forComic('source-a', 'comic')['sourceLanguage'], 'ja');
       expect(restored.forComic('source-a', 'korean')['sourceLanguage'], 'ko');
@@ -66,7 +65,7 @@ void main() {
     }
   });
 
-  test('quality presets and custom OCR overrides survive restart per comic', () async {
+  test('comic OCR overrides persist and reset without overriding shared resources', () async {
     final directory = await Directory.systemTemp.createTemp('zic-translation-settings-');
     try {
       final settings = ComicTranslationSettings();
@@ -77,27 +76,62 @@ void main() {
         'comicTranslationBackend': 'openaiCompatible',
         'comicTranslationRemoteModel': 'configured-model',
       });
-      await settings.setComic('source', 'comic', {
-        ...ComicTranslationQuality.fast.settings,
-        'translationQuality': 'custom',
-        'ocrRecognitionThreshold': .55,
-      });
+      await settings.setComic('source', 'comic', {'sourceLanguage': 'ko',
+        'translateSoundEffects': true, 'useCleanOverlay': false});
+      final file = File('${directory.path}/comic_translation_settings.json');
+      final legacy = jsonDecode(await file.readAsString()) as Map;
+      final oldComic = (legacy['comics'] as Map)[jsonEncode(['source', 'comic'])] as Map;
+      oldComic.addAll(<String, dynamic>{...ComicTranslationQuality.fast.settings,
+        'translationQuality': 'custom', 'ocrRecognitionThreshold': .55,
+        'targetLanguage': 'en', 'comicTranslationBackend': 'none'});
+      await file.writeAsString(jsonEncode(legacy));
       final restored = ComicTranslationSettings();
       await restored.init(directory.path);
       final comic = restored.forComic('source', 'comic');
       expect(ComicOcrParameters.fromSettings(comic).maxAnalysisSide, 1024);
       expect(ComicOcrParameters.fromSettings(comic).recognitionThreshold, .55);
-      expect(comic['translationQuality'], 'custom');
-      expect(comic['contextPages'], 0);
-      expect(comic['translationPrefetchPages'], 2);
-      expect(comic['translationCachePrefetchPages'], 4);
+      expect(restored.hasComicOcrOverride('source', 'comic'), isTrue);
+      expect(comic['translationQuality'], 'precise');
+      expect(comic['contextPages'], 4);
+      expect(comic['translationPrefetchPages'], 6);
+      expect(comic['translationCachePrefetchPages'], 6);
+      expect(comic['targetLanguage'], 'zh-CN');
+      expect(comic['comicTranslationBackend'], 'openaiCompatible');
+      expect(comic['sourceLanguage'], 'ko');
+      expect(comic['translateSoundEffects'], isTrue);
+      expect(comic['useCleanOverlay'], isFalse);
+      await restored.setComic('source', 'other', {
+        ...ComicTranslationQuality.fast.settings, 'translationQuality': 'fast',
+        'targetLanguage': 'en', 'comicTranslationBackend': 'none',
+      });
       final other = restored.forComic('source', 'other');
-      expect(ComicOcrParameters.fromSettings(other).maxAnalysisSide, 2240);
+      expect(ComicOcrParameters.fromSettings(other).maxAnalysisSide, 1024);
       expect(other['contextPages'], 4);
+      expect(other['targetLanguage'], 'zh-CN');
+      expect(other['sourceLanguage'], 'auto');
       expect(other['translationQuality'], 'precise');
       expect(other['comicTranslationBackend'], 'openaiCompatible');
       expect(other['comicTranslationRemoteModel'], 'configured-model');
       expect(comic['comicTranslationRemoteModel'], 'configured-model');
+      expect(restored.forComic('other-source', 'comic')['ocrMaxAnalysisSide'], 2240);
+      await restored.resetComicOcr('source', 'comic');
+      expect(restored.hasComicOcrOverride('source', 'comic'), isFalse);
+      expect(ComicOcrParameters.fromSettings(restored.forComic('source', 'comic')).maxAnalysisSide, 2240);
+      restored.values['ocrMaxAnalysisSide'] = 1600;
+      await restored.save();
+      final reloaded = ComicTranslationSettings();
+      await reloaded.init(directory.path);
+      final inherited = reloaded.forComic('source', 'comic');
+      expect(ComicOcrParameters.fromSettings(inherited).maxAnalysisSide, 1600);
+      expect(ComicOcrParameters.fromSettings(inherited).recognitionThreshold, .35);
+      expect(reloaded.hasComicOcrOverride('source', 'comic'), isFalse);
+      expect(inherited['sourceLanguage'], 'ko');
+      expect(inherited['translateSoundEffects'], isTrue);
+      expect(inherited['useCleanOverlay'], isFalse);
+      expect(inherited['contextPages'], 4);
+      expect(inherited['targetLanguage'], 'zh-CN');
+      expect(reloaded.forComic('source', 'other')['ocrMaxAnalysisSide'], 1024);
+      reloaded.dispose();
       settings.dispose();
       restored.dispose();
     } finally {

@@ -221,8 +221,8 @@ final class SettingsScreen extends StatelessWidget {
           _SettingsEntry(
             key: const ValueKey('settings-translation-entry'),
             icon: Icons.translate,
-            title: '翻译模型与 API',
-            subtitle: 'OCR、本地翻译与远程 API',
+            title: '漫画翻译',
+            subtitle: '语言、档位、OCR 与翻译后端',
             onTap: () => _push(context, const ComicTranslationSettingsScreen()),
           ),
           _SettingsEntry(

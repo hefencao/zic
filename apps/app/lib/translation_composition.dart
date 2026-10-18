@@ -366,6 +366,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   Future<void> _edit(BuildContext context, String status) async {
     const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
     const indicatorModes = {'always': '常驻', 'processing': '处理中', 'off': '关闭'};
+    const ocrPresets = {1024: '快速', 1600: '标准', 2240: '精细'};
+    var ocrDraft = ComicOcrParameters.fromSettings(_preferences);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -391,6 +393,8 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
             final indicatorMode = _preferences['showIndicator'] == false ? 'off'
                 : _preferences['indicatorOnlyWhileProcessing'] == true ? 'processing' : 'always';
             final detected = _session?.detectedLanguageListenable.value;
+            final ocr = ComicOcrParameters.fromSettings(_preferences);
+            final hasOcrOverride = _settings.hasComicOcrOverride(_chapter.sourceId, _chapter.comicId);
             final subtitle = selected == 'auto' && detected != null
                 ? '$status · ${languages[detected] ?? detected}' : status;
             final chapterKey = AppTranslationChapterJobs.keyForManifest(_chapter);
@@ -410,12 +414,11 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                     Text(subtitle, textAlign: TextAlign.center, maxLines: 2,
                       overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
                   ])),
-                  IconButton(tooltip: '翻译模型与 API', icon: const Icon(Icons.settings_outlined),
+                  IconButton(tooltip: '全局翻译设置', icon: const Icon(Icons.settings_outlined),
                     onPressed: () {
                       Navigator.pop(sheetContext);
                       Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => ComicTranslationSettingsScreen(
-                          sourceId: _chapter.sourceId, comicId: _chapter.comicId),
+                        builder: (_) => const ComicTranslationSettingsScreen(),
                       ));
                     }),
                 ]),
@@ -437,6 +440,84 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                     ],
                   ))),
                 ]),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Text('内容', style: theme.textTheme.bodyMedium),
+                  const SizedBox(width: 8),
+                  Flexible(child: Semantics(label: '本漫画译文内容', child: Wrap(
+                    key: const ValueKey('reader-translation-content'),
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (final entry in const {
+                        'translateSoundEffects': '翻译拟声词', 'useCleanOverlay': '清除原文背景',
+                      }.entries)
+                        pill(entry.value, _preferences[entry.key] == true, (value) async {
+                          Navigator.pop(sheetContext);
+                          await _settings.setComic(_chapter.sourceId, _chapter.comicId, {entry.key: value});
+                        }),
+                    ],
+                  ))),
+                ]),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Text('OCR', style: theme.textTheme.bodyMedium),
+                  const SizedBox(width: 8),
+                  Flexible(child: Semantics(label: '本漫画 OCR 精度', child: Wrap(
+                    key: const ValueKey('reader-translation-ocr'),
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      pill('跟随全局', !hasOcrOverride, (_) async {
+                        Navigator.pop(sheetContext);
+                        await _settings.resetComicOcr(_chapter.sourceId, _chapter.comicId);
+                      }),
+                      for (final entry in ocrPresets.entries)
+                        pill(entry.value, hasOcrOverride && ocr.cacheSuffix ==
+                            ComicOcrParameters(maxAnalysisSide: entry.key).cacheSuffix, (_) async {
+                          Navigator.pop(sheetContext);
+                          await _settings.setComic(_chapter.sourceId, _chapter.comicId,
+                            ComicOcrParameters(maxAnalysisSide: entry.key).toSettings());
+                        }),
+                    ],
+                  ))),
+                ]),
+                StatefulBuilder(builder: (_, setOcrState) => ExpansionTile(
+                  key: const ValueKey('reader-translation-ocr-advanced'),
+                  title: const Text('OCR 高级设置'),
+                  subtitle: Text('${ocr.maxAnalysisSide} px · 检测 ${ocr.detectionThreshold.toStringAsFixed(2)} · '
+                    '识别 ${ocr.recognitionThreshold.toStringAsFixed(2)}'),
+                  tilePadding: EdgeInsets.zero,
+                  children: [
+                    const Text('提高分辨率有利于识别小字，也增加耗时与内存。参数仅用于本漫画。'),
+                    ListTile(title: const Text('分析分辨率'), trailing: Text('${ocrDraft.maxAnalysisSide} px')),
+                    Slider(value: ocrDraft.maxAnalysisSide.toDouble(), min: 320, max: 4096, divisions: 59,
+                      label: '${ocrDraft.maxAnalysisSide} px', onChanged: (value) => setOcrState(() {
+                        ocrDraft = ComicOcrParameters.fromSettings({...ocrDraft.toSettings(),
+                          'ocrMaxAnalysisSide': value.round()});
+                      })),
+                    for (final recognition in [false, true]) ...[
+                      ListTile(title: Text(recognition ? '识别置信度下限' : '检测阈值'),
+                        subtitle: Text(recognition ? '提高可减少误识别，也可能漏掉模糊对白。' : '提高可减少候选文字框，也可能漏字。'),
+                        trailing: Text((recognition ? ocrDraft.recognitionThreshold : ocrDraft.detectionThreshold).toStringAsFixed(2))),
+                      Slider(value: recognition ? ocrDraft.recognitionThreshold : ocrDraft.detectionThreshold,
+                        min: .1, max: .9, divisions: 16, onChanged: (value) => setOcrState(() {
+                          ocrDraft = ComicOcrParameters.fromSettings({...ocrDraft.toSettings(),
+                            (recognition ? 'ocrRecognitionThreshold' : 'ocrDetectionThreshold'): (value * 100).round() / 100});
+                        })),
+                    ],
+                    ListTile(title: const Text('文字框扩展倍率'), trailing: Text(ocrDraft.unclipRatio.toStringAsFixed(1))),
+                    Slider(value: ocrDraft.unclipRatio, min: 1, max: 3, divisions: 20,
+                      onChanged: (value) => setOcrState(() {
+                        ocrDraft = ComicOcrParameters.fromSettings({...ocrDraft.toSettings(),
+                          'ocrUnclipRatio': (value * 10).round() / 10});
+                      })),
+                    TextButton(onPressed: () async {
+                      Navigator.pop(sheetContext);
+                      await _settings.setComic(_chapter.sourceId, _chapter.comicId, ocrDraft.toSettings());
+                    }, child: const Text('应用到本漫画')),
+                  ],
+                )),
                 const SizedBox(height: 4),
                 Row(children: [
                   Text('翻译指示器', style: theme.textTheme.bodyMedium),

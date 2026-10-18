@@ -71,9 +71,10 @@ void main() {
     expect(session()!.enabled, isTrue);
     expect(tester.state(find.byType(_Media)), same(media));
     expect(session(), same(initial), reason: 'the enabled preference does not replace the translation session');
-    await tester.runAsync(() => ComicTranslationSettings.instance.setComic('translation-test', 'comic', {
+    ComicTranslationSettings.instance.values.addAll({
       'translationPrefetchPages': 0, 'translationCachePrefetchPages': 8, 'translationQuality': 'custom',
-    }));
+    });
+    await tester.runAsync(ComicTranslationSettings.instance.save);
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump();
     expect(session(), same(initial), reason: 'lookahead and preset labels do not invalidate translation results');
@@ -118,7 +119,73 @@ void main() {
     await indicatorMode('常驻');
     expect(find.byKey(const ValueKey('reader-translation-status')), findsOneWidget);
     expect(session(), same(initial));
-    Navigator.of(tester.element(find.byKey(const ValueKey('reader-translation-enable')))).pop();
+    expect(find.byKey(const ValueKey('reader-translation-content')), findsOneWidget);
+    await tester.runAsync(() => tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('reader-translation-content')), matching: find.text('翻译拟声词'))));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(ComicTranslationSettings.instance.forComic('translation-test', 'comic')['translateSoundEffects'], isTrue);
+    expect(ComicTranslationSettings.instance.values['translateSoundEffects'], isFalse);
+    expect(tester.state(find.byType(_Media)), same(media));
+    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
+    expect(find.text('应用到本漫画'), findsNothing, reason: 'OCR fine tuning starts collapsed');
+    await tester.runAsync(() => tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('reader-translation-ocr')), matching: find.text('精细'))));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(session()!.policy.ocrParameters.maxAnalysisSide, 2240);
+    expect(ComicTranslationSettings.instance.values['ocrMaxAnalysisSide'], 1600);
+    expect(session()!.policy.contextPages, 2);
+    expect(session()!.policy.prefetchPages, 0);
+    expect(session()!.policy.cachePrefetchPages, 8);
+    expect(tester.state(find.byType(_Media)), same(media));
+    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OCR 高级设置'));
+    await tester.pumpAndSettle();
+    final beforeOcrDraft = session();
+    tester.widget<Slider>(find.byWidgetPredicate((widget) => widget is Slider && widget.min == 320))
+        .onChanged!(1600);
+    await tester.pump();
+    tester.widget<Slider>(find.byWidgetPredicate((widget) => widget is Slider && widget.min == .1 && widget.value == .45))
+        .onChanged!(.1 + (.9 - .1) * (7 / 16));
+    await tester.pump();
+    tester.widget<Slider>(find.byWidgetPredicate((widget) => widget is Slider && widget.min == .1 && widget.value == .35))
+        .onChanged!(.1 + (.9 - .1) * (5 / 16));
+    await tester.pump();
+    tester.widget<Slider>(find.byWidgetPredicate((widget) => widget is Slider && widget.min == 1))
+        .onChanged!(1 + (3 - 1) * (4 / 20));
+    await tester.pump();
+    expect(session(), same(beforeOcrDraft), reason: 'fine tuning is a draft until applied once');
+    expect(session()!.policy.ocrParameters.maxAnalysisSide, 2240);
+    await tester.ensureVisible(find.text('应用到本漫画'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => tester.tap(find.text('应用到本漫画')));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(session()!.policy.ocrParameters.cacheSuffix, isEmpty,
+      reason: 'the comic sliders must preserve the default cache identity');
+    expect(ComicTranslationSettings.instance.hasComicOcrOverride('translation-test', 'comic'), isTrue);
+    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('reader-translation-ocr')), matching: find.text('跟随全局'))));
+    await tester.runAsync(ComicTranslationSettings.instance.flush);
+    await tester.pumpAndSettle();
+    expect(session()!.policy.ocrParameters.cacheSuffix, isEmpty);
+    expect(ComicTranslationSettings.instance.hasComicOcrOverride('translation-test', 'comic'), isFalse);
+    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => tester.tap(find.byTooltip('全局翻译设置')));
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle();
+    expect(find.text('全局翻译设置'), findsOneWidget);
+    expect(find.text('本漫画翻译设置'), findsNothing);
+    expect(find.text('高级设置'), findsOneWidget);
+    expect(find.text('OCR 参数'), findsNothing);
+    Navigator.of(tester.element(find.text('全局翻译设置'))).pop();
     await tester.pumpAndSettle();
     await tester.longPress(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
@@ -136,7 +203,8 @@ void main() {
     await tester.runAsync(ComicTranslationSettings.instance.flush);
     await tester.pumpAndSettle();
     expect(session()!.sourceLanguage, 'auto');
-    await tester.runAsync(() => ComicTranslationSettings.instance.setComic('translation-test', 'comic', {'targetLanguage': 'en'}));
+    ComicTranslationSettings.instance.values['targetLanguage'] = 'en';
+    await tester.runAsync(ComicTranslationSettings.instance.save);
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump();
     expect(session()!.targetLanguage, 'en');
@@ -154,6 +222,14 @@ void main() {
       reason: 'credential-only changes must replace the captured engine configuration');
     final beforeMetadataChange = session();
     final activeEngine = ComicTranslationEngineRegistry.instance.translationEngine;
+    await tester.runAsync(() => ComicTranslationSettings.instance.setComic('translation-test', 'comic',
+      const ComicOcrParameters(maxAnalysisSide: 2240).toSettings()));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(ComicTranslationEngineRegistry.instance.translationEngine, same(activeEngine),
+      reason: 'comic OCR precision must reuse the configured translation engine');
+    expect(session(), isNot(same(beforeMetadataChange)));
+    final beforeProfileRename = session();
     final values = ComicTranslationSettings.instance.values;
     values['comicTranslationRemoteProfiles'] = [
       ComicTranslationRemoteProfile(id: 'default', name: 'Renamed profile',
@@ -168,7 +244,7 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump();
     expect(ComicTranslationEngineRegistry.instance.translationEngine, same(activeEngine));
-    expect(session(), same(beforeMetadataChange),
+    expect(session(), same(beforeProfileRename),
       reason: 'profile labels and inactive model settings must preserve the active session and its output');
     final valid = session();
     ComicTranslationSettings.instance.values['comicTranslationBackend'] = 'deepl';

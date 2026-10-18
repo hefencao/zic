@@ -11,10 +11,7 @@ import 'translation_composition.dart';
 const comicTranslationSettingsKey = ValueKey('comic-translation-settings');
 
 final class ComicTranslationSettingsScreen extends StatefulWidget {
-  const ComicTranslationSettingsScreen({this.sourceId, this.comicId, super.key});
-
-  final String? sourceId;
-  final String? comicId;
+  const ComicTranslationSettingsScreen({super.key});
 
   @override
   State<ComicTranslationSettingsScreen> createState() => _ComicTranslationSettingsScreenState();
@@ -47,7 +44,6 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
   bool _cleanOverlay = true;
   bool _working = false;
   String? _result;
-  bool get _isComic => widget.sourceId != null && widget.comicId != null;
   bool get _remote => _backend == 'openaiCompatible' || _backend == 'deepl';
 
   @override
@@ -60,18 +56,17 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
     await initializeComicTranslation();
     if (!mounted) return;
     final values = _settings.values;
-    final comic = _isComic ? _settings.forComic(widget.sourceId!, widget.comicId!) : values;
     _backend = values['comicTranslationBackend'] as String;
     _localModel = values['comicTranslationLocalModel'] as String;
     _profiles = (values['comicTranslationRemoteProfiles'] as List).map((value) =>
         ComicTranslationRemoteProfile.fromJson(Map<String, dynamic>.from(value as Map))).toList();
     _profileId = values['comicTranslationRemoteProfile'] as String;
-    _enabled = comic['enabled'] == true;
-    _source = comic['sourceLanguage'] as String;
-    _target = comic['targetLanguage'] as String;
-    _loadTuning(comic);
-    _soundEffects = comic['translateSoundEffects'] == true;
-    _cleanOverlay = comic['useCleanOverlay'] == true;
+    _enabled = values['enabled'] == true;
+    _source = values['sourceLanguage'] as String;
+    _target = values['targetLanguage'] as String;
+    _loadTuning(values);
+    _soundEffects = values['translateSoundEffects'] == true;
+    _cleanOverlay = values['useCleanOverlay'] == true;
     if (_remote) _selectBackendProfile();
   }
 
@@ -187,12 +182,8 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
       'translateSoundEffects': _soundEffects,
       'useCleanOverlay': _cleanOverlay,
     };
-    if (_isComic) {
-      await _settings.setComic(widget.sourceId!, widget.comicId!, reader);
-    } else {
-      _settings.values.addAll(reader);
-      await _settings.save();
-    }
+    _settings.values.addAll(reader);
+    await _settings.save();
     ComicTranslationRuntime.instance.configure();
     if (mounted) setState(() => _result = '已保存');
   }
@@ -220,7 +211,7 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
   @override
   Widget build(BuildContext context) => Scaffold(
         key: comicTranslationSettingsKey,
-        appBar: AppBar(title: Text(_isComic ? '本漫画翻译设置' : '翻译模型与 API'), actions: [
+        appBar: AppBar(title: const Text('全局翻译设置'), actions: [
           IconButton(tooltip: '保存翻译设置', icon: const Icon(Icons.check),
             onPressed: _working ? null : () => _run(() async { await _ready; await _save(); })),
         ]),
@@ -236,23 +227,6 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                SwitchListTile(
-                  title: Text(_isComic ? '翻译本漫画' : '默认开启漫画翻译'),
-                  value: _enabled,
-                  onChanged: _working ? null : (value) => setState(() => _enabled = value),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: _source,
-                  decoration: const InputDecoration(labelText: '源语言'),
-                  items: const [
-                    DropdownMenuItem(value: 'auto', child: Text('自动（日语 / 韩语）')),
-                    DropdownMenuItem(value: 'ja', child: Text('日语')),
-                    DropdownMenuItem(value: 'ko', child: Text('韩语')),
-                    DropdownMenuItem(value: 'en', child: Text('英语')),
-                    DropdownMenuItem(value: 'zh', child: Text('中文')),
-                  ],
-                  onChanged: (value) => setState(() => _source = value!),
-                ),
                 DropdownButtonFormField<String>(
                   initialValue: _target,
                   decoration: const InputDecoration(labelText: '目标语言'),
@@ -265,10 +239,6 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                   ],
                   onChanged: (value) => setState(() => _target = value!),
                 ),
-                SwitchListTile(title: const Text('翻译拟声词'), value: _soundEffects,
-                  onChanged: (value) => setState(() => _soundEffects = value)),
-                SwitchListTile(title: const Text('清除原文背景'), value: _cleanOverlay,
-                  onChanged: (value) => setState(() => _cleanOverlay = value)),
                 const ListTile(title: Text('翻译档位'), contentPadding: EdgeInsets.zero),
                 Wrap(spacing: 8, runSpacing: 4, children: [
                   for (final entry in const {
@@ -287,68 +257,6 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                   ComicTranslationQuality.precise => '2240 px OCR · 前 4 页上下文 · 提前翻译 6 页',
                   ComicTranslationQuality.custom => '按下方参数处理。已完成的译文优先使用缓存。',
                 }, style: Theme.of(context).textTheme.bodySmall),
-                ListTile(title: const Text('前页上下文'), trailing: DropdownButton<int>(
-                  value: _contextPages,
-                  items: [for (var i = 0; i <= 4; i++) DropdownMenuItem(value: i, child: Text('$i 页'))],
-                  onChanged: (value) => _custom(() => _contextPages = value!),
-                )),
-                for (final cached in [false, true]) ListTile(
-                  title: Text(cached ? '提前加载译文缓存' : '提前翻译'),
-                  trailing: DropdownButton<int>(value: cached ? _cachePrefetchPages : _prefetchPages,
-                    items: [for (var i = 0; i <= 8; i++)
-                      DropdownMenuItem(value: i, child: Text(i == 0 ? '仅当前页' : '$i 页'))],
-                    onChanged: (value) => _custom(() {
-                      if (cached) { _cachePrefetchPages = value!; } else { _prefetchPages = value!; }
-                    })),
-                ),
-                ExpansionTile(title: const Text('OCR 参数'),
-                  subtitle: Text('$_analysisSide px · 检测 ${_detectionThreshold.toStringAsFixed(2)} · '
-                    '识别 ${_recognitionThreshold.toStringAsFixed(2)}'),
-                  tilePadding: EdgeInsets.zero,
-                  children: [
-                    ListTile(title: const Text('分析分辨率'), trailing: Text('$_analysisSide px')),
-                    Slider(value: _analysisSide.toDouble(), min: 320, max: 4096, divisions: 59,
-                      label: '$_analysisSide px', onChanged: _working ? null :
-                        (value) => _custom(() => _analysisSide = value.round())),
-                    const Padding(padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Text('分辨率越高越利于识别细字，同时增加耗时与内存占用。')),
-                    for (final recognition in [false, true]) ...[
-                      ListTile(title: Text(recognition ? '识别置信度下限' : '检测阈值'),
-                        subtitle: Text(recognition ? '提高可减少误识别，也可能漏掉模糊对白。' : '提高可减少候选文字框，也可能漏字。'),
-                        trailing: Text((recognition ? _recognitionThreshold : _detectionThreshold).toStringAsFixed(2))),
-                      Slider(value: recognition ? _recognitionThreshold : _detectionThreshold,
-                        min: .1, max: .9, divisions: 16,
-                        onChanged: _working ? null : (value) => _custom(() {
-                          final threshold = (value * 100).round() / 100;
-                          if (recognition) { _recognitionThreshold = threshold; } else { _detectionThreshold = threshold; }
-                        })),
-                    ],
-                    ListTile(title: const Text('文字框扩展倍率'), trailing: Text(_unclipRatio.toStringAsFixed(1))),
-                    Slider(value: _unclipRatio, min: 1, max: 3, divisions: 20,
-                      onChanged: _working ? null : (value) => _custom(() => _unclipRatio = (value * 10).round() / 10)),
-                  ],
-                ),
-                const Divider(),
-                ListTile(
-                  title: const Text('本地 OCR 模型'),
-                  subtitle: Text(ocr.installed ? '${ComicOcrModelManager.bundle.displayName} · 已安装' :
-                      'PP-OCRv6 · 约 ${(ComicOcrModelManager.bundle.bytes / 1048576).round()} MB'),
-                ),
-                ValueListenableBuilder<ComicOcrModelProgress>(
-                  valueListenable: ocr.progress,
-                  builder: (_, progress, __) => Column(children: [
-                    if (ocr.installing) LinearProgressIndicator(value: progress.fraction),
-                    TextButton.icon(
-                      onPressed: _working || ocr.installing ? null : () => _run(() async {
-                        if (ocr.installed) { await ocr.remove(); } else { await ocr.install(); }
-                        ComicTranslationRuntime.instance.configure();
-                      }),
-                      icon: Icon(ocr.installed ? Icons.delete_outline : Icons.download_outlined),
-                      label: Text(ocr.installed ? '移除 OCR 模型' : '下载并校验 OCR 模型'),
-                    ),
-                  ]),
-                ),
-                const Text('文字在设备上识别。远程后端仅接收识别出的文字；本地后端在设备上翻译。'),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   initialValue: _backend,
@@ -432,8 +340,6 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                     keyboardType: TextInputType.url, autocorrect: false),
                   TextField(controller: _model, decoration: InputDecoration(
                     labelText: _backend == 'deepl' ? 'model_type（可留空）' : '模型名称'), autocorrect: false),
-                  if (_backend == 'openaiCompatible') TextField(controller: _prompt, maxLines: 3,
-                    decoration: const InputDecoration(labelText: '追加提示词')),
                   TextField(controller: _key, obscureText: true, enableSuggestions: false, autocorrect: false,
                     decoration: InputDecoration(labelText: 'API key', hintText:
                       ComicTranslationSecrets.instance.hasApiKey(_profileId) ? '已保存，留空保留' : '尚未设置')),
@@ -443,11 +349,110 @@ final class _ComicTranslationSettingsScreenState extends State<ComicTranslationS
                   }), child: const Text('清除 API key')),
                 ],
                 const SizedBox(height: 16),
+                ExpansionTile(
+                  title: const Text('高级设置'),
+                  subtitle: const Text('上下文、预读、OCR 参数与默认行为'),
+                  tilePadding: EdgeInsets.zero,
+                  children: [
+                    ListTile(title: const Text('前页上下文'), trailing: DropdownButton<int>(
+                      value: _contextPages,
+                      items: [for (var i = 0; i <= 4; i++) DropdownMenuItem(value: i, child: Text('$i 页'))],
+                      onChanged: (value) => _custom(() => _contextPages = value!),
+                    )),
+                    for (final cached in [false, true]) ListTile(
+                      title: Text(cached ? '提前加载译文缓存' : '提前翻译'),
+                      trailing: DropdownButton<int>(value: cached ? _cachePrefetchPages : _prefetchPages,
+                        items: [for (var i = 0; i <= 8; i++)
+                          DropdownMenuItem(value: i, child: Text(i == 0 ? '仅当前页' : '$i 页'))],
+                        onChanged: (value) => _custom(() {
+                          if (cached) { _cachePrefetchPages = value!; } else { _prefetchPages = value!; }
+                        })),
+                    ),
+                    ExpansionTile(title: const Text('OCR 参数'),
+                      subtitle: Text('$_analysisSide px · 检测 ${_detectionThreshold.toStringAsFixed(2)} · '
+                        '识别 ${_recognitionThreshold.toStringAsFixed(2)}'),
+                      tilePadding: EdgeInsets.zero,
+                      children: [
+                        ListTile(title: const Text('分析分辨率'), trailing: Text('$_analysisSide px')),
+                        Slider(value: _analysisSide.toDouble(), min: 320, max: 4096, divisions: 59,
+                          label: '$_analysisSide px', onChanged: _working ? null :
+                            (value) => _custom(() => _analysisSide = value.round())),
+                        const Padding(padding: EdgeInsets.symmetric(horizontal: 16),
+                          child: Text('分辨率越高越利于识别细字，同时增加耗时与内存占用。')),
+                        for (final recognition in [false, true]) ...[
+                          ListTile(title: Text(recognition ? '识别置信度下限' : '检测阈值'),
+                            subtitle: Text(recognition ? '提高可减少误识别，也可能漏掉模糊对白。' : '提高可减少候选文字框，也可能漏字。'),
+                            trailing: Text((recognition ? _recognitionThreshold : _detectionThreshold).toStringAsFixed(2))),
+                          Slider(value: recognition ? _recognitionThreshold : _detectionThreshold,
+                            min: .1, max: .9, divisions: 16,
+                            onChanged: _working ? null : (value) => _custom(() {
+                              final threshold = (value * 100).round() / 100;
+                              if (recognition) { _recognitionThreshold = threshold; } else { _detectionThreshold = threshold; }
+                            })),
+                        ],
+                        ListTile(title: const Text('文字框扩展倍率'), trailing: Text(_unclipRatio.toStringAsFixed(1))),
+                        Slider(value: _unclipRatio, min: 1, max: 3, divisions: 20,
+                          onChanged: _working ? null : (value) => _custom(() => _unclipRatio = (value * 10).round() / 10)),
+                      ],
+                    ),
+                    SwitchListTile(
+                      title: const Text('默认开启漫画翻译'),
+                      value: _enabled,
+                      onChanged: _working ? null : (value) => setState(() => _enabled = value),
+                    ),
+                    DropdownButtonFormField<String>(
+                      initialValue: _source,
+                      decoration: const InputDecoration(labelText: '默认原文语言'),
+                      items: const [
+                        DropdownMenuItem(value: 'auto', child: Text('自动（日语 / 韩语）')),
+                        DropdownMenuItem(value: 'ja', child: Text('日语')),
+                        DropdownMenuItem(value: 'ko', child: Text('韩语')),
+                        DropdownMenuItem(value: 'en', child: Text('英语')),
+                        DropdownMenuItem(value: 'zh', child: Text('中文')),
+                      ],
+                      onChanged: (value) => setState(() => _source = value!),
+                    ),
+                    SwitchListTile(title: const Text('默认翻译拟声词'), value: _soundEffects,
+                      onChanged: (value) => setState(() => _soundEffects = value)),
+                    SwitchListTile(title: const Text('默认清除原文背景'), value: _cleanOverlay,
+                      onChanged: (value) => setState(() => _cleanOverlay = value)),
+                    if (_backend == 'openaiCompatible') TextField(controller: _prompt, maxLines: 3,
+                      decoration: const InputDecoration(labelText: '追加提示词')),
+                    if (_backend != 'none') OutlinedButton(
+                      onPressed: _working ? null : () => _run(_testConnection), child: const Text('测试文字翻译')),
+                    OutlinedButton(onPressed: _working ? null : () => _run(_benchmark),
+                      child: const Text('选择图片测试 OCR 与翻译')),
+                  ],
+                ),
+                ExpansionTile(
+                  title: const Text('模型管理'),
+                  subtitle: Text(ocr.installed ? '本地 OCR 已安装' : '本地 OCR 尚未安装'),
+                  tilePadding: EdgeInsets.zero,
+                  children: [
+                    ListTile(
+                      title: const Text('本地 OCR 模型'),
+                      subtitle: Text(ocr.installed ? '${ComicOcrModelManager.bundle.displayName} · 已安装' :
+                          'PP-OCRv6 · 约 ${(ComicOcrModelManager.bundle.bytes / 1048576).round()} MB'),
+                    ),
+                    ValueListenableBuilder<ComicOcrModelProgress>(
+                      valueListenable: ocr.progress,
+                      builder: (_, progress, __) => Column(children: [
+                        if (ocr.installing) LinearProgressIndicator(value: progress.fraction),
+                        TextButton.icon(
+                          onPressed: _working || ocr.installing ? null : () => _run(() async {
+                            if (ocr.installed) { await ocr.remove(); } else { await ocr.install(); }
+                            ComicTranslationRuntime.instance.configure();
+                          }),
+                          icon: Icon(ocr.installed ? Icons.delete_outline : Icons.download_outlined),
+                          label: Text(ocr.installed ? '移除 OCR 模型' : '下载并校验 OCR 模型'),
+                        ),
+                      ]),
+                    ),
+                    const Text('文字在设备上识别。远程后端仅接收识别出的文字；本地后端在设备上翻译。'),
+                  ],
+                ),
+                const SizedBox(height: 16),
                 FilledButton(onPressed: _working ? null : () => _run(_save), child: const Text('保存')),
-                if (_backend != 'none') OutlinedButton(
-                  onPressed: _working ? null : () => _run(_testConnection), child: const Text('测试文字翻译')),
-                OutlinedButton(onPressed: _working ? null : () => _run(_benchmark),
-                  child: const Text('选择图片测试 OCR 与翻译')),
                 if (_working) const LinearProgressIndicator(),
                 if (_result != null) SelectableText(_result!),
               ],
