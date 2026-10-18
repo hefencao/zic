@@ -234,6 +234,22 @@ final class ComicSourceChip extends StatelessWidget {
   }
 }
 
+final class ComicFilterPanel extends StatelessWidget {
+  const ComicFilterPanel({super.key, required this.child});
+
+  static const rowHeight = 40.0;
+  static const horizontalInset = 12.0;
+  static const bottomInset = 8.0;
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    type: MaterialType.transparency,
+    child: SafeArea(top: false, child: child),
+  );
+}
+
 final class _ComicSourceBar extends StatelessWidget {
   const _ComicSourceBar({required this.chips, this.barKey});
 
@@ -241,23 +257,19 @@ final class _ComicSourceBar extends StatelessWidget {
   final Key? barKey;
 
   @override
-  Widget build(BuildContext context) => Material(
+  Widget build(BuildContext context) => ComicFilterPanel(
     key: barKey,
-    elevation: 3,
-    child: SafeArea(
-      top: false,
-      child: SizedBox(
-        height: 58,
-        child: chips.isEmpty
-            ? const Center(child: Text('没有已启用的漫画源'))
-            : ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                scrollDirection: Axis.horizontal,
-                itemCount: chips.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) => chips[index],
-              ),
-      ),
+    child: SizedBox(
+      height: ComicFilterPanel.rowHeight,
+      child: chips.isEmpty
+          ? const Center(child: Text('没有已启用的漫画源'))
+          : ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              scrollDirection: Axis.horizontal,
+              itemCount: chips.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => chips[index],
+            ),
     ),
   );
 }
@@ -1970,7 +1982,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   ),
                 Positioned(
                   left: 12,
-                  bottom: 12,
+                  bottom: ComicFilterPanel.rowHeight + ComicFilterPanel.bottomInset +
+                    MediaQuery.paddingOf(context).bottom + 12,
                   child: _SourceSearchKeyboardInset(
                     onKeyboardHiding: () => _searchFocus.unfocus(),
                     child: ValueListenableBuilder<bool>(
@@ -1980,23 +1993,28 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                     ),
                   ),
                 ),
+                Positioned(
+                  left: ComicFilterPanel.horizontalInset,
+                  right: ComicFilterPanel.horizontalInset,
+                  bottom: ComicFilterPanel.bottomInset,
+                  child: RepaintBoundary(
+                    child: _SourceSwitcher(
+                      sources: widget.sources,
+                      activeSourceId: widget.activeSourceId,
+                      onSelected: (sourceId) {
+                        _exitAggregateSearchView();
+                        _aggregateSearch.setEnabled(
+                          false,
+                          _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+                        );
+                        widget.onSourceSelected(sourceId);
+                      },
+                      externalPlugins: widget.externalPlugins,
+                      onExternalPluginRetry: widget.onExternalPluginRetry,
+                    ),
+                  ),
+                ),
               ],
-            ),
-          ),
-          RepaintBoundary(
-            child: _SourceSwitcher(
-              sources: widget.sources,
-              activeSourceId: widget.activeSourceId,
-              onSelected: (sourceId) {
-                _exitAggregateSearchView();
-                _aggregateSearch.setEnabled(
-                  false,
-                  _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
-                );
-                widget.onSourceSelected(sourceId);
-              },
-              externalPlugins: widget.externalPlugins,
-              onExternalPluginRetry: widget.onExternalPluginRetry,
             ),
           ),
         ],

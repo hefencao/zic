@@ -1019,7 +1019,7 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   网格/列表 MUST 使用首页同一纵向滚动视口按需挂载，MUST NOT 一次展开所有历史封面；横向书架 MUST 在固定高度内横向按需构建。布局切换 MUST 保持最近阅读排序、canonical 封面身份与既有单击续读/长按详情动作，MUST NOT 新增缓存或网络调度 owner。
 - 书架 MUST 使用单行工具区与底部分类标签；来源按钮 MUST 按全部→本地→远程循环切换。“全部分类” MUST 显示为“全部”，并允许在书架设置中隐藏。隐藏且没有有效选中分类时 MUST 使用首个分类；无分类时 MUST 仍显示全部漫画。
 - 底部插件药丸 MUST 支持单击单选及长按直接追加/取消该组，MUST NOT 进入持久多选模式或显示完成多选；“所有”之后 MUST 优先显示已有本地分组。选择使用当前代表的 sourceId 集合，多项按 OR 过滤，与分类/来源类型按 AND 过滤；切换来源类型 MUST 清除插件筛选。分组 MUST 只读取已有插件元数据/来源投影，不得为筛选激活插件；归属未知/冲突时 MUST 保留独立来源。
-  分类和插件 MUST 使用完全透明的悬浮面板，MUST NOT 有背景、阴影或顶部提示杠；插件行 MUST 位于分类行下方，滚动末项 MUST 可完整移到面板上方。分类栏上划 MUST 展开、下划 MUST 收起；MUST NOT 显示常驻多选、折叠和隐藏图标。新安装 MUST 缺省收起；展开状态 MUST 保存并可在设置切换，旧展开值 MUST 保留、旧折叠/隐藏 MUST 迁移为收起。收起 MUST 保留筛选与漫画管理复选；设置 MUST 可清除插件筛选，有效时 MUST 显示状态标记。既有排序、管理命令与 canonical 封面身份 MUST 保持。
+  书架分类/插件与漫画源底栏 MUST 共用全透明悬浮面板样式、紧凑行高和边距，MUST NOT 有背景、阴影或顶部提示杠；插件行 MUST 位于分类行下方，滚动末项 MUST 可完整移到面板上方。分类栏上划 MUST 展开、下划 MUST 收起；MUST NOT 显示常驻多选、折叠和隐藏图标。新安装 MUST 缺省收起；展开状态 MUST 保存并可在设置切换，旧展开值 MUST 保留、旧折叠/隐藏 MUST 迁移为收起。收起 MUST 保留筛选与漫画管理复选；设置 MUST 可清除插件筛选，有效时 MUST 显示状态标记。既有排序、管理命令与 canonical 封面身份 MUST 保持。
   “保存过滤” MUST 缺省关闭；来源、分类和插件选择仅在开启后才持久化并跨重启恢复，关闭 MUST 清除持久过滤但保留当前选择。展开状态、视图、排序和“全部”分类显示偏好 MUST 独立保存；无效或已删除分类 MUST 沿用现有回退规则。
 - 首次书架操作提示 MUST 使用可复用的目标高亮/背景变暗和方向箭头组件，支持实际手势完成与明确关闭，尊重减少动态效果。提示 MUST 等偏好加载、书架当前可见和目标布局就绪后显示；确认 MUST 持久保存且不重复弹出，MUST NOT 意外触发遮罩下的按钮。
 
@@ -1083,7 +1083,7 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   exact durable binding仍按 `DownloadId` 裁决；canonical physical artifact由持久physical owner独立管理，MUST NOT重写provider URI/validator或硬迁移版本正文。
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于右侧，不得以“取消”文字按钮替代关闭 X。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。
-  原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。
+  原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。底部来源栏 MUST 与书架共用透明紧凑悬浮面板，搜索控件 MUST 位于其上方，滚动末项 MUST 可完整移到面板上方。
   固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
   Mihon MUST 完整保留来源原生页，MUST NOT按 host limit 截断或用返回项数推算 native page；来源声明的 nextOffset MUST严格前进且仅在 hasMore=true 时合法。
   Presentation MUST使用声明的下一请求坐标，未声明时继续按 global offset + 返回项数推进；空页但有下一坐标时 MUST保留下一页入口。

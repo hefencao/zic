@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Share a fully transparent floating filter panel between the source browser and bookshelf. Use compact 40 logical-pixel rows and matching insets, reduce the expanded shelf panel from 104 to 80 pixels, and keep the search control and scroll endings clear of the source pills.
+
 - Use a fully transparent floating bookshelf filter panel without a background, shadow or drag handle. Place Local immediately after All, toggle plugin inclusion directly on long press without a selection mode, and add opt-in persistence for source/category/plugin filters while retaining independent display preferences.
 
 - Cycle bookshelf source kinds on tap, reveal plugin pills below categories with an upward swipe, and persist the expansion switch with legacy visibility migration. Remove permanent filter/fold/hide icons. Add reusable dimmed gesture guidance with animated arrows, reduced-motion support and persisted first-use acknowledgement.

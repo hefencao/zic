@@ -212,7 +212,7 @@ Debug 模式下，首页顶栏应用名的单击打开翻译测试，长按打�
 Debug 首页的一键 Trace 导出位于顶栏应用名之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
 阅读历史的网格、横向书架或列表布局以及列数/行数由 `AppPreferencesController` 持久化，标题旁打开布局面板，即选即用，独立于书架视图偏好。默认三列网格，可选二至六列；窄窗口按最小封面宽度减少实际列数但不覆盖保存值。横向书架可选一至三行，列表显示保存的章节与页码。
 首页使用统一纵向 sliver 视口，网格/列表按需挂载；横向书架仅在固定高度内横向滚动，不通过 shrink-wrap 展开整份历史。布局只改变呈现，历史仍按最近阅读排序，沿用 canonical artwork 身份与既有点击续读、长按详情命令。
-书架上方使用单行工具区承载来源类型、排序、视图、管理与设置。来源按钮按全部→本地→远程循环切换。底部完全透明的悬浮面板承载分类和其下方的插件行，无背景、阴影或展开提示杠；滚动内容保留底部余量，末项可完整移到面板上方。`AppPreferencesController` 保存“全部”分类的显示选择；隐藏时无有效选中分类则使用首个分类，没有分类时仍显示全部漫画。
+书架上方使用单行工具区承载来源类型、排序、视图、管理与设置。来源按钮按全部→本地→远程循环切换。底部分类和其下方的插件行与漫画源页共用 `ComicFilterPanel`，统一全透明、无背景/阴影及紧凑行高和悬浮边距；无展开提示杠。滚动底部余量随展开状态匹配，末项可完整移到面板上方。`AppPreferencesController` 保存“全部”分类的显示选择；隐藏时无有效选中分类则使用首个分类，没有分类时仍显示全部漫画。
 插件药丸复用 `ComicSourceChip` 呈现，“所有”之后优先显示已有本地分组，其余分组保持原顺序。`groupBookshelfPlugins` 只读取书架来源、已安装插件的声明/保存 sourceIds 及现有 active owner，不触发安装、激活或网络；同插件来源合并，本地来源归为一项，未知或归属冲突的来源保留独立项。筛选使用药丸当前代表的 sourceId 集合，多项取并集，再与分类和来源类型交叉；切换来源类型清空插件筛选。
 分类栏上划展开插件行、下划收起；展开状态由 `AppPreferencesController` 持久化，也可在书架设置切换。新安装缺省收起；旧展开值迁移为展开，旧折叠/隐藏值迁移为收起。收起保留筛选与漫画管理复选。药丸点击单选，长按直接追加或取消该组，不保留多选模式或完成按钮。来源、分类、插件选择由同一偏好 owner 管理；“保存过滤”缺省关闭，仅保留本次选择，开启后才持久化并在重启恢复；关闭时清除持久过滤但保留当前选择。设置可清除插件筛选，工具区保留状态标记，分组独立观察既有来源投影窄信号。
 `showOperationHint` 是可复用的方向手势遮罩，仅负责高亮目标、背景变暗、箭头动画和手势/关闭结果；尊重减少动态效果，关闭时释放动画。首次书架提示等偏好加载与当前路由/分类栏布局就绪后显示，按现有展开状态演示收起或展开；确认记录由 `AppPreferencesController` 保存，展示与设置不新增资源或调度 owner。
@@ -616,7 +616,7 @@ exact partial绑定自己的DownloadId/URI validator；
 Mihon 映射 Popular/Latest，标准展示顺序为“最新 → 热门”，Venera 枚举 explore loader 与 category target；
 Venera `multiPartPage.load(null)` 返回完整分组集合，由 runtime adapter 按全局 offset 切片并仅以集合余量判定结束；普通页码 load 和既有 loadNext 游标合同独立，不修改插件返回对象或新增分页缓存。
 首次进入来源时默认 section必须由**当前展示顺序的第一项**决定，不能另写 `popular` 默认值，也不能让最近一次 catalog cache projection反向选择 UI。
-未来用户自定义排序若改变Presentation顺序，同一排序owner自然同时决定默认焦点。漫画源页、搜索和迁移复用同一来源chip：颜色区分原生/Mihon/Venera，不显示勾或插件名称；选中后才显示JS/拼图图标，不占内容分类行。调用者仍各自拥有单选、多选及插件激活策略。
+未来用户自定义排序若改变Presentation顺序，同一排序owner自然同时决定默认焦点。漫画源页、搜索和迁移复用同一来源chip：颜色区分原生/Mihon/Venera，不显示勾或插件名称；选中后才显示JS/拼图图标，不占内容分类行。调用者仍各自拥有单选、多选及插件激活策略。漫画源底部来源栏和书架筛选共用全透明 `ComicFilterPanel`，按统一紧凑行高与边距悬浮在内容上，无背景或阴影；搜索按钮位于来源栏上方，滚动末项保留避让余量。
 `FilterableBrowsableComicSource` 只投影来源真实 `FilterList`：空 schema即没有筛选入口，不另设容易漂移的 capability布尔值。
 Mihon bridge必须按官方 `Filter.Header/Separator/Select/Text/CheckBox/TriState/Group/Sort` 基类继承关系识别插件自定义子类，
 并保留 Group层次与 Text/Sort状态；用户修改以类型化 filter-state override进入 search request。筛选是否激活是独立 Presentation/request mode：

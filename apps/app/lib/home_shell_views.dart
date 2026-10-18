@@ -1165,7 +1165,8 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   double get _shelfScrollBottomPadding =>
-      52 + (widget.preferences.shelfPluginFilterExpanded ? 52 : 0) + 24;
+      ComicFilterPanel.rowHeight * (widget.preferences.shelfPluginFilterExpanded ? 2 : 1) +
+      ComicFilterPanel.bottomInset + MediaQuery.paddingOf(context).bottom + 16;
 
   Widget _buildShelfGallery(List<LibraryComic> comics) {
     return LayoutBuilder(
@@ -1379,9 +1380,9 @@ extension _HomeShellViews on _HomeShellState {
 
   Widget _buildShelfPluginBar(List<LibraryComic> libraryComics) {
     final groups = _shelfPluginGroups(libraryComics);
-    return SizedBox(key: bookshelfPluginBarKey, height: 52, child: Row(children: [
+    return SizedBox(key: bookshelfPluginBarKey, height: ComicFilterPanel.rowHeight, child: Row(children: [
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), children: [
+        padding: const EdgeInsets.symmetric(horizontal: 12), children: [
           ChoiceChip(key: bookshelfAllPluginsKey, label: const Text('所有'),
             selected: _shelfPluginSourceIds.isEmpty, showCheckmark: false,
             onSelected: (_) => widget.preferences.setShelfPluginSourceIds(const [])),
@@ -1437,8 +1438,7 @@ extension _HomeShellViews on _HomeShellState {
     });
   }
 
-  Widget _buildShelfFilters(List<LibraryComic> libraryComics) => Material(
-    type: MaterialType.transparency,
+  Widget _buildShelfFilters(List<LibraryComic> libraryComics) => ComicFilterPanel(
     child: Column(mainAxisSize: MainAxisSize.min, children: [
       Semantics(key: _shelfCategoryHintTarget, container: true,
         label: widget.preferences.shelfPluginFilterExpanded ? '下划收起插件筛选' : '上划展开插件筛选',
@@ -1465,10 +1465,10 @@ extension _HomeShellViews on _HomeShellState {
   );
 
   Widget _buildShelfCategoryBar() => SizedBox(
-    key: bookshelfCategoryBarKey, height: 52,
+    key: bookshelfCategoryBarKey, height: ComicFilterPanel.rowHeight,
     child: Row(children: [
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), children: [
+        padding: const EdgeInsets.fromLTRB(12, 0, 4, 0), children: [
           if (_shelfShowAllCategory) ...[
             ChoiceChip(key: bookshelfAllCategoryKey, label: const Text('全部'),
               selected: _selectedCategoryId == null, showCheckmark: false,
@@ -1518,7 +1518,8 @@ extension _HomeShellViews on _HomeShellState {
         Expanded(child: Stack(fit: StackFit.expand, children: [
           comics.isEmpty ? const Center(child: Text('当前筛选下没有漫画'))
             : _shelfViewMode == ShelfViewPreference.gallery ? _buildShelfGallery(comics) : _buildShelfList(comics),
-          Positioned(left: 12, right: 12, bottom: 8, child: _buildShelfFilters(libraryComics)),
+          Positioned(left: ComicFilterPanel.horizontalInset, right: ComicFilterPanel.horizontalInset,
+            bottom: ComicFilterPanel.bottomInset, child: _buildShelfFilters(libraryComics)),
         ])),
       ]);
     },
