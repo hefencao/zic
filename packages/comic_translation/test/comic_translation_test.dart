@@ -696,13 +696,20 @@ void main() {
     final started = Completer<void>();
     final gate = Completer<void>();
     final translator = _TranslationEngine(translateStarted: started, translateGate: gate);
+    final opened = <ComicTranslationPageIdentity>[];
     final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
-      engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()..translationEngine = translator);
+      engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()..translationEngine = translator,
+      inputResolver: ComicTranslationInputResolver(openFile: (identity) async {
+        opened.add(identity);
+        return ComicTranslationInputFile(path: File.fromUri(Uri.parse(identity.imageKey)).path,
+          release: () {});
+      }));
     addTearDown(() async {
       if (!gate.isCompleted) gate.complete();
       await session.close();
     });
     session.reportPages(current: [pages.first], near: [pages.last], interaction: ComicTranslationInteraction.idle);
+    expect(opened.first, pages.first, reason: 'current input must start before speculative cache reads');
     await started.future.timeout(const Duration(seconds: 2));
     final prepared = await _waitFor(session, pages.last).timeout(const Duration(seconds: 2));
     expect(gate.isCompleted, isFalse);

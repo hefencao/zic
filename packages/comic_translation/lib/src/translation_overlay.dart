@@ -70,6 +70,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
   String? _hiddenBlockKey;
   _ComicTranslationPainter? _painter;
   _ComicTranslationPainter? _displayPainter;
+  ComicTranslationArtifact? _paintedArtifact;
   Uint8List? _cleanOverlayBytes;
   bool _cleanOverlayReady = false;
   bool _cleanOverlayOpaque = false;
@@ -96,6 +97,8 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     _layoutScheduled = true;
     _layoutTaskPainter = painter;
     _layoutTaskSize = size;
+    final watch = Stopwatch()..start();
+    var workMicros = 0;
     widget.onDiagnostic?.call({
       'stage': 'layout-started', 'contentDigest': painter.artifact.contentDigest,
       'width': size.width, 'height': size.height,
@@ -103,6 +106,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
       'retained': retained,
     });
     void scheduleNext() {
+      // Progress during scrolling, transitions and progress indicators too.
       unawaited(
         SchedulerBinding.instance.scheduleTask<void>(() {
           if (!mounted || generation != _layoutGeneration) return;
@@ -111,12 +115,13 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
             var done = false;
             final prepared = painter.layoutCache.prepared.length;
             final budget = Stopwatch()..start();
-            // Amortize idle-task scheduling without occupying a whole frame.
+            // Amortize task scheduling without occupying a whole frame.
             // Publish each completed balloon before continuing the next one.
             do {
               done = painter.prepareNext(size);
             } while (!done && budget.elapsedMicroseconds < 1500 &&
                 painter.layoutCache.prepared.length == prepared);
+            workMicros += budget.elapsedMicroseconds;
             completed = done;
           } catch (error, stack) {
             if (mounted && generation == _layoutGeneration) {
@@ -139,15 +144,31 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
             _RetainedTranslationLayouts.remember(painter, size);
             widget.onDiagnostic?.call({'stage': 'layout-ready',
               'contentDigest': painter.artifact.contentDigest,
+              'elapsedMicros': watch.elapsedMicroseconds, 'workMicros': workMicros,
               'blocks': painter.describePreparedBlocks()});
             setState(() {});
           }
           if (!completed) scheduleNext();
-        }, Priority.idle),
+        }, Priority.animation),
       );
     }
 
     scheduleNext();
+  }
+
+  void _reportFirstPaint(_ComicTranslationPainter painter) {
+    if (_paintedArtifact == painter.artifact) return;
+    _paintedArtifact = painter.artifact;
+    final identity = widget.identity.key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.identity.key != identity ||
+          _displayPainter?.artifact != painter.artifact) {
+        return;
+      }
+      widget.onDiagnostic?.call({'stage': 'overlay-first-frame',
+        'contentDigest': painter.artifact.contentDigest,
+        'preparedBlocks': painter.layoutCache.prepared.length});
+    });
   }
 
   void _markCleanOverlayReady(Uint8List bytes) {
@@ -205,6 +226,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
     _hiddenBlockKey = null;
     _painter = null;
     _displayPainter = null;
+    _paintedArtifact = null;
     _layoutGeneration++;
     _layoutScheduled = false;
     _layoutTaskPainter = null;
@@ -229,6 +251,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
       _cancelLayoutPreparation();
       _painter = null;
       _displayPainter = null;
+      _paintedArtifact = null;
     }
     final identity = widget.identity;
     final pageState = session != null && session.enabled ? session.listenable(identity) : null;
@@ -254,6 +277,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                     _cancelLayoutPreparation();
                     _painter = null;
                     _displayPainter = null;
+                    _paintedArtifact = null;
                     return const SizedBox();
                   }
                   final background = Theme.of(context).colorScheme.surface.withValues(
@@ -301,6 +325,7 @@ class _ComicTranslationOverlayState extends State<ComicTranslationOverlay> {
                           bodyFontRatio: bodyFontRatio,
                           hasCleanOverlay: hasCleanOverlay,
                           hiddenBlockKey: _hiddenBlockKey,
+                          onPaint: _reportFirstPaint,
                           layoutCache: layoutCompatible &&
                                   current.background == background &&
                                   current.foreground == foreground

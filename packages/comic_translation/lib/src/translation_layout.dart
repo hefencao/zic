@@ -44,6 +44,7 @@ class _TranslationLayoutCache {
   final Set<String> skipped = {};
   final Map<String, _VerticalGlyphMetrics> verticalMetrics = {};
   final Map<String, double> horizontalWidthFactors = {};
+  final Map<(_TranslationTextLane, int, int), List<int>> verticalPartitions = {};
   List<_TranslationLayoutBlock>? blocks;
   Rect? imageRect;
   _TranslationLayoutSearch? search;
@@ -77,6 +78,7 @@ class _ComicTranslationPainter extends CustomPainter {
   final double? bodyFontRatio;
   final bool hasCleanOverlay;
   final String? hiddenBlockKey;
+  final ValueChanged<_ComicTranslationPainter> onPaint;
   final _TranslationLayoutCache layoutCache;
   final List<_TranslationHitRegion> _hitRegions = [];
   Map<String, _TranslationLayoutPlan> get _layoutPlans => layoutCache.plans;
@@ -98,6 +100,7 @@ class _ComicTranslationPainter extends CustomPainter {
     required this.bodyFontRatio,
     required this.hasCleanOverlay,
     required this.hiddenBlockKey,
+    required this.onPaint,
     required this.layoutCache,
   }) : super(repaint: layoutCache.repaint);
 
@@ -108,13 +111,15 @@ class _ComicTranslationPainter extends CustomPainter {
               background: background, foreground: foreground, fontScale: fontScale,
               bodyFontRatio: bodyFontRatio, hasCleanOverlay: hasCleanOverlay,
               hiddenBlockKey: hiddenBlockKey, layoutCache: layoutCache,
+              onPaint: onPaint,
             );
 
   _ComicTranslationPainter withLayoutCache(_TranslationLayoutCache cache) =>
       _ComicTranslationPainter(pageIndex: pageIndex, artifact: artifact, fit: fit,
         alignment: alignment, background: background, foreground: foreground,
         fontScale: fontScale, bodyFontRatio: bodyFontRatio,
-        hasCleanOverlay: hasCleanOverlay, hiddenBlockKey: hiddenBlockKey, layoutCache: cache);
+        hasCleanOverlay: hasCleanOverlay, hiddenBlockKey: hiddenBlockKey,
+        onPaint: onPaint, layoutCache: cache);
 
   Rect _imageRect(Size size) {
     final sourceSize = Size(
@@ -137,6 +142,7 @@ class _ComicTranslationPainter extends CustomPainter {
     layoutCache.skipped.clear();
     layoutCache.search = null;
     layoutCache.render = null;
+    layoutCache.verticalPartitions.clear();
   }
 
   void _syncVisualStyle() {
@@ -212,6 +218,7 @@ class _ComicTranslationPainter extends CustomPainter {
         imageRect,
       );
       layoutCache.search = null;
+      layoutCache.verticalPartitions.clear();
       return false;
     }
     for (final block in _layoutBlocks()) {
@@ -291,6 +298,7 @@ class _ComicTranslationPainter extends CustomPainter {
       }
       canvas.restore();
     }
+    if (_hitRegions.isNotEmpty) onPaint(this);
   }
 
   String? blockAt(Offset position) {

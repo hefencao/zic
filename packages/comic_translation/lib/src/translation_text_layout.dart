@@ -114,8 +114,9 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
   _MeasuredTranslationLayout _measureLayout(
     _TranslationLayoutBlock block,
     _TranslationLayoutOption option,
-    double fontSize,
-  ) {
+    double fontSize, {
+    bool fitOnly = false,
+  }) {
     var area = 0.0;
     var lineCount = 0;
     var sentencePenalty = 0.0;
@@ -127,12 +128,13 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
       if (block.orientation == ComicTextOrientation.vertical) {
         final glyphs = _verticalGlyphs(lane.text);
         final metrics = _verticalGlyphMetrics(glyphs);
-        final layout = _verticalLayout(lane, fontSize, metrics);
+        final layout = _verticalLayout(lane, fontSize, metrics, fitOnly: fitOnly);
         if (!layout.fits) {
           return const _MeasuredTranslationLayout(
             false, 0, 0, 0, 0, 0, Rect.zero, [],
           );
         }
+        if (fitOnly) continue;
         laneLayouts.add(layout);
         area += glyphs.length * layout.cellWidth * layout.cellHeight;
         final laneContent = Rect.fromCenter(
@@ -160,17 +162,24 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
         );
         if (paragraph.width > lane.bounds.width ||
             paragraph.height > lane.bounds.height) {
+          paragraph.dispose();
           return const _MeasuredTranslationLayout(
             false, 0, 0, 0, 0, 0, Rect.zero, [],
           );
         }
+        if (fitOnly) {
+          paragraph.dispose();
+          continue;
+        }
         final metrics = paragraph.computeLineMetrics();
+        final paragraphHeight = paragraph.height;
+        paragraph.dispose();
         final contentWidth = metrics.map((line) => line.width).reduce(math.max);
-        area += contentWidth * paragraph.height;
+        area += contentWidth * paragraphHeight;
         final laneContent = Rect.fromCenter(
           center: lane.bounds.center,
           width: contentWidth,
-          height: paragraph.height,
+          height: paragraphHeight,
         );
         contentBounds = contentBounds?.expandToInclude(laneContent) ??
             laneContent;
@@ -192,7 +201,7 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
       sentencePenalty,
       orphanPenalty,
       flowPenalty,
-      contentBounds!,
+      contentBounds ?? Rect.zero,
       laneLayouts,
     );
   }
@@ -240,13 +249,17 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
     final key = glyphs.join();
     final widthFactor = layoutCache.horizontalWidthFactors.putIfAbsent(
       key,
-      () => glyphs.fold(0.0, (width, glyph) => width +
-          _glyph(
-            glyph,
-            100,
-            fillColor: const Color(0xff000000),
-            outline: const Color(0xffffffff),
-          ).width) / glyphs.length / 100,
+      () => glyphs.fold(0.0, (width, glyph) {
+        final painter = _glyph(
+          glyph,
+          100,
+          fillColor: const Color(0xff000000),
+          outline: const Color(0xffffffff),
+        );
+        final result = width + painter.width;
+        painter.dispose();
+        return result;
+      }) / glyphs.length / 100,
     );
     final averageWidth = widthFactor * fontSize;
     return lineWidths.map((width) =>
@@ -302,6 +315,7 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
       );
       width = math.max(width, painter.width);
       height = math.max(height, painter.height);
+      painter.dispose();
     }
     return _VerticalGlyphMetrics(width / sampleSize, height / sampleSize);
   });
@@ -315,21 +329,25 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
   _VerticalTextLayout _verticalLayout(
     _TranslationTextLane lane,
     double fontSize,
-    _VerticalGlyphMetrics glyphMetrics,
-  ) {
+    _VerticalGlyphMetrics glyphMetrics, {
+    bool fitOnly = false,
+  }) {
     final glyphs = _verticalGlyphs(lane.text);
     final cellWidth = fontSize * glyphMetrics.widthFactor * 1.08;
     final cellHeight = fontSize * glyphMetrics.heightFactor * 1.04;
     final rows = math.max(1, (lane.bounds.height / cellHeight).floor());
     final columnCapacity = (lane.bounds.width / cellWidth).floor();
     final minimumColumns = (glyphs.length / rows).ceil();
-    if (cellHeight > lane.bounds.height || minimumColumns > columnCapacity) {
+    final fits = cellHeight <= lane.bounds.height && minimumColumns <= columnCapacity;
+    // The binary search only needs capacity. Choosing punctuation-aware column
+    // breaks at its tiny lower bound does not affect whether the text fits.
+    if (!fits || fitOnly) {
       return _VerticalTextLayout(
         cellWidth: cellWidth,
         cellHeight: cellHeight,
         rows: rows,
         columnLengths: const [],
-        fits: false,
+        fits: fits,
         breakPenalty: 0,
         orphanPenalty: 0,
       );
@@ -338,7 +356,8 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
     var bestScore = double.infinity;
     final maximumColumns = math.min(columnCapacity, glyphs.length);
     for (var columns = minimumColumns; columns <= maximumColumns; columns++) {
-      final lengths = _verticalPartition(glyphs, lane, rows, columns);
+      final lengths = layoutCache.verticalPartitions.putIfAbsent((lane, rows, columns),
+        () => _verticalPartition(glyphs, lane, rows, columns));
       final breakPenalty = _breakPenalty(
         _columnBoundaries(lengths),
         lane.breakHints,
@@ -389,11 +408,13 @@ extension _ComicTranslationTextLayout on _ComicTranslationPainter {
       final next = <int, _VerticalPartition>{};
       final remainingColumns = columns - column - 1;
       for (final entry in states.entries) {
+        final minimumEnd = math.max(entry.key + 1,
+          glyphs.length - remainingColumns * rows);
         final maximumEnd = math.min(
           entry.key + rows,
           glyphs.length - remainingColumns,
         );
-        for (var end = entry.key + 1; end <= maximumEnd; end++) {
+        for (var end = minimumEnd; end <= maximumEnd; end++) {
           final length = end - entry.key;
           var cost = (length / glyphs.length - expected[column]).abs() *
               columns;

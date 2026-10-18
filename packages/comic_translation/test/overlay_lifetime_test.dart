@@ -64,7 +64,7 @@ void main() {
     await session.close();
   });
 
-  testWidgets('resolved taps find a translated bubble and restore it after peeking', (tester) async {
+  testWidgets('translations and resolved taps remain available during another animation', (tester) async {
     const identity = ComicTranslationPageIdentity(
       imageKey: 'image', sourceKey: 'test', comicId: 'comic', chapterId: 'chapter',
       pageIndex: 0, mediaKind: ComicTranslationMediaKind.staticImage,
@@ -86,20 +86,30 @@ void main() {
       ),
     );
     final controller = ComicTranslationOverlayController();
+    final diagnostics = <Map<String, Object?>>[];
     const mediaKey = ValueKey('peek-media');
-    await tester.pumpWidget(MaterialApp(home: Center(child: SizedBox(width: 300, height: 400,
-      child: ComicTranslationOverlay(session: session, identity: identity, controller: controller,
-        child: const ColoredBox(key: mediaKey, color: Colors.white)),
-    ))));
-    final bounds = tester.getRect(find.byKey(mediaKey));
-    final point = bounds.topLeft + Offset(bounds.width * 0.5, bounds.height * 0.4);
-    var consumed = false;
-    for (var i = 0; i < 100 && !consumed; i++) {
-      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-      await tester.pump(const Duration(milliseconds: 16));
-      consumed = controller.peekSourceAt(point);
-    }
-    expect(consumed, isTrue, reason: 'a painted translated bubble must accept its resolved tap');
+    late Offset point;
+    await tester.runAsync(() async {
+      await tester.pumpWidget(MaterialApp(home: Center(child: SizedBox(width: 300, height: 400,
+        child: ComicTranslationOverlay(session: session, identity: identity, controller: controller,
+          onDiagnostic: diagnostics.add,
+          child: const Stack(fit: StackFit.expand, children: [
+            ColoredBox(key: mediaKey, color: Colors.white),
+            Align(alignment: Alignment.topCenter, child: SizedBox.square(
+              dimension: 20, child: CircularProgressIndicator())),
+          ])),
+      ))));
+      final bounds = tester.getRect(find.byKey(mediaKey));
+      point = bounds.topLeft + Offset(bounds.width * 0.5, bounds.height * 0.4);
+      var consumed = false;
+      for (var i = 0; i < 100 && !consumed; i++) {
+        await Future<void>.delayed(Duration.zero);
+        await tester.pump(const Duration(milliseconds: 16));
+        consumed = controller.peekSourceAt(point);
+      }
+      expect(consumed, isTrue, reason: 'a painted translated bubble must accept its resolved tap');
+    });
+    expect(controller.peekSourceAt(point), isTrue);
     await tester.pump(const Duration(milliseconds: 600));
     expect(controller.peekSourceAt(point), isFalse, reason: 'the translated block is hidden during peek');
     await tester.pump(const Duration(seconds: 1));
@@ -109,6 +119,7 @@ void main() {
     await tester.pump();
     expect(controller.peekSourceAt(point), isTrue,
       reason: 'a font-metric update must keep the painted translation until its replacement is ready');
+    expect(diagnostics.where((event) => event['stage'] == 'overlay-first-frame'), hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
     await session.close();

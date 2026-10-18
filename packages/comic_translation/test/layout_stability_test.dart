@@ -25,7 +25,9 @@ void main() {
         themeAnimationDuration: Duration.zero,
         home: Center(child: SizedBox(width: width, height: 400,
           child: ComicTranslationOverlay(session: session, identity: identity,
-            onDiagnostic: events.add, child: const ColoredBox(color: Colors.white)))),
+            onDiagnostic: (event) {
+              if (event['stage'] != 'overlay-first-frame') events.add(event);
+            }, child: const ColoredBox(color: Colors.white)))),
       ));
       try {
         session.reportPages(current: [identity], interaction: ComicTranslationInteraction.idle);

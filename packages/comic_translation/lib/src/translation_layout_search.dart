@@ -70,7 +70,7 @@ class _TranslationLayoutSearch {
       _optionInitialized = true;
     }
     if (!_lowerBoundFits) {
-      if (painter._measureLayout(block, option, _low).fits) {
+      if (painter._measureLayout(block, option, _low, fitOnly: true).fits) {
         _lowerBoundFits = true;
       } else {
         _low /= 2;
@@ -79,7 +79,7 @@ class _TranslationLayoutSearch {
     }
     if (_binaryStep < 9) {
       final middle = (_low + _high) / 2;
-      if (painter._measureLayout(block, option, middle).fits) {
+      if (painter._measureLayout(block, option, middle, fitOnly: true).fits) {
         _low = middle;
       } else {
         _high = middle;

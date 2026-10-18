@@ -182,19 +182,17 @@ final class ComicTranslationSession {
       if (artifact != null) _updateFontScale(artifact);
     }
     final delay = policy.submissionDelay(interaction);
-    // Reading complete cached results is independent of the interaction delay
-    // and serial inference. The idle current page already owns the serial path.
-    for (final identity in [
-      if (_running || delay != Duration.zero) ..._current,
-      ..._near.take(policy.cachePrefetchPages),
-    ]) {
-      _probeCache(identity);
+    // Start current input preparation before speculative neighbours. Reading
+    // cached results still bypasses interaction delay and another inference.
+    if (_running || delay != Duration.zero) {
+      for (final identity in _current) _probeCache(identity);
     }
     if (delay == Duration.zero) {
       _submitVisiblePages();
     } else {
       _submissionTimer = Timer(delay, _submitVisiblePages);
     }
+    for (final identity in _near.take(policy.cachePrefetchPages)) _probeCache(identity);
   }
 
   void imageReady(ComicTranslationPageIdentity identity) {
@@ -348,7 +346,8 @@ final class ComicTranslationSession {
         // probe for the same page between this lookup and serial processing.
         _processing = ticket;
         try {
-          await _cacheProbes[item.identity.key];
+          final probe = _cacheProbes[item.identity.key];
+          if (probe != null) await probe;
           if (!_isActive(ticket) || _states[item.identity.key]?.value.artifact != null) continue;
           await _process(item.identity, ticket);
         } catch (error) {
@@ -460,6 +459,7 @@ final class ComicTranslationSession {
       }
       if (!_isActive(ticket)) return;
       _diagnose(identity, {'stage': 'ocr-cache', 'hit': cachedOcr != null,
+        'elapsedMicros': watch.elapsedMicroseconds,
         'cacheOnly': cacheOnly,
         'contentDigest': input.contentDigest, 'sourceLanguage': language,
         'engineId': ocrEngine.id, 'modelVersion': ocrEngine.modelVersion});
@@ -550,6 +550,7 @@ final class ComicTranslationSession {
       }
       final translationCached = translation != null;
       _diagnose(identity, {'stage': 'translation-cache', 'hit': translationCached,
+        'elapsedMicros': watch.elapsedMicroseconds,
         'cacheOnly': cacheOnly,
         'ocrDigest': digest, 'sourceLanguage': sourceOcr.sourceLanguage,
         'engineId': engineIdentity.id, 'modelVersion': translationModelVersion,
