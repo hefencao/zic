@@ -52,3 +52,13 @@ if [[ "$READER_CADENCE_DIAGNOSTICS" == 1 ]]; then
   FLUTTER_ARGS+=(--dart-define=ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true)
 fi
 flutter build apk --no-pub "${FLUTTER_ARGS[@]}"
+# This command produces split APKs. Remove only its obsolete universal output
+# so a previous direct Flutter build cannot be mistaken for the current result.
+rm -f -- "$APP/build/app/outputs/flutter-apk/app-$MODE.apk"
+python3 - "$APP/build/app/outputs/flutter-apk" "$MODE" <<'PY'
+from pathlib import Path
+import sys
+for abi in ('arm64-v8a', 'armeabi-v7a', 'x86_64'):
+    apk = Path(sys.argv[1]) / f'app-{abi}-{sys.argv[2]}.apk'
+    print(f'{apk}: {apk.stat().st_size / 1048576:.2f} MiB')
+PY

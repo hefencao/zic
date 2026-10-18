@@ -9,6 +9,7 @@ INTERNET_PERMISSION = (
     '    <uses-permission android:name="android.permission.INTERNET" />'
 )
 JITPACK_URL = 'https://jitpack.io'
+OPENCV_REPOSITORY_MARKER = 'includeModule("dev.zic.thirdparty", "opencv-ocr")'
 
 
 def configure_android_manifest(manifest: Path) -> bool:
@@ -85,6 +86,25 @@ def _first_existing(*paths: Path) -> Path | None:
     return next((path for path in paths if path.is_file()), None)
 
 
+def _inject_opencv_repository(text: str, owner_block: str) -> tuple[str, bool]:
+    owner_open, owner_close = _block_bounds(text, owner_block)
+    opening, closing = _block_bounds(text, 'repositories', start=owner_open + 1, end=owner_close)
+    if OPENCV_REPOSITORY_MARKER in text[opening:closing]:
+        return text, False
+    line_start = text.rfind('\n', 0, opening) + 1
+    indent = re.match(r'[ \t]*', text[line_start:opening]).group(0) + '    '
+    lines = [
+        'maven {',
+        '    url = uri((System.getenv("ZIC_TRANSLATION_NATIVE_ROOT")',
+        '        ?: rootProject.projectDir.toPath().resolve("../../../.deps/comic_translation_native").normalize().toString())',
+        '        + "/opencv-runtime/maven")',
+        f'    content {{ {OPENCV_REPOSITORY_MARKER} }}',
+        '}',
+    ]
+    repository = '\n'.join(indent + line for line in lines)
+    return text[:opening + 1] + '\n' + repository + text[opening + 1:], True
+
+
 def configure_android_dependency_repositories(android_dir: Path) -> tuple[Path, ...]:
     settings = _first_existing(
         android_dir / 'settings.gradle.kts',
@@ -117,7 +137,8 @@ def configure_android_dependency_repositories(android_dir: Path) -> tuple[Path, 
         owner_block=owner_block,
         kotlin_dsl=target.suffix == '.kts',
     )
-    if not injected and canonicalized == text:
+    updated, opencv_injected = _inject_opencv_repository(updated, owner_block)
+    if not injected and not opencv_injected and canonicalized == text:
         return ()
     target.write_text(updated, encoding='utf-8')
     return (target,)
@@ -151,9 +172,9 @@ def main() -> int:
     changed_repositories = configure_android_dependency_repositories(android_dir)
     if changed_repositories:
         for target in changed_repositories:
-            print(f'Android JitPack repository: updated ({target})')
+            print(f'Android dependency repositories: updated ({target})')
     else:
-        print(f'Android JitPack repository: already configured ({android_dir})')
+        print(f'Android dependency repositories: already configured ({android_dir})')
     return 0
 
 

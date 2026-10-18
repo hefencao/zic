@@ -1,5 +1,11 @@
 allprojects {
     repositories {
+        maven {
+            url = uri((System.getenv("ZIC_TRANSLATION_NATIVE_ROOT")
+                ?: rootProject.projectDir.toPath().resolve("../../../.deps/comic_translation_native").normalize().toString())
+                + "/opencv-runtime/maven")
+            content { includeModule("dev.zic.thirdparty", "opencv-ocr") }
+        }
         maven { url = uri("https://jitpack.io") }
         google()
         mavenCentral()

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PINNED = {
@@ -63,6 +64,11 @@ def main() -> None:
         ], check=True)
     if not valid_runtime(runtime):
         raise SystemExit('Pinned Android translation runtime is incomplete or invalid')
+    subprocess.run([
+        sys.executable,
+        str(ROOT / 'tool/comic_translation/prepare_opencv_android.py'),
+        '--native-root', str(native),
+    ], check=True)
     print('Android translation runtime: pinned arm64 dependencies available')
 
 

@@ -9,6 +9,10 @@ import struct
 import zipfile
 from pathlib import Path
 
+from comic_translation.prepare_opencv_android import (
+    COMMIT as OPENCV_COMMIT, MODULES as OPENCV_MODULES, validate_library,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -65,6 +69,13 @@ def main() -> None:
         assert b'Java_dev_zic_comic_1translation_LocalTranslationCpu_capabilities' in probe
         assert apk.read('assets/flutter_assets/packages/comic_translation/assets/opencc.txt')
         notices = 'assets/third_party/comic_translation'
+        opencv = json.loads(apk.read(f'{notices}/opencv-versions.json'))
+        assert opencv['commit'] == OPENCV_COMMIT
+        assert opencv['modules'] == list(OPENCV_MODULES)
+        for name in apk.namelist():
+            if name.startswith('lib/') and name.endswith('/libopencv_java4.so'):
+                validate_library(apk.read(name), name.split('/')[1])
+        assert apk.read(f'{notices}/opencv/opencv.txt')
         versions = json.loads(apk.read(f'{notices}/versions.json'))
         assert versions['llama']['commit'] == '031ddb2e08962837c899374297da75f91cc0157d'
         patch = ROOT / 'tool/comic_translation/patches/llama-q2_0c-kleidiai.patch'
@@ -73,7 +84,7 @@ def main() -> None:
             assert apk.read(f'{notices}/dependencies/{name}')
         assert apk.read('assets/third_party/comic_translation/vibevenera-LICENSE')
         assert apk.read('assets/third_party/comic_translation/ppocr-LICENSE')
-    print('Android translation APK closure: OCR, JNI, Hy-MT, CTranslate2, OpenCC and notices OK')
+    print('Android translation APK closure: OCR, optimized OpenCV modules, JNI, Hy-MT, CTranslate2, OpenCC and notices OK')
 
 
 if __name__ == '__main__':

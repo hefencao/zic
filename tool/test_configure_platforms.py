@@ -6,6 +6,7 @@ from pathlib import Path
 
 from configure_platforms import (
     JITPACK_URL,
+    OPENCV_REPOSITORY_MARKER,
     configure_android_dependency_repositories,
     configure_android_manifest,
 )
@@ -59,6 +60,8 @@ def _test_groovy_repository(android: Path) -> None:
     assert text.count(JITPACK_URL) == 1
     assert 'https://www.jitpack.io' not in text
     assert f'maven {{ url "{JITPACK_URL}" }}' in text
+    assert text.count(OPENCV_REPOSITORY_MARKER) == 1
+    assert '/opencv-runtime/maven' in text
 
 
 def _test_kotlin_settings_repository(android: Path) -> None:
@@ -96,6 +99,8 @@ def _test_kotlin_settings_repository(android: Path) -> None:
     assert settings_text.count(JITPACK_URL) == 1
     assert f'maven {{ url = uri("{JITPACK_URL}") }}' in settings_text
     assert JITPACK_URL not in build_text
+    assert settings_text.count(OPENCV_REPOSITORY_MARKER) == 1
+    assert OPENCV_REPOSITORY_MARKER not in build_text
 
 
 def main() -> int:

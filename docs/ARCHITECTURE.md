@@ -1166,6 +1166,7 @@ OCR 按图片 SHA-256、引擎/模型和源语言缓存；译文另含目标语�
 
 Android PaddleOCR 与 Hy-MT/CTranslate2 各用独立单线程 worker；原图只通过文件路径传入，
 不在 Flutter UI isolate 或 Android platform 主线程推理。
+Android 翻译依赖由 `prepare_translation_android.py` 统一准备。OpenCV 使用固定 4.13.0 源码，仅编译 core/imgproc/imgcodecs/photo 与 Java JNI，保持上游 Java API、图像编解码、SIMD 分派、TBB 和各 ABI 的 HAL 加速；ONNX 与本地翻译内核独立保留。生成包进入仅限该模块的本地 Maven 仓库，源码、构建配方及 AAR 摘要校验通过才复用；三 ABI 与原始 OCR JNI 接口核对完成后整体发布，许可和版本随 APK 保存。
 OCR worker 在识别前应用当前阈值与扩展倍率，更新预处理/后处理配置并复用已加载的 detector 与识别器，不为参数调整重新加载模型。
 Hy-MT 的优化运行库加载前，独立的基线 ISA JNI 库读取系统 AArch64 HWCAP，核对 ARMv8.2-A/DotProd 编译所需能力；不兼容设备显式报告不可用，不加载优化库或回退远程。
 Engine registry 拥有模型租约与有界保温：相同翻译后端跨漫画/语言复用，OCR 仅切换识别器并保留 detector。关闭翻译或退出会话后，最后租约等待已提交调用实际退出，再保温最多 30 秒；超时回收。

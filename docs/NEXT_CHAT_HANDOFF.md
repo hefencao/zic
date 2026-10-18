@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 本地 `main`（翻译分支已合并，未推送），`0.31.0-dev.331` / `0.31.0+331`：翻译第三项单击开关/长按。左下无字开关，指示器上行附标签；原文/指示器均用独立药丸，单阶段图标，页号仅Debug；指示器保存不重建。可见缓存不等推理，Trace命中/调用。日/韩记忆、模型复用/回收；静态/覆层/NetLane保留。Debug首页测试/诊断；dev.196、dev.197、dev.198、dev.199、dev.203 bounded 语义不变。
-- 翻译：面板管漫画开关/原文/OCR/内容/指示器，右上全局；目标/模型/档位/上下文/预读仅全局，高级折叠。当前输入先于邻页；worker缓存，LRU8页/128块；帧间1.5ms排版不等动画，竖排容量试算/断行复用保持结果；Trace就绪/布局/首帧分离。App整章逐页保存/共享推理，companion归下载。空单元补译一次；HTTP追加2/5/15/30/60秒，Retry-After≤5分，等待不占NetLane，离页/后台唤醒。验收见状态JSON。
+- 翻译：面板管漫画开关/原文/OCR/内容/指示器，右上全局；模型/目标/档位/上下文/预读仅全局。当前输入先于邻页；worker缓存、LRU8页/128块；帧间1.5ms排版/容量试算/断行复用；Trace分就绪/布局/首帧。OpenCV裁剪OCR模块，保留SIMD/TBB/HAL，推理内核不变。整章逐页保存/共享推理，companion归下载。空单元补译一次；HTTP重试2/5/15/30/60秒、Retry-After≤5分，等待不占NetLane、离页/后台唤醒。验收见状态JSON。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
