@@ -28,12 +28,15 @@ extension _HomeShellViews on _HomeShellState {
         preference.sourceKind != ComicSourceKind.remote) {
       return false;
     }
+    if (_shelfPluginSourceIds.isNotEmpty && !_shelfPluginSourceIds.contains(comic.sourceId)) {
+      return false;
+    }
     final categoryId = _selectedCategoryId;
     return categoryId == null || preference.categoryIds.contains(categoryId);
   }
 
-  List<LibraryComic> _filteredShelfComics() {
-    final comics = _libraryComics
+  List<LibraryComic> _filteredShelfComics({List<LibraryComic>? libraryComics}) {
+    final comics = (libraryComics ?? _libraryComics)
         .where(_matchesShelfFilter)
         .toList(growable: true);
     switch (_sortMode) {
@@ -608,6 +611,77 @@ extension _HomeShellViews on _HomeShellState {
           content: Text('已归档“${comic.title}”（已清理下载文件与正文缓存）'),
         ),
       );
+    }
+  }
+
+  Future<void> _createCategory() async {
+    var draft = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('新建分类'),
+        content: TextFormField(
+          onChanged: (value) => draft = value,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '分类名称'),
+          onFieldSubmitted: (value) =>
+              Navigator.of(context).pop(value.trim()),
+        ),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.of(context).pop(),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(draft.trim()),
+                child: const Text('创建'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final category = LibraryCategory(
+      categoryId: 'category-${now.microsecondsSinceEpoch}',
+      name: name,
+      sortOrder: _categories.length,
+      createdAt: now,
+    );
+    await _librarySession.upsertCategory(category);
+  }
+
+  Future<void> _deleteCategory(LibraryCategory category) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除分类'),
+        content: Text('删除“${category.name}”？漫画本身不会被删除。'),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.of(context).pop(false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _librarySession.removeCategory(category.categoryId);
+    if (_shelfCategoryId == category.categoryId) {
+      if (mounted) {
+        _setState(() => _selectedCategoryId = null);
+      } else {
+        _selectedCategoryId = null;
+      }
     }
   }
 
@@ -1209,190 +1283,222 @@ extension _HomeShellViews on _HomeShellState {
     );
   }
 
-  Widget _buildBookshelfPage() {
-    final comics = _filteredShelfComics();
-    return Column(
-      key: bookshelfPageKey,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-          child: Column(
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: SegmentedButton<ShelfSourceFilter>(
-                      key: bookshelfSourceFilterKey,
-                      showSelectedIcon: false,
-                      segments: const <ButtonSegment<ShelfSourceFilter>>[
-                        ButtonSegment(
-                          value: ShelfSourceFilter.all,
-                          label: Text('全部'),
-                        ),
-                        ButtonSegment(
-                          value: ShelfSourceFilter.local,
-                          label: Text('本地'),
-                        ),
-                        ButtonSegment(
-                          value: ShelfSourceFilter.remote,
-                          label: Text('远程'),
-                        ),
-                      ],
-                      selected: <ShelfSourceFilter>{_sourceFilter},
-                      onSelectionChanged: (selection) {
-                        widget.preferences.setShelfSourceFilter(
-                          selection.single,
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    key: bookshelfManageKey,
-                    onPressed: () =>
-                        _setState(_shelfManagement.toggleManaging),
-                    icon: Icon(
-                      _shelfManagement.managing ? Icons.done : Icons.edit_outlined,
-                    ),
-                    label: Text(_shelfManagement.managing ? '完成' : '管理'),
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: <Widget>[
-                  IconButton(
-                    key: bookshelfViewKey,
-                    tooltip: _shelfViewMode == ShelfViewPreference.gallery
-                        ? '切换列表视图'
-                        : '切换画廊视图',
-                    onPressed: () => widget.preferences.setShelfView(
-                      _shelfViewMode == ShelfViewPreference.gallery
-                          ? ShelfViewPreference.list
-                          : ShelfViewPreference.gallery,
-                    ),
-                    icon: Icon(
-                      _shelfViewMode == ShelfViewPreference.gallery
-                          ? Icons.view_list_outlined
-                          : Icons.grid_view_outlined,
-                    ),
-                  ),
-                  PopupMenuButton<LibrarySortMode>(
-                    key: bookshelfSortKey,
-                    tooltip: '排序方式',
-                    initialValue: _sortMode,
-                    onSelected: widget.preferences.setShelfSortMode,
-                    itemBuilder: (context) => <PopupMenuEntry<LibrarySortMode>>[
-                      _sortMenuItem(
-                        bookshelfSortRecentKey,
-                        LibrarySortMode.recent,
-                        '最近更新',
-                      ),
-                      _sortMenuItem(
-                        bookshelfSortTitleKey,
-                        LibrarySortMode.title,
-                        '标题',
-                      ),
-                      _sortMenuItem(
-                        bookshelfSortPageCountKey,
-                        LibrarySortMode.pageCount,
-                        '页数',
-                      ),
-                      _sortMenuItem(
-                        bookshelfSortCustomKey,
-                        LibrarySortMode.custom,
-                        '自定义排序',
-                      ),
-                    ],
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          const Icon(Icons.sort),
-                          const SizedBox(width: 6),
-                          Text(_librarySortLabel(_sortMode)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            children: <Widget>[
-              ChoiceChip(
-                label: const Text('全部分类'),
-                selected: _selectedCategoryId == null,
-                showCheckmark: false,
-                onSelected: (_) => _setState(() {
-                  _selectedCategoryId = null;
-                  _clearManagedSelection();
-                }),
-              ),
-              const SizedBox(width: 8),
-              for (final category in _categories) ...<Widget>[
-                GestureDetector(
-                  onLongPress:
-                      _shelfManagement.managing ? () => _deleteCategory(category) : null,
-                  child: ChoiceChip(
-                    label: Text(category.name),
-                    selected: _selectedCategoryId == category.categoryId,
-                    showCheckmark: false,
-                    onSelected: (_) => _setState(() {
-                      _selectedCategoryId = category.categoryId;
-                      _clearManagedSelection();
-                    }),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              ActionChip(
-                key: bookshelfAddCategoryKey,
-                avatar: const Icon(Icons.add, size: 18),
-                label: const Text('分类'),
-                onPressed: _createCategory,
-              ),
-              if (_selectedCategoryId != null) ...<Widget>[
-                const SizedBox(width: 8),
-                ActionChip(
-                  key: bookshelfAddComicToCategoryKey,
-                  avatar: const Icon(Icons.playlist_add, size: 18),
-                  label: const Text('添加漫画'),
-                  onPressed: _addComicsToSelectedCategory,
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (_shelfManagement.managing &&
-            _shelfManagement.batchSelecting &&
-            _shelfManagement.hasSelection)
-          _buildBatchManagementBar(),
-        if (_shelfManagement.managing && _sortMode == LibrarySortMode.custom)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(12, 2, 12, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text('使用封面左上角拖动柄调整顺序；长按封面进入批量选择'),
-            ),
-          ),
-        Expanded(
-          child: comics.isEmpty
-              ? const Center(child: Text('当前筛选下没有漫画'))
-              : _shelfViewMode == ShelfViewPreference.gallery
-                  ? _buildShelfGallery(comics)
-                  : _buildShelfList(comics),
-        ),
-      ],
+  Widget _buildBookshelfToolbar(int count) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+    child: Row(children: [
+      Expanded(child: PopupMenuButton<ShelfSourceFilter>(
+        key: bookshelfSourceFilterKey,
+        tooltip: '来源类型',
+        initialValue: _sourceFilter,
+        onSelected: widget.preferences.setShelfSourceFilter,
+        itemBuilder: (_) => [for (final entry in const {
+          ShelfSourceFilter.all: '全部', ShelfSourceFilter.local: '本地', ShelfSourceFilter.remote: '远程',
+        }.entries) CheckedPopupMenuItem(value: entry.key,
+          checked: _sourceFilter == entry.key, child: Text(entry.value))],
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(children: [
+            const Icon(Icons.filter_list, size: 20),
+            const SizedBox(width: 6),
+            Flexible(child: Text('${switch (_sourceFilter) {
+              ShelfSourceFilter.all => '全部', ShelfSourceFilter.local => '本地',
+              ShelfSourceFilter.remote => '远程',
+            }} · $count', maxLines: 1, overflow: TextOverflow.ellipsis)),
+            const Icon(Icons.arrow_drop_down, size: 18),
+          ])),
+      )),
+      PopupMenuButton<LibrarySortMode>(
+        key: bookshelfSortKey,
+        tooltip: '排序：${_librarySortLabel(_sortMode)}',
+        icon: const Icon(Icons.sort),
+        initialValue: _sortMode,
+        onSelected: widget.preferences.setShelfSortMode,
+        itemBuilder: (_) => [
+          _sortMenuItem(bookshelfSortRecentKey, LibrarySortMode.recent, '最近更新'),
+          _sortMenuItem(bookshelfSortTitleKey, LibrarySortMode.title, '标题'),
+          _sortMenuItem(bookshelfSortPageCountKey, LibrarySortMode.pageCount, '页数'),
+          _sortMenuItem(bookshelfSortCustomKey, LibrarySortMode.custom, '自定义排序'),
+        ],
+      ),
+      IconButton(key: bookshelfViewKey,
+        tooltip: _shelfViewMode == ShelfViewPreference.gallery ? '切换列表视图' : '切换画廊视图',
+        onPressed: () => widget.preferences.setShelfView(
+          _shelfViewMode == ShelfViewPreference.gallery ? ShelfViewPreference.list : ShelfViewPreference.gallery),
+        icon: Icon(_shelfViewMode == ShelfViewPreference.gallery
+          ? Icons.view_list_outlined : Icons.grid_view_outlined)),
+      IconButton(key: bookshelfManageKey,
+        tooltip: _shelfManagement.managing ? '完成书架管理' : '管理书架',
+        onPressed: () => _setState(_shelfManagement.toggleManaging),
+        icon: Icon(_shelfManagement.managing ? Icons.done : Icons.edit_outlined)),
+      IconButton(key: bookshelfSettingsKey,
+        tooltip: '书架设置',
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => BookshelfSettingsScreen(preferences: widget.preferences))),
+        icon: Badge(isLabelVisible: _shelfPluginSourceIds.isNotEmpty,
+          child: const Icon(Icons.tune))),
+    ]),
+  );
+
+  List<BookshelfPluginGroup> _shelfPluginGroups(List<LibraryComic> libraryComics) {
+    final identityQuery = _catalogIdentityQuery();
+    final sourceIds = <String>{};
+    final localSourceIds = <String>{};
+    for (final comic in libraryComics) {
+      final preference = _preferenceForComic(comic,
+        aliases: identityQuery.aliasesFor(comic.sourceId, comic.comicId));
+      if (!preference.inShelf) continue;
+      final local = preference.sourceKind == ComicSourceKind.local;
+      if ((_sourceFilter == ShelfSourceFilter.local && !local) ||
+          (_sourceFilter == ShelfSourceFilter.remote && local)) {
+        continue;
+      }
+      sourceIds.add(comic.sourceId);
+      if (local) localSourceIds.add(comic.sourceId);
+    }
+    sourceIds.addAll(_shelfPluginSourceIds);
+    return groupBookshelfPlugins(
+      sourceIds: sourceIds,
+      localSourceIds: localSourceIds,
+      sources: _sourceProjection.sources,
+      installed: _externalSources.activeController?.installed ?? const [],
+      activeOwnerOfSource: _externalSources.ownerOfSource,
     );
   }
+
+  void _selectShelfPlugin(BookshelfPluginGroup group, {bool longPress = false}) {
+    if (longPress) _setState(() => _shelfPluginMultiSelect = true);
+    final next = _shelfPluginSourceIds.toSet();
+    final selected = group.sourceIds.any(next.contains);
+    if (longPress) {
+      next.addAll(group.sourceIds);
+    } else if (_shelfPluginMultiSelect) {
+      selected ? next.removeAll(group.sourceIds) : next.addAll(group.sourceIds);
+    } else {
+      next.clear();
+      if (!selected || !_shelfPluginSourceIds.every(group.sourceIds.contains)) {
+        next.addAll(group.sourceIds);
+      }
+    }
+    widget.preferences.setShelfPluginSourceIds(next);
+  }
+
+  Widget _buildShelfPluginBar(List<LibraryComic> libraryComics) {
+    final visibility = widget.preferences.shelfPluginBarVisibility;
+    if (visibility == ShelfPluginBarVisibility.hidden) return const SizedBox.shrink();
+    final groups = _shelfPluginGroups(libraryComics);
+    final selectedCount = groups.where((group) => group.sourceIds.any(_shelfPluginSourceIds.contains)).length;
+    final hide = IconButton(key: bookshelfPluginHideKey, tooltip: '隐藏插件筛选',
+      onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.hidden),
+      icon: const Icon(Icons.visibility_off_outlined, size: 20));
+    if (visibility == ShelfPluginBarVisibility.collapsed) {
+      return SizedBox(key: bookshelfPluginBarKey, height: 44, child: Row(children: [
+        const SizedBox(width: 8),
+        Expanded(child: Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+          key: bookshelfPluginExpandKey,
+          onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.expanded),
+          icon: const Icon(Icons.expand_less, size: 20),
+          label: Text(selectedCount == 0 ? '插件筛选' : '插件筛选 · 已选 $selectedCount'),
+        ))),
+        hide,
+        const SizedBox(width: 4),
+      ]));
+    }
+    return SizedBox(key: bookshelfPluginBarKey, height: 52, child: Row(children: [
+      IconButton(tooltip: _shelfPluginMultiSelect ? '完成插件多选' : '插件多选（也可长按药丸）',
+        onPressed: () => _setState(() => _shelfPluginMultiSelect = !_shelfPluginMultiSelect),
+        icon: Icon(_shelfPluginMultiSelect ? Icons.done_all : Icons.filter_alt_outlined, size: 20)),
+      Expanded(child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(vertical: 6), children: [
+          ChoiceChip(key: bookshelfAllPluginsKey, label: const Text('所有插件'),
+            selected: _shelfPluginSourceIds.isEmpty, showCheckmark: false,
+            onSelected: (_) {
+              _setState(() => _shelfPluginMultiSelect = false);
+              widget.preferences.setShelfPluginSourceIds(const []);
+            }),
+          for (final group in groups) ...[
+            const SizedBox(width: 8),
+            GestureDetector(onLongPress: () => _selectShelfPlugin(group, longPress: true),
+              child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 144),
+                child: ComicSourceChip(chipKey: bookshelfPluginChoiceKey(group.id),
+                  label: group.label, format: group.format,
+                  accent: switch (group.format) {
+                    ExternalComicPluginFormat.mihonExtension => Colors.green,
+                    ExternalComicPluginFormat.veneraJavaScript => Colors.blue,
+                    null => Theme.of(context).colorScheme.primary,
+                  },
+                  multiple: _shelfPluginMultiSelect,
+                  selected: group.sourceIds.any(_shelfPluginSourceIds.contains),
+                  onSelected: (_) => _selectShelfPlugin(group),
+                ))),
+          ],
+        ])),
+      IconButton(key: bookshelfPluginCollapseKey, tooltip: '折叠插件筛选',
+        onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.collapsed),
+        icon: const Icon(Icons.expand_more, size: 20)),
+      hide,
+    ]));
+  }
+
+  Widget _buildShelfCategoryBar() => SizedBox(
+    key: bookshelfCategoryBarKey, height: 52,
+    child: Row(children: [
+      Expanded(child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), children: [
+          if (_shelfShowAllCategory) ...[
+            ChoiceChip(key: bookshelfAllCategoryKey, label: const Text('全部'),
+              selected: _selectedCategoryId == null, showCheckmark: false,
+              onSelected: (_) => _setState(() {
+                _selectedCategoryId = null;
+                _clearManagedSelection();
+              })),
+            const SizedBox(width: 8),
+          ],
+          for (final category in _categories) ...[
+            GestureDetector(
+              onLongPress: _shelfManagement.managing ? () => _deleteCategory(category) : null,
+              child: ChoiceChip(label: Text(category.name), showCheckmark: false,
+                selected: _selectedCategoryId == category.categoryId,
+                onSelected: (_) => _setState(() {
+                  _selectedCategoryId = category.categoryId;
+                  _clearManagedSelection();
+                }))),
+            const SizedBox(width: 8),
+          ],
+          if (!_shelfShowAllCategory && _categories.isEmpty)
+            const Center(child: Text('暂无分类')),
+        ])),
+      if (_selectedCategoryId != null)
+        IconButton(key: bookshelfAddComicToCategoryKey, tooltip: '添加漫画到当前分类',
+          onPressed: _addComicsToSelectedCategory, icon: const Icon(Icons.playlist_add)),
+      IconButton(key: bookshelfAddCategoryKey, tooltip: '新建分类',
+        onPressed: _createCategory, icon: const Icon(Icons.add)),
+      const SizedBox(width: 4),
+    ]),
+  );
+
+  Widget _buildBookshelfPage() => ListenableBuilder(
+    listenable: widget.preferences,
+    builder: (context, _) {
+      final libraryComics = _libraryComics;
+      final comics = _filteredShelfComics(libraryComics: libraryComics);
+      return Column(key: bookshelfPageKey, children: [
+        _buildBookshelfToolbar(comics.length),
+        if (_shelfManagement.managing && _shelfManagement.batchSelecting && _shelfManagement.hasSelection)
+          _buildBatchManagementBar(),
+        if (_shelfManagement.managing && _sortMode == LibrarySortMode.custom)
+          const Padding(padding: EdgeInsets.fromLTRB(12, 2, 12, 4),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('使用封面左上角拖动柄调整顺序；长按封面进入批量选择'))),
+        Expanded(child: comics.isEmpty ? const Center(child: Text('当前筛选下没有漫画'))
+          : _shelfViewMode == ShelfViewPreference.gallery ? _buildShelfGallery(comics) : _buildShelfList(comics)),
+        Material(elevation: 3, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          StreamBuilder<void>(stream: _externalSources.sourceProjectionChanges,
+            builder: (_, _) => _buildShelfPluginBar(libraryComics)),
+          _buildShelfCategoryBar(),
+        ])),
+      ]);
+    },
+  );
+
 }
 
 final class _LazyIndexedPage extends StatefulWidget {

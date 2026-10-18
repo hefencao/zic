@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Consolidate bookshelf tools into one row and anchor categories and plugin filters at the bottom. Rename the all-category tab to All with an optional hide setting. Support persistent collapsible/hidden plugin pills, single selection or long-press multi-selection, and offline grouping from existing plugin metadata without activation. Folding preserves active filters and comic selection.
+
 - Move Home quick Trace export next to the zic title. Make reading history configurable as a vertical cover grid (2–6 columns), a horizontal shelf (1–3 rows), or a progress list, with a three-column grid by default. Persist Home choices independently, adapt narrow windows without changing saved columns, and build history lazily.
 
 - Open the reader translation panel on tap and keep enablement on its in-panel switch. Rename the processing-only indicator mode to Auto, make it the default without replacing saved preferences, and move model management before translation service and advanced settings before translation tests.

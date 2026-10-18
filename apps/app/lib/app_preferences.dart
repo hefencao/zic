@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
@@ -11,6 +12,8 @@ import 'debug_trace_export_destination.dart';
 enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
+
+enum ShelfPluginBarVisibility { expanded, collapsed, hidden }
 
 enum HomeHistoryLayout { grid, carousel, list }
 
@@ -177,6 +180,9 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfSourceFilter _shelfSourceFilter = ShelfSourceFilter.all;
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
+  bool _shelfShowAllCategory = true;
+  ShelfPluginBarVisibility _shelfPluginBarVisibility = ShelfPluginBarVisibility.expanded;
+  Set<String> _shelfPluginSourceIds = <String>{};
   HomeHistoryLayout _homeHistoryLayout = HomeHistoryLayout.grid;
   int _homeHistoryColumns = 3;
   int _homeHistoryRows = 2;
@@ -238,6 +244,9 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfSourceFilter get shelfSourceFilter => _shelfSourceFilter;
   LibrarySortMode get shelfSortMode => _shelfSortMode;
   ShelfViewPreference get shelfView => _shelfView;
+  bool get shelfShowAllCategory => _shelfShowAllCategory;
+  ShelfPluginBarVisibility get shelfPluginBarVisibility => _shelfPluginBarVisibility;
+  Set<String> get shelfPluginSourceIds => Set<String>.unmodifiable(_shelfPluginSourceIds);
   HomeHistoryLayout get homeHistoryLayout => _homeHistoryLayout;
   int get homeHistoryColumns => _homeHistoryColumns;
   int get homeHistoryRows => _homeHistoryRows;
@@ -403,6 +412,13 @@ final class AppPreferencesController extends ChangeNotifier {
       values['shelfView'],
       _shelfView,
     );
+    _shelfShowAllCategory = _boolValue(values['shelfShowAllCategory'], true);
+    _shelfPluginBarVisibility = _enumByName(
+      ShelfPluginBarVisibility.values,
+      values['shelfPluginBarVisibility'],
+      _shelfPluginBarVisibility,
+    );
+    _shelfPluginSourceIds = _decodeIdentitySet(values['shelfPluginSourceIds'], maxItems: 5000);
     _homeHistoryLayout = _enumByName(
       HomeHistoryLayout.values,
       values['homeHistoryLayout'],
@@ -605,8 +621,28 @@ final class AppPreferencesController extends ChangeNotifier {
   }
 
   void setShelfSourceFilter(ShelfSourceFilter value) {
-    if (_disposed || _shelfSourceFilter == value) return;
+    if (_disposed || (_shelfSourceFilter == value && _shelfPluginSourceIds.isEmpty)) return;
     _shelfSourceFilter = value;
+    _shelfPluginSourceIds = <String>{};
+    _changed();
+  }
+
+  void setShelfShowAllCategory(bool value) {
+    if (_disposed || _shelfShowAllCategory == value) return;
+    _shelfShowAllCategory = value;
+    _changed();
+  }
+
+  void setShelfPluginBarVisibility(ShelfPluginBarVisibility value) {
+    if (_disposed || _shelfPluginBarVisibility == value) return;
+    _shelfPluginBarVisibility = value;
+    _changed();
+  }
+
+  void setShelfPluginSourceIds(Iterable<String> values) {
+    final next = values.where((value) => value.isNotEmpty).take(5000).toSet();
+    if (_disposed || setEquals(_shelfPluginSourceIds, next)) return;
+    _shelfPluginSourceIds = next;
     _changed();
   }
 
@@ -1042,6 +1078,9 @@ final class AppPreferencesController extends ChangeNotifier {
       'shelfSourceFilter': _shelfSourceFilter.name,
       'shelfSortMode': _shelfSortMode.name,
       'shelfView': _shelfView.name,
+      'shelfShowAllCategory': _shelfShowAllCategory,
+      'shelfPluginBarVisibility': _shelfPluginBarVisibility.name,
+      'shelfPluginSourceIds': _shelfPluginSourceIds.toList(growable: false),
       'homeHistoryLayout': _homeHistoryLayout.name,
       'homeHistoryColumns': _homeHistoryColumns,
       'homeHistoryRows': _homeHistoryRows,

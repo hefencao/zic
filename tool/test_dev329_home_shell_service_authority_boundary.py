@@ -16,6 +16,7 @@ def require(body: str, marker: str, label: str) -> None:
 
 
 home = text("apps/app/lib/home_shell.dart")
+home_views = text("apps/app/lib/home_shell_views.dart")
 handoff = text("apps/app/lib/home_shell_service_handoff.dart")
 source_migration = text("apps/app/lib/home_shell_source_migration.dart")
 session = text("apps/app/lib/home_library_session.dart")
@@ -214,6 +215,9 @@ if "_librarySession.persistProgress(" in reader_progress_body:
 for marker, label in (
     ("_librarySession.upsertCategory(category);", "category upsert delegation"),
     ("_librarySession.removeCategory(category.categoryId);", "category removal delegation"),
+):
+    require(home_views, marker, label)
+for marker, label in (
     ("_librarySession.persistPreferences(updatedPreferences);", "comic preference delegation"),
     ("_librarySession.persistSourcePreference(updated);", "source preference delegation"),
     ("_librarySession.persistReadState(state);", "read-state delegation"),
@@ -231,7 +235,7 @@ for forbidden in (
     "_librarySession.replaceSourcePreference(",
     "_librarySession.replaceReadState(",
 ):
-    if forbidden in home:
+    if forbidden in home or forbidden in home_views:
         raise SystemExit(
             f"HomeShell bypasses HomeLibrarySession library mutation owner: {forbidden}"
         )

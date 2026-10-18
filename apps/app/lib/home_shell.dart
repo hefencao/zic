@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
@@ -17,6 +18,7 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'app_preferences.dart';
 import 'app_settings_screen.dart';
+import 'bookshelf_filters.dart';
 import 'comic_details.dart' as details;
 import 'comic_translation_test_screen.dart';
 import 'dialog_actions.dart';
@@ -75,6 +77,15 @@ const bookshelfSortRecentKey = ValueKey<String>('bookshelf-sort-recent');
 const bookshelfSortTitleKey = ValueKey<String>('bookshelf-sort-title');
 const bookshelfSortPageCountKey = ValueKey<String>('bookshelf-sort-page-count');
 const bookshelfViewKey = ValueKey<String>('bookshelf-view');
+const bookshelfSettingsKey = ValueKey<String>('bookshelf-settings');
+const bookshelfCategoryBarKey = ValueKey<String>('bookshelf-category-bar');
+const bookshelfAllCategoryKey = ValueKey<String>('bookshelf-all-category');
+const bookshelfPluginBarKey = ValueKey<String>('bookshelf-plugin-bar');
+const bookshelfPluginExpandKey = ValueKey<String>('bookshelf-plugin-expand');
+const bookshelfPluginCollapseKey = ValueKey<String>('bookshelf-plugin-collapse');
+const bookshelfPluginHideKey = ValueKey<String>('bookshelf-plugin-hide');
+const bookshelfAllPluginsKey = ValueKey<String>('bookshelf-all-plugins');
+Key bookshelfPluginChoiceKey(String id) => ValueKey<String>('bookshelf-plugin:$id');
 const bookshelfAddCategoryKey = ValueKey<String>('bookshelf-add-category');
 const bookshelfAddComicToCategoryKey =
     ValueKey<String>('bookshelf-add-comic-to-category');
@@ -225,7 +236,18 @@ final class _HomeShellState extends State<HomeShell> {
   String? _sourceSearchQuery;
   int _sourceSearchRevision = 0;
   late ShelfSourceFilter _sourceFilter;
-  String? _selectedCategoryId;
+  late Set<String> _shelfPluginSourceIds;
+  late bool _shelfShowAllCategory;
+  bool _shelfPluginMultiSelect = false;
+  String? _shelfCategoryId;
+  String? get _selectedCategoryId {
+    if (_shelfCategoryId != null &&
+        _categories.any((category) => category.categoryId == _shelfCategoryId)) {
+      return _shelfCategoryId;
+    }
+    return !_shelfShowAllCategory && _categories.isNotEmpty ? _categories.first.categoryId : null;
+  }
+  set _selectedCategoryId(String? value) => _shelfCategoryId = value;
   late LibrarySortMode _sortMode;
   late ShelfViewPreference _shelfViewMode;
   late bool _debugModeEnabled;
@@ -319,6 +341,8 @@ final class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     _sourceFilter = widget.preferences.shelfSourceFilter;
+    _shelfPluginSourceIds = widget.preferences.shelfPluginSourceIds;
+    _shelfShowAllCategory = widget.preferences.shelfShowAllCategory;
     _sortMode = widget.preferences.shelfSortMode;
     _shelfViewMode = widget.preferences.shelfView;
     _debugModeEnabled = widget.preferences.debugModeEnabled;
@@ -590,10 +614,14 @@ final class _HomeShellState extends State<HomeShell> {
     _syncReaderPrefetchReadBudget();
     _syncCachedCarrierTrustMode();
     final sourceFilter = widget.preferences.shelfSourceFilter;
+    final pluginSourceIds = widget.preferences.shelfPluginSourceIds;
+    final showAllCategory = widget.preferences.shelfShowAllCategory;
     final sortMode = widget.preferences.shelfSortMode;
     final shelfView = widget.preferences.shelfView;
     final debugModeEnabled = widget.preferences.debugModeEnabled;
     if (_sourceFilter == sourceFilter &&
+        setEquals(_shelfPluginSourceIds, pluginSourceIds) &&
+        _shelfShowAllCategory == showAllCategory &&
         _sortMode == sortMode &&
         _shelfViewMode == shelfView &&
         _debugModeEnabled == debugModeEnabled) {
@@ -601,7 +629,10 @@ final class _HomeShellState extends State<HomeShell> {
     }
     if (mounted) {
       setState(() {
+        if (_sourceFilter != sourceFilter) _shelfPluginMultiSelect = false;
         _sourceFilter = sourceFilter;
+        _shelfPluginSourceIds = pluginSourceIds;
+        _shelfShowAllCategory = showAllCategory;
         _sortMode = sortMode;
         _shelfViewMode = shelfView;
         _debugModeEnabled = debugModeEnabled;
@@ -1553,77 +1584,6 @@ final class _HomeShellState extends State<HomeShell> {
     );
     if (mounted) {
       await _reloadLibrary();
-    }
-  }
-
-  Future<void> _createCategory() async {
-    var draft = '';
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新建分类'),
-        content: TextFormField(
-          onChanged: (value) => draft = value,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '分类名称'),
-          onFieldSubmitted: (value) =>
-              Navigator.of(context).pop(value.trim()),
-        ),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.of(context).pop(),
-            actions: <Widget>[
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(draft.trim()),
-                child: const Text('创建'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (name == null || name.isEmpty) {
-      return;
-    }
-    final now = DateTime.now().toUtc();
-    final category = LibraryCategory(
-      categoryId: 'category-${now.microsecondsSinceEpoch}',
-      name: name,
-      sortOrder: _categories.length,
-      createdAt: now,
-    );
-    await _librarySession.upsertCategory(category);
-  }
-
-  Future<void> _deleteCategory(LibraryCategory category) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除分类'),
-        content: Text('删除“${category.name}”？漫画本身不会被删除。'),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.of(context).pop(false),
-            actions: <Widget>[
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('删除'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) {
-      return;
-    }
-    await _librarySession.removeCategory(category.categoryId);
-    if (_selectedCategoryId == category.categoryId) {
-      if (mounted) {
-        setState(() => _selectedCategoryId = null);
-      } else {
-        _selectedCategoryId = null;
-      }
     }
   }
 

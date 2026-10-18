@@ -551,6 +551,34 @@ void main() {
       reason: 'Home layout choices must not change bookshelf preferences');
   });
 
+  test('shelf filters persist independently of folded controls and reset on source-kind changes', () async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    expect(preferences.shelfShowAllCategory, isTrue);
+    expect(preferences.shelfPluginBarVisibility, ShelfPluginBarVisibility.expanded);
+    expect(preferences.shelfPluginSourceIds, isEmpty);
+    Map<String, Object?>? saved;
+    await preferences.attach(read: () async => {
+      'shelfShowAllCategory': false, 'shelfPluginBarVisibility': 'unknown',
+      'shelfPluginSourceIds': ['a', '', 1, 'a', 'b'],
+    }, write: (value) async { saved = value; });
+    expect(preferences.shelfPluginBarVisibility, ShelfPluginBarVisibility.expanded);
+    expect(preferences.shelfPluginSourceIds, {'a', 'b'});
+    preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.hidden);
+    await preferences.flush();
+    final restored = AppPreferencesController();
+    addTearDown(restored.dispose);
+    await restored.attach(read: () async => saved, write: (_) async {});
+    expect(restored.shelfShowAllCategory, isFalse);
+    expect(restored.shelfPluginBarVisibility, ShelfPluginBarVisibility.hidden);
+    expect(restored.shelfPluginSourceIds, {'a', 'b'});
+    restored.setShelfSourceFilter(ShelfSourceFilter.local);
+    expect(restored.shelfPluginSourceIds, isEmpty);
+    restored.setShelfPluginSourceIds({'a'});
+    restored.setShelfSourceFilter(ShelfSourceFilter.local);
+    expect(restored.shelfPluginSourceIds, isEmpty);
+  });
+
   test('application preferences load and persist through injected storage', () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);

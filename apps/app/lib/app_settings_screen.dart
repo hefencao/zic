@@ -1145,6 +1145,35 @@ final class BookshelfSettingsScreen extends StatelessWidget {
         builder: (context, _) => ListView(
           padding: const EdgeInsets.all(16),
           children: <Widget>[
+            const _SettingsSectionTitle('底部筛选'),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('显示“全部”分类'),
+              subtitle: const Text('关闭后优先显示第一个分类；没有分类时仍显示所有漫画。'),
+              value: preferences.shelfShowAllCategory,
+              onChanged: preferences.setShelfShowAllCategory,
+            ),
+            const SizedBox(height: 12),
+            const Text('插件药丸'),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final entry in const {
+                ShelfPluginBarVisibility.expanded: '展开',
+                ShelfPluginBarVisibility.collapsed: '折叠',
+                ShelfPluginBarVisibility.hidden: '隐藏',
+              }.entries)
+                ChoiceChip(label: Text(entry.value), showCheckmark: false,
+                  selected: preferences.shelfPluginBarVisibility == entry.key,
+                  onSelected: (_) => preferences.setShelfPluginBarVisibility(entry.key)),
+            ]),
+            const SizedBox(height: 8),
+            const Text('点击单选，长按进入多选。隐藏后可从书架右上角设置恢复。'),
+            if (preferences.shelfPluginSourceIds.isNotEmpty)
+              ListTile(contentPadding: EdgeInsets.zero,
+                title: const Text('当前插件筛选'),
+                trailing: TextButton(onPressed: () => preferences.setShelfPluginSourceIds(const []),
+                  child: const Text('清除'))),
+            const SizedBox(height: 24),
             const _SettingsSectionTitle('默认来源筛选'),
             SegmentedButton<ShelfSourceFilter>(
               showSelectedIcon: false,

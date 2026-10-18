@@ -466,7 +466,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
               ]),
             ),
             _ComicSourceBar(chips: <Widget>[
-              _ComicSourceChip(
+              ComicSourceChip(
                 chipKey: comicTitleSearchAllKey,
                 label: '全部',
                 accent: Theme.of(context).colorScheme.primary,
@@ -476,7 +476,7 @@ final class _ComicTitleSearchPageState extends State<ComicTitleSearchPage> {
               ),
               for (final source in sources)
                 if (!emptySources.contains(source.sourceId))
-                  _ComicSourceChip(
+                  ComicSourceChip(
                     chipKey: comicSourceChoiceKey(source.sourceId),
                     label: source.descriptor.name,
                     accent: _comicSourceAccent(source),

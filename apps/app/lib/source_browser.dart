@@ -180,8 +180,9 @@ Widget? _comicSourcePluginIcon(ExternalComicPluginFormat? format) =>
     };
 
 /// Shared source presentation; callers retain selection and activation policy.
-final class _ComicSourceChip extends StatelessWidget {
-  const _ComicSourceChip({
+final class ComicSourceChip extends StatelessWidget {
+  const ComicSourceChip({
+    super.key,
     required this.label,
     required this.accent,
     required this.selected,
@@ -2083,7 +2084,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             runSpacing: 8,
             children: <Widget>[
               for (final plugin in plugins)
-                _ComicSourceChip(
+                ComicSourceChip(
                   chipKey: comicSourceAggregatePluginKey(plugin.pluginId),
                   label: plugin.label,
                   accent: plugin.accent,
@@ -2912,7 +2913,7 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
         : '$displayName · 点击重试';
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 120),
-      child: _ComicSourceChip(
+      child: ComicSourceChip(
         chipKey: comicSourcePluginChoiceKey(pluginId),
         label: label,
         accent: accent,
@@ -2950,7 +2951,7 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
       final accent = _comicSourceAccent(source);
       final selected = source.sourceId == widget.activeSourceId;
       chips.add(
-        _ComicSourceChip(
+        ComicSourceChip(
           chipKey: comicSourceChoiceKey(source.sourceId),
           label: source.descriptor.name,
           accent: accent,

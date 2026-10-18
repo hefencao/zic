@@ -1246,6 +1246,77 @@ void main() {
     expect(find.byTooltip('切换画廊视图'), findsOneWidget);
   });
 
+  testWidgets('plugin filters combine by source and retain selection when folded or hidden', (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final preferences = AppPreferencesController()..setShelfShowAllCategory(false);
+    addTearDown(preferences.dispose);
+    const categoryId = 'filter-category';
+    await store.upsertCategory(LibraryCategory(categoryId: categoryId, name: '筛选分类',
+      sortOrder: 0, createdAt: DateTime.utc(2026, 10, 18)));
+    for (final id in ['a', 'b', 'c']) {
+      await store.upsertSavedComic(SavedComicRecord(sourceId: 'offline:$id', comicId: id,
+        title: 'Shelf $id', savedAt: DateTime.utc(2026, 10, 18), updatedAt: DateTime.utc(2026, 10, 18)));
+      await store.saveComicPreference(ComicPreference.defaults(sourceId: 'offline:$id', comicId: id,
+        sourceKind: ComicSourceKind.remote).copyWith(inShelf: true,
+          categoryIds: id == 'b' ? const {} : {categoryId}));
+    }
+    await tester.pumpWidget(App(libraryStore: store, preferences: preferences));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+    final a = find.byKey(comicCoverKey('offline:a', 'a'));
+    final b = find.byKey(comicCoverKey('offline:b', 'b'));
+    final c = find.byKey(comicCoverKey('offline:c', 'c'));
+    expect(find.byKey(bookshelfAllCategoryKey), findsNothing);
+    expect(a, findsOneWidget);
+    expect(b, findsNothing);
+    expect(c, findsOneWidget);
+    preferences.setShelfShowAllCategory(true);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(bookshelfAllCategoryKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(bookshelfPluginChoiceKey('source:offline:a')));
+    await tester.pumpAndSettle();
+    expect(a, findsOneWidget);
+    expect(b, findsNothing);
+    await tester.longPress(find.byKey(bookshelfPluginChoiceKey('source:offline:b')));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfPluginSourceIds, {'offline:a', 'offline:b'});
+    expect(b, findsOneWidget);
+    expect(c, findsNothing);
+    await tester.tap(find.text('筛选分类'));
+    await tester.pumpAndSettle();
+    expect(a, findsOneWidget);
+    expect(b, findsNothing);
+    await tester.tap(find.byKey(bookshelfManageKey));
+    await tester.pumpAndSettle();
+    await tester.longPress(a);
+    await tester.pumpAndSettle();
+    expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
+    await tester.tap(find.byKey(bookshelfPluginCollapseKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(bookshelfPluginExpandKey), findsOneWidget);
+    expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
+    await tester.tap(find.byKey(bookshelfPluginHideKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(bookshelfPluginBarKey), findsNothing);
+    expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
+    expect(preferences.shelfPluginSourceIds, {'offline:a', 'offline:b'});
+    preferences.setShelfShowAllCategory(false);
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('筛选分类'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('暂无分类'), findsOneWidget);
+    expect(find.byKey(bookshelfAllCategoryKey), findsNothing);
+    expect(a, findsOneWidget);
+    expect(b, findsOneWidget);
+    expect(await store.listSavedComics(), hasLength(3));
+  });
+
   testWidgets('category can add comics from the current category view',
       (tester) async {
     final store = MemoryImportedLibraryStore();
