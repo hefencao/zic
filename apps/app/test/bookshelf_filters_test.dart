@@ -23,10 +23,10 @@ void main() {
       activeOwnerOfSource: (_) => null,
     );
     expect(groups.map((group) => group.id),
-      ['plugin:shared-plugin', 'local', 'source:retired-source']);
-    expect(groups.first.sourceIds, {'mihon:en', 'mihon:ja'});
-    expect(groups.first.label, 'shared-plugin');
-    expect(groups[1].sourceIds, {'folder-a', 'folder-b'});
+      ['local', 'plugin:shared-plugin', 'source:retired-source']);
+    expect(groups.first.sourceIds, {'folder-a', 'folder-b'});
+    expect(groups[1].sourceIds, {'mihon:en', 'mihon:ja'});
+    expect(groups[1].label, 'shared-plugin');
     expect(groups.last.label, 'retired-source');
   });
 

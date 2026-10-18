@@ -237,7 +237,6 @@ final class _HomeShellState extends State<HomeShell> {
   late ShelfSourceFilter _sourceFilter;
   late Set<String> _shelfPluginSourceIds;
   late bool _shelfShowAllCategory;
-  bool _shelfPluginMultiSelect = false;
   final GlobalKey _shelfCategoryHintTarget = GlobalKey();
   bool _shelfGestureHintQueued = false;
   double _shelfFilterDragDistance = 0;
@@ -249,7 +248,7 @@ final class _HomeShellState extends State<HomeShell> {
     }
     return !_shelfShowAllCategory && _categories.isNotEmpty ? _categories.first.categoryId : null;
   }
-  set _selectedCategoryId(String? value) => _shelfCategoryId = value;
+  set _selectedCategoryId(String? value) => widget.preferences.setShelfCategoryId(value);
   late LibrarySortMode _sortMode;
   late ShelfViewPreference _shelfViewMode;
   late bool _debugModeEnabled;
@@ -343,6 +342,7 @@ final class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     _sourceFilter = widget.preferences.shelfSourceFilter;
+    _shelfCategoryId = widget.preferences.shelfCategoryId;
     _shelfPluginSourceIds = widget.preferences.shelfPluginSourceIds;
     _shelfShowAllCategory = widget.preferences.shelfShowAllCategory;
     _sortMode = widget.preferences.shelfSortMode;
@@ -616,12 +616,14 @@ final class _HomeShellState extends State<HomeShell> {
     _syncReaderPrefetchReadBudget();
     _syncCachedCarrierTrustMode();
     final sourceFilter = widget.preferences.shelfSourceFilter;
+    final categoryId = widget.preferences.shelfCategoryId;
     final pluginSourceIds = widget.preferences.shelfPluginSourceIds;
     final showAllCategory = widget.preferences.shelfShowAllCategory;
     final sortMode = widget.preferences.shelfSortMode;
     final shelfView = widget.preferences.shelfView;
     final debugModeEnabled = widget.preferences.debugModeEnabled;
     if (_sourceFilter == sourceFilter &&
+        _shelfCategoryId == categoryId &&
         setEquals(_shelfPluginSourceIds, pluginSourceIds) &&
         _shelfShowAllCategory == showAllCategory &&
         _sortMode == sortMode &&
@@ -631,8 +633,8 @@ final class _HomeShellState extends State<HomeShell> {
     }
     if (mounted) {
       setState(() {
-        if (_sourceFilter != sourceFilter) _shelfPluginMultiSelect = false;
         _sourceFilter = sourceFilter;
+        _shelfCategoryId = categoryId;
         _shelfPluginSourceIds = pluginSourceIds;
         _shelfShowAllCategory = showAllCategory;
         _sortMode = sortMode;

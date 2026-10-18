@@ -176,6 +176,8 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _debugModeEnabled = true;
   bool _debugTraceEnabled = true;
   ShelfSourceFilter _shelfSourceFilter = ShelfSourceFilter.all;
+  bool _shelfSaveFilters = false;
+  String? _shelfCategoryId;
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
   bool _shelfShowAllCategory = true;
@@ -241,6 +243,8 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get debugModeEnabled => _debugModeEnabled;
   bool get debugTraceEnabled => _debugTraceEnabled;
   ShelfSourceFilter get shelfSourceFilter => _shelfSourceFilter;
+  bool get shelfSaveFilters => _shelfSaveFilters;
+  String? get shelfCategoryId => _shelfCategoryId;
   LibrarySortMode get shelfSortMode => _shelfSortMode;
   ShelfViewPreference get shelfView => _shelfView;
   bool get shelfShowAllCategory => _shelfShowAllCategory;
@@ -397,11 +401,13 @@ final class AppPreferencesController extends ChangeNotifier {
         _boolValue(values['debugModeEnabled'], _debugModeEnabled);
     _debugTraceEnabled =
         _boolValue(values['debugTraceEnabled'], _debugTraceEnabled);
-    _shelfSourceFilter = _enumByName(
+    _shelfSaveFilters = _boolValue(values['shelfSaveFilters'], false);
+    _shelfSourceFilter = _shelfSaveFilters ? _enumByName(
       ShelfSourceFilter.values,
       values['shelfSourceFilter'],
-      _shelfSourceFilter,
-    );
+      ShelfSourceFilter.all,
+    ) : ShelfSourceFilter.all;
+    _shelfCategoryId = _shelfSaveFilters ? _nullableTrimmedString(values['shelfCategoryId']) : null;
     _shelfSortMode = _enumByName(
       LibrarySortMode.values,
       values['shelfSortMode'],
@@ -415,7 +421,8 @@ final class AppPreferencesController extends ChangeNotifier {
     _shelfShowAllCategory = _boolValue(values['shelfShowAllCategory'], true);
     _shelfPluginFilterExpanded = _boolValue(values['shelfPluginFilterExpanded'],
       values['shelfPluginBarVisibility'] == 'expanded');
-    _shelfPluginSourceIds = _decodeIdentitySet(values['shelfPluginSourceIds'], maxItems: 5000);
+    _shelfPluginSourceIds = _shelfSaveFilters
+      ? _decodeIdentitySet(values['shelfPluginSourceIds'], maxItems: 5000) : <String>{};
     _dismissedOperationHints = _decodeIdentitySet(values['dismissedOperationHints'], maxItems: 128);
     _homeHistoryLayout = _enumByName(
       HomeHistoryLayout.values,
@@ -622,6 +629,19 @@ final class AppPreferencesController extends ChangeNotifier {
     if (_disposed || (_shelfSourceFilter == value && _shelfPluginSourceIds.isEmpty)) return;
     _shelfSourceFilter = value;
     _shelfPluginSourceIds = <String>{};
+    _changed();
+  }
+
+  void setShelfSaveFilters(bool value) {
+    if (_disposed || _shelfSaveFilters == value) return;
+    _shelfSaveFilters = value;
+    _changed();
+  }
+
+  void setShelfCategoryId(String? value) {
+    final next = _nullableTrimmedString(value);
+    if (_disposed || _shelfCategoryId == next) return;
+    _shelfCategoryId = next;
     _changed();
   }
 
@@ -1088,12 +1108,14 @@ final class AppPreferencesController extends ChangeNotifier {
       'amoledDarkTheme': _amoledDarkTheme,
       'debugModeEnabled': _debugModeEnabled,
       'debugTraceEnabled': _debugTraceEnabled,
-      'shelfSourceFilter': _shelfSourceFilter.name,
+      'shelfSaveFilters': _shelfSaveFilters,
+      'shelfSourceFilter': (_shelfSaveFilters ? _shelfSourceFilter : ShelfSourceFilter.all).name,
+      'shelfCategoryId': _shelfSaveFilters ? _shelfCategoryId : null,
       'shelfSortMode': _shelfSortMode.name,
       'shelfView': _shelfView.name,
       'shelfShowAllCategory': _shelfShowAllCategory,
       'shelfPluginFilterExpanded': _shelfPluginFilterExpanded,
-      'shelfPluginSourceIds': _shelfPluginSourceIds.toList(growable: false),
+      'shelfPluginSourceIds': _shelfSaveFilters ? _shelfPluginSourceIds.toList(growable: false) : <String>[],
       'dismissedOperationHints': _dismissedOperationHints.toList(growable: false),
       'homeHistoryLayout': _homeHistoryLayout.name,
       'homeHistoryColumns': _homeHistoryColumns,

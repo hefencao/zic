@@ -1156,9 +1156,16 @@ final class BookshelfSettingsScreen extends StatelessWidget {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('展开插件筛选'),
-              subtitle: const Text('在底部分类栏上划展开、下划收起。点击药丸单选，长按进入多选。'),
+              subtitle: const Text('在底部分类栏上划展开、下划收起。点击药丸单选，长按追加或取消。'),
               value: preferences.shelfPluginFilterExpanded,
               onChanged: preferences.setShelfPluginFilterExpanded,
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('保存过滤'),
+              subtitle: const Text('重新打开应用时恢复来源、分类和插件选择。关闭后仅在本次使用中保留。'),
+              value: preferences.shelfSaveFilters,
+              onChanged: preferences.setShelfSaveFilters,
             ),
             if (preferences.shelfPluginSourceIds.isNotEmpty)
               ListTile(contentPadding: EdgeInsets.zero,
@@ -1166,7 +1173,7 @@ final class BookshelfSettingsScreen extends StatelessWidget {
                 trailing: TextButton(onPressed: () => preferences.setShelfPluginSourceIds(const []),
                   child: const Text('清除'))),
             const SizedBox(height: 24),
-            const _SettingsSectionTitle('默认来源筛选'),
+            const _SettingsSectionTitle('来源筛选'),
             SegmentedButton<ShelfSourceFilter>(
               showSelectedIcon: false,
               segments: const <ButtonSegment<ShelfSourceFilter>>[

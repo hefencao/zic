@@ -559,6 +559,7 @@ void main() {
     expect(preferences.shelfPluginSourceIds, isEmpty);
     Map<String, Object?>? saved;
     await preferences.attach(read: () async => {
+      'shelfSaveFilters': true,
       'shelfShowAllCategory': false, 'shelfPluginBarVisibility': 'unknown',
       'shelfPluginSourceIds': ['a', '', 1, 'a', 'b'],
     }, write: (value) async { saved = value; });
@@ -579,6 +580,64 @@ void main() {
     restored.setShelfPluginSourceIds({'a'});
     restored.setShelfSourceFilter(ShelfSourceFilter.local);
     expect(restored.shelfPluginSourceIds, isEmpty);
+  });
+
+  test('shelf filter saving is opt-in and disabling it preserves only the live selection', () async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    Map<String, Object?>? saved;
+    await preferences.attach(read: () async => {
+      'shelfSourceFilter': 'remote', 'shelfCategoryId': 'legacy',
+      'shelfPluginSourceIds': ['legacy'], 'shelfPluginFilterExpanded': true,
+    }, write: (values) async { saved = values; });
+    expect(preferences.shelfSaveFilters, isFalse);
+    expect(preferences.shelfSourceFilter, ShelfSourceFilter.all);
+    expect(preferences.shelfCategoryId, isNull);
+    expect(preferences.shelfPluginSourceIds, isEmpty);
+    preferences.setShelfSourceFilter(ShelfSourceFilter.remote);
+    preferences.setShelfCategoryId('category');
+    preferences.setShelfPluginSourceIds({'a', 'b'});
+    preferences.setShelfSortMode(LibrarySortMode.title);
+    await preferences.flush();
+    expect(saved!['shelfSourceFilter'], 'all');
+    expect(saved!['shelfCategoryId'], isNull);
+    expect(saved!['shelfPluginSourceIds'], isEmpty);
+
+    Future<AppPreferencesController> reopen() async {
+      final restored = AppPreferencesController();
+      addTearDown(restored.dispose);
+      await restored.attach(read: () async => saved, write: (_) async {});
+      return restored;
+    }
+    final transient = await reopen();
+    expect(transient.shelfSourceFilter, ShelfSourceFilter.all);
+    expect(transient.shelfCategoryId, isNull);
+    expect(transient.shelfPluginSourceIds, isEmpty);
+    expect(transient.shelfPluginFilterExpanded, isTrue);
+    expect(transient.shelfSortMode, LibrarySortMode.title);
+    preferences.setShelfSaveFilters(true);
+    await preferences.flush();
+    final enabled = await reopen();
+    expect(enabled.shelfSaveFilters, isTrue);
+    expect(enabled.shelfSourceFilter, ShelfSourceFilter.remote);
+    expect(enabled.shelfCategoryId, 'category');
+    expect(enabled.shelfPluginSourceIds, {'a', 'b'});
+    preferences.setShelfCategoryId('next');
+    preferences.setShelfPluginSourceIds({'b'});
+    await preferences.flush();
+    final updated = await reopen();
+    expect(updated.shelfCategoryId, 'next');
+    expect(updated.shelfPluginSourceIds, {'b'});
+    preferences.setShelfSaveFilters(false);
+    await preferences.flush();
+    expect(preferences.shelfSourceFilter, ShelfSourceFilter.remote);
+    expect(preferences.shelfCategoryId, 'next');
+    expect(preferences.shelfPluginSourceIds, {'b'});
+    final disabled = await reopen();
+    expect(disabled.shelfSaveFilters, isFalse);
+    expect(disabled.shelfSourceFilter, ShelfSourceFilter.all);
+    expect(disabled.shelfCategoryId, isNull);
+    expect(disabled.shelfPluginSourceIds, isEmpty);
   });
 
   test('shelf expansion migrates saved visibility and the explicit bool wins', () async {
@@ -615,6 +674,7 @@ void main() {
         'amoledDarkTheme': true,
         'debugModeEnabled': false,
         'debugTraceEnabled': false,
+        'shelfSaveFilters': true,
         'shelfSourceFilter': 'remote',
         'shelfSortMode': 'title',
         'shelfView': 'list',

@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Use a fully transparent floating bookshelf filter panel without a background, shadow or drag handle. Place Local immediately after All, toggle plugin inclusion directly on long press without a selection mode, and add opt-in persistence for source/category/plugin filters while retaining independent display preferences.
+
 - Cycle bookshelf source kinds on tap, reveal plugin pills below categories with an upward swipe, and persist the expansion switch with legacy visibility migration. Remove permanent filter/fold/hide icons. Add reusable dimmed gesture guidance with animated arrows, reduced-motion support and persisted first-use acknowledgement.
 
 - Consolidate bookshelf tools into one row and anchor categories and plugin filters at the bottom. Rename the all-category tab to All with an optional hide setting. Support persistent collapsible/hidden plugin pills, single selection or long-press multi-selection, and offline grouping from existing plugin metadata without activation. Folding preserves active filters and comic selection.

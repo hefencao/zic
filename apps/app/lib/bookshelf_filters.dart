@@ -52,5 +52,8 @@ List<BookshelfPluginGroup> groupBookshelfPlugins({
       id: id, label: label, sourceIds: <String>{}, format: format,
     )).sourceIds.add(sourceId);
   }
-  return groups.values.toList(growable: false);
+  return [
+    ?groups['local'],
+    for (final group in groups.values) if (group.id != 'local') group,
+  ];
 }

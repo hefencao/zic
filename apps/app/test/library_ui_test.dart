@@ -1288,8 +1288,22 @@ void main() {
     expect(preferences.shelfPluginSourceIds, {'offline:a', 'offline:b'});
     expect(b, findsOneWidget);
     expect(c, findsNothing);
+    await tester.longPress(find.byKey(bookshelfPluginChoiceKey('source:offline:b')));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfPluginSourceIds, {'offline:a'});
+    expect(b, findsNothing);
+    await tester.longPress(find.byKey(bookshelfPluginChoiceKey('source:offline:b')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(bookshelfPluginChoiceKey('source:offline:a')));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfPluginSourceIds, {'offline:a'},
+      reason: 'A regular tap remains single selection after long-press toggles');
+    await tester.longPress(find.byKey(bookshelfPluginChoiceKey('source:offline:b')));
+    await tester.pumpAndSettle();
+    expect(find.text('完成多选'), findsNothing);
     await tester.tap(find.text('筛选分类'));
     await tester.pumpAndSettle();
+    expect(preferences.shelfCategoryId, categoryId);
     expect(a, findsOneWidget);
     expect(b, findsNothing);
     await tester.tap(find.byKey(bookshelfManageKey));
@@ -1321,6 +1335,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
     expect(find.text('暂无分类'), findsOneWidget);
+    expect(preferences.shelfCategoryId, isNull);
     expect(find.byKey(bookshelfAllCategoryKey), findsNothing);
     expect(a, findsOneWidget);
     expect(b, findsOneWidget);

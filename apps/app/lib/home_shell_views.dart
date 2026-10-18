@@ -1164,6 +1164,9 @@ extension _HomeShellViews on _HomeShellState {
     );
   }
 
+  double get _shelfScrollBottomPadding =>
+      52 + (widget.preferences.shelfPluginFilterExpanded ? 52 : 0) + 24;
+
   Widget _buildShelfGallery(List<LibraryComic> comics) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1177,7 +1180,7 @@ extension _HomeShellViews on _HomeShellState {
         final centeredPadding = (constraints.maxWidth - usedWidth) / 2;
         final sidePadding = centeredPadding < 12 ? 12.0 : centeredPadding;
         return GridView.builder(
-          padding: EdgeInsets.fromLTRB(sidePadding, 8, sidePadding, 24),
+          padding: EdgeInsets.fromLTRB(sidePadding, 8, sidePadding, _shelfScrollBottomPadding),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: count,
             mainAxisExtent: ComicCoverCard.cardExtent,
@@ -1246,7 +1249,7 @@ extension _HomeShellViews on _HomeShellState {
         !_shelfManagement.batchSelecting) {
       return ReorderableListView.builder(
         buildDefaultDragHandles: false,
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+        padding: EdgeInsets.fromLTRB(12, 8, 12, _shelfScrollBottomPadding),
         itemCount: comics.length,
         onReorder: (oldIndex, newIndex) {
           unawaited(_reorderCustom(oldIndex, newIndex));
@@ -1255,7 +1258,7 @@ extension _HomeShellViews on _HomeShellState {
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      padding: EdgeInsets.fromLTRB(12, 8, 12, _shelfScrollBottomPadding),
       itemCount: comics.length,
       itemBuilder: (context, index) => item(comics[index], index),
     );
@@ -1361,12 +1364,9 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   void _selectShelfPlugin(BookshelfPluginGroup group, {bool longPress = false}) {
-    if (longPress) _setState(() => _shelfPluginMultiSelect = true);
     final next = _shelfPluginSourceIds.toSet();
     final selected = group.sourceIds.any(next.contains);
     if (longPress) {
-      next.addAll(group.sourceIds);
-    } else if (_shelfPluginMultiSelect) {
       selected ? next.removeAll(group.sourceIds) : next.addAll(group.sourceIds);
     } else {
       next.clear();
@@ -1382,12 +1382,9 @@ extension _HomeShellViews on _HomeShellState {
     return SizedBox(key: bookshelfPluginBarKey, height: 52, child: Row(children: [
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), children: [
-          ChoiceChip(key: bookshelfAllPluginsKey, label: const Text('所有插件'),
+          ChoiceChip(key: bookshelfAllPluginsKey, label: const Text('所有'),
             selected: _shelfPluginSourceIds.isEmpty, showCheckmark: false,
-            onSelected: (_) {
-              _setState(() => _shelfPluginMultiSelect = false);
-              widget.preferences.setShelfPluginSourceIds(const []);
-            }),
+            onSelected: (_) => widget.preferences.setShelfPluginSourceIds(const [])),
           for (final group in groups) ...[
             const SizedBox(width: 8),
             GestureDetector(onLongPress: () => _selectShelfPlugin(group, longPress: true),
@@ -1399,15 +1396,12 @@ extension _HomeShellViews on _HomeShellState {
                     ExternalComicPluginFormat.veneraJavaScript => Colors.blue,
                     null => Theme.of(context).colorScheme.primary,
                   },
-                  multiple: _shelfPluginMultiSelect,
+                  multiple: true,
                   selected: group.sourceIds.any(_shelfPluginSourceIds.contains),
                   onSelected: (_) => _selectShelfPlugin(group),
                 ))),
           ],
         ])),
-      if (_shelfPluginMultiSelect)
-        TextButton(onPressed: () => _setState(() => _shelfPluginMultiSelect = false),
-          child: const Text('完成多选')),
     ]));
   }
 
@@ -1427,8 +1421,8 @@ extension _HomeShellViews on _HomeShellState {
         final result = await showOperationHint(context: context, target: _shelfCategoryHintTarget,
           title: '滑动分类栏，展开或收起插件',
           message: expanded
-            ? '在亮起的分类栏向下滑动收起，向上滑动可再次展开。长按插件药丸可多选。'
-            : '在亮起的分类栏向上滑动，展开插件筛选；向下滑动收起。长按插件药丸可多选。',
+            ? '在亮起的分类栏向下滑动收起，向上滑动可再次展开。点击插件单选，长按追加或取消。'
+            : '在亮起的分类栏向上滑动，展开插件筛选；向下滑动收起。点击插件单选，长按追加或取消。',
           gesture: expanded ? OperationHintGesture.swipeDown : OperationHintGesture.swipeUp);
         if (!mounted || result == null) {
           return;
@@ -1444,7 +1438,8 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   Widget _buildShelfFilters(List<LibraryComic> libraryComics) => Material(
-    elevation: 3, child: Column(mainAxisSize: MainAxisSize.min, children: [
+    type: MaterialType.transparency,
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
       Semantics(key: _shelfCategoryHintTarget, container: true,
         label: widget.preferences.shelfPluginFilterExpanded ? '下划收起插件筛选' : '上划展开插件筛选',
         onIncrease: () => widget.preferences.setShelfPluginFilterExpanded(true),
@@ -1470,12 +1465,8 @@ extension _HomeShellViews on _HomeShellState {
   );
 
   Widget _buildShelfCategoryBar() => SizedBox(
-    key: bookshelfCategoryBarKey, height: 60,
-    child: Column(children: [
-      SizedBox(height: 8, child: Center(child: Container(width: 28, height: 3,
-        decoration: BoxDecoration(color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .4),
-          borderRadius: BorderRadius.circular(2))))),
-      Expanded(child: Row(children: [
+    key: bookshelfCategoryBarKey, height: 52,
+    child: Row(children: [
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), children: [
           if (_shelfShowAllCategory) ...[
@@ -1507,7 +1498,6 @@ extension _HomeShellViews on _HomeShellState {
       IconButton(key: bookshelfAddCategoryKey, tooltip: '新建分类',
         onPressed: _createCategory, icon: const Icon(Icons.add)),
       const SizedBox(width: 4),
-      ])),
     ]),
   );
 
@@ -1525,9 +1515,11 @@ extension _HomeShellViews on _HomeShellState {
           const Padding(padding: EdgeInsets.fromLTRB(12, 2, 12, 4),
             child: Align(alignment: Alignment.centerLeft,
               child: Text('使用封面左上角拖动柄调整顺序；长按封面进入批量选择'))),
-        Expanded(child: comics.isEmpty ? const Center(child: Text('当前筛选下没有漫画'))
-          : _shelfViewMode == ShelfViewPreference.gallery ? _buildShelfGallery(comics) : _buildShelfList(comics)),
-        _buildShelfFilters(libraryComics),
+        Expanded(child: Stack(fit: StackFit.expand, children: [
+          comics.isEmpty ? const Center(child: Text('当前筛选下没有漫画'))
+            : _shelfViewMode == ShelfViewPreference.gallery ? _buildShelfGallery(comics) : _buildShelfList(comics),
+          Positioned(left: 12, right: 12, bottom: 8, child: _buildShelfFilters(libraryComics)),
+        ])),
       ]);
     },
   );
