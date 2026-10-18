@@ -259,6 +259,8 @@
 ## 1. 产品范围
 zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、
 partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
+平台应用图标 MUST 与仓库品牌源图保持一致；Android MUST 提供自适应前景/背景、主题单色层与旧系统密度资源，iOS 图标 MUST 不透明。图标 MUST 通过静态平台资源提供。
+README MUST 面向用户介绍已有能力、入门与支持边界，同类产品事实 MUST 有官方资料依据；构建、架构导航与诊断命令 MUST 维护在 `docs/DEVELOPMENT.md`。
 首页应用名 MUST 仅在 Debug 模式响应诊断操作：单击打开翻译测试，长按打开已展开且翻译测试置顶的诊断项页。
 翻译测试 MUST 提供翻译设置入口；单次测试语言 MUST NOT 改变阅读默认。
 Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用配置目录与既有导出反馈，执行中 MUST 禁止重复提交。

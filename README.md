@@ -1,138 +1,69 @@
+<p align="center">
+  <img src="assets/branding/zic.svg" width="96" height="96" alt="zic 图标" />
+</p>
+
 # zic
 
-`zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。
+**边下边播的动图，可复用的版本缓存，排进气泡的译文。**
 
-本文件只提供项目入口、构建命令和文档导航。版本历史、实验结论和单轮验证结果不写入 README。
+zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫画、Mihon / Venera 插件，以及内置漫画翻译。重点照顾大幅动图、同一作品的多个版本和外语漫画阅读。
 
-## 文档导航
+[版本发布](https://github.com/hefencao/zic/releases) · [反馈问题](https://github.com/hefencao/zic/issues) · [开发指南](docs/DEVELOPMENT.md)
 
-按以下顺序阅读：
+## 和同类阅读器相比，zic 关注什么
 
-1. [`docs/PROJECT_CHARTER.md`](docs/PROJECT_CHARTER.md)：目标、非目标和长期原则。
-2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：当前稳定所有权、依赖方向、数据流和生命周期。
-3. [`docs/SPEC.md`](docs/SPEC.md)：产品与工程合同；描述“必须满足什么”，不声明当前已经通过。
-4. [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)：当前源码状态、验证级别和未验证项。
-5. [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)：仍需执行的工作，不保存完成历史。
-6. [`docs/NEXT_CHAT_HANDOFF.md`](docs/NEXT_CHAT_HANDOFF.md)：下一轮唯一基线和继续入口。
-7. [`docs/DOCUMENTATION_POLICY.md`](docs/DOCUMENTATION_POLICY.md)：各文档职责和证据规则。
-8. [`docs/IMPLEMENTATION_STATE.json`](docs/IMPLEMENTATION_STATE.json)：唯一当前需求状态、有效验收及剩余工作。
+[Mihon](https://mihon.app/) 提供丰富的阅读设置与扩展生态，[Venera](https://github.com/venera-app/venera) 支持本地、网络漫画和 JavaScript 漫画源。zic 在插件阅读的基础上，重点打磨以下体验：
 
-历史变更位于 [`CHANGELOG.md`](CHANGELOG.md)；既有技术决策与验证记录归档于 `docs/archive/adr/` 和 `docs/archive/audits/`，按需追溯并核对当前源码，暂不新增此类文件。
+| 阅读场景 | zic 的处理方式 | 对阅读的帮助 |
+| --- | --- | --- |
+| 远程 Animated WebP 较大，整图下载等待较久 | 增量接收、解码和播放，优先准备当前页及邻页 | 收到足够帧数据即可开始看，后续内容继续加载 |
+| 同一作品不断发布新版，新增页面导致页码变化 | 确认版本关系，验证页面对应区间并持久保存映射 | 在有效映射范围内复用缓存，减少重下相同图片 |
+| 外语漫画的文字散落在多个气泡中 | 本地 OCR、气泡分组、文字翻译和气泡内排版 | 直接在画面里阅读译文，并可点击核对原文 |
+| 同时使用不同插件和本地漫画 | 在同一书架与阅读器中使用 Mihon、Venera 及本地来源 | 按分类、插件过滤，统一管理阅读历史与下载 |
 
-## 仓库结构
+这里比较的是阅读场景和设计侧重。实际加载时间取决于网络、文件结构与设备；翻译效果取决于原图、OCR 和所选翻译服务。
 
-```text
-apps/app/                  Flutter composition root、导航和产品页面
-packages/domain/           领域 identity、值对象和不可变实体
-packages/comic_translation/ 本地 OCR、文字翻译、模型管理与独立译文覆层
-packages/catalog/          漫画源、manifest、稳定 catalog/cache identity
-packages/resource_cache/   封面、详情、搜索和元数据响应缓存
-packages/transport/        可取消、可分块 encoded-byte transport 合同
-packages/storage/          partial、seal、promotion、索引和临时 workspace
-packages/downloads/        页面 artifact cache、来源 transport、章节/整本下载
-packages/sessions/         Download/Decode/Upload session、Reader-local decode source binding、lane、holder、timer
-packages/pipeline/         Reader observation、角色窗口和纯 demand policy
-packages/pipeline_runtime/ Reader 资源会话组合、retention 和只读页面流
-packages/pipeline_native/  native source/cursor/uploader/output 原子能力组合
-packages/media/            encoded source、cursor、frame、output 抽象
-packages/reader/           通用 Reader observation、导航和 Flutter widget
-packages/reader_runtime/   Reader Presentation、交互和 observation 适配
-packages/local_media*/     本地文件/文件夹导入与展示
-packages/plugin_host*/     插件信任、隔离、请求计划和 Android runtime 适配
-packages/network_bridge/   浏览器、Cookie、challenge 和网络平台能力
-packages/texture_bridge/   Android Flutter texture 与 SurfaceProducer 呈现
-packages/bridge/           Dart FFI、native source/cursor/frame ABI 与 worker pool
-packages/*_bridge/         storage、downloads、runtime 等平台组合适配
-native/media_core/         Rust 增量媒体内核
-third_party/source_archives/ 锁定第三方源码归档
-tool/                      构建、验证、分析和仓库门禁
-```
+## 边下载边播放动图
 
-## 环境
+来源可流式提供图片数据时，Animated WebP 会逐步接收、解码，在首批帧可用时开始播放，并继续接收后续数据。当前阅读页优先，邻页提前准备；快速切页时，加载优先级跟随阅读位置调整。
 
-最低要求由各 `pubspec.yaml`、`Cargo.toml` 和 Android 构建文件定义。常用工具：
+支持分页、连续滚动和自适应阅读，可按漫画调整方向、缩放及点击区域。临时阅读缓存与主动离线下载分别管理，也可为不同漫画源设置下载目录。
 
-- Flutter SDK / Dart SDK
-- Android SDK、NDK、Gradle
-- Rust / Cargo
-- CMake、Ninja、Python 3
-- Kotlin compiler（静态 bridge compile gate）
+## 多版本映射，少重下相同内容
 
-缺少工具链时，`tool/check.sh` 会执行可用的结构和静态门禁并明确输出跳过项；静态门禁不能替代 Flutter、Android 或真机验证。
+同一作品可能有持续增补、重新发布的版本。zic 根据来源确认的版本关系和经过验证的页面对应区间，保存旧版与新版之间的映射。
 
-## 初始化与运行
+例如，新版在开头增加了若干页，映射成功后可复用旧版中确认一致的已缓存图片，减少因页码变化而重复下载。查看其他版本与迁移漫画分别提供操作入口；跨源迁移会先展示信息对照，具体进度与状态迁移取决于章节匹配结果。迁移后的页序发生变化时，阅读位置仍需核对。
 
-Flutter host 位于 `apps/app/`，不要在仓库根目录执行 `flutter create .`。
+版本关系和缓存复用都有校验边界，未确认对应关系的页面仍按目标版本加载。
 
-```bash
-./tool/bootstrap_platforms.sh
-./tool/run_android.sh
-```
+## 译文排回气泡里
 
-等价的直接运行方式：
+翻译从本机文字识别开始，再根据原文位置修正分组，并结合气泡轮廓调整字号、断行和文字布局。多个文字组共享一个气泡时会划分排版空间，译文随图片缩放、旋转；点击译文气泡可查看原文。
 
-```bash
-cd apps/app
-flutter pub get
-python3 ../../tool/prepare_rhttp_android.py
-python3 ../../tool/prepare_translation_android.py
-flutter run --no-pub -d android
-```
+- **按漫画记住语言**：自动模式可判断日文、韩文并记忆结果，也可手动选择原文语言。
+- **按漫画调整 OCR**：不同清晰度的作品可分别选择识别精度，或跟随全局设置。
+- **选择在线或离线翻译**：支持本地模型、OpenAI 兼容 API 和 DeepL；首次使用会单独引导准备识别模型与服务配置。
+- **边读边准备译文**：可提前翻译邻页，也可显式启动整章预翻译；离开阅读器后整章任务仍保留，应用在后台时暂停新推理。
+- **复用已有结果**：有效 OCR 与译文缓存可在再次进入时恢复；支持将已有翻译结果随下载图片保存。
 
-## 检查与测试
+文字识别在本机进行。选择在线翻译时，远程服务接收识别后的文字，需自行配置 API，并按服务商规则计费。本地翻译需另行下载模型，支持范围取决于设备与所选模型。动图目前保留原始播放，暂不翻译。
 
-执行当前环境可用的全部检查：
+## 开始使用
 
-```bash
-./tool/check.sh
-```
+1. **安装应用**：下载项目的 Android APK。常见手机选择 `arm64-v8a`，较旧的 32 位设备选择 `armeabi-v7a`，`x86_64` 用于对应架构的设备或模拟器。
+2. **添加内容**：在插件管理中导入并启用所需的 Mihon / Venera 插件，或导入本地漫画文件夹。网络来源的登录与验证按该来源要求完成。
+3. **整理书架**：添加喜欢的漫画，使用底部分类与插件药丸过滤；在分类行上划展开插件行，下划收起。阅读历史可切换网格、横向书架或列表布局。
+4. **开启翻译**：点击阅读器底部第三项翻译按钮，在弹窗中开启本漫画翻译；首次按引导配置，右上角进入全局设置。
 
-要求完整工具链，任何缺失都视为失败：
+## 平台与使用边界
 
-```bash
-./tool/check.sh --require-toolchains
-```
+目前主要面向 Android 开发和验证，iOS 保留工程入口。项目持续迭代，复杂气泡、拟声词和低清图片仍可能识别或翻译不准，可点击气泡核对原文，或调整该漫画的 OCR 精度。
 
-分项执行：
+本地文字翻译运行时面向 arm64，部分模型还要求特定 CPU 指令集；其他架构可按实际支持情况选择在线服务。模型权重按需下载，不随 APK 打包。
 
-```bash
-make analyze
-make dart-test
-make flutter-test
-make rust-test
-make webp-check
-```
+## 反馈与参与
 
-仓库规则禁止自动运行 `dart format`；修改应保持最小且手工格式化。
+遇到问题时，请在 [Issues](https://github.com/hefencao/zic/issues) 附上应用版本、设备型号、复现步骤，以及相关漫画来源、章节与页码。开启应用 Debug 模式后，可在首页顶栏 zic 名称旁一键导出 Trace，辅助定位加载、播放或翻译问题。
 
-## Android 构建
-
-```bash
-./tool/build_android.sh debug
-./tool/build_android.sh release
-```
-
-release 默认使用 `--split-per-abi`；构建成功后移除该模式遗留的通用 APK，并打印各架构包路径与体积。debug/profile/release 从同一个 `apps/app/android/zic-version.properties` 读取 application version。
-首次构建会准备固定版本的 OCR 专用 OpenCV，保留 SIMD、TBB 和原有 HAL 加速；后续校验并复用，不打包模型权重。
-原生库在 APK 内压缩，由系统安装时解压，运行时加载原始库文件；这会缩小 APK，但增加安装后的总占用。
-
-## Native WebP
-
-项目保留并校验 `third_party/source_archives/libwebp-1.6.0.zip`。源码准备和补丁应用必须通过锁定哈希与零 fuzz 检查：
-
-```bash
-./tool/prepare_webp.sh
-./tool/check_webp.sh
-```
-
-展开源码、构建目录和安装产物写入 `.deps/`，不得进入交付 ZIP。普通构建不应依赖联网下载已有的锁定归档。
-
-## Trace
-
-Debug Trace 是诊断证据，不是产品状态数据库。分析逐帧 Pipeline 时使用：
-
-```bash
-python3 tool/analyze_frame_pipeline_trace.py zic-debug-trace-*.jsonl
-```
-
-Trace 的简短结论覆盖更新到现有状态；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。`.log/` 只保留原始报障输入、开放问题的必要复现文件及当前复验结果；私有缓存执行同一规则。重复与过期产物及时删除，临时目录在成功或失败退出时清理。
+构建、测试、仓库结构与架构导航已移至[开发指南](docs/DEVELOPMENT.md)。版本变更见 [CHANGELOG](CHANGELOG.md)，翻译组件来源、依赖与模型说明见[翻译组件文档](packages/comic_translation/README.md)。

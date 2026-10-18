@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Replace the Flutter launcher icon with a comic-panel Z mark, including Android adaptive/themed layers, legacy density icons and matching opaque iOS assets. Rewrite README for readers around streaming Animated WebP, verified version mapping and in-bubble translation; move engineering instructions to docs/DEVELOPMENT.md.
+
 - Add explicit spacing between bookshelf category and plugin rows, balancing their visible pill gap with the space above navigation while preserving compact pills and the shared transparent panel. Include that spacing in the scroll clearance and collapse animation.
 
 - Share a fully transparent floating filter panel between the source browser and bookshelf. Use compact 40 logical-pixel rows and matching insets, reduce the expanded shelf panel from 104 to 80 pixels, and keep the search control and scroll endings clear of the source pills.

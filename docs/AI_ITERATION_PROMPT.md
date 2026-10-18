@@ -59,7 +59,7 @@ Architecture 与所有权原则：
 5. 为重要所有权边界增加静态门禁，但静态门禁只是补充，不能替代 analyzer、Flutter test 或设备验证。
 6. 测试使用稳定 key、状态对象或可控 Future 同步；禁止固定 pump 猜异步完成，禁止对 lazy child 直接 `.single`，禁止用脆弱文本包含匹配作为唯一身份。
 7. Trace 使用 hash/长度摘要，不打印完整 Mihon/Venera Base64 token；高频事件可在诊断投影合并，但错误和权威 telemetry 不得丢失。
-8. 更新 README、CHANGELOG、Architecture、Spec、Plan、Status、Handoff 和必要 ADR，使文档与实际代码所有权一致。发现旧文档与当前架构冲突时应直接修正，不得继续复制过时描述。
+8. 更新 CHANGELOG、Architecture、Spec、Plan、Status、Handoff 与当前状态，使文档与实际代码所有权一致。README 面向用户，仅在功能说明变化时更新；构建与工程入口维护在 docs/DEVELOPMENT.md。暂不新增 ADR/audit；发现旧文档与当前架构冲突时直接修正，不复制过时描述。
 
 验证顺序：
 - `flutter analyze`

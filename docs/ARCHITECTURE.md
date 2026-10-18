@@ -476,6 +476,7 @@ close 先等 `_ready` 与这些 admitted operations，再排 version/canonical/s
 whole-App `checkpointSnapshot()` 是 teardown durability barrier，不属于普通新 mutation admission。
 `HomeShell.dispose()` 只启动异步 composition close，`ChangeNotifier.dispose()` 必须在该 close 完成后执行，不能抢先取消已接纳快照。
 
+应用图标由平台宿主静态打包，源图为 `assets/branding/zic.svg` 的漫画分格 Z；Android 使用独立背景与矢量前景、自适应/单色层和旧系统密度 PNG，iOS 使用对应不透明 PNG，不引入 Flutter 运行时资源或加载逻辑。
 `MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；
 仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。
 `LocalMediaBridge` 在 Android 的 pick/scan/open/read 入口前共享 single-flight attach，
