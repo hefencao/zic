@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Use the supplied illustrated comic book as the launcher and home title icon. Generate bounded Android/iOS and home thumbnail assets from the cropped master; preserve Debug tap/long press, Trace adjacency and the accessible app name, with a matching book outline for themed icons.
+
 - Replace the Flutter launcher icon with a comic-panel Z mark, including Android adaptive/themed layers, legacy density icons and matching opaque iOS assets. Rewrite README for readers around streaming Animated WebP, verified version mapping and in-bubble translation; move engineering instructions to docs/DEVELOPMENT.md.
 
 - Add explicit spacing between bookshelf category and plugin rows, balancing their visible pill gap with the space above navigation while preserving compact pills and the shared transparent panel. Include that spacing in the scroll clearance and collapse animation.

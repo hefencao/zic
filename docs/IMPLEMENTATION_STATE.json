@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T12:02:04Z",
-  "objective": "更换应用图标并重写用户 README",
+  "updated_at": "2026-10-18T12:49:56Z",
+  "objective": "统一用户插画应用图标与首页标识",
   "status": "partial",
-  "scope": ["Comic-panel Z:Android adaptive/themed+legacy/iOS PNG","User README;engineering moved to docs/DEVELOPMENT.md;protected112 retained"],
+  "scope": ["User illustration:Android adaptive/themed+legacy/iOS and Home","160px thumbnail;Debug routes retained;protected112 unchanged"],
   "preserve": [
     "已验生产合同与用户数据",
     "NetLane唯一network authority与真实退出容量边界",
@@ -140,8 +140,8 @@
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
-  "current_device_installation": {"verified_for_current_change":true,"serial":"72b08a1c","apk_sha256":"8092987d180d4992bd12ba3b0ed5483aa767eb0db9c95411a59c65daaa77e3e8","observation":"Release/PID28825:launcher Z unclipped/matching peer size;tap opens app;shelf/settings retained."},
-  "validation": {"command":"CI=true bash ./tool/check.sh --require-toolchains;JVM;Release/packages/assets/docs","exit_code":0,"analyzers":28,"dart_flutter_tests":{"passed":2594,"skipped":3},"rust_tests":25,"release_apk_mib":{"arm64_v8a":34.9316,"armeabi_v7a":28.9684,"x86_64":46.9383},"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS build unverified"],"android_jvm_tests":"110 owned pass;upstream Robolectric/ByteBuddy unverified","native_runtime":"3ABI Debug/Release;arm64 closure;signatures/CRC/deflate/extract pass;all runtime ELFs unchanged","scope":"2594/3skip,Rust25,110 owned JVM pass;SVG/native paths,5 Android/15 iOS assets,links/migration pass;launcher/open verified."},
+  "current_device_installation": {"verified_for_current_change":true,"serial":"72b08a1c","apk_sha256":"a80fb367441b450a11f44d69d38a2ab4358922fc6eae46a3dac25210925fbe4d","observation":"Release/PID4349:launcher/Home artwork,Trace adjacency and Debug tap/long-press pass;settings/TLS trace retained."},
+  "validation": {"command":"CI=true bash ./tool/check.sh --require-toolchains;JVM;Release/packages/assets/docs","exit_code":0,"analyzers":28,"dart_flutter_tests":{"passed":2594,"skipped":3},"rust_tests":25,"release_apk_mib":{"arm64_v8a":35.1649,"armeabi_v7a":29.2026,"x86_64":47.1724},"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS build unverified"],"android_jvm_tests":"110 owned pass;upstream Robolectric/ByteBuddy unverified","native_runtime":"3ABI Debug/Release;arm64 closure;signature/CRC/deflate/extract pass;non-Dart ELFs unchanged","scope":"Original crop/160px header,5 Android/15 opaque iOS,APK assets pass;launcher/Home/Debug routes verified."},
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",

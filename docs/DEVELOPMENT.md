@@ -118,9 +118,9 @@ release 默认使用 `--split-per-abi`；构建成功后移除该模式遗留的
 
 ## 应用图标
 
-源图位于 `assets/branding/zic.svg`，使用漫画分格组成 Z；它属于仓库品牌素材，不进入 Flutter 运行时资源。
-Android 自适应前景沿用同一组路径，在 108dp 画布内偏移 18dp；背景为独立颜色资源，Android 13 起提供单色主题层。旧系统使用五档密度 PNG。设计约束见[Android 自适应图标规范](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)。
-iOS 的 PNG 尺寸以 `AppIcon.appiconset/Contents.json` 为准，全部保持不透明。更换图标时同步源图、Android 各层和两端 PNG；图形留在自适应图标安全区域内，由系统裁切外形。
+源图 `assets/branding/zic.png` 来自用户提供的漫画书插画，裁去展示留白后缩至 1024px，供 README 与宿主图标派生，不进入 Flutter 资源包。首页顶栏只打包 160px 的 `apps/app/assets/branding/app_icon.png`，显示为 40dp，保留 48dp 点击区域与 zic 无障碍名称；Debug 点击/长按行为沿用原入口。
+Android 使用 256px 前景位图，在自适应图标内保留 22dp 边距，搭配独立浅色背景；Android 13 起使用漫画书轮廓单色层。旧系统使用五档密度 PNG。设计约束见[Android 自适应图标规范](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)。
+iOS 的 PNG 尺寸以 `AppIcon.appiconset/Contents.json` 为准，全部保持不透明。更换图标时同步源图、首页缩略图、Android 各层和两端 PNG；主体留在自适应图标安全区域内，由系统裁切外形。
 
 ## Native WebP
 

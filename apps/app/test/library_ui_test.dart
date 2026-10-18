@@ -999,10 +999,14 @@ void main() {
       ),
     );
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
-    await _pumpUntilFound(tester, find.byType(Image));
+    final coverImage = find.descendant(
+      of: find.byType(ComicCoverCard),
+      matching: find.byType(Image),
+    );
+    await _pumpUntilFound(tester, coverImage);
 
     expect(find.byType(ComicCoverCard), findsOneWidget);
-    expect(find.byType(Image), findsOneWidget);
+    expect(coverImage, findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await cache.close();
   });

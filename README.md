@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/zic.svg" width="96" height="96" alt="zic 图标" />
+  <img src="assets/branding/zic.png" width="96" height="96" alt="zic 图标" />
 </p>
 
 # zic
@@ -64,6 +64,6 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 
 ## 反馈与参与
 
-遇到问题时，请在 [Issues](https://github.com/hefencao/zic/issues) 附上应用版本、设备型号、复现步骤，以及相关漫画来源、章节与页码。开启应用 Debug 模式后，可在首页顶栏 zic 名称旁一键导出 Trace，辅助定位加载、播放或翻译问题。
+遇到问题时，请在 [Issues](https://github.com/hefencao/zic/issues) 附上应用版本、设备型号、复现步骤，以及相关漫画来源、章节与页码。开启应用 Debug 模式后，可在首页顶栏应用图标旁一键导出 Trace，辅助定位加载、播放或翻译问题。
 
 构建、测试、仓库结构与架构导航已移至[开发指南](docs/DEVELOPMENT.md)。版本变更见 [CHANGELOG](CHANGELOG.md)，翻译组件来源、依赖与模型说明见[翻译组件文档](packages/comic_translation/README.md)。

@@ -1,12 +1,12 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- 本地`main`未推送，`0.31.0-dev.331`/`0.31.0+331`：zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
+- 本地`main`未推送，`0.31.0-dev.331`/`0.31.0+331`：图标后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
 ## 2. 必读顺序
-1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；工程入口`docs/DEVELOPMENT.md`，README面向用户。漫画分格Z图标源图`assets/branding/zic.svg`，宿主静态资源同步；
+1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；工程入口`docs/DEVELOPMENT.md`，README面向用户。图标源图`assets/branding/zic.png`为用户插画，宿主与首页160px缩略图同步，Debug操作保留；
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题

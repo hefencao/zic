@@ -25,7 +25,7 @@
   无 authority 的错误不再自动制造新的 presentation/source generation。widget/page-output 的本地异步 fence 已分别命名为 `loadEpoch` / `bindingEpoch`。
 
 ### Home 组合与服务代际
-- `HomeShell`/`home_shell_*`为入口，旧`DemoHome`仅历史。Trace紧跟zic；历史网格2–6列/横向1–3行/列表，默认三列、持久化、窄屏/sliver。书架来源循环；与漫画源共用全透明紧凑悬浮面板，行高40/行距6，无背景/阴影/提示杠；所有/本地优先，长按复选。展开独立保存，来源/分类/插件由默认关闭的保存过滤控制跨重启恢复。首次遮罩复用`showOperationHint`，确认持久化；元数据只读/canonical续读保留。
+- `HomeShell`/`home_shell_*`为入口，旧`DemoHome`仅历史。Trace紧跟图标；历史网格2–6列/横向1–3行/列表，默认三列、持久化、窄屏/sliver。书架来源循环；与漫画源共用全透明紧凑悬浮面板，行高40/行距6，无背景/阴影/提示杠；所有/本地优先，长按复选。展开独立保存，来源/分类/插件由默认关闭的保存过滤控制跨重启恢复。首次遮罩复用`showOperationHint`，确认持久化；元数据只读/canonical续读保留。
 - `HomeShell` 只持Navigator/presentation wiring，authority归各自owner。封面局部订阅source signal，source-failed只在unavailable→available重试；canonical artwork与raw点击key同级。32 UI回归及冷启动8/组合3真机通过，063/066/082收口。
 - Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。 ADR0404：单源页首次挂载先接收已有query，再发原source请求；后续queryRevision与标签路由不变，冷真机queryLength2/offset0已验。
 - ADR0399/0400/0401已验保持。0402 Accepted：viewport/DPR/stitch消费原绝对center，DPR首轮接同一layout校正。8先失败、11新合同/105 focused及全门禁通过；Release4bd8351d/PID11582几何28步/真实OS变化16次通过，125完整payload保持。原加载/active视觉/最终显示开放。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android入口按SHA-256准备rhttp0.18.0补丁；原生库压缩/安装时解压保留。宿主图标为漫画分格Z，含adaptive/单色/旧密度及iOS不透明PNG；README面向用户，工程入口DEVELOPMENT.md。当前验证、native/quarantine与未验范围见状态JSON。 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android入口按SHA-256准备rhttp0.18.0补丁；原生库压缩/安装时解压保留。宿主使用用户漫画书插画，含adaptive/单色/旧密度及iOS PNG；首页同图缩略图保留Debug操作。README面向用户，工程入口DEVELOPMENT.md。当前验证、native/quarantine与未验见状态JSON。 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native重入与19/20静置/历史、21话slider保持。当前完整动作UI/自然GC分量已验，退出raster仍超预算；原19/20偶发加载及物理输入/视觉/最终显示开放。SDK3.12.2分配接口统计当前堆，不能证明总分配 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久metadata及056/069强制WNACG host直连/无类型重放前提退休，实际runtime媒体已验。缺输入/账号/独立时钟只暂停对应分支；完整GC窗口已采，不等同进退性能通过。已验cache/NetLane/几何保持。

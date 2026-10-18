@@ -1646,6 +1646,9 @@ final class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final appIcon = SizedBox.square(dimension: 48, child: Center(
+      child: Image.asset('assets/branding/app_icon.png', width: 40, height: 40,
+        semanticLabel: 'zic')));
     return Scaffold(
       resizeToAvoidBottomInset: _navigationIndex != 2,
       appBar: AppBar(
@@ -1656,11 +1659,10 @@ final class _HomeShellState extends State<HomeShell> {
                     key: homeDiagnosticsKey,
                     onTap: _openTranslationTest,
                     onLongPress: _openDiagnostics,
-                    child: const Padding(padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                      child: Text('zic')),
+                    child: appIcon,
                   ))
                 else
-                  const Text('zic'),
+                  appIcon,
                 if (_debugModeEnabled) IconButton(
                   key: homeTraceQuickExportKey,
                   tooltip: _exportingHomeTrace ? '正在导出 Trace…' :
