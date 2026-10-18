@@ -555,28 +555,53 @@ void main() {
     final preferences = AppPreferencesController();
     addTearDown(preferences.dispose);
     expect(preferences.shelfShowAllCategory, isTrue);
-    expect(preferences.shelfPluginBarVisibility, ShelfPluginBarVisibility.expanded);
+    expect(preferences.shelfPluginFilterExpanded, isFalse);
     expect(preferences.shelfPluginSourceIds, isEmpty);
     Map<String, Object?>? saved;
     await preferences.attach(read: () async => {
       'shelfShowAllCategory': false, 'shelfPluginBarVisibility': 'unknown',
       'shelfPluginSourceIds': ['a', '', 1, 'a', 'b'],
     }, write: (value) async { saved = value; });
-    expect(preferences.shelfPluginBarVisibility, ShelfPluginBarVisibility.expanded);
+    expect(preferences.shelfPluginFilterExpanded, isFalse);
     expect(preferences.shelfPluginSourceIds, {'a', 'b'});
-    preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.hidden);
+    preferences.setShelfPluginFilterExpanded(true);
+    preferences.dismissOperationHint('shelf-swipe');
     await preferences.flush();
     final restored = AppPreferencesController();
     addTearDown(restored.dispose);
     await restored.attach(read: () async => saved, write: (_) async {});
     expect(restored.shelfShowAllCategory, isFalse);
-    expect(restored.shelfPluginBarVisibility, ShelfPluginBarVisibility.hidden);
+    expect(restored.shelfPluginFilterExpanded, isTrue);
+    expect(restored.hasSeenOperationHint('shelf-swipe'), isTrue);
     expect(restored.shelfPluginSourceIds, {'a', 'b'});
     restored.setShelfSourceFilter(ShelfSourceFilter.local);
     expect(restored.shelfPluginSourceIds, isEmpty);
     restored.setShelfPluginSourceIds({'a'});
     restored.setShelfSourceFilter(ShelfSourceFilter.local);
     expect(restored.shelfPluginSourceIds, isEmpty);
+  });
+
+  test('shelf expansion migrates saved visibility and the explicit bool wins', () async {
+    for (final legacy in ['expanded', 'collapsed', 'hidden']) {
+      final controller = AppPreferencesController();
+      await controller.attach(read: () async => {'shelfPluginBarVisibility': legacy}, write: (_) async {});
+      expect(controller.shelfPluginFilterExpanded, legacy == 'expanded');
+      controller.dispose();
+    }
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    await controller.attach(read: () async => {
+      'shelfPluginBarVisibility': 'expanded', 'shelfPluginFilterExpanded': false,
+    }, write: (_) async {});
+    expect(controller.shelfPluginFilterExpanded, isFalse);
+    controller.setShelfPluginSourceIds({'a'});
+    controller.cycleShelfSourceFilter();
+    expect(controller.shelfSourceFilter, ShelfSourceFilter.local);
+    expect(controller.shelfPluginSourceIds, isEmpty);
+    controller.cycleShelfSourceFilter();
+    expect(controller.shelfSourceFilter, ShelfSourceFilter.remote);
+    controller.cycleShelfSourceFilter();
+    expect(controller.shelfSourceFilter, ShelfSourceFilter.all);
   });
 
   test('application preferences load and persist through injected storage', () async {

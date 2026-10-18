@@ -1,13 +1,9 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T08:36:24Z",
-  "objective": "书架工具区整理、底部分类与插件筛选",
+  "updated_at": "2026-10-18T09:23:52Z",
+  "objective": "书架循环来源、手势展开插件筛选与可复用首次引导",
   "status": "partial",
-  "scope": [
-    "main:bookshelf toolbar;bottom categories/plugin filters",
-    "Read-only plugin grouping;persisted display/filter preferences",
-    "原112条验收及summary逐字保留"
-  ],
+  "scope": ["main:shelf source cycle;category swipe;reusable gesture hint","Persisted expansion/legacy visibility migration and hint acknowledgement","原112条验收及summary逐字保留"],
   "preserve": [
     "已验生产合同与用户数据",
     "NetLane唯一network authority与真实退出容量边界",
@@ -144,8 +140,8 @@
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
-  "current_device_installation": {"verified_for_current_change":true,"serial":"72b08a1c","apk_sha256":"f302afee8f4f7859cb3ecd9152ce69dabb4c07aaf78a49202df0d6a332315037","observation":"PID15859/Bookshelf:toolbar,All-hidden,plugin OR/fold/hide/restore,restart,sort/manage pass;defaults restored."},
-  "validation": {"command":"CI=true bash ./tool/check.sh --require-toolchains;app analyze;JVM;Release","exit_code":0,"analyzers":28,"dart_flutter_tests":{"passed":2586,"skipped":3},"rust_tests":25,"release_apk_mib":{"arm64_v8a":34.9066,"armeabi_v7a":28.9474,"x86_64":46.9138},"missing_toolchains":["pwsh:Windows builder unverified"],"android_jvm_tests":"110 owned/0 failures;upstream Robolectric/ByteBuddy unverified","native_runtime":"3ABI Debug/Release;arm64 closure;3ABI signature/CRC/deflate/extract pass;non-Dart ELFs unchanged","scope":"28 analyzers no errors/warnings;full check exit0;Release device/bookshelf acceptance pass."},
+  "current_device_installation": {"verified_for_current_change":true,"serial":"72b08a1c","apk_sha256":"ba862e8a2860ddeae7d333185c661bc81cb95d3c19da141e6ea961b900b8024e","observation":"Release/PID32120:gesture,hint,cycle,persistence pass;prior shelf display restored."},
+  "validation": {"command":"check.sh --require-toolchains;app analyze/88 targeted after hint semantics;JVM;Release","exit_code":0,"analyzers":28,"dart_flutter_tests":{"passed":2593,"skipped":3},"rust_tests":25,"release_apk_mib":{"arm64_v8a":34.9102,"armeabi_v7a":28.95,"x86_64":46.918},"missing_toolchains":["pwsh:Windows builder unverified"],"android_jvm_tests":"110 owned/0 failures;upstream Robolectric/ByteBuddy unverified","native_runtime":"3ABI Debug/Release;arm64 closure;signature/CRC/deflate/extract pass;non-Dart ELFs unchanged","scope":"Full pass;88 targeted rerun after hint semantics;device gestures/hint/persistence pass."},
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",
@@ -164,7 +160,7 @@
       "mainline": "main;local only"
     },
     "home_history_layout": {"status":"verified_device","current_contract":"Home Trace after zic;history grid2–6(default3,narrow-fit),carousel1–3/progress list;persisted,sliver-lazy,canonical resume/details.","accepted":"Releasefa603969/PID8766:layouts/densities,narrow cap,restart,one export pass;grid3/rows2 restored;80-record lazy mount and bounds tested."},
-    "bookshelf_layout": {"status":"verified_device","current_contract":"One toolbar;bottom categories/optional All and grouped plugin pills. Persisted source-ID OR filters intersect category/kind;kind changes clear plugin filters. Fold/hide retains filters/comic selection;settings restores/clears. Grouping reads saved metadata only.","accepted":"83 focused/2586 full tests;Releasef302afee/PID15859:toolbar,All-hidden/no-category,OR multi-select,fold/hide/restore,restart,sort/manage pass;defaults restored."}
+    "bookshelf_layout": {"status":"verified_device","current_contract":"Source kind cycles all/local/remote. Category swipe reveals plugin row below;persisted expansion defaults closed,migrates legacy visibility. Long-press OR filters retained on folding. Reusable dimmed directional hint waits for attached preferences/current shelf and persists acknowledgement.","accepted":"88 targeted/full gates pass. Release ba862e8a/PID32120:cycle,row order,swipes,tap/horizontal isolation,OR,settings,restart and once-only hint pass;prior expanded display restored."}
   },
   "remaining": [
     "KO ch80 stationary p1 and4 fresh neighbors accepted with one OCR/MT each. Original Namaniku97-page/cache-only completion remains TLS-limited at index54,54 saved. Cached-neighbor/history/zoom and6 races stay accepted.",

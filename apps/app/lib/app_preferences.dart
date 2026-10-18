@@ -13,8 +13,6 @@ enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
 
-enum ShelfPluginBarVisibility { expanded, collapsed, hidden }
-
 enum HomeHistoryLayout { grid, carousel, list }
 
 enum CachedCarrierTrustMode {
@@ -181,8 +179,9 @@ final class AppPreferencesController extends ChangeNotifier {
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
   bool _shelfShowAllCategory = true;
-  ShelfPluginBarVisibility _shelfPluginBarVisibility = ShelfPluginBarVisibility.expanded;
+  bool _shelfPluginFilterExpanded = false;
   Set<String> _shelfPluginSourceIds = <String>{};
+  Set<String> _dismissedOperationHints = <String>{};
   HomeHistoryLayout _homeHistoryLayout = HomeHistoryLayout.grid;
   int _homeHistoryColumns = 3;
   int _homeHistoryRows = 2;
@@ -245,8 +244,9 @@ final class AppPreferencesController extends ChangeNotifier {
   LibrarySortMode get shelfSortMode => _shelfSortMode;
   ShelfViewPreference get shelfView => _shelfView;
   bool get shelfShowAllCategory => _shelfShowAllCategory;
-  ShelfPluginBarVisibility get shelfPluginBarVisibility => _shelfPluginBarVisibility;
+  bool get shelfPluginFilterExpanded => _shelfPluginFilterExpanded;
   Set<String> get shelfPluginSourceIds => Set<String>.unmodifiable(_shelfPluginSourceIds);
+  bool hasSeenOperationHint(String id) => _dismissedOperationHints.contains(id);
   HomeHistoryLayout get homeHistoryLayout => _homeHistoryLayout;
   int get homeHistoryColumns => _homeHistoryColumns;
   int get homeHistoryRows => _homeHistoryRows;
@@ -413,12 +413,10 @@ final class AppPreferencesController extends ChangeNotifier {
       _shelfView,
     );
     _shelfShowAllCategory = _boolValue(values['shelfShowAllCategory'], true);
-    _shelfPluginBarVisibility = _enumByName(
-      ShelfPluginBarVisibility.values,
-      values['shelfPluginBarVisibility'],
-      _shelfPluginBarVisibility,
-    );
+    _shelfPluginFilterExpanded = _boolValue(values['shelfPluginFilterExpanded'],
+      values['shelfPluginBarVisibility'] == 'expanded');
     _shelfPluginSourceIds = _decodeIdentitySet(values['shelfPluginSourceIds'], maxItems: 5000);
+    _dismissedOperationHints = _decodeIdentitySet(values['dismissedOperationHints'], maxItems: 128);
     _homeHistoryLayout = _enumByName(
       HomeHistoryLayout.values,
       values['homeHistoryLayout'],
@@ -627,15 +625,30 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void cycleShelfSourceFilter() => setShelfSourceFilter(switch (_shelfSourceFilter) {
+    ShelfSourceFilter.all => ShelfSourceFilter.local,
+    ShelfSourceFilter.local => ShelfSourceFilter.remote,
+    ShelfSourceFilter.remote => ShelfSourceFilter.all,
+  });
+
   void setShelfShowAllCategory(bool value) {
     if (_disposed || _shelfShowAllCategory == value) return;
     _shelfShowAllCategory = value;
     _changed();
   }
 
-  void setShelfPluginBarVisibility(ShelfPluginBarVisibility value) {
-    if (_disposed || _shelfPluginBarVisibility == value) return;
-    _shelfPluginBarVisibility = value;
+  void setShelfPluginFilterExpanded(bool value) {
+    if (_disposed || _shelfPluginFilterExpanded == value) return;
+    _shelfPluginFilterExpanded = value;
+    _changed();
+  }
+
+  void dismissOperationHint(String id) {
+    if (_disposed || id.isEmpty || _dismissedOperationHints.contains(id)) return;
+    _dismissedOperationHints.add(id);
+    if (_dismissedOperationHints.length > 128) {
+      _dismissedOperationHints.remove(_dismissedOperationHints.first);
+    }
     _changed();
   }
 
@@ -1079,8 +1092,9 @@ final class AppPreferencesController extends ChangeNotifier {
       'shelfSortMode': _shelfSortMode.name,
       'shelfView': _shelfView.name,
       'shelfShowAllCategory': _shelfShowAllCategory,
-      'shelfPluginBarVisibility': _shelfPluginBarVisibility.name,
+      'shelfPluginFilterExpanded': _shelfPluginFilterExpanded,
       'shelfPluginSourceIds': _shelfPluginSourceIds.toList(growable: false),
+      'dismissedOperationHints': _dismissedOperationHints.toList(growable: false),
       'homeHistoryLayout': _homeHistoryLayout.name,
       'homeHistoryColumns': _homeHistoryColumns,
       'homeHistoryRows': _homeHistoryRows,

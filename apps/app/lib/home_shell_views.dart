@@ -1286,15 +1286,10 @@ extension _HomeShellViews on _HomeShellState {
   Widget _buildBookshelfToolbar(int count) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
     child: Row(children: [
-      Expanded(child: PopupMenuButton<ShelfSourceFilter>(
+      Expanded(child: TextButton(
         key: bookshelfSourceFilterKey,
-        tooltip: '来源类型',
-        initialValue: _sourceFilter,
-        onSelected: widget.preferences.setShelfSourceFilter,
-        itemBuilder: (_) => [for (final entry in const {
-          ShelfSourceFilter.all: '全部', ShelfSourceFilter.local: '本地', ShelfSourceFilter.remote: '远程',
-        }.entries) CheckedPopupMenuItem(value: entry.key,
-          checked: _sourceFilter == entry.key, child: Text(entry.value))],
+        onPressed: widget.preferences.cycleShelfSourceFilter,
+        style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
         child: Padding(padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(children: [
             const Icon(Icons.filter_list, size: 20),
@@ -1303,7 +1298,8 @@ extension _HomeShellViews on _HomeShellState {
               ShelfSourceFilter.all => '全部', ShelfSourceFilter.local => '本地',
               ShelfSourceFilter.remote => '远程',
             }} · $count', maxLines: 1, overflow: TextOverflow.ellipsis)),
-            const Icon(Icons.arrow_drop_down, size: 18),
+            const SizedBox(width: 4),
+            const Icon(Icons.swap_horiz, size: 18),
           ])),
       )),
       PopupMenuButton<LibrarySortMode>(
@@ -1382,32 +1378,10 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   Widget _buildShelfPluginBar(List<LibraryComic> libraryComics) {
-    final visibility = widget.preferences.shelfPluginBarVisibility;
-    if (visibility == ShelfPluginBarVisibility.hidden) return const SizedBox.shrink();
     final groups = _shelfPluginGroups(libraryComics);
-    final selectedCount = groups.where((group) => group.sourceIds.any(_shelfPluginSourceIds.contains)).length;
-    final hide = IconButton(key: bookshelfPluginHideKey, tooltip: '隐藏插件筛选',
-      onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.hidden),
-      icon: const Icon(Icons.visibility_off_outlined, size: 20));
-    if (visibility == ShelfPluginBarVisibility.collapsed) {
-      return SizedBox(key: bookshelfPluginBarKey, height: 44, child: Row(children: [
-        const SizedBox(width: 8),
-        Expanded(child: Align(alignment: Alignment.centerLeft, child: TextButton.icon(
-          key: bookshelfPluginExpandKey,
-          onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.expanded),
-          icon: const Icon(Icons.expand_less, size: 20),
-          label: Text(selectedCount == 0 ? '插件筛选' : '插件筛选 · 已选 $selectedCount'),
-        ))),
-        hide,
-        const SizedBox(width: 4),
-      ]));
-    }
     return SizedBox(key: bookshelfPluginBarKey, height: 52, child: Row(children: [
-      IconButton(tooltip: _shelfPluginMultiSelect ? '完成插件多选' : '插件多选（也可长按药丸）',
-        onPressed: () => _setState(() => _shelfPluginMultiSelect = !_shelfPluginMultiSelect),
-        icon: Icon(_shelfPluginMultiSelect ? Icons.done_all : Icons.filter_alt_outlined, size: 20)),
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(vertical: 6), children: [
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), children: [
           ChoiceChip(key: bookshelfAllPluginsKey, label: const Text('所有插件'),
             selected: _shelfPluginSourceIds.isEmpty, showCheckmark: false,
             onSelected: (_) {
@@ -1431,16 +1405,77 @@ extension _HomeShellViews on _HomeShellState {
                 ))),
           ],
         ])),
-      IconButton(key: bookshelfPluginCollapseKey, tooltip: '折叠插件筛选',
-        onPressed: () => widget.preferences.setShelfPluginBarVisibility(ShelfPluginBarVisibility.collapsed),
-        icon: const Icon(Icons.expand_more, size: 20)),
-      hide,
+      if (_shelfPluginMultiSelect)
+        TextButton(onPressed: () => _setState(() => _shelfPluginMultiSelect = false),
+          child: const Text('完成多选')),
     ]));
   }
 
+  void _maybeShowShelfGestureHint() {
+    final preferences = widget.preferences;
+    if (_shelfGestureHintQueued || _navigationIndex != 1 || !preferences.isAttached ||
+        preferences.hasSeenOperationHint(bookshelfPluginGestureHintId)) {
+      return;
+    }
+    _shelfGestureHintQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (!mounted || _navigationIndex != 1 || ModalRoute.of(context)?.isCurrent != true) {
+          return;
+        }
+        final expanded = preferences.shelfPluginFilterExpanded;
+        final result = await showOperationHint(context: context, target: _shelfCategoryHintTarget,
+          title: '滑动分类栏，展开或收起插件',
+          message: expanded
+            ? '在亮起的分类栏向下滑动收起，向上滑动可再次展开。长按插件药丸可多选。'
+            : '在亮起的分类栏向上滑动，展开插件筛选；向下滑动收起。长按插件药丸可多选。',
+          gesture: expanded ? OperationHintGesture.swipeDown : OperationHintGesture.swipeUp);
+        if (!mounted || result == null) {
+          return;
+        }
+        preferences.dismissOperationHint(bookshelfPluginGestureHintId);
+        if (result == OperationHintResult.performed) {
+          preferences.setShelfPluginFilterExpanded(!expanded);
+        }
+      } finally {
+        _shelfGestureHintQueued = false;
+      }
+    });
+  }
+
+  Widget _buildShelfFilters(List<LibraryComic> libraryComics) => Material(
+    elevation: 3, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Semantics(key: _shelfCategoryHintTarget, container: true,
+        label: widget.preferences.shelfPluginFilterExpanded ? '下划收起插件筛选' : '上划展开插件筛选',
+        onIncrease: () => widget.preferences.setShelfPluginFilterExpanded(true),
+        onDecrease: () => widget.preferences.setShelfPluginFilterExpanded(false),
+        child: GestureDetector(behavior: HitTestBehavior.opaque,
+          onVerticalDragStart: (_) => _shelfFilterDragDistance = 0,
+          onVerticalDragUpdate: (details) => _shelfFilterDragDistance += details.primaryDelta ?? 0,
+          onVerticalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (_shelfFilterDragDistance.abs() >= 24 || velocity.abs() >= 300) {
+              widget.preferences.setShelfPluginFilterExpanded(
+                _shelfFilterDragDistance.abs() >= 24 ? _shelfFilterDragDistance < 0 : velocity < 0);
+            }
+          },
+          child: _buildShelfCategoryBar())),
+      AnimatedSize(duration: const Duration(milliseconds: 180), curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: widget.preferences.shelfPluginFilterExpanded
+          ? StreamBuilder<void>(stream: _externalSources.sourceProjectionChanges,
+              builder: (_, _) => _buildShelfPluginBar(libraryComics))
+          : const SizedBox(width: double.infinity)),
+    ]),
+  );
+
   Widget _buildShelfCategoryBar() => SizedBox(
-    key: bookshelfCategoryBarKey, height: 52,
-    child: Row(children: [
+    key: bookshelfCategoryBarKey, height: 60,
+    child: Column(children: [
+      SizedBox(height: 8, child: Center(child: Container(width: 28, height: 3,
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .4),
+          borderRadius: BorderRadius.circular(2))))),
+      Expanded(child: Row(children: [
       Expanded(child: ListView(scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), children: [
           if (_shelfShowAllCategory) ...[
@@ -1472,12 +1507,14 @@ extension _HomeShellViews on _HomeShellState {
       IconButton(key: bookshelfAddCategoryKey, tooltip: '新建分类',
         onPressed: _createCategory, icon: const Icon(Icons.add)),
       const SizedBox(width: 4),
+      ])),
     ]),
   );
 
   Widget _buildBookshelfPage() => ListenableBuilder(
     listenable: widget.preferences,
     builder: (context, _) {
+      _maybeShowShelfGestureHint();
       final libraryComics = _libraryComics;
       final comics = _filteredShelfComics(libraryComics: libraryComics);
       return Column(key: bookshelfPageKey, children: [
@@ -1490,11 +1527,7 @@ extension _HomeShellViews on _HomeShellState {
               child: Text('使用封面左上角拖动柄调整顺序；长按封面进入批量选择'))),
         Expanded(child: comics.isEmpty ? const Center(child: Text('当前筛选下没有漫画'))
           : _shelfViewMode == ShelfViewPreference.gallery ? _buildShelfGallery(comics) : _buildShelfList(comics)),
-        Material(elevation: 3, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          StreamBuilder<void>(stream: _externalSources.sourceProjectionChanges,
-            builder: (_, _) => _buildShelfPluginBar(libraryComics)),
-          _buildShelfCategoryBar(),
-        ])),
+        _buildShelfFilters(libraryComics),
       ]);
     },
   );

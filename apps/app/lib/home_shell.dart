@@ -53,6 +53,7 @@ import 'home_source_projection.dart';
 import 'home_version_reuse_lifecycle.dart';
 import 'home_widgets.dart';
 import 'home_history_layout.dart';
+import 'operation_hint.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'home_shell_views.dart';
 part 'home_shell_source_compat.dart';
@@ -81,9 +82,7 @@ const bookshelfSettingsKey = ValueKey<String>('bookshelf-settings');
 const bookshelfCategoryBarKey = ValueKey<String>('bookshelf-category-bar');
 const bookshelfAllCategoryKey = ValueKey<String>('bookshelf-all-category');
 const bookshelfPluginBarKey = ValueKey<String>('bookshelf-plugin-bar');
-const bookshelfPluginExpandKey = ValueKey<String>('bookshelf-plugin-expand');
-const bookshelfPluginCollapseKey = ValueKey<String>('bookshelf-plugin-collapse');
-const bookshelfPluginHideKey = ValueKey<String>('bookshelf-plugin-hide');
+const bookshelfPluginGestureHintId = 'bookshelf-plugin-swipe';
 const bookshelfAllPluginsKey = ValueKey<String>('bookshelf-all-plugins');
 Key bookshelfPluginChoiceKey(String id) => ValueKey<String>('bookshelf-plugin:$id');
 const bookshelfAddCategoryKey = ValueKey<String>('bookshelf-add-category');
@@ -239,6 +238,9 @@ final class _HomeShellState extends State<HomeShell> {
   late Set<String> _shelfPluginSourceIds;
   late bool _shelfShowAllCategory;
   bool _shelfPluginMultiSelect = false;
+  final GlobalKey _shelfCategoryHintTarget = GlobalKey();
+  bool _shelfGestureHintQueued = false;
+  double _shelfFilterDragDistance = 0;
   String? _shelfCategoryId;
   String? get _selectedCategoryId {
     if (_shelfCategoryId != null &&

@@ -2451,7 +2451,7 @@ def check_compile_regressions() -> None:
         'homeUpdatesSectionKey',
         'homeHistorySectionKey',
         'NavigationBar(',
-        'PopupMenuButton<ShelfSourceFilter>',
+        'cycleShelfSourceFilter',
         'showCheckmark: false',
         'ShelfViewPreference',
         'bookshelfViewKey',

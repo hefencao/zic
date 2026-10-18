@@ -18,6 +18,7 @@ import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
 import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
+import 'package:zic/operation_hint.dart';
 
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
@@ -1246,11 +1247,12 @@ void main() {
     expect(find.byTooltip('切换画廊视图'), findsOneWidget);
   });
 
-  testWidgets('plugin filters combine by source and retain selection when folded or hidden', (tester) async {
+  testWidgets('plugin filters combine by source and retain selection through category swipes', (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
-    final preferences = AppPreferencesController()..setShelfShowAllCategory(false);
+    final preferences = AppPreferencesController()..setShelfShowAllCategory(false)
+      ..setShelfPluginFilterExpanded(true);
     addTearDown(preferences.dispose);
     const categoryId = 'filter-category';
     await store.upsertCategory(LibraryCategory(categoryId: categoryId, name: '筛选分类',
@@ -1295,11 +1297,19 @@ void main() {
     await tester.longPress(a);
     await tester.pumpAndSettle();
     expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
-    await tester.tap(find.byKey(bookshelfPluginCollapseKey));
+    await tester.drag(find.byKey(bookshelfCategoryBarKey), const Offset(0, 90));
     await tester.pumpAndSettle();
-    expect(find.byKey(bookshelfPluginExpandKey), findsOneWidget);
+    expect(find.byKey(bookshelfPluginBarKey), findsNothing);
     expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
-    await tester.tap(find.byKey(bookshelfPluginHideKey));
+    await tester.drag(find.byKey(bookshelfCategoryBarKey), const Offset(-90, 0));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfPluginFilterExpanded, isFalse);
+    await tester.drag(find.byKey(bookshelfCategoryBarKey), const Offset(0, -90));
+    await tester.pumpAndSettle();
+    expect(find.byKey(bookshelfPluginBarKey), findsOneWidget);
+    expect(tester.getTopLeft(find.byKey(bookshelfPluginBarKey)).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.byKey(bookshelfCategoryBarKey)).dy));
+    preferences.setShelfPluginFilterExpanded(false);
     await tester.pumpAndSettle();
     expect(find.byKey(bookshelfPluginBarKey), findsNothing);
     expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
@@ -1315,6 +1325,50 @@ void main() {
     expect(a, findsOneWidget);
     expect(b, findsOneWidget);
     expect(await store.listSavedComics(), hasLength(3));
+    await tester.tap(find.byKey(bookshelfSourceFilterKey));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfSourceFilter, ShelfSourceFilter.local);
+    expect(preferences.shelfPluginSourceIds, isEmpty);
+    await tester.tap(find.byKey(bookshelfSourceFilterKey));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfSourceFilter, ShelfSourceFilter.remote);
+    expect(c, findsOneWidget);
+    await tester.tap(find.byKey(bookshelfSourceFilterKey));
+    await tester.pumpAndSettle();
+    expect(preferences.shelfSourceFilter, ShelfSourceFilter.all);
+  });
+
+  testWidgets('first shelf hint waits for loaded preferences and is acknowledged by the gesture', (tester) async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    Map<String, Object?>? saved;
+    await tester.pumpWidget(App(preferences: preferences));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+    expect(find.byKey(operationHintDismissKey), findsNothing);
+    await preferences.attach(read: () async => null, write: (value) async { saved = value; });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(operationHintArrowKey), findsOneWidget);
+    expect(preferences.hasSeenOperationHint(bookshelfPluginGestureHintId), isFalse);
+    await tester.dragFrom(tester.getCenter(find.byKey(bookshelfCategoryBarKey)), const Offset(0, -100));
+    await tester.pumpAndSettle();
+    expect(find.byKey(operationHintDismissKey), findsNothing);
+    expect(preferences.shelfPluginFilterExpanded, isTrue);
+    expect(preferences.hasSeenOperationHint(bookshelfPluginGestureHintId), isTrue);
+    await preferences.flush();
+    final restored = AppPreferencesController();
+    addTearDown(restored.dispose);
+    await restored.attach(read: () async => saved, write: (_) async {});
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(App(preferences: restored));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+    expect(find.byKey(operationHintDismissKey), findsNothing);
+    expect(restored.shelfPluginFilterExpanded, isTrue);
   });
 
   testWidgets('category can add comics from the current category view',

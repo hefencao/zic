@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Cycle bookshelf source kinds on tap, reveal plugin pills below categories with an upward swipe, and persist the expansion switch with legacy visibility migration. Remove permanent filter/fold/hide icons. Add reusable dimmed gesture guidance with animated arrows, reduced-motion support and persisted first-use acknowledgement.
+
 - Consolidate bookshelf tools into one row and anchor categories and plugin filters at the bottom. Rename the all-category tab to All with an optional hide setting. Support persistent collapsible/hidden plugin pills, single selection or long-press multi-selection, and offline grouping from existing plugin metadata without activation. Folding preserves active filters and comic selection.
 
 - Move Home quick Trace export next to the zic title. Make reading history configurable as a vertical cover grid (2–6 columns), a horizontal shelf (1–3 rows), or a progress list, with a three-column grid by default. Persist Home choices independently, adapt narrow windows without changing saved columns, and build history lazily.

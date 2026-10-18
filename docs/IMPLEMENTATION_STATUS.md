@@ -25,7 +25,7 @@
   无 authority 的错误不再自动制造新的 presentation/source generation。widget/page-output 的本地异步 fence 已分别命名为 `loadEpoch` / `bindingEpoch`。
 
 ### Home 组合与服务代际
-- `HomeShell`/`home_shell_*` 为生产入口，旧`DemoHome`仅存历史。Debug Trace紧跟首页zic；历史网格2–6列/横向1–3行/列表，默认三列、偏好持久化、窄屏适配、sliver按需挂载。书架单行工具区，分类底置、可隐藏“全部”；插件药丸底置、可折叠/隐藏、长按多选并交叉分类。AppPreferences持久化，来源分组只读元数据，沿用canonical封面/续读。
+- `HomeShell`/`home_shell_*` 为生产入口，旧`DemoHome`仅存历史。Debug Trace紧跟zic；历史网格2–6列/横向1–3行/列表，默认三列、持久化、窄屏适配/sliver按需挂载。书架来源循环切换、分类底置可隐藏“全部”；插件在分类下方、上/下划展开/收起，设置保存、长按多选、元数据只读。首次方向手势遮罩复用`showOperationHint`，确认持久化。沿用canonical封面/续读。
 - `HomeShell` 只持Navigator/presentation wiring，authority归各自owner。封面局部订阅source signal，source-failed只在unavailable→available重试；canonical artwork与raw点击key同级。32 UI回归及冷启动8/组合3真机通过，063/066/082收口。
 - Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。 ADR0404：单源页首次挂载先接收已有query，再发原source请求；后续queryRevision与标签路由不变，冷真机queryLength2/offset0已验。
 - ADR0399/0400/0401已验保持。0402 Accepted：viewport/DPR/stitch消费原绝对center，DPR首轮接同一layout校正。8先失败、11新合同/105 focused及全门禁通过；Release4bd8351d/PID11582几何28步/真实OS变化16次通过，125完整payload保持。原加载/active视觉/最终显示开放。

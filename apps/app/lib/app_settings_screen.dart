@@ -1153,21 +1153,13 @@ final class BookshelfSettingsScreen extends StatelessWidget {
               value: preferences.shelfShowAllCategory,
               onChanged: preferences.setShelfShowAllCategory,
             ),
-            const SizedBox(height: 12),
-            const Text('插件药丸'),
-            const SizedBox(height: 8),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final entry in const {
-                ShelfPluginBarVisibility.expanded: '展开',
-                ShelfPluginBarVisibility.collapsed: '折叠',
-                ShelfPluginBarVisibility.hidden: '隐藏',
-              }.entries)
-                ChoiceChip(label: Text(entry.value), showCheckmark: false,
-                  selected: preferences.shelfPluginBarVisibility == entry.key,
-                  onSelected: (_) => preferences.setShelfPluginBarVisibility(entry.key)),
-            ]),
-            const SizedBox(height: 8),
-            const Text('点击单选，长按进入多选。隐藏后可从书架右上角设置恢复。'),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('展开插件筛选'),
+              subtitle: const Text('在底部分类栏上划展开、下划收起。点击药丸单选，长按进入多选。'),
+              value: preferences.shelfPluginFilterExpanded,
+              onChanged: preferences.setShelfPluginFilterExpanded,
+            ),
             if (preferences.shelfPluginSourceIds.isNotEmpty)
               ListTile(contentPadding: EdgeInsets.zero,
                 title: const Text('当前插件筛选'),
