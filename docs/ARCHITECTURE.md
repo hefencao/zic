@@ -1149,6 +1149,7 @@ App 的 `AppTranslationChapterJobs` 拥有显式整章预翻译，单次仅运�
 
 `PipelineReaderSession.openSealedPageFile()` 只打开当前 authority 的完整 artifact 租约，miss
 不会下载或重试；若普通 promoted handoff 已在持久化，读取只等待该既有提交。
+App 通过 Pipeline 的完整图片通知唤醒旁路；会话记录通知修订，若通知早于异步输入检查返回，或等待图片状态已发布但旧任务尚未退出，则在原缓存检查/串行任务释放后重放。只唤醒仍保留且等待图片的同代页面，合并重复通知，不轮询、不重新推理已有结果。
 fresh-source quarantine 中的历史呈现不能作为 OCR 输入。源自本地文件的
 图片仍由来源拥有；`LocalMediaBridge.openDocumentFile()` 保留完整文档描述符，不能直接表示整图时
 由本地来源桥生成临时文件，租约释放时删除。输入租约覆盖内容摘要、OCR 和缓存操作，并在所有成功、失败、取消路径退出后释放。

@@ -1491,6 +1491,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
 - DeepL 空白 `model_type` MUST 使用既有 `latency_optimized` 默认并统一请求与缓存身份；未知非空类型 MUST 报错。
 - Reader 翻译 MUST 作为独立旁路消费完整缓存或本地原图；cache miss MUST 等待既有 Pipeline，
   不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
+  Pipeline 完整图片通知早于异步输入检查返回，或到达旧任务退出间隙时，旁路 MUST 在该任务退出后重放通知，MUST NOT 依赖再次翻页。重放 MUST 仅唤醒同代、仍在配置范围内且等待图片的页面，MUST NOT 轮询或重复推理就绪页面；缓存恢复与邻页推理均遵守此边界。
 - 显式整章预翻译 MUST 由 App 持有并通过既有章节下载服务准备完整图片，MUST NOT 新建网络调度队列。一次 MUST 仅处理一章，当前页保存及租约释放完成后才按原始页序推进，只保留当前页和配置的前页上下文；默认 MUST 跳过动图。
   离开 Reader MUST 保留任务；取消 MUST 停止后续页、等待实际调用退出并保留有效译文，MUST NOT 撤销共享图片下载。App services 关闭 MUST 先排空任务，活动任务期间 MUST 拒绝切换存储根；后台 MUST 暂停新推理，恢复后继续。
   Reader 与整章任务请求相同内容、引擎及完整配置时 MUST 共用在途 OCR/翻译，MUST NOT 重复调用模型。各消费者 MUST 持有自身输入和引擎租约至实际退出，单个消费者取消 MUST NOT 提前释放共享调用容量或使其他消费者失去结果。

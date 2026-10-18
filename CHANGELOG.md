@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Retain Pipeline image-completion notifications that overtake an asynchronous missing-input check or arrive before its previous owner exits. Replay after cache-probe/serial-task cleanup so neighboring translation and cache restoration resume without a page turn. Keep retained-page, generation and disable boundaries; coalesce notifications without polling, extra image requests or repeated inference of ready pages.
+
 - Compress Android APK native libraries through the App host packaging DSL and let the installer extract the original ELF files. Keep all native code, inference kernels and runtime behavior intact; reduce the distributed APK at the cost of installation decompression and greater installed disk usage.
 
 - Build a pinned OpenCV OCR module closure for Android instead of bundling every vision module. Preserve the upstream Java API, required OCR JNI, codecs, SIMD dispatch, TBB and ABI-specific HAL acceleration; keep ONNX and local translation kernels intact. Verify the complete package before publishing it, retain dependency versions/licenses, and report split APK sizes while removing the stale universal output after successful builds.

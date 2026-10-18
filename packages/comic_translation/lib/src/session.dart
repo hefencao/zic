@@ -80,6 +80,7 @@ final class ComicTranslationSession {
   final Map<String, Future<void>> _cacheProbes = {};
   final Set<_SharedTranslationWork> _translationWork = {};
   final Map<String, int> _cacheProbeGenerations = {};
+  final Map<String, int> _imageReadyRevisions = {};
   final Map<String, Map<int, ComicTranslationArtifact>> _readyPages = {};
   final ValueNotifier<double> _fontScale = ValueNotifier(1);
   final ValueNotifier<String?> _detectedLanguage;
@@ -196,6 +197,12 @@ final class ComicTranslationSession {
   }
 
   void imageReady(ComicTranslationPageIdentity identity) {
+    if (_disposed || !_enabled || !_retainedKeys.contains(identity.key)) return;
+    _imageReadyRevisions.update(identity.key, (value) => value + 1, ifAbsent: () => 1);
+    _wakeWaitingImage(identity);
+  }
+
+  void _wakeWaitingImage(ComicTranslationPageIdentity identity) {
     final state = _states[identity.key]?.value;
     if (!_enabled || state?.phase != ComicTranslationPhase.waitingForImage) {
       return;
@@ -205,6 +212,15 @@ final class ComicTranslationSession {
       _enqueue(identity, 1000);
     } else if (_near.take(policy.prefetchPages).any((page) => page.key == identity.key)) {
       _enqueue(identity, 500);
+    }
+  }
+
+  void _replayImageReady(ComicTranslationPageIdentity identity, _ProcessTicket ticket) {
+    // Completion may overtake a missing-file lookup or arrive while its owner
+    // still prevents another probe/enqueue. Replay only after that owner exits;
+    // a fresh ticket consumes the revision even if the file is still missing.
+    if (_isActive(ticket) && ticket.imageReadyRevision != (_imageReadyRevisions[identity.key] ?? 0)) {
+      _wakeWaitingImage(identity);
     }
   }
 
@@ -291,7 +307,8 @@ final class ComicTranslationSession {
         _processing?.identityKey == identity.key || _cacheProbes.containsKey(identity.key) ||
         _cacheProbeGenerations[identity.key] == _generation ||
         _states[identity.key]?.value.artifact != null) return;
-    final ticket = _ProcessTicket(generation: _generation, identityKey: identity.key);
+    final ticket = _ProcessTicket(generation: _generation, identityKey: identity.key,
+      imageReadyRevision: _imageReadyRevisions[identity.key] ?? 0);
     _identities[identity.key] = identity;
     _cacheProbeGenerations[identity.key] = _generation;
     late final Future<void> task;
@@ -310,6 +327,7 @@ final class ComicTranslationSession {
       if (ticket.generation != _generation && _retainedKeys.contains(identity.key)) {
         _probeCache(identity);
       }
+      _replayImageReady(identity, ticket);
       if (!_disposed && _enabled && _queue.isNotEmpty) unawaited(_pump());
     });
     _cacheProbes[identity.key] = task;
@@ -340,6 +358,7 @@ final class ComicTranslationSession {
         final ticket = _ProcessTicket(
           generation: _generation,
           identityKey: item.identity.key,
+          imageReadyRevision: _imageReadyRevisions[item.identity.key] ?? 0,
         );
         if (!_isActive(ticket)) continue;
         // Claim before yielding so a repeated observation cannot start a cache
@@ -362,6 +381,7 @@ final class ComicTranslationSession {
           }
         } finally {
           _processing = null;
+          _replayImageReady(item.identity, ticket);
         }
       }
     } finally {
@@ -847,10 +867,12 @@ final class _SharedTranslationWork {
 final class _ProcessTicket {
   final int generation;
   final String identityKey;
+  final int imageReadyRevision;
 
   const _ProcessTicket({
     required this.generation,
     required this.identityKey,
+    required this.imageReadyRevision,
   });
 }
 

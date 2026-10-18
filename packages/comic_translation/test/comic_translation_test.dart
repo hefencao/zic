@@ -721,6 +721,131 @@ void main() {
     expect(translator.calls, 1, reason: 'a cached neighbor must not enter the model queue');
   });
 
+  for (final cacheOnly in [false, true]) {
+    for (final notifyWhileOpening in [false, true]) {
+      test('neighbor image readiness survives ${notifyWhileOpening ? 'input preparation' : 'owner cleanup'} '
+          'for ${cacheOnly ? 'cache restoration' : 'inference'}', () async {
+        final pages = <ComicTranslationPageIdentity>[];
+        for (var i = 0; i < 2; i++) {
+          final image = File('${temp.path}/image-ready-$cacheOnly-$notifyWhileOpening-$i.bin');
+          await image.writeAsBytes(List<int>.filled(607 + i, 109 + (cacheOnly ? 1 : 0) + (notifyWhileOpening ? 2 : 0)));
+          pages.add(ComicTranslationPageIdentity(imageKey: image.uri.toString(), sourceKey: 'image-ready',
+            comicId: 'comic', chapterId: 'chapter', pageIndex: i,
+            mediaKind: ComicTranslationMediaKind.staticImage));
+        }
+        if (cacheOnly) {
+          final seed = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+            engines: ComicTranslationEngineRegistry()..ocrEngine = _OcrEngine()
+              ..translationEngine = _TranslationEngine(contextMode: ComicTranslationContextMode.none));
+          seed.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+          await _waitFor(seed, pages.last);
+          await seed.close();
+        }
+        final opened = Completer<void>();
+        final firstRead = Completer<ComicTranslationInputFile?>();
+        final ocr = _OcrEngine();
+        final translator = _TranslationEngine(contextMode: ComicTranslationContextMode.none);
+        var neighborInputs = 0;
+        final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+          engines: ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator,
+          policy: ComicTranslationPolicy(prefetchPages: cacheOnly ? 0 : 1, cachePrefetchPages: cacheOnly ? 1 : 0),
+          inputResolver: ComicTranslationInputResolver(openFile: (identity) async {
+            if (identity == pages.last && ++neighborInputs == 1) {
+              opened.complete();
+              return firstRead.future;
+            }
+            return ComicTranslationInputFile(path: File.fromUri(Uri.parse(identity.imageKey)).path,
+              release: () {});
+          }));
+        addTearDown(() async {
+          if (!firstRead.isCompleted) firstRead.complete(null);
+          await session.close();
+        });
+        var notified = false;
+        final state = session.listenable(pages.last);
+        void imageCompleted() {
+          if (notified || state.value.phase != ComicTranslationPhase.waitingForImage) return;
+          notified = true;
+          // A completion can arrive synchronously with publication of a miss,
+          // before the old cache probe or serial inference owner has exited.
+          session.imageReady(pages.last);
+        }
+        if (!notifyWhileOpening) state.addListener(imageCompleted);
+        session.reportPages(current: [pages.first], near: [pages.last], interaction: ComicTranslationInteraction.idle);
+        await opened.future.timeout(const Duration(seconds: 2));
+        if (notifyWhileOpening) {
+          expect(state.value.phase, ComicTranslationPhase.loadingCache);
+          session.imageReady(pages.last);
+          session.imageReady(pages.last);
+        }
+        firstRead.complete(null);
+        await _waitFor(session, pages.last).timeout(const Duration(seconds: 2));
+        await _waitFor(session, pages.first).timeout(const Duration(seconds: 2));
+        if (!notifyWhileOpening) state.removeListener(imageCompleted);
+        final readyInputs = neighborInputs;
+        session.imageReady(pages.last);
+        expect(neighborInputs, readyInputs, reason: 'a repeated completion cannot restart a ready page');
+        await session.close();
+        expect(neighborInputs, inInclusiveRange(2, 3),
+          reason: 'one completion must wake input preparation without another viewport report or polling');
+        expect(ocr.calls, cacheOnly ? 1 : 2);
+        expect(translator.calls, cacheOnly ? 1 : 2);
+      });
+    }
+  }
+
+  for (final disable in [false, true]) {
+    test('pending image readiness does not revive ${disable ? 'disabled' : 'unretained'} translation', () async {
+      final image = File('${temp.path}/retired-image-ready-$disable.bin');
+      await image.writeAsBytes(List<int>.filled(619, disable ? 117 : 119));
+      ComicTranslationPageIdentity page(int index) => ComicTranslationPageIdentity(
+        imageKey: image.uri.toString(), sourceKey: 'retired-image-ready', comicId: 'comic',
+        chapterId: 'chapter', pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage);
+      final current = page(0);
+      final neighbor = page(1);
+      final opened = Completer<void>();
+      final missed = Completer<void>();
+      final firstRead = Completer<ComicTranslationInputFile?>();
+      var neighborInputs = 0;
+      final ocr = _OcrEngine();
+      final translator = _TranslationEngine(contextMode: ComicTranslationContextMode.none);
+      final session = ComicTranslationSession(enabled: true, sourceLanguage: 'ja', targetLanguage: 'zh-CN',
+        engines: ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator,
+        policy: const ComicTranslationPolicy(prefetchPages: 1, cachePrefetchPages: 0),
+        inputResolver: ComicTranslationInputResolver(openFile: (identity) async {
+          if (identity == neighbor) {
+            neighborInputs++;
+            if (!opened.isCompleted) opened.complete();
+            return firstRead.future;
+          }
+          return ComicTranslationInputFile(path: image.path, release: () {});
+        }), onDiagnostic: (identity, details) {
+          if (identity == neighbor && details['stage'] == 'input-ready' && details['available'] == false) {
+            missed.complete();
+          }
+        });
+      addTearDown(() async {
+        if (!firstRead.isCompleted) firstRead.complete(null);
+        await session.close();
+      });
+      session.reportPages(current: [current], near: [neighbor], interaction: ComicTranslationInteraction.idle);
+      await opened.future.timeout(const Duration(seconds: 2));
+      session.imageReady(neighbor);
+      if (disable) {
+        session.setEnabled(false);
+      } else {
+        session.reportPages(current: [current], interaction: ComicTranslationInteraction.idle);
+      }
+      firstRead.complete(null);
+      await missed.future.timeout(const Duration(seconds: 2));
+      await Future<void>.delayed(Duration.zero);
+      expect(neighborInputs, 1);
+      expect(ocr.calls, 1);
+      expect(translator.calls, 1);
+      await session.close();
+    });
+  }
+
   test('dragging restores cache before inference submission is allowed', () async {
     final image = File('${temp.path}/drag-cache.bin');
     await image.writeAsBytes(List<int>.filled(487, 97));

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T02:01:45Z",
-  "objective": "ARM64 Release控制在40MiB以内，保持翻译与阅读性能",
+  "updated_at": "2026-10-18T02:30:34Z",
+  "objective": "修复翻页前邻页自动预翻译唤醒，保持Pipeline/NetLane边界",
   "status": "partial",
   "scope": [
-    "main:Android APK native compression;runtime bytes preserved",
+    "main:translation input-completion wake;no extra image requests",
     "Reader/Pipeline/NetLane与取消真实退出边界保持",
     "原112条验收及summary逐字保留"
   ],
@@ -147,25 +147,25 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "11cbef7914ede41b9e564ecdb371f313b9fb9981d8c2af29b85b0a38dfe42ec1",
-    "observation": "Release11cbef/PID21725;21 extracted ELF hashes match APK. JA/KO3x parity;Namaniku8-10/history/zoom pass;OpenAI restored.7 cache hits/0 OCR/MT;chapter54/97 saved."
+    "apk_sha256": "0b01621d4a94f6fc3c60f70832fc801254fa427387d8c0c0ddb370ed7e8ebb07",
+    "observation": "Release0b0162/PID21895;Namaniku61→62/history/zoom pass.11 cache hits/0 OCR/MT;page62 ready33.324s before entry. Fresh inference unverified/TLS."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
     "exit_code": 0,
     "analyzers": 28,
     "dart_flutter_tests": {
-      "passed": 2569,
+      "passed": 2575,
       "skipped": 3
     },
     "rust_tests": 25,
-    "android_jvm_tests": "110 owned/0 failures;4 Gradle targets pass;upstream Robolectric/ByteBuddy unverified",
-    "native_runtime": "3ABI Debug/Profile/Release ELF/compression/manifest/signatures pass;Release native/DEX/assets byte-identical,only extractNativeLibs changes.",
-    "device": "11cbef:cold5x median736→668ms;JA warm1953.5→1986ms(+1.7%),KO1951→1951.5ms.48 texts/counts unchanged;Reader7 cache hits/0 OCR/MT,history/zoom pass.",
+    "android_jvm_tests": "110 owned/0 failures;4 targets pass;upstream Robolectric/ByteBuddy unverified",
+    "native_runtime": "3ABI Release ELF/compression/manifest/signatures pass;arm64 Debug/Release translation closure.20 non-Dart runtime ELF byte-identical.",
+    "device": "0b0162:61→62/history/zoom pass;11 cache hits/0 OCR/MT;neighbor ready33.324s before entry. Fresh baseline index54 MT hit TLS4 retries.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "28 analyzers/28 suites,2569 pass/3skip,Rust25,Android110,3ABI Debug/Profile/Release/device pass;112 records/summary byte-identical."
+    "scope": "28 analyzers/28 suites,2575pass/3skip,Rust25,Android110;6 new cases/4 fail beforefix.112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,19 +176,19 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "APK .so compressed/install-extracted;ELF/DEX/assets unchanged. OpenCV4.13 OCR/JNI/SIMD/TBB/HAL+ONNX/MT retained. Current-first worker cache/1.5ms layout/LRU8p128blocks;comic OCR/content/indicator,global models/target/quality/context/lookahead;chapter/companions/retries.",
-      "diagnosis": "Stored native libraries dominated74.57/79.55MiB. Change App host APK compression only;installer extracts original files. Installed occupancy increases;no runtime decompression/inference changes.",
-      "accepted": "3ABI Release payloads identical except manifest;21 installed arm64 ELF hashes match. JA/KO3x48texts/counts same;Reader8-10/history/zoom pass,7 hits/0 OCR/MT.154 regressions/64 layouts retained.",
-      "performance": "Release MiB arm64 79.55→34.87,v7a55.17→28.90,x86 107.73→46.88. APK+ELF109.44MiB(+29.89);cold736→668ms;JA warm1953.5→1986ms,KO1951→1951.5ms. Chapter54 saved,TLS54 pending.",
+      "current_contract": "Pipeline complete-file lease/events feed App sidecar;OCR/MT serial inference,NetLane owns network. Completion revisions replay after probe/serial exit for retained waiting pages;no polling/extra image requests or ready-page inference. Existing cache/model/layout contracts retained.",
+      "diagnosis": "imageReady ignored loadingCache events;waiting-state callbacks also lost while old probe/serial owner blocked resubmission.4 failing-before tests cover both races and cache/inference;generation/retention guards remain.",
+      "accepted": "6 new regressions;160 package/2575 full pass. Release0b0162 device:11 cached hits,0 OCR/MT;neighbor ready33.324s before entry;history/zoom pass. Fresh MT remains TLS-limited.",
+      "performance": "Release MiB arm6434.8725/v7a28.9051/x8646.8766;arm64+504B.20 non-Dart runtime ELF unchanged;no polling or repeated ready-page inference.",
       "remaining_acceptance": [
-        "97-page/cache-only run pending TLS at index54,54 saved. Trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl",
+        "Fresh-neighbor inference/97-page completion unverified:TLS at index54,54 saved. Original trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl",
         "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."
       ],
       "mainline": "main;local only"
     }
   },
   "remaining": [
-    "97-page/cache-only translation acceptance blocked by TLS after54 saved and5 retries;settings/OCR acceptance passed.",
+    "Fresh-neighbor inference and97-page/cache-only acceptance unverified after real API TLS failures;54 chapter pages saved.6 race regressions and candidate cached-neighbor/history/zoom pass.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",
