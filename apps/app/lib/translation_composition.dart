@@ -182,7 +182,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
       comicId: _chapter.comicId,
       chapterId: _chapter.chapter.chapterId,
       pageIndex: index,
-      mediaKind: asset.animatedHint || asset.contentKindHint == ContentKindHint.gif
+      mediaKind: pipeline.pageIsAnimated(asset) == true
           ? ComicTranslationMediaKind.animatedImage
           : ComicTranslationMediaKind.staticImage,
     );
@@ -195,7 +195,9 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
     final token = _inputToken;
     final lease = await pipeline.openSealedPageFile(asset, token);
     if (lease != null) {
-      final file = ComicTranslationInputFile(path: lease.path, release: lease.release);
+      final file = ComicTranslationInputFile(path: lease.path, release: lease.release,
+        mediaKind: lease.isAnimated == null ? null : lease.isAnimated!
+            ? ComicTranslationMediaKind.animatedImage : ComicTranslationMediaKind.staticImage);
       final store = artifactStore;
       return store == null ? file : bindTranslationArchive(file, store: store,
         id: readerPageDownloadId(_chapter, asset));

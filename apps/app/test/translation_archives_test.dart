@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -40,13 +39,13 @@ void main() {
     final entry = ImportedLibraryEntry(chapter: ImportedChapterRecord(
       directoryId: 'archive-fixture', displayName: 'Chapter', sourceId: 'fixture',
       comicId: 'comic', chapterId: 'chapter', sourceRevision: 'r1',
-      pages: const [ImportedPageRecord(displayName: 'Page', sourceId: 'https://example.invalid/page.png',
-        pageId: 'page', contentKindHint: ContentKindHint.png)],
+      pages: const [ImportedPageRecord(displayName: 'Page', sourceId: 'https://example.invalid/page.webp',
+        pageId: 'page', contentKindHint: ContentKindHint.webp, animatedHint: true)],
     ));
     await library.upsertChapter(entry.chapter);
     final manifest = entry.chapter.toManifest();
     final id = readerPageDownloadId(manifest, manifest.pages.single);
-    final image = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8/8AAAAASUVORK5CYII=');
+    final image = await File('test/device_acceptance/fixtures/source_native_webp/static.webp').readAsBytes();
     await composition.artifactStore.storePromotedArtifact(id: id, bytes: image);
     final content = sha256.convert(image).toString();
     final ocr = ComicOcrArtifact(contentDigest: content, engineId: 'fixture-ocr', modelVersion: 'v1',

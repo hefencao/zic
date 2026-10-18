@@ -79,6 +79,8 @@ void main() {
       final lease = await reader.openSealedPageFile(chapter.pages.single, MediaLoadToken());
       expect(lease, isNotNull);
       expect(lease!.path, '/proc/self/fd/41');
+      expect(reader.pageIsAnimated(chapter.pages.single), isNull);
+      expect(lease.isAnimated, isNull, reason: 'unresolved WebP is not proof of animation');
       expect(runtime.registry.find(readerPageDownloadId(chapter, chapter.pages.single)), isNull);
       expect(lane.isIdle, isTrue);
       expect(backend.releases, 0);
@@ -87,6 +89,36 @@ void main() {
     } finally {
       await reader.dispose();
       await runtime.dispose();
+    }
+  });
+
+  test('sealed sidecar reuses physical WebP evidence despite an animated source hint', () async {
+    for (final flags in [0, 2]) {
+      final chapter = _chapter(uri: Uri.parse('https://example.invalid/page.webp'),
+        contentKindHint: ContentKindHint.webp, animatedHint: true);
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final lane = NetLane(maxActive: 1);
+      final runtime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: ArtifactCacheManager(backend: _PresentationFileBackend()),
+        partialDownloadStore: null, net: lane);
+      runtime.registry.get(id).bindResidentImmutableAuthority(
+        validators: const Validators(), totalLength: 30,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+        metadataPrefix: [...'RIFF'.codeUnits, 22, 0, 0, 0, ...'WEBP'.codeUnits,
+          ...'VP8X'.codeUnits, 10, 0, 0, 0, flags, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      final reader = PipelineReaderSessionFactory(mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: lane).withTransferRuntime(runtime).create(
+          chapter: chapter, sessionId: 'sidecar-webp-evidence');
+      try {
+        expect(reader.pageIsAnimated(chapter.pages.single), flags == 2);
+        final lease = await reader.openSealedPageFile(chapter.pages.single, MediaLoadToken());
+        expect(lease!.isAnimated, flags == 2);
+        expect(lane.isIdle, isTrue, reason: 'classification cannot add transport or decode demand');
+        await lease.release();
+      } finally {
+        await reader.dispose();
+        await runtime.dispose();
+      }
     }
   });
 
@@ -1123,6 +1155,7 @@ ReaderObs _observation(String sessionId, ChapterManifest chapter) => ReaderObs(
 ChapterManifest _chapter({
   required Uri uri,
   ContentKindHint contentKindHint = ContentKindHint.jpeg,
+  bool animatedHint = false,
 }) => ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
@@ -1141,6 +1174,7 @@ ChapterManifest _chapter({
           index: 0,
           uri: uri,
           contentKindHint: contentKindHint,
+          animatedHint: animatedHint,
         ),
       ],
       readingDirection: ReadingDirection.ltr,

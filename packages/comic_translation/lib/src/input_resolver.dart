@@ -36,10 +36,13 @@ final class ComicTranslationArchiveAccess {
 
 /// A pinned, complete encoded image. The caller retains storage authority.
 final class ComicTranslationInputFile {
-  const ComicTranslationInputFile({required this.path, required this.release, this.archive});
+  const ComicTranslationInputFile({required this.path, required this.release,
+    this.archive, this.mediaKind});
   final String path;
   final FutureOr<void> Function() release;
   final ComicTranslationArchiveAccess? archive;
+  /// Optional authoritative classification from this complete file's owner.
+  final ComicTranslationMediaKind? mediaKind;
 
   static Future<ComicTranslationInputFile?> openLocalUri(Uri uri) async {
     if (uri.scheme != 'file') return null;
@@ -77,7 +80,7 @@ final class ComicTranslationInputResolver {
       if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
       final modified = stat.modified.millisecondsSinceEpoch;
       // Digest the actual pinned body; URL/length/mtime are not content proof.
-      final analysis = await _analyze(file, stat.size, modified);
+      final analysis = await _analyze(file, stat.size, modified, lease.mediaKind);
       final verified = await file.stat();
       if (verified.size != stat.size ||
           verified.modified.millisecondsSinceEpoch != modified) {
@@ -90,8 +93,7 @@ final class ComicTranslationInputResolver {
         size: stat.size,
         modifiedMilliseconds: modified,
         contentDigest: analysis.digest,
-        mediaKind: identity.mediaKind == ComicTranslationMediaKind.animatedImage
-            ? identity.mediaKind : analysis.mediaKind,
+        mediaKind: lease.mediaKind ?? analysis.mediaKind,
         archive: lease.archive,
       );
     } finally {
@@ -108,7 +110,7 @@ final class ComicTranslationInputResolver {
   }
 
   static Future<({String digest, ComicTranslationMediaKind mediaKind})> _analyze(
-    File file, int size, int modified,
+    File file, int size, int modified, ComicTranslationMediaKind? ownerMediaKind,
   ) {
     final key = '${file.path}\u0000$size\u0000$modified';
     final existing = _analysisTasks[key];
@@ -116,7 +118,7 @@ final class ComicTranslationInputResolver {
     late final Future<({String digest, ComicTranslationMediaKind mediaKind})> task;
     task = Isolate.run(() async => (
         digest: (await sha256.bind(File(file.path).openRead()).first).toString(),
-        mediaKind: _detectMediaKind(file.path),
+        mediaKind: ownerMediaKind ?? _detectMediaKind(file.path),
       ))
       .whenComplete(() {
         if (identical(_analysisTasks[key], task)) _analysisTasks.remove(key);

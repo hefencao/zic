@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T02:30:34Z",
-  "objective": "修复翻页前邻页自动预翻译唤醒，保持Pipeline/NetLane边界",
+  "updated_at": "2026-10-18T04:05:03Z",
+  "objective": "让翻译全局设置可按步骤完成，并修复来源动图提示误阻断静态图片",
   "status": "partial",
   "scope": [
-    "main:translation input-completion wake;no extra image requests",
+    "main:guided OCR/backend/test setup;global indicator/single save;actual media classification",
     "Reader/Pipeline/NetLane与取消真实退出边界保持",
     "原112条验收及summary逐字保留"
   ],
@@ -147,25 +147,29 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "0b01621d4a94f6fc3c60f70832fc801254fa427387d8c0c0ddb370ed7e8ebb07",
-    "observation": "Release0b0162/PID21895;Namaniku61→62/history/zoom pass.11 cache hits/0 OCR/MT;page62 ready33.324s before entry. Fresh inference unverified/TLS."
+    "apk_sha256": "0ff5da944293d853b648c23018af31e9a50b1f3f5a4bc38e5d76229aebf720da",
+    "observation": "PID31329/Home:guided setup,backend branches and persistent key-status UI pass;original API/models/settings retained."
   },
   "validation": {
-    "command": "CI=true ./tool/check.sh --require-toolchains",
+    "command": "CI=true bash ./tool/check.sh --require-toolchains",
     "exit_code": 0,
     "analyzers": 28,
     "dart_flutter_tests": {
-      "passed": 2575,
+      "passed": 2577,
       "skipped": 3
     },
     "rust_tests": 25,
-    "android_jvm_tests": "110 owned/0 failures;4 targets pass;upstream Robolectric/ByteBuddy unverified",
-    "native_runtime": "3ABI Release ELF/compression/manifest/signatures pass;arm64 Debug/Release translation closure.20 non-Dart runtime ELF byte-identical.",
-    "device": "0b0162:61→62/history/zoom pass;11 cache hits/0 OCR/MT;neighbor ready33.324s before entry. Fresh baseline index54 MT hit TLS4 retries.",
+    "release_apk_mib": {
+      "arm64_v8a": 34.8778,
+      "armeabi_v7a": 28.9097,
+      "x86_64": 46.8804
+    },
     "missing_toolchains": [
-      "pwsh: Windows builder unverified"
+      "pwsh:Windows builder unverified"
     ],
-    "scope": "28 analyzers/28 suites,2575pass/3skip,Rust25,Android110;6 new cases/4 fail beforefix.112 records/summary byte-identical."
+    "android_jvm_tests": "110 owned/0 failures;upstream Robolectric/ByteBuddy unverified",
+    "native_runtime": "3ABI Debug/Release;arm64 translation closure;signature/CRC/native compression pass;non-Dart ELFs unchanged",
+    "scope": "Final UI patch:App analysis and3 focused tests pass."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,19 +180,19 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "Pipeline complete-file lease/events feed App sidecar;OCR/MT serial inference,NetLane owns network. Completion revisions replay after probe/serial exit for retained waiting pages;no polling/extra image requests or ready-page inference. Existing cache/model/layout contracts retained.",
-      "diagnosis": "imageReady ignored loadingCache events;waiting-state callbacks also lost while old probe/serial owner blocked resubmission.4 failing-before tests cover both races and cache/inference;generation/retention guards remain.",
-      "accepted": "6 new regressions;160 package/2575 full pass. Release0b0162 device:11 cached hits,0 OCR/MT;neighbor ready33.324s before entry;history/zoom pass. Fresh MT remains TLS-limited.",
-      "performance": "Release MiB arm6434.8725/v7a28.9051/x8646.8766;arm64+504B.20 non-Dart runtime ELF unchanged;no polling or repeated ready-page inference.",
+      "current_contract": "Global setup guides required OCR,online/offline fields and tests;profile/import/removal folded;indicator pills,single Save. Pipeline same-epoch media facts or full-file probe replace hints;owners/cache/NetLane retained.",
+      "diagnosis": "Reader/chapter/archive mistook animatedHint for animation. Original WebP-labelled KO input is PNG. Required OCR download was hidden;API/local model dependencies lacked guidance;Save duplicated.",
+      "accepted": "Full gates/Release pass;Reader/archive fail before fix,actual static WebP fixture passes. Current setup UI/4 backend branches/key status pass;no settings changed/API calls. Same media code edf68/PID22102:KO80p1 labelledWebP/inputPNG ready9.960s;pages1..5 each OCR/MT once without flip/retry,4 fresh neighbors.",
+      "performance": "Reuses Pipeline evidence;known media skips container re-probe. Same inference ELFs;no new media demand,model loading,queue or cache identity.",
       "remaining_acceptance": [
-        "Fresh-neighbor inference/97-page completion unverified:TLS at index54,54 saved. Original trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl",
-        "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."
+        "Namaniku97-page/cache-only completion pending:54 saved,TLS at index54;preserve /sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl.",
+        "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;DeepL/CTranslate2/Windows/non-DotProd unverified."
       ],
       "mainline": "main;local only"
     }
   },
   "remaining": [
-    "Fresh-neighbor inference and97-page/cache-only acceptance unverified after real API TLS failures;54 chapter pages saved.6 race regressions and candidate cached-neighbor/history/zoom pass.",
+    "KO ch80 stationary p1 and4 fresh neighbors accepted with one OCR/MT each. Original Namaniku97-page/cache-only completion remains TLS-limited at index54,54 saved. Cached-neighbor/history/zoom and6 races stay accepted.",
     "Exit raster remains actionable:current vertical full action19724us and separate exported20825us/Timeline24558us fail the16.667ms component budget. PAGED kernel supplement mostly runs on CPU but lacks the failing vertical frame;no fence/lock or production cause established. UI/GC,SQL/parser/warm components stay accepted. Total allocation needs a valid cumulative measure. Original9.779s/cover-install/210 HalfLove-to-Ani and original19/20 intermittent loading remain unverified;001/002/005/007/100 physical input/visual/final display stay open. Invalid display clocks do not block independent app work.",
     "Actual default system-DNS waiting/cancel/physical retirement089 and independent wire/FFI/application-pacing attribution013. Current VPN has no usable bypass/TestNetwork resolver control;SDK36 device does not register android.network_packets. HTTP Future completion,Dart progress and generic ftrace/log do not supply these missing clocks;stop repeated same-capability sampling. Do not add a DNS/network owner.",
     "016 needs genuine previous660-to780 before first downloadStarted plus source-gate timing. Latest ordinary force-reload has5 starts/0 failures,but the relevant body remains active through660->0->780;no new previous admission. It automatically presents6.712s after force before navigation at57.393s. Stop repeating this input.020/010/018/093/009/021 stay closed;no capacity change.",

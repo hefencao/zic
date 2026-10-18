@@ -13,6 +13,7 @@ ComicTranslationInputFile bindTranslationArchive(ComicTranslationInputFile file,
   required PersistentDownloadArtifactStore store,
   required DownloadId id,
 }) => ComicTranslationInputFile(path: file.path, release: file.release,
+  mediaKind: file.mediaKind,
   archive: ComicTranslationArchiveAccess(
     read: () => store.readArtifactCompanion(id),
     write: (bytes) => store.writeArtifactCompanion(id, bytes),
@@ -71,10 +72,8 @@ final class TranslationDownloadArchives {
             imageKey: jsonEncode([snapshot.sourceRevision, page.uri.toString()]),
             sourceKey: snapshot.sourceId, comicId: snapshot.comicId,
             chapterId: snapshot.chapterId, pageIndex: page.index,
-            mediaKind: page.animatedHint || page.contentKindHint == ContentKindHint.gif
-                ? ComicTranslationMediaKind.animatedImage : ComicTranslationMediaKind.staticImage,
+            mediaKind: ComicTranslationMediaKind.staticImage,
           );
-          if (identity.mediaKind == ComicTranslationMediaKind.animatedImage) continue;
           final id = readerPageDownloadId(chapter, page);
           final input = await ComicTranslationInputResolver(openFile: (_) async {
             final lease = await composition.artifactCacheManager.openPresentationFile(id);

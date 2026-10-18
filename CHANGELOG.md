@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Guide translation setup through the shared required text-recognition download, online/offline translation configuration and visible tests. Explain download sizes, supported languages and required API fields; fold model import/removal and API-profile management. Expose global indicator defaults as independent always/processing/off pills, retain reading defaults and keep a single labeled Save action. Prefer Pipeline's current-generation media evidence for translation and fall back to complete-file inspection; do not treat source WebP/animation hints as proof of animation in Reader, chapter jobs or translation archives.
+
 - Retain Pipeline image-completion notifications that overtake an asynchronous missing-input check or arrive before its previous owner exits. Replay after cache-probe/serial-task cleanup so neighboring translation and cache restoration resume without a page turn. Keep retained-page, generation and disable boundaries; coalesce notifications without polling, extra image requests or repeated inference of ready pages.
 
 - Compress Android APK native libraries through the App host packaging DSL and let the installer extract the original ELF files. Keep all native code, inference kernels and runtime behavior intact; reduce the distributed APK at the cost of installation decompression and greater installed disk usage.

@@ -5,6 +5,32 @@ import 'package:comic_translation/comic_translation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('complete-file classification uses owner evidence before probing the container', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-translation-media-');
+    try {
+      final image = File('${directory.path}/static.webp');
+      await image.writeAsBytes([...'RIFF'.codeUnits, 22, 0, 0, 0, ...'WEBP'.codeUnits,
+        ...'VP8X'.codeUnits, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      const identity = ComicTranslationPageIdentity(imageKey: 'opaque', sourceKey: 'test',
+        comicId: 'comic', chapterId: 'chapter', pageIndex: 0,
+        mediaKind: ComicTranslationMediaKind.animatedImage);
+      var releases = 0;
+      String? digest;
+      for (final kind in [null, ...ComicTranslationMediaKind.values]) {
+        final input = await ComicTranslationInputResolver(openFile: (_) async =>
+          ComicTranslationInputFile(path: image.path, release: () { releases++; }, mediaKind: kind))
+            .resolve(identity);
+        expect(input!.mediaKind, kind ?? ComicTranslationMediaKind.staticImage);
+        digest ??= input.contentDigest;
+        expect(input.contentDigest, digest, reason: 'classification does not change content identity');
+        await input.release();
+      }
+      expect(releases, 3);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('lease is released on rejected input and remains live until caller finishes', () async {
     final directory = await Directory.systemTemp.createTemp('zic-translation-input-');
     try {

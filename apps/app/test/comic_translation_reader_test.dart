@@ -26,7 +26,8 @@ void main() {
       chapter: const Chapter(chapterId: 'chapter', comicId: 'comic', title: '静态页',
         sequence: 1, pageCount: 1, sourceRevision: '1'),
       pages: [PageAsset(pageId: 'page', chapterId: 'chapter', index: 0,
-        uri: Uri.parse('assets/demo/pages/001.png'), contentKindHint: ContentKindHint.png)],
+        uri: Uri.parse('assets/demo/pages/001.png'), contentKindHint: ContentKindHint.webp,
+        animatedHint: true)],
       readingDirection: ReadingDirection.ltr,
     );
     late ComicTranslationReaderExtension extension;
@@ -69,6 +70,9 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump();
     expect(session()!.enabled, isTrue);
+    expect(tester.widget<ComicTranslationOverlay>(find.byType(ComicTranslationOverlay))
+      .identity.mediaKind, ComicTranslationMediaKind.staticImage,
+      reason: 'source WebP/animation hints are not proof of an animated page');
     expect(tester.state(find.byType(_Media)), same(media));
     expect(session(), same(initial), reason: 'the enabled preference does not replace the translation session');
     ComicTranslationSettings.instance.values.addAll({
@@ -183,6 +187,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('全局翻译设置'), findsOneWidget);
     expect(find.text('本漫画翻译设置'), findsNothing);
+    await tester.scrollUntilVisible(find.text('高级设置'), 250);
     expect(find.text('高级设置'), findsOneWidget);
     expect(find.text('OCR 参数'), findsNothing);
     Navigator.of(tester.element(find.text('全局翻译设置'))).pop();

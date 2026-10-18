@@ -57,6 +57,7 @@ final class PipelineEncodedPresentationFileLease {
     this.width,
     this.height,
     this.authority,
+    this.isAnimated,
   });
 
   final String path;
@@ -65,6 +66,8 @@ final class PipelineEncodedPresentationFileLease {
   final int? width;
   final int? height;
   final PipelinePresentationArtifactAuthority? authority;
+  /// Authoritative Pipeline classification; null means still unresolved.
+  final bool? isAnimated;
   final Future<void> Function() release;
 }
 
@@ -1979,6 +1982,31 @@ final class PipelineReaderSession {
     return !path.endsWith('.webp') && !path.endsWith('.gif');
   }
 
+  /// Reads existing decoder/ingress evidence without creating media demand.
+  /// Hints and an incomplete single-frame cursor cannot prove a static image.
+  bool? pageIsAnimated(PageAsset asset) {
+    if (_disposed) return null;
+    final id = readerPageDownloadId(chapter, asset);
+    if (_artifactCacheManager?.requiresFreshSource(id) == true) return null;
+    final download = _transferRuntime.findSession(id);
+    if (download == null) return null;
+    final decodeId = _activeDecodeIdentity(id);
+    final decoded = decodeId == null ? null : _decodes.find(decodeId)?.snapshot;
+    if (decoded != null && decoded.epoch == download.epoch) {
+      if (decoded.animation.frameCount > 1) return true;
+      if (decoded.animation.complete && decoded.animation.frameCount == 1) return false;
+    }
+    final ingress = _ingresses.find(id);
+    final evidence = ingress?.snapshot.epoch == download.epoch
+        ? ingress?.webpAnimationEvidence : null;
+    if (evidence != null) return evidence == WebpAnimationEvidence.animated;
+    final prefix = download.readSourceMetadataPrefix();
+    final webp = parseWebpPrefixAnimationEvidence(prefix);
+    if (webp != null) return webp == WebpAnimationEvidence.animated;
+    if (_isStaticFallbackImageKind(sniffEncodedImageKind(prefix))) return false;
+    return null;
+  }
+
   /// Read-only sidecar ingress. Opens only an already complete, authoritative
   /// artifact; a miss never schedules transport, decode, retry or presentation.
   Future<PipelineEncodedPresentationFileLease?> openSealedPageFile(
@@ -1993,6 +2021,7 @@ final class PipelineReaderSession {
     // A retained historical carrier is a visual fallback, not OCR authority.
     if (cache.requiresFreshSource(id)) return null;
     final download = _transferRuntime.findSession(id);
+    final epoch = download?.epoch;
     if (download != null) {
       // Promoted is published before the ordinary durable handoff finishes.
       // Join only that existing commit so a stationary page cannot miss its
@@ -2017,6 +2046,7 @@ final class PipelineReaderSession {
       cacheIdentity: read.cacheIdentity,
       width: read.width,
       height: read.height,
+      isAnimated: download != null && download.epoch == epoch ? pageIsAnimated(asset) : null,
       authority: PipelinePresentationArtifactAuthority(
         storageId: read.storageId,
         generation: read.generation,

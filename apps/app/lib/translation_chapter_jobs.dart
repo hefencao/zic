@@ -81,8 +81,7 @@ final class AppTranslationChapterJobs extends ChangeNotifier {
           imageKey: jsonEncode([chapter.sourceRevision, page.uri.toString()]),
           sourceKey: chapter.sourceId, comicId: chapter.comicId, chapterId: chapter.chapterId,
           pageIndex: page.index,
-          mediaKind: page.animatedHint || page.contentKindHint == ContentKindHint.gif
-              ? ComicTranslationMediaKind.animatedImage : ComicTranslationMediaKind.staticImage,
+          mediaKind: ComicTranslationMediaKind.staticImage,
         )],
         sourceLanguage: preferences['sourceLanguage'] as String,
         targetLanguage: preferences['targetLanguage'] as String,
