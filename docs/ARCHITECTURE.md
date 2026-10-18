@@ -207,9 +207,9 @@ cache invalidation、session reset 与 network re-admission 全部留在 Pipelin
 
 ### Home 组合与生命周期
 
-首页顶栏以应用插画图标替代文字名称，使用固定 40dp 图像与 48dp 区域，保留 zic 无障碍名称。Debug 模式下单击打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
+首页顶栏显示 zic 文字名称。Debug 模式下单击应用名打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
 测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
-Debug 首页的一键 Trace 导出位于顶栏应用图标之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
+Debug 首页的一键 Trace 导出位于顶栏应用名之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
 阅读历史的网格、横向书架或列表布局以及列数/行数由 `AppPreferencesController` 持久化，标题旁打开布局面板，即选即用，独立于书架视图偏好。默认三列网格，可选二至六列；窄窗口按最小封面宽度减少实际列数但不覆盖保存值。横向书架可选一至三行，列表显示保存的章节与页码。
 首页使用统一纵向 sliver 视口，网格/列表按需挂载；横向书架仅在固定高度内横向滚动，不通过 shrink-wrap 展开整份历史。布局只改变呈现，历史仍按最近阅读排序，沿用 canonical artwork 身份与既有点击续读、长按详情命令。
 书架上方使用单行工具区承载来源类型、排序、视图、管理与设置。来源按钮按全部→本地→远程循环切换。底部分类和其下方的插件行与漫画源页共用 `ComicFilterPanel`，统一全透明、无背景/阴影及紧凑行高和悬浮边距；两行间保留独立留白，按药丸可见边缘与底部间距协调，无展开提示杠。滚动底部余量随展开状态匹配，末项可完整移到面板上方。`AppPreferencesController` 保存“全部”分类的显示选择；隐藏时无有效选中分类则使用首个分类，没有分类时仍显示全部漫画。
@@ -476,7 +476,7 @@ close 先等 `_ready` 与这些 admitted operations，再排 version/canonical/s
 whole-App `checkpointSnapshot()` 是 teardown durability barrier，不属于普通新 mutation admission。
 `HomeShell.dispose()` 只启动异步 composition close，`ChangeNotifier.dispose()` 必须在该 close 完成后执行，不能抢先取消已接纳快照。
 
-应用图标由平台宿主静态打包，源图为 `assets/branding/zic.png` 的用户漫画书插画；Android 使用独立背景、留白前景位图、自适应/漫画书单色层和旧系统密度 PNG，iOS 使用对应不透明 PNG。首页只打包同图 160px 缩略图，不加载源图或平台尺寸资源。
+应用图标由平台宿主静态打包，源图为 `assets/branding/zic.png` 的用户透明漫画书插画；Android 使用独立背景、透明前景位图、自适应/漫画书单色层和旧系统密度 PNG，iOS 使用浅色底合成的不透明 PNG。品牌源图不进入 Flutter 资源包。
 `MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；
 仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。
 `LocalMediaBridge` 在 Android 的 pick/scan/open/read 入口前共享 single-flight attach，

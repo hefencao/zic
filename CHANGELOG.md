@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Switch the launcher artwork to the supplied transparent comic book, preserve its alpha in the Android foreground and brand source, and composite opaque iOS assets. Restore the Home title to zic text with existing Debug routes and Trace adjacency; remove the unused Flutter thumbnail.
+
 - Use the supplied illustrated comic book as the launcher and home title icon. Generate bounded Android/iOS and home thumbnail assets from the cropped master; preserve Debug tap/long press, Trace adjacency and the accessible app name, with a matching book outline for themed icons.
 
 - Replace the Flutter launcher icon with a comic-panel Z mark, including Android adaptive/themed layers, legacy density icons and matching opaque iOS assets. Rewrite README for readers around streaming Animated WebP, verified version mapping and in-bubble translation; move engineering instructions to docs/DEVELOPMENT.md.

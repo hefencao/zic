@@ -61,7 +61,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/branding/app_icon.png
     - assets/demo/comic.json
     - assets/demo/chapter_001.json
     - assets/demo/chapter_media_pipeline.json
