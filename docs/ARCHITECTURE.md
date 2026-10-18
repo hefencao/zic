@@ -2538,6 +2538,7 @@ overlapping total 不得与子阶段重复参与 dominant 归因。production rh
 静态门禁阻止明显的依赖反转、API 泄漏、重复权威和文档漂移，但不能替代 `flutter analyze`、
 Dart/Flutter/Rust tests、Android debug/release build 和真机生命周期/性能验证。
 Android build/run 入口在 `flutter pub get` 后，通过 `tool/prepare_rhttp_android.py` 按锁定版本和输入/输出 SHA-256 准备 rhttp 的 Cargokit SDK 解析补丁，兼容整数与 major.minor SDK 表示；不依赖机器预先修改 pub cache。
+Android App host 的 Gradle `packaging.jniLibs.useLegacyPackaging` 压缩 APK 内原生库，系统安装时解压到原生库目录；执行仍加载原始 ELF，不在推理或阅读路径解压。这缩小分发文件，但增加安装解压成本与安装后的总占用，不改变模型、算子或运行时资源预算。
 Detailed download/storage ownership for multi-version materialization,
 SAF/direct coexistence, partial transfer continuity and Reader/manual resource sharing is defined in [`DOWNLOAD_STORAGE_ARCHITECTURE.md`](DOWNLOAD_STORAGE_ARCHITECTURE.md),
 with normative rules in [`DOWNLOAD_STORAGE_SPEC.md`](DOWNLOAD_STORAGE_SPEC.md).

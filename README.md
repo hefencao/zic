@@ -114,6 +114,7 @@ make webp-check
 
 release 默认使用 `--split-per-abi`；构建成功后移除该模式遗留的通用 APK，并打印各架构包路径与体积。debug/profile/release 从同一个 `apps/app/android/zic-version.properties` 读取 application version。
 首次构建会准备固定版本的 OCR 专用 OpenCV，保留 SIMD、TBB 和原有 HAL 加速；后续校验并复用，不打包模型权重。
+原生库在 APK 内压缩，由系统安装时解压，运行时加载原始库文件；这会缩小 APK，但增加安装后的总占用。
 
 ## Native WebP
 

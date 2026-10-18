@@ -2360,6 +2360,7 @@ Android来源正文阶段系统采集 MUST仅观测原client、stream与claim，
 - Android build/run 入口 MUST 在依赖解析后幂等准备锁定的 rhttp SDK 解析补丁；未知版本或脚本哈希 MUST 拒绝修改，MUST NOT 依赖未记录的 pub cache 修正。
 - Android OpenCV MUST 由锁定源码和配方构建 OCR 所需模块，保留所需 OCR JNI、编解码、SIMD 分派、TBB 与 ABI 对应 HAL 加速；三 ABI 校验完成前 MUST NOT 替换已发布依赖。构建缓存 MUST 校验配方及包摘要，APK MUST 包含版本与许可。瘦身 MUST NOT 降低 OCR 参数、裁掉模型所需算子或关闭推理优化；模型权重 MUST NOT 进入 APK。
   Android 打包入口 MUST 输出各架构 APK 的路径和体积，并在成功后移除该模式遗留的通用 APK，避免混淆新旧构建。
+- Android App host MUST 在 APK 中压缩原生库并由系统在安装时解压，运行时加载原始 ELF；MUST NOT 为包体缩减在推理或阅读路径增加解压，也不得更改原生库功能或优化。APK 文件体积与安装后总占用 MUST 区分说明，性能结论 MUST 基于对应设备与输入。
 
 发布候选 MUST 尽可能完成 analyzer、受影响 package/App tests、native tests、
 Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，并排除 `.git`、`.dart_tool`、`build`、`.gradle`、`.deps`、

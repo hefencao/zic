@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T01:33:45Z",
-  "objective": "Android包体瘦身，保持翻译功能与性能",
+  "updated_at": "2026-10-18T02:01:45Z",
+  "objective": "ARM64 Release控制在40MiB以内，保持翻译与阅读性能",
   "status": "partial",
   "scope": [
-    "main:OpenCV OCR modules;translation cache/OCR/chapter/files",
+    "main:Android APK native compression;runtime bytes preserved",
     "Reader/Pipeline/NetLane与取消真实退出边界保持",
     "原112条验收及summary逐字保留"
   ],
@@ -147,8 +147,8 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "ca8360aab8ad0b33f6deef272ec0c35abee8fe36d06a28d6bc39771479ea0ae2",
-    "observation": "Release ca836/PID11616;JA/KO3x parity pass. Namaniku8→9→10→9→8/history reentry pass;OpenAI restored.22 cache hits/0 OCR/MT;chapter54/97 saved."
+    "apk_sha256": "11cbef7914ede41b9e564ecdb371f313b9fb9981d8c2af29b85b0a38dfe42ec1",
+    "observation": "Release11cbef/PID21725;21 extracted ELF hashes match APK. JA/KO3x parity;Namaniku8-10/history/zoom pass;OpenAI restored.7 cache hits/0 OCR/MT;chapter54/97 saved."
   },
   "validation": {
     "command": "CI=true ./tool/check.sh --require-toolchains",
@@ -160,12 +160,12 @@
     },
     "rust_tests": 25,
     "android_jvm_tests": "110 owned/0 failures;4 Gradle targets pass;upstream Robolectric/ByteBuddy unverified",
-    "native_runtime": "3ABI Debug/Release/source staging/APK closure;OpenCV JNI/SIMD/TBB/HAL/ELF pass;DEX/19 other arm64 libs byte-identical",
-    "device": "ca836:JA median2620→2604ms,KO2620→2581ms;48 texts/counts unchanged. Reader22 cache hits/0 OCR/MT;last history reentry first text71ms after firstFrameReady.",
+    "native_runtime": "3ABI Debug/Profile/Release ELF/compression/manifest/signatures pass;Release native/DEX/assets byte-identical,only extractNativeLibs changes.",
+    "device": "11cbef:cold5x median736→668ms;JA warm1953.5→1986ms(+1.7%),KO1951→1951.5ms.48 texts/counts unchanged;Reader7 cache hits/0 OCR/MT,history/zoom pass.",
     "missing_toolchains": [
       "pwsh: Windows builder unverified"
     ],
-    "scope": "28 analyzers/28 suites,2569 pass/3skip,Rust25,Android110,3ABI Debug/Release/device pass;112 records/summary byte-identical."
+    "scope": "28 analyzers/28 suites,2569 pass/3skip,Rust25,Android110,3ABI Debug/Profile/Release/device pass;112 records/summary byte-identical."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -176,10 +176,10 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "OpenCV4.13 OCR modules/Java;required JNI/codecs/SIMD/TBB/HAL retained,ONNX/MT intact. Current-first worker cache/1.5ms layout/LRU8p128blocks;comic OCR/content/indicator,global models/target/quality/context/lookahead;shared chapter/companions/HTTP retries.",
-      "diagnosis": "Full OpenCV bundled unused vision modules;trim only its module closure. OCR parameters/model/cache identities unchanged;prior cache/layout fixes retained.",
-      "accepted": "3ABI JNI/fast paths/ELF;DEX/19 arm64 libs unchanged. JA/KO3x same text/8regions/4bubbles;Reader8-10/history pass,22 hits/0 OCR/MT.154 regressions/64 layouts retained.",
-      "performance": "Release MiB arm64 90.42→79.55,v7a62.58→55.17,x86 119.91→107.73. JA warm2618.5→2584.5ms;KO median2620→2581ms. Last Reader reentry first text71ms;chapter54 saved,TLS54 pending.",
+      "current_contract": "APK .so compressed/install-extracted;ELF/DEX/assets unchanged. OpenCV4.13 OCR/JNI/SIMD/TBB/HAL+ONNX/MT retained. Current-first worker cache/1.5ms layout/LRU8p128blocks;comic OCR/content/indicator,global models/target/quality/context/lookahead;chapter/companions/retries.",
+      "diagnosis": "Stored native libraries dominated74.57/79.55MiB. Change App host APK compression only;installer extracts original files. Installed occupancy increases;no runtime decompression/inference changes.",
+      "accepted": "3ABI Release payloads identical except manifest;21 installed arm64 ELF hashes match. JA/KO3x48texts/counts same;Reader8-10/history/zoom pass,7 hits/0 OCR/MT.154 regressions/64 layouts retained.",
+      "performance": "Release MiB arm64 79.55→34.87,v7a55.17→28.90,x86 107.73→46.88. APK+ELF109.44MiB(+29.89);cold736→668ms;JA warm1953.5→1986ms,KO1951→1951.5ms. Chapter54 saved,TLS54 pending.",
       "remaining_acceptance": [
         "97-page/cache-only run pending TLS at index54,54 saved. Trace:/sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl",
         "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;real DeepL/CTranslate2/Windows/non-DotProd unverified."

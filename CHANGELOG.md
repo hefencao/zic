@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Compress Android APK native libraries through the App host packaging DSL and let the installer extract the original ELF files. Keep all native code, inference kernels and runtime behavior intact; reduce the distributed APK at the cost of installation decompression and greater installed disk usage.
+
 - Build a pinned OpenCV OCR module closure for Android instead of bundling every vision module. Preserve the upstream Java API, required OCR JNI, codecs, SIMD dispatch, TBB and ABI-specific HAL acceleration; keep ONNX and local translation kernels intact. Verify the complete package before publishing it, retain dependency versions/licenses, and report split APK sizes while removing the stale universal output after successful builds.
 
 - Prepare current-page translation input before neighboring cache reads. Let bounded layout tasks progress during scrolling, route transitions and progress animations; use capacity-only font probes and reuse identical vertical partitions without changing typography or grouping. Release temporary text measurements promptly and trace the actual first translation frame separately from cache readiness and layout work.

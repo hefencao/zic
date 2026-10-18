@@ -34,7 +34,7 @@
   SQLite authority仍由 SqliteIndex 拥有：约0.13ms的read已撤销常驻worker，直接在owner connection做单事务snapshot；touch保留worker且先过既有 StorageWriteScheduler。
   后续若再“放后台”，先区分 async scheduling 与真正 multithread/isolate：网络等待继续用 Future+NetLane；只有 CPU/同步FFI/磁盘调用会实际占 frame budget时才新增 worker，且不得复制 owner/retry/eligibility/state。
 ## 4. 下一步命令
-- `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`。Android build/run 入口在 pub get 后执行锁定的 rhttp SDK 解析补丁准备，不依赖本机 pub cache 预修正。
+- `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`。Android入口pub get后准备锁定rhttp SDK补丁；App host压缩APK原生库、系统安装时解压，ELF不变，安装总占用增加。最新包体、冷启动及OCR实测见状态JSON。
 ## 5. 不可改变的稳定边界
 - 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint，
   以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，

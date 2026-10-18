@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android build/run 入口在依赖解析后按输入/输出 SHA-256 准备 rhttp 0.18.0 的 Cargokit SDK 解析补丁；最新验证、保留的 native 验收、quarantine 和未验范围见状态 JSON。 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android入口按SHA-256准备rhttp 0.18.0 SDK解析补丁；App host压缩APK原生库、系统安装时解压，ELF不变，安装总占用增加。当前验证、native验收、quarantine及未验范围见状态JSON。 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native重入与19/20静置/历史、21话slider保持。当前完整动作UI/自然GC分量已验，退出raster仍超预算；原19/20偶发加载及物理输入/视觉/最终显示开放。SDK3.12.2分配接口统计当前堆，不能证明总分配 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久metadata及056/069强制WNACG host直连/无类型重放前提退休，实际runtime媒体已验。缺输入/账号/独立时钟只暂停对应分支；完整GC窗口已采，不等同进退性能通过。已验cache/NetLane/几何保持。

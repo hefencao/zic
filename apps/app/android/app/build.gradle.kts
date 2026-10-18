@@ -44,6 +44,14 @@ android {
         versionName = zicVersionName
     }
 
+    packaging {
+        jniLibs {
+            // Compress in the APK; Android extracts once at installation so
+            // native execution still loads the original library files.
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         configureEach {
             applicationIdSuffix = null
