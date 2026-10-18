@@ -209,6 +209,9 @@ cache invalidation、session reset 与 network re-admission 全部留在 Pipelin
 
 Debug 模式下，首页顶栏应用名的单击打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
 测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
+Debug 首页的一键 Trace 导出位于顶栏应用名之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
+阅读历史的网格、横向书架或列表布局以及列数/行数由 `AppPreferencesController` 持久化，标题旁打开布局面板，即选即用，独立于书架视图偏好。默认三列网格，可选二至六列；窄窗口按最小封面宽度减少实际列数但不覆盖保存值。横向书架可选一至三行，列表显示保存的章节与页码。
+首页使用统一纵向 sliver 视口，网格/列表按需挂载；横向书架仅在固定高度内横向滚动，不通过 shrink-wrap 展开整份历史。布局只改变呈现，历史仍按最近阅读排序，沿用 canonical artwork 身份与既有点击续读、长按详情命令。
 
 - Reader native media/process prewarm 只能是 acceleration hint：
   可以在章节 materialization 同时启动，但章节准备/route readiness MUST NOT await prewarm；

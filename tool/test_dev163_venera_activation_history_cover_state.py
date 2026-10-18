@@ -61,7 +61,10 @@ require(
 
 views = read('apps/app/lib/home_shell_views.dart')
 for token in (
-    "final section = history ? 'home-history' : 'home-update';",
+    "'home-history:$identity'",
+    "'home-update:$identity'",
+    'key: ValueKey<String>(identities[index])',
+    'itemIndexByKey[key.value] : null',
     'final presentationIdentities = <String>[',
     'key: ValueKey<String>(presentationIdentity)',
     'findChildIndexCallback: (key)',

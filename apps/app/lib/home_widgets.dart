@@ -533,6 +533,9 @@ final class ShelfListTile extends StatelessWidget {
     this.startupTelemetry,
     this.onLongPress,
     this.trailing,
+    this.interactionKey,
+    this.telemetryIdentity,
+    this.subtitle,
     super.key,
   });
 
@@ -548,15 +551,19 @@ final class ShelfListTile extends StatelessWidget {
   final HomeStartupTelemetry? startupTelemetry;
   final VoidCallback? onLongPress;
   final Widget? trailing;
+  final Key? interactionKey;
+  final String? telemetryIdentity;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = comic.hasMultipleChapters
+    final subtitle = this.subtitle ?? (comic.hasMultipleChapters
         ? '${comic.chapters.length} 章 · ${comic.totalPages} 页'
-        : '${comic.totalPages} 页';
+        : '${comic.totalPages} 页');
     return Card(
       color: selected ? Theme.of(context).colorScheme.secondaryContainer : null,
       child: ListTile(
+        key: interactionKey,
         leading: SizedBox(
           width: 48,
           child: AspectRatio(
@@ -568,7 +575,7 @@ final class ShelfListTile extends StatelessWidget {
                 children: <Widget>[
                   _CoverImage(
                     cacheIdentity: coverIdentity,
-                    telemetryIdentity: coverIdentity,
+                    telemetryIdentity: telemetryIdentity ?? coverIdentity,
                     sourceAvailable: sourceAvailable,
                     loader: coverSource,
                     placeholderLoader: coverPlaceholderSource,
@@ -581,8 +588,10 @@ final class ShelfListTile extends StatelessWidget {
             ),
           ),
         ),
-        title: Text(comic.title),
-        subtitle: Text(subtitle),
+        title: Text(comic.title, maxLines: this.subtitle == null ? null : 2,
+          overflow: this.subtitle == null ? null : TextOverflow.ellipsis),
+        subtitle: Text(subtitle, maxLines: this.subtitle == null ? null : 2,
+          overflow: this.subtitle == null ? null : TextOverflow.ellipsis),
         onTap: onTap,
         onLongPress: onLongPress,
         trailing: trailing ??
@@ -598,21 +607,23 @@ final class ShelfListTile extends StatelessWidget {
 }
 
 final class HomeSectionTitle extends StatelessWidget {
-  const HomeSectionTitle({required this.title, this.subtitle, super.key});
+  const HomeSectionTitle({required this.title, this.subtitle, this.trailing, super.key});
 
   final String title;
   final String? subtitle;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
         Expanded(
           child: Text(title, style: Theme.of(context).textTheme.titleLarge),
         ),
         if (subtitle != null)
-          Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
+          Flexible(child: Text(subtitle!, style: Theme.of(context).textTheme.bodySmall)),
+        ?trailing,
       ],
     );
   }

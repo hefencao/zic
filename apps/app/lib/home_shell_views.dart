@@ -222,65 +222,171 @@ extension _HomeShellViews on _HomeShellState {
       );
     final hasPrimaryLibraryProjection =
         _libraryEntries.isNotEmpty || !_libraryLoading;
-    return SingleChildScrollView(
+    return CustomScrollView(
       key: homePageKey,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          HomeSectionTitle(
-            key: hasPrimaryLibraryProjection ? homeUpdatesSectionKey : null,
-            title: '更新漫画',
-            subtitle: updates.isEmpty ? '加入书架的漫画有新章节或新版本时显示' : null,
-          ),
-          const SizedBox(height: 10),
-          _buildHorizontalComics(
-            visibleUpdates,
-            canonicalKeyFor: identityQuery.keyFor,
-            telemetryOwners: telemetryOwners,
-          ),
-          const SizedBox(height: 24),
-          HomeSectionTitle(
-            key: hasPrimaryLibraryProjection ? homeHistorySectionKey : null,
-            title: '阅读历史',
-            subtitle: history.isEmpty ? '开始阅读后会保留最后位置' : null,
-          ),
-          const SizedBox(height: 10),
-          _buildHorizontalComics(
-            history,
-            canonicalKeyFor: identityQuery.keyFor,
-            history: true,
-            telemetryOwners: telemetryOwners,
-          ),
-          if (_debugModeEnabled) ...<Widget>[
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              key: homeTraceQuickExportKey,
-              onPressed: _exportingHomeTrace
-                  ? null
-                  : () => unawaited(_exportHomeDebugTrace()),
-              icon: _exportingHomeTrace
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.download_outlined),
-              label: Text(
-                _exportingHomeTrace
-                    ? '正在导出 Trace…'
-                    : '一键导出 Trace 到 '
-                        '${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          sliver: SliverToBoxAdapter(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              HomeSectionTitle(
+                key: hasPrimaryLibraryProjection ? homeUpdatesSectionKey : null,
+                title: '更新漫画',
+                subtitle: updates.isEmpty ? '加入书架的漫画有新章节或新版本时显示' : null,
               ),
-            ),
-          ],
-        ],
-      ),
+              const SizedBox(height: 10),
+              _buildHorizontalComics(
+                visibleUpdates,
+                canonicalKeyFor: identityQuery.keyFor,
+                telemetryOwners: telemetryOwners,
+              ),
+              const SizedBox(height: 24),
+              HomeSectionTitle(
+                key: hasPrimaryLibraryProjection ? homeHistorySectionKey : null,
+                title: '阅读历史',
+                subtitle: history.isEmpty ? '开始阅读后会保留最后位置' : null,
+                trailing: IconButton(
+                  key: homeHistoryLayoutKey,
+                  tooltip: '阅读历史布局',
+                  icon: const Icon(Icons.dashboard_customize_outlined),
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    builder: (_) => HomeHistoryLayoutSheet(preferences: widget.preferences),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+          )),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+          sliver: ListenableBuilder(
+            listenable: widget.preferences,
+            builder: (_, _) => _buildHistorySliver(history,
+              canonicalKeyFor: identityQuery.keyFor, telemetryOwners: telemetryOwners),
+          ),
+        ),
+      ],
     );
+  }
+
+  Widget _buildHomeComicCard(LibraryComic comic, {
+    required String coverIdentity,
+    required String presentationIdentity,
+    required bool history,
+    Set<String>? telemetryOwners,
+  }) {
+    final resume = comic.resumeChapter;
+    final interactionKey = resume == null
+        ? ValueKey<String>('comic-entry:${comic.identity}')
+        : history
+            ? historyChapterEntryKey(resume.chapter.sourceId, resume.chapter.chapterId)
+            : importedChapterEntryKey(resume.chapter.sourceId, resume.chapter.chapterId);
+    final startupTelemetry = telemetryOwners == null || telemetryOwners.add(presentationIdentity)
+        ? widget.startupTelemetry : null;
+    return _buildSourceAwareCover(
+      builder: (context, _) {
+        if (history && widget.preferences.homeHistoryLayout == HomeHistoryLayout.list) {
+          final progress = resume?.progress;
+          return ShelfListTile(
+            interactionKey: interactionKey,
+            comic: comic,
+            preference: _preferenceForComic(comic),
+            coverSource: _coverSourceLoaderForComic(comic),
+            coverIdentity: coverIdentity,
+            telemetryIdentity: presentationIdentity,
+            sourceAvailable: _coverSourceAvailableForComic(comic),
+            startupTelemetry: startupTelemetry,
+            downloadProgress: _downloadProgressForComic(comic),
+            selected: false,
+            subtitle: resume == null || progress == null ? null :
+              '${resume.chapter.displayName} · 第 ${progress.pageIndex + 1} / ${resume.chapter.pages.length} 页',
+            onTap: () => unawaited(_openComic(comic)),
+            onLongPress: () => unawaited(_openComicDetails(comic)),
+          );
+        }
+        return ComicCoverCard(
+          interactionKey: interactionKey,
+          comic: comic,
+          preference: _preferenceForComic(comic),
+          coverIdentity: coverIdentity,
+          telemetryIdentity: presentationIdentity,
+          coverSource: _coverSourceLoaderForComic(comic),
+          sourceAvailable: _coverSourceAvailableForComic(comic),
+          startupTelemetry: startupTelemetry,
+          downloadProgress: _downloadProgressForComic(comic),
+          onTap: () => unawaited(_openComic(comic)),
+          onLongPress: () => unawaited(_openComicDetails(comic)),
+        );
+      },
+    );
+  }
+
+  Widget _buildHistorySliver(List<LibraryComic> comics, {
+    required String Function(String sourceId, String comicId) canonicalKeyFor,
+    required Set<String> telemetryOwners,
+  }) {
+    if (comics.isEmpty) {
+      return SliverToBoxAdapter(child: _buildHorizontalComics(comics));
+    }
+    final coverIdentities = [for (final comic in comics) canonicalKeyFor(comic.sourceId, comic.comicId)];
+    final identities = [for (final identity in coverIdentities) 'home-history:$identity'];
+    final itemIndexByKey = {for (var i = 0; i < identities.length; i++) identities[i]: i};
+    final delegate = SliverChildBuilderDelegate(
+      (context, index) => SizedBox(
+        key: ValueKey<String>(identities[index]),
+        child: _buildHomeComicCard(comics[index], coverIdentity: coverIdentities[index],
+          presentationIdentity: identities[index], history: true, telemetryOwners: telemetryOwners),
+      ),
+      childCount: comics.length,
+      findChildIndexCallback: (key) => key is ValueKey<String> ? itemIndexByKey[key.value] : null,
+    );
+    final layout = widget.preferences.homeHistoryLayout;
+    if (layout == HomeHistoryLayout.list) {
+      return SliverList(key: const ValueKey('home-history-list'), delegate: delegate);
+    }
+    const spacing = 12.0;
+    if (layout == HomeHistoryLayout.carousel) {
+      final rows = widget.preferences.homeHistoryRows;
+      return SliverToBoxAdapter(child: SizedBox(
+        height: rows * ComicCoverCard.cardExtent + (rows - 1) * spacing,
+        child: GridView.custom(
+          key: const PageStorageKey('home-history-carousel'),
+          scrollDirection: Axis.horizontal,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: rows,
+            mainAxisExtent: ComicCoverCard.cardWidth,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+          ),
+          childrenDelegate: delegate,
+        ),
+      ));
+    }
+    return SliverLayoutBuilder(builder: (context, constraints) {
+      // Keep narrow windows usable even when a higher column count is saved.
+      final capacity = ((constraints.crossAxisExtent + spacing) / (88 + spacing)).floor().clamp(1, 6).toInt();
+      final columns = widget.preferences.homeHistoryColumns.clamp(1, capacity).toInt();
+      final width = (constraints.crossAxisExtent - (columns - 1) * spacing) / columns;
+      return SliverGrid(
+        key: const ValueKey('home-history-grid'),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          mainAxisExtent: width * ComicCoverCard.cardExtent / ComicCoverCard.cardWidth,
+          crossAxisSpacing: spacing,
+          mainAxisSpacing: spacing,
+        ),
+        delegate: delegate,
+      );
+    });
   }
 
   Widget _buildHorizontalComics(
     List<LibraryComic> comics, {
-    bool history = false,
     Set<String>? telemetryOwners,
     String Function(String sourceId, String comicId)? canonicalKeyFor,
   }) {
@@ -292,13 +398,12 @@ extension _HomeShellViews on _HomeShellState {
         ),
       );
     }
-    final section = history ? 'home-history' : 'home-update';
     final coverIdentities = <String>[
       for (final comic in comics)
         (canonicalKeyFor ?? _canonicalComicKey)(comic.sourceId, comic.comicId),
     ];
     final presentationIdentities = <String>[
-      for (final identity in coverIdentities) '$section:$identity',
+      for (final identity in coverIdentities) 'home-update:$identity',
     ];
     final itemIndexByKey = <String, int>{
       for (var index = 0; index < presentationIdentities.length; index++)
@@ -317,41 +422,14 @@ extension _HomeShellViews on _HomeShellState {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final comic = comics[index];
-          final resume = comic.resumeChapter;
           final coverIdentity = coverIdentities[index];
           final presentationIdentity = presentationIdentities[index];
-          final startupTelemetry = telemetryOwners == null ||
-                  telemetryOwners.add(presentationIdentity)
-              ? widget.startupTelemetry
-              : null;
           return SizedBox(
             key: ValueKey<String>(presentationIdentity),
             width: ComicCoverCard.cardWidth,
-            child: _buildSourceAwareCover(
-              builder: (context, _) => ComicCoverCard(
-                interactionKey: resume == null
-                    ? ValueKey<String>('comic-entry:${comic.identity}')
-                    : history
-                        ? historyChapterEntryKey(
-                            resume.chapter.sourceId,
-                            resume.chapter.chapterId,
-                          )
-                        : importedChapterEntryKey(
-                            resume.chapter.sourceId,
-                            resume.chapter.chapterId,
-                          ),
-                comic: comic,
-                preference: _preferenceForComic(comic),
-                coverIdentity: coverIdentity,
-                telemetryIdentity: presentationIdentity,
-                coverSource: _coverSourceLoaderForComic(comic),
-                sourceAvailable: _coverSourceAvailableForComic(comic),
-                startupTelemetry: startupTelemetry,
-                downloadProgress: _downloadProgressForComic(comic),
-                onTap: () => unawaited(_openComic(comic)),
-                onLongPress: () => unawaited(_openComicDetails(comic)),
-              ),
-            ),
+            child: _buildHomeComicCard(comic, coverIdentity: coverIdentity,
+              presentationIdentity: presentationIdentity, history: false,
+              telemetryOwners: telemetryOwners),
           );
         },
       ),

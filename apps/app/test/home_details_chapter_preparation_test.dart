@@ -210,6 +210,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       expect(find.text(_comic.title), findsOneWidget);
+      await tester.ensureVisible(find.text(_comic.title));
+      await tester.pumpAndSettle();
       await tester.longPress(find.text(_comic.title));
       final route = find.byType(details.LocalComicDetailsScreen);
       for (var frame = 0; frame < 80 && route.evaluate().isEmpty; frame++) {

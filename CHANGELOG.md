@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Move Home quick Trace export next to the zic title. Make reading history configurable as a vertical cover grid (2–6 columns), a horizontal shelf (1–3 rows), or a progress list, with a three-column grid by default. Persist Home choices independently, adapt narrow windows without changing saved columns, and build history lazily.
+
 - Open the reader translation panel on tap and keep enablement on its in-panel switch. Rename the processing-only indicator mode to Auto, make it the default without replacing saved preferences, and move model management before translation service and advanced settings before translation tests.
 
 - Separate first-use translation setup into its own three-step route. Skip it for existing configurations, allow manual setup and reopening, and retain drafts and credentials until an explicit finish/save. Keep ordinary global settings organized by service, tests and reading preferences; cancelling setup preserves settings, comic enablement and shared installed models.

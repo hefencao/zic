@@ -261,6 +261,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
 首页应用名 MUST 仅在 Debug 模式响应诊断操作：单击打开翻译测试，长按打开已展开且翻译测试置顶的诊断项页。
 翻译测试 MUST 提供翻译设置入口；单次测试语言 MUST NOT 改变阅读默认。
+Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用配置目录与既有导出反馈，执行中 MUST 禁止重复提交。
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 
@@ -1014,6 +1015,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   首次入架 MUST确认当时已知的章节与版本提醒；该版本确认 MUST持久保存且不得改写relation、family heads或复用证明。普通偏好编辑 MUST保留确认，后续新章节/版本 MUST仍可提醒；跨来源迁移 MUST NOT搬运foreign版本确认。
   漫画源卡片 MAY 将 confirmed successor 投影为右上更新感叹号，点击时 MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。
   远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
+- 阅读历史标题旁 MUST 提供布局设置，可选择网格、横向书架或列表并立即持久化；选择 MUST 独立于书架偏好。缺省 MUST 使用三列网格，列数 MUST 可设二至六列，窄窗口 MAY 为封面可读性减少实际列数，但 MUST 保留用户保存值；横向书架 MUST 支持一至三行，列表 MUST 显示章节与页码。
+  网格/列表 MUST 使用首页同一纵向滚动视口按需挂载，MUST NOT 一次展开所有历史封面；横向书架 MUST 在固定高度内横向按需构建。布局切换 MUST 保持最近阅读排序、canonical 封面身份与既有单击续读/长按详情动作，MUST NOT 新增缓存或网络调度 owner。
 
 ### 1.2 详情页与来源迁移
 - 详情页顶部控制栏 MUST 不重复显示漫画标题；漫画标题只在详情内容区显示。

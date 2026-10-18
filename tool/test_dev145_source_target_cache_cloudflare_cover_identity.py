@@ -77,7 +77,10 @@ for stale in (
     if stale in demo:
         raise SystemExit(f'App retains superseded cover owner: {stale}')
 for token in (
-    "'home-history' : 'home-update'",
+    "'home-history:$identity'",
+    "'home-update:$identity'",
+    'canonicalKeyFor(comic.sourceId, comic.comicId)',
+    '(canonicalKeyFor ?? _canonicalComicKey)(comic.sourceId, comic.comicId)',
     'final coverIdentity = _canonicalComicKey(',
     'telemetryOwners.add(presentationIdentity)',
 ):

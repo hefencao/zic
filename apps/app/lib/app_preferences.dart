@@ -12,6 +12,8 @@ enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
 
+enum HomeHistoryLayout { grid, carousel, list }
+
 enum CachedCarrierTrustMode {
   strictReload,
   reuseThenRefresh,
@@ -175,6 +177,9 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfSourceFilter _shelfSourceFilter = ShelfSourceFilter.all;
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
+  HomeHistoryLayout _homeHistoryLayout = HomeHistoryLayout.grid;
+  int _homeHistoryColumns = 3;
+  int _homeHistoryRows = 2;
   ReaderMode _defaultReaderMode = ReaderMode.paged;
   bool _readerStartsImmersive = true;
   ReaderPagedDirectionPreference _readerPagedDirectionPreference =
@@ -233,6 +238,9 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfSourceFilter get shelfSourceFilter => _shelfSourceFilter;
   LibrarySortMode get shelfSortMode => _shelfSortMode;
   ShelfViewPreference get shelfView => _shelfView;
+  HomeHistoryLayout get homeHistoryLayout => _homeHistoryLayout;
+  int get homeHistoryColumns => _homeHistoryColumns;
+  int get homeHistoryRows => _homeHistoryRows;
   ReaderMode get defaultReaderMode => _defaultReaderMode;
   bool get readerStartsImmersive => _readerStartsImmersive;
   ReaderPagedDirectionPreference get readerPagedDirectionPreference =>
@@ -395,6 +403,15 @@ final class AppPreferencesController extends ChangeNotifier {
       values['shelfView'],
       _shelfView,
     );
+    _homeHistoryLayout = _enumByName(
+      HomeHistoryLayout.values,
+      values['homeHistoryLayout'],
+      _homeHistoryLayout,
+    );
+    final historyColumns = values['homeHistoryColumns'];
+    if (historyColumns is int) _homeHistoryColumns = historyColumns.clamp(2, 6).toInt();
+    final historyRows = values['homeHistoryRows'];
+    if (historyRows is int) _homeHistoryRows = historyRows.clamp(1, 3).toInt();
     _defaultReaderMode = _enumByName(
       ReaderMode.values,
       values['defaultReaderMode'],
@@ -602,6 +619,26 @@ final class AppPreferencesController extends ChangeNotifier {
   void setShelfView(ShelfViewPreference value) {
     if (_disposed || _shelfView == value) return;
     _shelfView = value;
+    _changed();
+  }
+
+  void setHomeHistoryLayout(HomeHistoryLayout value) {
+    if (_disposed || _homeHistoryLayout == value) return;
+    _homeHistoryLayout = value;
+    _changed();
+  }
+
+  void setHomeHistoryColumns(int value) {
+    final normalized = value.clamp(2, 6).toInt();
+    if (_disposed || _homeHistoryColumns == normalized) return;
+    _homeHistoryColumns = normalized;
+    _changed();
+  }
+
+  void setHomeHistoryRows(int value) {
+    final normalized = value.clamp(1, 3).toInt();
+    if (_disposed || _homeHistoryRows == normalized) return;
+    _homeHistoryRows = normalized;
     _changed();
   }
 
@@ -1005,6 +1042,9 @@ final class AppPreferencesController extends ChangeNotifier {
       'shelfSourceFilter': _shelfSourceFilter.name,
       'shelfSortMode': _shelfSortMode.name,
       'shelfView': _shelfView.name,
+      'homeHistoryLayout': _homeHistoryLayout.name,
+      'homeHistoryColumns': _homeHistoryColumns,
+      'homeHistoryRows': _homeHistoryRows,
       'defaultReaderMode': _defaultReaderMode.name,
       'readerStartsImmersive': _readerStartsImmersive,
       'readerPagedDirectionPreference': _readerPagedDirectionPreference.name,

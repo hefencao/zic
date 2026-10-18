@@ -50,6 +50,7 @@ import 'home_source_migration_transaction.dart';
 import 'home_source_projection.dart';
 import 'home_version_reuse_lifecycle.dart';
 import 'home_widgets.dart';
+import 'home_history_layout.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'home_shell_views.dart';
 part 'home_shell_source_compat.dart';
@@ -63,6 +64,7 @@ const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
 const homeHistorySectionKey = ValueKey<String>('home-history-section');
+const homeHistoryLayoutKey = ValueKey<String>('home-history-layout');
 const homeDiagnosticsKey = ValueKey<String>('home-diagnostics');
 const homeTraceQuickExportKey = ValueKey<String>('home-trace-quick-export');
 const bookshelfManageKey = ValueKey<String>('bookshelf-manage');
@@ -1683,14 +1685,29 @@ final class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       resizeToAvoidBottomInset: _navigationIndex != 2,
       appBar: AppBar(
-        title: _navigationIndex == 0 && _debugModeEnabled
-            ? Tooltip(message: '翻译测试；长按打开开发与媒体诊断', child: InkWell(
-                key: homeDiagnosticsKey,
-                onTap: _openTranslationTest,
-                onLongPress: _openDiagnostics,
-                child: const Padding(padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                  child: Text('zic')),
-              ))
+        title: _navigationIndex == 0
+            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                if (_debugModeEnabled)
+                  Tooltip(message: '翻译测试；长按打开开发与媒体诊断', child: InkWell(
+                    key: homeDiagnosticsKey,
+                    onTap: _openTranslationTest,
+                    onLongPress: _openDiagnostics,
+                    child: const Padding(padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                      child: Text('zic')),
+                  ))
+                else
+                  const Text('zic'),
+                if (_debugModeEnabled) IconButton(
+                  key: homeTraceQuickExportKey,
+                  tooltip: _exportingHomeTrace ? '正在导出 Trace…' :
+                    '一键导出 Trace 到 ${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
+                  onPressed: _exportingHomeTrace ? null : () => unawaited(_exportHomeDebugTrace()),
+                  icon: _exportingHomeTrace
+                      ? const SizedBox.square(dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.download_outlined),
+                ),
+              ])
             : Text(
           switch (_navigationIndex) {
             0 => 'zic',

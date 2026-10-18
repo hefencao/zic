@@ -143,6 +143,13 @@ void main() {
     await tester.pump();
     expect(find.byKey(miscDebugTraceEntryKey), findsOneWidget);
     expect(find.text('记录 Debug trace'), findsOneWidget);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.home_outlined));
+    await tester.pump();
+    expect(find.descendant(of: find.byType(AppBar),
+      matching: find.byKey(homeTraceQuickExportKey)), findsOneWidget);
+    expect(find.descendant(of: find.byKey(homePageKey),
+      matching: find.byKey(homeTraceQuickExportKey)), findsNothing);
   });
 
   testWidgets('reading zoom stages use sliders and status bar exposes three modes',
@@ -515,6 +522,35 @@ void main() {
     );
   });
 
+  test('home history preferences use safe defaults and normalize saved dimensions', () async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    expect(preferences.homeHistoryLayout, HomeHistoryLayout.grid);
+    expect(preferences.homeHistoryColumns, 3);
+    expect(preferences.homeHistoryRows, 2);
+    Map<String, Object?>? saved;
+    await preferences.attach(
+      read: () async => {'homeHistoryLayout': 'unknown', 'homeHistoryColumns': 99,
+        'homeHistoryRows': -2, 'shelfView': 'list'},
+      write: (values) async { saved = values; },
+    );
+    expect(preferences.homeHistoryLayout, HomeHistoryLayout.grid);
+    expect(preferences.homeHistoryColumns, 6);
+    expect(preferences.homeHistoryRows, 1);
+    preferences.setHomeHistoryLayout(HomeHistoryLayout.carousel);
+    preferences.setHomeHistoryColumns(0);
+    preferences.setHomeHistoryRows(999);
+    await preferences.flush();
+    final restored = AppPreferencesController();
+    addTearDown(restored.dispose);
+    await restored.attach(read: () async => saved, write: (_) async {});
+    expect(restored.homeHistoryLayout, HomeHistoryLayout.carousel);
+    expect(restored.homeHistoryColumns, 2);
+    expect(restored.homeHistoryRows, 3);
+    expect(restored.shelfView, ShelfViewPreference.list,
+      reason: 'Home layout choices must not change bookshelf preferences');
+  });
+
   test('application preferences load and persist through injected storage', () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);
@@ -529,6 +565,9 @@ void main() {
         'shelfSourceFilter': 'remote',
         'shelfSortMode': 'title',
         'shelfView': 'list',
+        'homeHistoryLayout': 'carousel',
+        'homeHistoryColumns': 5,
+        'homeHistoryRows': 3,
         'defaultReaderMode': 'continuous',
         'readerStartsImmersive': false,
         'readerPagedDirectionPreference': 'rtl',
@@ -605,6 +644,9 @@ void main() {
     expect(controller.shelfSourceFilter, ShelfSourceFilter.remote);
     expect(controller.shelfSortMode, LibrarySortMode.title);
     expect(controller.shelfView, ShelfViewPreference.list);
+    expect(controller.homeHistoryLayout, HomeHistoryLayout.carousel);
+    expect(controller.homeHistoryColumns, 5);
+    expect(controller.homeHistoryRows, 3);
     expect(controller.defaultReaderMode, ReaderMode.continuous);
     expect(controller.readerStartsImmersive, isFalse);
     expect(
@@ -723,6 +765,9 @@ void main() {
     controller.setAmoledDarkTheme(false);
     controller.setDebugModeEnabled(true);
     controller.setShelfSortMode(LibrarySortMode.custom);
+    controller.setHomeHistoryLayout(HomeHistoryLayout.list);
+    controller.setHomeHistoryColumns(4);
+    controller.setHomeHistoryRows(1);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
     controller.setDebugTraceExportDirectory('Debug/Reader');
@@ -779,6 +824,9 @@ void main() {
     expect(written?['amoledDarkTheme'], isFalse);
     expect(written?['debugModeEnabled'], isTrue);
     expect(written?['shelfSortMode'], 'custom');
+    expect(written?['homeHistoryLayout'], 'list');
+    expect(written?['homeHistoryColumns'], 4);
+    expect(written?['homeHistoryRows'], 1);
     expect(written?['version'], 9);
     expect(written?['readerPagedDirectionPreference'], 'source');
     expect(written?['systemStatusBarMode'], 'followControls');

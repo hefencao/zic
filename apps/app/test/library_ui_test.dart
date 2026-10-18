@@ -538,6 +538,56 @@ void main() {
     );
   });
 
+  testWidgets('long reading history stays lazy across layouts and narrow windows', (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    for (var index = 0; index < 80; index++) {
+      final chapter = _chapter(name: 'History $index');
+      await store.upsertChapter(chapter);
+      await store.saveProgress(ReadingProgress(
+        sourceId: chapter.sourceId, comicId: chapter.comicId, chapterId: chapter.chapterId,
+        pageIndex: 0, subPageOffset: 0, readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 10, 18).subtract(Duration(minutes: index)),
+      ));
+    }
+    await tester.pumpWidget(App(libraryStore: store, preferences: preferences,
+      persistHomeProjectionSnapshot: false));
+    await _pumpUntilFound(tester, find.byType(ComicCoverCard));
+    final first = _chapter(name: 'History 0');
+    final firstEntry = find.byKey(historyChapterEntryKey(first.sourceId, first.chapterId));
+    expect(firstEntry, findsOneWidget);
+    expect(find.byType(ComicCoverCard).evaluate().length, lessThan(80),
+      reason: 'vertical history must not mount every cover on startup');
+    preferences.setHomeHistoryLayout(HomeHistoryLayout.list);
+    await tester.pump();
+    expect(firstEntry, findsOneWidget);
+    expect(find.byType(ListTile).evaluate().length, lessThan(80));
+    expect(find.text('History 0 · 第 1 / 1 页'), findsOneWidget);
+    final tile = tester.widget<ListTile>(firstEntry);
+    expect(tile.onTap, isNotNull);
+    expect(tile.onLongPress, isNotNull);
+    preferences.setHomeHistoryLayout(HomeHistoryLayout.carousel);
+    await tester.pump();
+    final carousel = tester.widget<GridView>(find.byKey(const PageStorageKey('home-history-carousel')));
+    expect(carousel.scrollDirection, Axis.horizontal);
+    expect((carousel.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount).crossAxisCount, 2);
+    expect(firstEntry, findsOneWidget);
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    preferences.setHomeHistoryColumns(6);
+    preferences.setHomeHistoryLayout(HomeHistoryLayout.grid);
+    await tester.pump();
+    final grid = tester.widget<SliverGrid>(find.byKey(const ValueKey('home-history-grid')));
+    expect((grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount).crossAxisCount, 3);
+    expect(preferences.homeHistoryColumns, 6,
+      reason: 'a narrow window must not overwrite the saved column preference');
+    expect(firstEntry, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('home and bookshelf share the persisted local library',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -557,7 +607,11 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(App(libraryStore: store));
+    final preferences = AppPreferencesController()
+      ..setHomeHistoryLayout(HomeHistoryLayout.carousel)
+      ..setHomeHistoryRows(1);
+    addTearDown(preferences.dispose);
+    await tester.pumpWidget(App(libraryStore: store, preferences: preferences));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
 
     expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
@@ -759,6 +813,8 @@ void main() {
         widget is SizedBox && widget.key is ValueKey<String> &&
         (widget.key! as ValueKey<String>).value.startsWith('home-update:'));
     expect(updates, findsNothing);
+    await tester.ensureVisible(find.text('old-comic'));
+    await tester.pumpAndSettle();
     await tester.longPress(find.text('old-comic'));
     await _pumpUntilFound(tester, find.byType(details.LocalComicDetailsScreen));
     final screen = tester.widget<details.LocalComicDetailsScreen>(
