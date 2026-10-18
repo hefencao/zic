@@ -238,6 +238,7 @@ final class ComicFilterPanel extends StatelessWidget {
   const ComicFilterPanel({super.key, required this.child});
 
   static const rowHeight = 40.0;
+  static const rowSpacing = 6.0;
   static const horizontalInset = 12.0;
   static const bottomInset = 8.0;
 

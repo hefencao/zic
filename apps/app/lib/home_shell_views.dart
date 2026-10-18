@@ -1165,7 +1165,8 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   double get _shelfScrollBottomPadding =>
-      ComicFilterPanel.rowHeight * (widget.preferences.shelfPluginFilterExpanded ? 2 : 1) +
+      ComicFilterPanel.rowHeight + (widget.preferences.shelfPluginFilterExpanded
+        ? ComicFilterPanel.rowHeight + ComicFilterPanel.rowSpacing : 0) +
       ComicFilterPanel.bottomInset + MediaQuery.paddingOf(context).bottom + 16;
 
   Widget _buildShelfGallery(List<LibraryComic> comics) {
@@ -1458,8 +1459,9 @@ extension _HomeShellViews on _HomeShellState {
       AnimatedSize(duration: const Duration(milliseconds: 180), curve: Curves.easeOut,
         alignment: Alignment.topCenter,
         child: widget.preferences.shelfPluginFilterExpanded
-          ? StreamBuilder<void>(stream: _externalSources.sourceProjectionChanges,
-              builder: (_, _) => _buildShelfPluginBar(libraryComics))
+          ? Padding(padding: const EdgeInsets.only(top: ComicFilterPanel.rowSpacing),
+              child: StreamBuilder<void>(stream: _externalSources.sourceProjectionChanges,
+                builder: (_, _) => _buildShelfPluginBar(libraryComics)))
           : const SizedBox(width: double.infinity)),
     ]),
   );
