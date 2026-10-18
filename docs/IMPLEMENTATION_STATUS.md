@@ -194,7 +194,7 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
-- 漫画翻译：面板管漫画语言/OCR/内容/指示器，右上全局；首次独立三步引导，已配置跳过、退出不保存；全局服务/测试/默认/档位分类，可重开；仅右上保存，高级/导入/多API管理折叠。静态WebP不受动图提示阻断，优先Pipeline同代媒体事实，未决查完整文件；整章/归档同理。当前输入先于邻页，缓存不等推理；完成通知退出后重放保留等待页。SHA/JSON在worker，1.5ms排版、LRU8页/128块；后台/压力清除。OpenCV仅OCR模块，保留SIMD/TBB/HAL和推理内核。
+- 漫画翻译：底栏第三项点击面板，左下开关；面板管漫画语言/OCR/内容/指示器，右上全局。指示器缺省自动，保留已存偏好。首次独立三步引导，已配置跳过、退出不保存，可重开；全局模型/服务/高级/测试/默认/档位排列，仅右上保存，高级/导入/多API管理折叠。静态WebP优先Pipeline同代事实，未决查完整文件；整章/归档同理。当前输入优先，缓存不等推理；通知重放。worker摘要/JSON、1.5ms排版、LRU8页/128块；压力清除。OpenCV保留SIMD/TBB/HAL及推理内核。
   App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/后台回收、NetLane至真实退出；验收见状态JSON。
   远程连接/握手及临时HTTP错误统一追加至多5次重试，间隔2/5/15/30/60秒；Retry-After可延长至5分钟。只重发失败批次，等待不占NetLane；全消费者退出/离页/后台唤醒等待，快速返回重放新需求，单方退出保留共享请求。页/章节显示重试与失败进度，Trace脱敏；鉴权/证书/格式/发送接收超时不重试，缓存身份保持。
 

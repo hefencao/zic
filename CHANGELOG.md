@@ -1,5 +1,7 @@
 ## Unreleased — state governance and device acceptance
 
+- Open the reader translation panel on tap and keep enablement on its in-panel switch. Rename the processing-only indicator mode to Auto, make it the default without replacing saved preferences, and move model management before translation service and advanced settings before translation tests.
+
 - Separate first-use translation setup into its own three-step route. Skip it for existing configurations, allow manual setup and reopening, and retain drafts and credentials until an explicit finish/save. Keep ordinary global settings organized by service, tests and reading preferences; cancelling setup preserves settings, comic enablement and shared installed models.
 
 - Guide translation setup through the shared required text-recognition download, online/offline translation configuration and visible tests. Explain download sizes, supported languages and required API fields; fold model import/removal and API-profile management. Expose global indicator defaults as independent always/processing/off pills, retain reading defaults and keep a single labeled Save action. Prefer Pipeline's current-generation media evidence for translation and fall back to complete-file inspection; do not treat source WebP/animation hints as proof of animation in Reader, chapter jobs or translation archives.

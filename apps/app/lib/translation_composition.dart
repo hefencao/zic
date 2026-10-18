@@ -332,20 +332,13 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
   @override
   Widget buildControls(BuildContext context) => _buildCurrentState((index, state) {
     final enabled = _session?.enabled == true;
-    return GestureDetector(
-      onLongPress: () => _edit(context, _status(state)),
-      child: TooltipTheme(
-        // The settings gesture owns long press; the tooltip keeps its label.
-        data: TooltipTheme.of(context).copyWith(triggerMode: TooltipTriggerMode.manual),
-        child: IconButton(
-          key: const ValueKey('reader-translation'),
-          tooltip: '${enabled ? '关闭翻译' : '开启翻译'}（长按设置）',
-          isSelected: enabled,
-          icon: const Icon(Icons.g_translate),
-          selectedIcon: const Icon(Icons.translate),
-          onPressed: _session == null ? null : () => _setEnabled(context, !enabled),
-        ),
-      ),
+    return IconButton(
+      key: const ValueKey('reader-translation'),
+      tooltip: '漫画翻译',
+      isSelected: enabled,
+      icon: const Icon(Icons.g_translate),
+      selectedIcon: const Icon(Icons.translate),
+      onPressed: _session == null && _error == null ? null : () => _edit(context, _status(state)),
     );
   });
 
@@ -380,7 +373,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
 
   Future<void> _edit(BuildContext context, String status) async {
     const languages = {'auto': '自动', 'ja': '日语', 'ko': '韩语', 'en': '英语', 'zh': '中文'};
-    const indicatorModes = {'always': '常驻', 'processing': '处理中', 'off': '关闭'};
+    const indicatorModes = {'always': '常驻', 'processing': '自动', 'off': '关闭'};
     const ocrPresets = {1024: '快速', 1600: '标准', 2240: '精细'};
     var ocrDraft = ComicOcrParameters.fromSettings(_preferences);
     await showModalBottomSheet<void>(

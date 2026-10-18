@@ -10,6 +10,9 @@ void main() {
     try {
       final settings = ComicTranslationSettings();
       await settings.init(directory.path);
+      expect(settings.values['indicatorOnlyWhileProcessing'], isTrue);
+      expect(settings.forComic('source-b', 'comic')['indicatorOnlyWhileProcessing'], isTrue);
+      settings.values['indicatorOnlyWhileProcessing'] = false;
       settings.values['targetLanguage'] = 'en';
       await settings.setComic('source-a', 'comic', {'enabled': true});
       await settings.setComic('source-a', 'comic', {'showIndicator': false});
@@ -28,6 +31,11 @@ void main() {
       await secrets.setApiKey('openai', 'private-openai-key');
       await secrets.setApiKey('deepl', 'private-deepl-key');
       final settingsFile = File('${directory.path}/comic_translation_settings.json');
+      final savedPreference = ComicTranslationSettings();
+      await savedPreference.init(directory.path);
+      expect(savedPreference.values['indicatorOnlyWhileProcessing'], isFalse,
+        reason: 'the new default must preserve an explicitly saved always-visible preference');
+      savedPreference.dispose();
       final saved = jsonDecode(await settingsFile.readAsString()) as Map;
       (saved['settings'] as Map).remove('indicatorOnlyWhileProcessing');
       await settingsFile.writeAsString(jsonEncode(saved));
@@ -36,8 +44,8 @@ void main() {
       expect(restored.forComic('source-a', 'comic')['enabled'], isTrue);
       expect(restored.forComic('source-a', 'comic')['showIndicator'], isFalse);
       expect(restored.forComic('source-b', 'comic')['showIndicator'], isTrue);
-      expect(restored.forComic('source-a', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
-      expect(restored.forComic('source-b', 'comic')['indicatorOnlyWhileProcessing'], isFalse);
+      expect(restored.forComic('source-a', 'comic')['indicatorOnlyWhileProcessing'], isTrue);
+      expect(restored.forComic('source-b', 'comic')['indicatorOnlyWhileProcessing'], isTrue);
       expect(restored.forComic('source-a', 'korean')['indicatorOnlyWhileProcessing'], isTrue);
       expect(restored.forComic('source-a', 'comic')['targetLanguage'], 'en');
       expect(restored.forComic('source-b', 'comic')['targetLanguage'], 'en');

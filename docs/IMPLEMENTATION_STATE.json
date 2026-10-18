@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T04:58:08Z",
-  "objective": "将翻译首次配置拆为独立引导，日常设置恢复分类组织",
+  "updated_at": "2026-10-18T05:32:39Z",
+  "objective": "统一底栏翻译点击入口、自动指示器默认值与全局设置顺序",
   "status": "partial",
   "scope": [
-    "main:standalone first-use translation setup;draft/cancel/migration;ordinary settings",
+    "main:reader tap panel;indicator Auto default;global settings order",
     "Reader/Pipeline/NetLane与取消真实退出边界保持",
     "原112条验收及summary逐字保留"
   ],
@@ -147,8 +147,8 @@
   "current_device_installation": {
     "verified_for_current_change": true,
     "serial": "72b08a1c",
-    "apk_sha256": "91bc02effec0e2f82dc10454b15ff377387c1d3c446025e6c42f46b004f3c84e",
-    "observation": "PID17882->24600/Home:existing config skips setup;3 branches,cancel,unchanged finish and restart pass.API/models/defaults retained."
+    "apk_sha256": "f5dddb789b300b98e1596a5fb824110dfc42e98bcd80fe04621e15d0b6e7e1e3",
+    "observation": "PID27055/Home:tap preserves on/off;panel switch restores;settings order/folding/Auto labels pass;saved Always retained."
   },
   "validation": {
     "command": "CI=true bash ./tool/check.sh --require-toolchains",
@@ -160,16 +160,16 @@
     },
     "rust_tests": 25,
     "release_apk_mib": {
-      "arm64_v8a": 34.8892,
-      "armeabi_v7a": 28.9239,
-      "x86_64": 46.897
+      "arm64_v8a": 34.8882,
+      "armeabi_v7a": 28.9229,
+      "x86_64": 46.896
     },
     "missing_toolchains": [
       "pwsh:Windows builder unverified"
     ],
     "android_jvm_tests": "110 owned/0 failures;upstream Robolectric/ByteBuddy unverified",
-    "native_runtime": "3ABI Debug/Release;closure/signature/CRC/compression pass;non-Dart ELFs unchanged",
-    "scope": "Final App analysis/5 focused tests pass;device independent setup accepted."
+    "native_runtime": "3ABI Debug/Release;arm64 closure;3ABI signature/CRC/compression pass;non-Dart ELFs unchanged",
+    "scope": "7 focused tests and device tap/Auto labels/order pass;fresh Auto default covered by settings regression."
   },
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
@@ -180,10 +180,10 @@
     "reader_entry_exit_stutter": "Accepted READY/relations/ledger/4ms64 parsing and connection-scoped upsert:31 storage/2385 gates/three-ABI packages;warm125934us,0 downloads/failures/upsert CPU. Profilee6f31315/PID18913 full setup-following8.483498s/933CPU:actual drag/ballistic/Reader callbacks,267 UI,max11578us/naturalGC7519us;exit raster19724us. Separate vertical exit has20825us exported raster/24558us Timeline. Corrected native supplement PID32362 is PAGED,1.653541s:28 UI/raster,max11957/15243us;15.243ms frame running14974.926us,sleep194.323us,runnable73.751us;13.006ms frame running13006us. Export8frames build11379/raster15205/span17672us;no kernel aligned with the vertical failure. Perfetto exit0/72079 sched slices/no error stats. SDK3.12.2 allocation count/size are current heap,not total allocations;GC reclamation is not a substitute. Original9.779s/cover-install/210 input and physical touch/display stay open. Follow/ordinary Release restored.",
     "comic_translation_migration": {
       "status": "partial",
-      "current_contract": "App standalone first-use setup gates settings/enable/chapter commands;existing configurations skip it. Finish/manual Save persists global completion;cancel discards service/key drafts. Ordinary settings remain separate. Pipeline/media/cache/NetLane owners retained.",
-      "diagnosis": "Numbered guidance mixed first-use setup with routine global settings. Provider switches previously wrote draft API keys before explicit Save.",
-      "accepted": "Release91bc02ef:existing config skips wizard;3 branches,cancel,unchanged finish/restart pass. Widgets verify first-use missing-model/commit/legacy/draft boundaries. Prior static WebP fixture and KO80p1+4 fresh neighbors remain accepted.",
-      "performance": "No new inference/model/download owner or cache identity. Existing model managers and Pipeline media evidence retained.",
+      "current_contract": "Reader tap opens panel without toggling;panel switch owns enablement. Indicator defaults to Auto(processing-only),preserving saved preferences. Global order:models/service/advanced/tests/reading/quality. Standalone first-use setup and Pipeline/cache/NetLane owners retained.",
+      "diagnosis": "Old tap toggled translation;long press opened settings. Indicator defaulted to Always;model management and advanced controls appeared too late.",
+      "accepted": "Releasef5dddb78/device:tap opens panel without toggling(on/off);panel switch restores;models/service and advanced/tests order,folding,Auto labels and saved Always pass. Prior first-use and static WebP/KO80p1+4 neighbors stay accepted.",
+      "performance": "UI/default changes only;no inference,model,download owner or cache identity changes.",
       "remaining_acceptance": [
         "Namaniku97-page/cache-only completion pending:54 saved,TLS at index54;preserve /sdcard/Download/Debug/zic-debug-trace-2026-10-17T23-31-55.jsonl.",
         "Broader OCR/group/font/SFX,JA待つて/緒に行きましよう;DeepL/CTranslate2/Windows/non-DotProd unverified."

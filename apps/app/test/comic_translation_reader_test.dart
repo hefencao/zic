@@ -87,18 +87,36 @@ void main() {
     expect(session()!.policy.cachePrefetchPages, 8);
     await tester.tap(find.byType(_Media));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     expect(find.byType(BottomSheet), findsOneWidget,
-      reason: 'the icon tooltip must not consume the settings long press');
+      reason: 'tapping the translation control opens its panel');
     expect(session()!.enabled, isTrue);
+    expect(session(), same(initial), reason: 'opening the panel must not toggle or restart translation');
+    Future<void> toggleTranslation() async {
+      await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('reader-translation-enable'))));
+      await tester.runAsync(ComicTranslationSettings.instance.flush);
+      await tester.pumpAndSettle();
+    }
+    await toggleTranslation();
+    expect(session()!.enabled, isFalse);
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(session()!.enabled, isFalse, reason: 'opening the panel must also preserve disabled translation');
+    await toggleTranslation();
+    expect(session()!.enabled, isTrue);
+    expect(session(), same(initial));
+    expect(tester.state(find.byType(_Media)), same(media));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
+    await tester.pumpAndSettle();
     Future<void> indicatorMode(String label) async {
       await tester.runAsync(() => tester.tap(find.descendant(
         of: find.byKey(const ValueKey('reader-translation-indicator-mode')), matching: find.text(label))));
       await tester.runAsync(ComicTranslationSettings.instance.flush);
       await tester.pumpAndSettle();
     }
-    await indicatorMode('处理中');
+    await indicatorMode('自动');
     expect(find.byKey(const ValueKey('reader-translation-status')), findsNothing,
       reason: 'the unavailable terminal state must not remain in processing-only mode');
     expect(session(), same(initial), reason: 'indicator mode must not restart OCR or translation');
@@ -132,7 +150,7 @@ void main() {
     expect(ComicTranslationSettings.instance.forComic('translation-test', 'comic')['translateSoundEffects'], isTrue);
     expect(ComicTranslationSettings.instance.values['translateSoundEffects'], isFalse);
     expect(tester.state(find.byType(_Media)), same(media));
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     expect(find.text('应用到本漫画'), findsNothing, reason: 'OCR fine tuning starts collapsed');
     await tester.runAsync(() => tester.tap(find.descendant(
@@ -145,7 +163,7 @@ void main() {
     expect(session()!.policy.prefetchPages, 0);
     expect(session()!.policy.cachePrefetchPages, 8);
     expect(tester.state(find.byType(_Media)), same(media));
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('OCR 高级设置'));
     await tester.pumpAndSettle();
@@ -172,7 +190,7 @@ void main() {
     expect(session()!.policy.ocrParameters.cacheSuffix, isEmpty,
       reason: 'the comic sliders must preserve the default cache identity');
     expect(ComicTranslationSettings.instance.hasComicOcrOverride('translation-test', 'comic'), isTrue);
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => tester.tap(find.descendant(
       of: find.byKey(const ValueKey('reader-translation-ocr')), matching: find.text('跟随全局'))));
@@ -180,7 +198,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(session()!.policy.ocrParameters.cacheSuffix, isEmpty);
     expect(ComicTranslationSettings.instance.hasComicOcrOverride('translation-test', 'comic'), isFalse);
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => tester.tap(find.byTooltip('全局翻译设置')));
     await tester.pump();
@@ -193,7 +211,7 @@ void main() {
     expect(find.text('OCR 参数'), findsNothing);
     Navigator.of(tester.element(find.text('全局翻译设置'))).pop();
     await tester.pumpAndSettle();
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => tester.tap(find.descendant(
       of: find.byKey(const ValueKey('reader-translation-source-language')), matching: find.text('韩语'))));
@@ -202,7 +220,7 @@ void main() {
     expect(session()!.sourceLanguage, 'ko');
     expect(ComicTranslationSettings.instance.values['sourceLanguage'], 'auto');
     expect(tester.state(find.byType(_Media)), same(media));
-    await tester.longPress(find.byKey(const ValueKey('reader-translation')));
+    await tester.tap(find.byKey(const ValueKey('reader-translation')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => tester.tap(find.descendant(
       of: find.byKey(const ValueKey('reader-translation-source-language')), matching: find.text('自动'))));
