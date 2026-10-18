@@ -12,7 +12,7 @@ import 'package:reader_runtime/reader_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'app_preferences.dart';
-import 'comic_translation_settings_screen.dart';
+import 'comic_translation_settings_entry.dart';
 import 'translation_indicator.dart';
 import 'translation_chapter_jobs.dart';
 import 'translation_runtime.dart';
@@ -343,12 +343,25 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
           isSelected: enabled,
           icon: const Icon(Icons.g_translate),
           selectedIcon: const Icon(Icons.translate),
-          onPressed: _session == null ? null : () => _settings.setComic(
-            _chapter.sourceId, _chapter.comicId, {'enabled': !enabled}),
+          onPressed: _session == null ? null : () => _setEnabled(context, !enabled),
         ),
       ),
     );
   });
+
+  bool _openingSetup = false;
+  Future<void> _setEnabled(BuildContext context, bool enabled) async {
+    if (_openingSetup || _closed) return;
+    if (enabled) {
+      _openingSetup = true;
+      try {
+        if (!await ensureComicTranslationSetup(context) || !context.mounted || _closed) return;
+      } finally {
+        _openingSetup = false;
+      }
+    }
+    await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
+  }
 
   @override
   Widget buildStatus(BuildContext context) {
@@ -419,9 +432,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                   IconButton(tooltip: '全局翻译设置', icon: const Icon(Icons.settings_outlined),
                     onPressed: () {
                       Navigator.pop(sheetContext);
-                      Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => const ComicTranslationSettingsScreen(),
-                      ));
+                      openComicTranslationSettings(context);
                     }),
                 ]),
                 const SizedBox(height: 8),
@@ -547,7 +558,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                     padding: EdgeInsets.zero,
                     onChanged: (enabled) async {
                       Navigator.pop(sheetContext);
-                      await _settings.setComic(_chapter.sourceId, _chapter.comicId, {'enabled': enabled});
+                      await _setEnabled(context, enabled);
                     },
                   ),
                 ),
@@ -560,6 +571,7 @@ final class ComicTranslationReaderExtension extends ReaderPresentationExtension 
                         if (chapterJob?.isActive == true) {
                           await AppTranslationChapterJobs.instance.cancel(chapterKey);
                         } else {
+                          if (!await ensureComicTranslationSetup(context) || !context.mounted || _closed) return;
                           await onPretranslateChapter!();
                         }
                       } on Object catch (error) {

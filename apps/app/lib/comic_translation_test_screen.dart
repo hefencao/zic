@@ -1,7 +1,7 @@
 import 'package:comic_translation/comic_translation.dart';
 import 'package:flutter/material.dart';
 
-import 'comic_translation_settings_screen.dart';
+import 'comic_translation_settings_entry.dart';
 import 'comic_translation_test_actions.dart';
 import 'translation_composition.dart';
 
@@ -47,9 +47,7 @@ final class _ComicTranslationTestScreenState extends State<ComicTranslationTestS
   }
 
   Future<void> _openSettings() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => const ComicTranslationSettingsScreen(),
-    ));
+    await openComicTranslationSettings(context);
     await _load();
     if (mounted) setState(() {});
   }

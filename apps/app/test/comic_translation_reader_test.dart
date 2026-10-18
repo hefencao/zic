@@ -21,6 +21,7 @@ void main() {
       return null;
     });
     await tester.runAsync(initializeComicTranslation);
+    ComicTranslationSettings.instance.values['comicTranslationSetupCompleted'] = true;
     final chapter = ChapterManifest(
       sourceId: 'translation-test', comicId: 'comic',
       chapter: const Chapter(chapterId: 'chapter', comicId: 'comic', title: '静态页',

@@ -1,7 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
 - 本地 `main`（翻译分支已合并，未推送），`0.31.0-dev.331` / `0.31.0+331`：翻译第三项单击开关/长按。左下无字开关，指示器上行附标签；原文/指示器均用独立药丸，单阶段图标，页号仅Debug；指示器保存不重建。可见缓存不等推理，Trace命中/调用。日/韩记忆、模型复用/回收；静态/覆层/NetLane保留。Debug首页测试/诊断；dev.196、dev.197、dev.198、dev.199、dev.203 bounded 语义不变。
-- 翻译：面板管漫画语言/OCR/内容/指示器；全局先引导识别模型下载/翻译方式/测试，再列默认/指示器药丸；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
+- 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局恢复日常分类，可重开引导；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。

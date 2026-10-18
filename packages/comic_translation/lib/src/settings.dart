@@ -14,6 +14,7 @@ final class ComicTranslationSettings extends ChangeNotifier {
   static const _comicKeys = {'enabled', 'sourceLanguage', 'translateSoundEffects',
     'useCleanOverlay', 'showIndicator', 'indicatorOnlyWhileProcessing', ..._ocrKeys};
   final Map<String, Object?> values = {
+    'comicTranslationSetupCompleted': false,
     'comicTranslationBackend': 'none',
     'comicTranslationLocalModel': '',
     'comicTranslationRemoteEndpoint': 'https://api.openai.com/v1/chat/completions',
