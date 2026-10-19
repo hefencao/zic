@@ -360,6 +360,7 @@ fi
 
 if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter pub get)
+  python3 "$ROOT/tool/test_release_repository_defaults.py"
   "$ROOT/tool/analyze.sh"
   "$ROOT/tool/test_dart.sh"
   "$ROOT/tool/test_flutter.sh"

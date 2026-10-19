@@ -1,9 +1,10 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-10-18T15:46:59Z",
-  "objective": "修复210a3115阅读器加载与手势退出卡顿",
+  "release":{"version":"0.31.0-beta.1","build":332,"tag":"v0.31.0-beta.1","status":"preparing","remaining":"Release build,device smoke,GitHub APK publication and anonymous download verification."},
+  "updated_at":"2026-10-19T02:02:22Z",
+  "objective":"Release去除内置源仓库；整理提交并发布GitHub beta与首页下载。",
   "status": "partial",
-  "scope": ["Home frame aliases;canonical backfill event turns;Reader route completion;original MaterialPageRoute restored","210 entry/edge-back under original animation;preserve icons/data/protected112"],
+  "scope":["Product repository policy;beta332;GitHub APK assets;README downloads"],
   "preserve": [
     "已验生产合同与用户数据",
     "NetLane唯一network authority与真实退出容量边界",
@@ -140,8 +141,8 @@
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
-  "current_device_installation": {"verified_for_current_change":true,"serial":"210a3115","apk_sha256":"a8d306c9c5235fcc41f502745e3c49fb70acc4f539270eade74f49c64c6359ce","observation":"Original MaterialPageRoute Release0.31.0/PID26152/Home;host/device SHA match;durable-services-ready+revision-fast-path;Namaniku Reader/edge-back pass;data/settings preserved;arm64 35.10MiB. Profile9906f2dc/PID22326 timings."},
-  "validation": {"command":"CI=true bash ./tool/check.sh --require-toolchains;bash ./tool/build_android.sh profile;bash ./tool/build_android.sh release;Release closure/signatures/CRC;210 original-animation entry/edge-back","exit_code":0,"dart_flutter_tests":{"passed":2596,"skipped":3},"rust_tests_passed":25,"owned_jvm_tests_passed":110,"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS build unverified"],"scope":"Current full check exit0:28 analyzers(no errors/warnings),28 test suites,repo/docs/ownership/platform,three ABI Debug,Rust25. Profile/Release3ABIs pass;110 owned JVM prior unchanged-native verification. Original-animation focused49 pass."},
+  "current_device_installation":{"verified_for_current_change":false,"serial":"72b08a1c","observation":"Unlocked Android16;beta install pending."},
+  "validation":{"command":"CI=true bash tool/check.sh --require-toolchains;bash tool/build_android.sh release;4 owned Android testDebugUnitTest targets;clean ZIP gates","exit_code":0,"dart_flutter_tests":{"passed":2596,"skipped":3},"rust_tests_passed":25,"owned_jvm_tests_passed":110,"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS build unverified"],"scope":"28 analyzers,no errors/warnings;28 suites;repo/docs/ownership/platform;3ABI Debug/Release;product AOT+APK URL absence,signatures,CRC,translation closure,clean ZIP pass. Device/publication pending."},
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",

@@ -1,3 +1,11 @@
+## 0.31.0-beta.1
+
+- Publish Android beta APKs for arm64-v8a, armeabi-v7a and x86_64 with SHA-256 checksums and direct download links in README.
+- Remove bundled Mihon/Venera repository indexes from product builds, including historical payload-based default reconstruction. Fresh repository inputs stay empty; manually supplied and persisted exact indexes remain available.
+- Let documentation and historical ownership gates read prerelease App versions while retaining their numeric build floors and contract assertions.
+- Enlarge the supplied launcher artwork. Share Home canonical aliases within each build/layout frame, bound canonical cache backfill to event turns and delay Home publication until the Reader reverse transition and overlay have finished.
+- Include comic translation, configurable reading history and the shared bookshelf/source filter improvements described below. Vertical exit raster and physical display acceptance remain open in the current implementation state.
+
 ## Unreleased — state governance and device acceptance
 
 - Switch the launcher artwork to the supplied transparent comic book, preserve its alpha in the Android foreground and brand source, and composite opaque iOS assets. Restore the Home title to zic text with existing Debug routes and Trace adjacency; remove the unused Flutter thumbnail.

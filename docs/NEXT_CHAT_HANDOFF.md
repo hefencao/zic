@@ -1,6 +1,7 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- 本地`main`未推送，`0.31.0-dev.331`/`0.31.0+331`：zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
+- `main`，`0.31.0-beta.1`/`0.31.0-beta.1+332`；当前验证和 GitHub beta 发布结果见 `docs/IMPLEMENTATION_STATE.json`。Release 不内置源仓库索引，不自动加载默认仓库；用户手填，已安装插件按已有精确索引更新。README 提供三 ABI beta APK 直接下载。
+- zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
@@ -73,8 +74,7 @@
   仅从当前同逻辑 chapter 复用 display metadata，禁止解析/展示 opaque Mihon id，也禁止把旧 revision 直接转成当前手动下载。
   自动缓存 projection 现为 durable-inventory-only：Reader/transfer runtime 的 hot session 不可单独建立 cache row；`local-folder` 的 `content://` source-resident promoted body 普通重读保持 source-owned，不物化 app-owned duplicate，Reader 关闭后 retention 也不会让它重新出现在自动缓存。
   v1/v2 或 payload SHA 不匹配的 v3 locator 必须在 Reader/下载入口强制 source refresh，不得恢复旧 opaque plan；replacement unavailable/replay source failure 只交给既有
-  terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；
-  不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime
+  terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime
   在当前 generation 内按 source+locator 有界保留 fresh source request authority，resolve/re-resolve/runtime load 不得回退旧 opaque plan；source setting mutation 推进 transport generation 时必须同步失效该 source 的 retained fresh/replay state。
   两份 Android `FallbackDns` 已统一为系统 DNS authority 优先且不重排；只有系统失败/空才使用 public A+AAAA fallback，并交错双栈结果。不要把 public-only 过滤施加到系统 DNS，以免破坏 split-DNS/private host。
 - VeneraHttpCacheStore 维持 6h 有效期与 targeted force-miss 规约；Venera 阶段约束见 0169-venera-previous-request-plan-pressure-and-source-open-stages.md。

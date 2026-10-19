@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:plugin_host/plugin_host.dart';
 import 'android_mihon_metadata_reader.dart';
 import 'external_plugin_mutation_gate.dart';
+import 'external_plugin_repository_defaults.dart';
 import 'method_channel_runtime_backends.dart';
 
 final class ExternalPluginInstallPreview {
@@ -33,11 +34,6 @@ final class _PendingPluginPayload {
   final String path;
   final Object claim;
 }
-
-const defaultMihonExtensionRepository =
-    'https://github.com/keiyoushi/extensions/raw/repo/index.pb';
-const defaultVeneraSourceRepository =
-    'https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json';
 
 String mihonResourceAuthorityRevisionForPayloadSha256(String payloadSha256) {
   final normalized = payloadSha256.trim().toLowerCase();
@@ -813,10 +809,10 @@ final class ExternalPluginController {
   /// of [format] and returns newer catalog entries keyed by [pluginId].
   ///
   /// Trust origin and update location are intentionally separate facts. Older
-  /// manifests stored only the former; official historical Keiyoushi/Venera
-  /// installs are mapped to their current default indexes from the pinned
-  /// payload URL. One unreachable repository never hides updates from the
-  /// others. Device-imported Mihon extensions remain skipped.
+  /// manifests stored only the former; development builds can map historical
+  /// Keiyoushi/Venera payload URLs to their default indexes. Product builds
+  /// never infer those defaults. One unreachable repository never hides updates
+  /// from the others. Device-imported Mihon extensions remain skipped.
   Future<Map<String, ExternalComicPluginCatalogEntry>> checkUpdates({
     required ExternalComicPluginFormat format,
   }) async {
@@ -1556,9 +1552,9 @@ void _requireHttps(Uri uri) {
 ///
 /// Manifest v1 originally collapsed the repository URL to a trust origin. A
 /// root origin is not an index and must never be fetched as one. For records
-/// installed before `repositoryIndex` existed, only the two historical default
-/// ecosystems are recoverable without guessing: their pinned payload URL
-/// carries an unambiguous repository identity.
+/// installed before `repositoryIndex` existed, development builds can recover
+/// the two historical defaults from their pinned payload URLs. Product builds
+/// require a persisted index and never reconstruct a bundled repository URL.
 Uri? externalPluginUpdateRepositoryIndex(InstalledExternalPlugin record) {
   final persisted = record.repositoryIndex;
   if (persisted != null) {
@@ -1573,6 +1569,8 @@ Uri? externalPluginUpdateRepositoryIndex(InstalledExternalPlugin record) {
       legacy.pathSegments.isNotEmpty) {
     return legacy;
   }
+
+  if (const bool.fromEnvironment('dart.vm.product')) return null;
 
   final entrypoint = record.plugin.entrypoint;
   switch (record.plugin.format) {

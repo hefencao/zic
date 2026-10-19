@@ -393,6 +393,9 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   `Image.fillImageRangeAt(x,y,image,srcX,srcY,width,height)` MUST accept `width==0` or `height==0` as a no-op because source transforms may intentionally emit empty slices;
   negative size or any non-empty source/target overrun MUST fail.
   Host MUST validate both source and target ranges before Canvas draw and MUST NOT clamp a real overrun into a silently corrupted image.
+- Release MUST NOT 内置 Mihon/Venera 默认仓库索引地址；仓库输入初始为空且 MUST NOT 自动加载默认仓库。
+  用户 MUST 自行填写 HTTPS 索引；已安装插件 MAY 通过已持久化的精确 index 或旧记录中的完整 HTTPS 索引路径检查更新，
+  MUST NOT 从 payload URL 或只有 scheme/host 的 trust origin 推断默认仓库。开发构建 MAY 保留原有仓库快捷地址。
 - Home 启动 MUST NOT 枚举 Android 上全部已安装包来发现 Mihon 扩展；设备扩展发现只能在来源管理页面的显式操作路径执行。
   外部插件 manifest 恢复和已安装 runtime activation MAY 在首帧后的 capability handoff 中后台执行，但不得成为首封面硬门槛；
   该 handoff MUST 独立于 imported-library/download/queue durable-state 判定，

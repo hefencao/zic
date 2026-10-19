@@ -10,6 +10,20 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 
 [版本发布](https://github.com/hefencao/zic/releases) · [反馈问题](https://github.com/hefencao/zic/issues) · [开发指南](docs/DEVELOPMENT.md)
 
+## 下载 beta
+
+当前测试版：**0.31.0-beta.1**。选择与设备匹配的 APK 下载后安装：
+
+| 设备 | 下载 |
+| --- | --- |
+| 常见 Android 手机 | [arm64-v8a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-arm64-v8a.apk) |
+| 较旧的 32 位 Android 设备 | [armeabi-v7a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-armeabi-v7a.apk) |
+| x86_64 设备或模拟器 | [x86_64 APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-x86_64.apk) |
+
+[版本说明](https://github.com/hefencao/zic/releases/tag/v0.31.0-beta.1) · [SHA-256 校验文件](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/SHA256SUMS)
+
+发行版不预置 Mihon / Venera 仓库地址，请在插件管理中自行填写 HTTPS 仓库索引或导入设备上的扩展。
+
 ## 和同类阅读器相比，zic 关注什么
 
 [Mihon](https://mihon.app/) 提供丰富的阅读设置与扩展生态，[Venera](https://github.com/venera-app/venera) 支持本地、网络漫画和 JavaScript 漫画源。zic 在插件阅读的基础上，重点打磨以下体验：
@@ -51,7 +65,7 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 
 ## 开始使用
 
-1. **安装应用**：下载项目的 Android APK。常见手机选择 `arm64-v8a`，较旧的 32 位设备选择 `armeabi-v7a`，`x86_64` 用于对应架构的设备或模拟器。
+1. **安装应用**：从上方下载对应设备的 Android APK，安装后打开 zic。
 2. **添加内容**：在插件管理中导入并启用所需的 Mihon / Venera 插件，或导入本地漫画文件夹。网络来源的登录与验证按该来源要求完成。
 3. **整理书架**：添加喜欢的漫画，使用底部分类与插件药丸过滤；在分类行上划展开插件行，下划收起。阅读历史可切换网格、横向书架或列表布局。
 4. **开启翻译**：点击阅读器底部第三项翻译按钮，在弹窗中开启本漫画翻译；首次按引导配置，右上角进入全局设置。

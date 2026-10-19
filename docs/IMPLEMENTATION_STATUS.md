@@ -1,5 +1,5 @@
 # Implementation Status
-源码版本：0.31.0-dev.331，App build：0.31.0+331
+源码版本：0.31.0-beta.1，App build：0.31.0-beta.1+332
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
@@ -37,7 +37,7 @@
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)
-
+- Release 不携带 Mihon/Venera 默认仓库索引，输入框初始为空且不自动加载；手动 HTTPS 索引和已有精确索引更新保留。开发构建保留快捷地址。当前 beta 验证与发布状态见 `docs/IMPLEMENTATION_STATE.json`。
 - Dart MethodChannel adapter 共用原有 process/session recovery single-flight；重新激活和单次 replay 不再进入原始恢复 handler；取消等待物理退出并保留 typed cancellation，恢复自身失败不触发第二轮激活。
 - ADR0400 Accepted：受控先失败确认同步编码堵共享JavaBridge，输出借原executor且退出才dispose/finished，canonical1/isolated2不变。回调6/Binder11/2304/Rust22/native108与六APK已验；真实JM8页runtime≤60.489ms、缓存104读/0重下。049正文载体收口；真实client/原加载/性能独立开放。
 - 049正文载体/寿命已收口：Binder11/Dart9/Source9/PNG6/FailureRetry6/Network4/Cookie8/NativeWebP6/Mihon6已验；039筛选/信号通过，040真实入架开放。089 blocking DNS退出未验：VPN旁路受限、TestNetwork无成功对照，回溯需root。013独立接收时间未验：SDK36未注册android.network_packets，ftrace/log不能补证；未改生产。

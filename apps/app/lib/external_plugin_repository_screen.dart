@@ -94,7 +94,8 @@ final class _ExternalPluginRepositoryScreenState
     });
     _deviceError = widget.controller.deviceMihonDiscoveryError;
     scheduleMicrotask(_checkUpdates);
-    if (widget.format == ExternalComicPluginFormat.mihonExtension) {
+    if (widget.format == ExternalComicPluginFormat.mihonExtension &&
+        _url.text.trim().isNotEmpty) {
       scheduleMicrotask(_loadRepository);
     }
   }

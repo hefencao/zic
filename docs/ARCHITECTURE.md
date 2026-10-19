@@ -719,8 +719,9 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   设备 Mihon 扫描可与插件激活并行。漫画源页底部控件只投影已经产生活跃 source session 的插件；
   已安装但未启用/激活的 Mihon 或 Venera 只保留在管理页，不得作为 disabled 来源控件出现。typed denial/runtime code判定不可恢复时才回滚新记录并删除新 payload，
   可恢复失败保留记录和 payload并由管理页或仍有旧 session 的控件触发同一 pluginId 重试，replacement 失败继续保留旧 session；从漫画源管理页返回不得等待后台库重载。
+  Release 的 Mihon/Venera 仓库输入初始为空，不自动请求默认仓库；仓库快捷地址由 `plugin_host_bridge` 的 product 编译常量置空并从产物移除，用户自行填写 HTTPS 索引。
   插件管理页进入时由 `ExternalPluginController.checkUpdates` 按安装时持久化的**精确仓库索引**检查更新（版本号优先比较，无版本号时版本串不同即可更新；
-  仓库索引与 executable-plugin gate 使用的 HTTPS trust origin 是两个独立事实，禁止把只有 scheme/host 的 trust origin 当 index 请求）。旧 manifest 未保存精确 index 时，仅对能够由 pinned payload URL 无歧义证明属于历史默认 Keiyoushi/Venera 仓库的记录迁移到当前默认 index；设备导入和无法证明来源的记录不猜测。单个仓库不可达不掩盖其它仓库结果，发现更新以对话框提醒一次并在已安装行保留徽标，仓库行对已安装且可更新的条目显示"更新"。已安装 Venera 插件支持直接编辑 JS：
+  仓库索引与 executable-plugin gate 使用的 HTTPS trust origin 是两个独立事实，禁止把只有 scheme/host 的 trust origin 当 index 请求）。旧 manifest 未保存精确 index 时，仅开发构建可对 pinned payload URL 无歧义证明属于历史默认 Keiyoushi/Venera 仓库的记录恢复默认 index；Release 只使用已持久化的精确 index 或旧记录中完整的 HTTPS 索引路径，设备导入和无法证明来源的记录不猜测。单个仓库不可达不掩盖其它仓库结果，发现更新以对话框提醒一次并在已安装行保留徽标，仓库行对已安装且可更新的条目显示"更新"。已安装 Venera 插件支持直接编辑 JS：
   `readVeneraJavaScript/saveVeneraJavaScript` 把编辑内容写入新 revision payload、
   重新经过受限元数据检查并以新摘要固定后走与安装相同的 approveAndActivate 事务替换会话，检查或激活失败时旧 payload 保持权威。
   插件管理中的版本与Mihon ABI只从既有安装记录/设备扫描元数据投影；设备扩展的长包名与版本ABI分行布局，失败态仍保留已知安装信息。来源主列表只投影来源名称、语言及站点，不查询安装记录；UI不扫描或镜像元数据。
