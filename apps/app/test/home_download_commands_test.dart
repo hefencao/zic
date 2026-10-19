@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -5,9 +6,60 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/home_download_commands.dart';
+import 'package:zic/download_command_lifetimes.dart';
 import 'package:zic/home_library_session.dart';
 
 void main() {
+  test('Stop during source preparation cannot start a late chapter or queue', () async {
+    for (final wholeComic in [false, true]) {
+      final preparation = Completer<void>();
+      final lifetimes = DownloadCommandLifetimes();
+      var sourceRefreshes = 0;
+      var pageLoads = 0;
+      final downloads = MemoryChapterDownloadService(pageLoader: (_, _) async {
+        pageLoads++;
+        return Uint8List(1);
+      });
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(library: MemoryImportedLibraryStore(),
+        chapterDownloads: downloads, wholeComicDownloads: queue,
+        sources: const [], ownsLibrary: true, ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true);
+      await session.ready;
+      final commands = HomeDownloadCommands(session: session,
+        commandLifetimes: lifetimes,
+        ensureDurableServices: () => preparation.future,
+        ensurePlatformEnvironment: () async {},
+        requiresSourceLocatorRefresh: (_) => true,
+        refreshRemoteEntry: (entry, {required forceSourceRefresh}) async {
+          sourceRefreshes++;
+          return entry;
+        }, refreshStaleChapter: (_) async => null);
+      final entry = _entry();
+      final Future<Object?> command = wholeComic
+          ? commands.downloadComicEntries(comicLibraryIdentity(entry.chapter.sourceId,
+              entry.chapter.comicId), [entry])
+          : commands.downloadChapter(entry);
+      expect(lifetimes.activeCount, 1,
+          reason: 'foreground-service lifetime starts before durable/source waits');
+      final failed = expectLater(command, throwsA(isA<Failure>()
+        .having((failure) => failure.code, 'code', ErrorCode.cancelled)));
+      var exited = false;
+      final drain = lifetimes.cancelAll().then((_) => exited = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(exited, false);
+      preparation.complete();
+      await Future.wait([failed, drain]);
+      expect(sourceRefreshes, 0);
+      expect(pageLoads, 0);
+      expect(queue.snapshot.jobs, isEmpty);
+      expect(lifetimes.activeCount, 0);
+      await session.close();
+      session.dispose();
+      lifetimes.dispose();
+    }
+  });
+
   test('download commands follow the session service generation', () async {
     final firstLibrary = MemoryImportedLibraryStore();
     final firstDownloads = MemoryChapterDownloadService(

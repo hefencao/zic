@@ -53,6 +53,7 @@ class MainActivity : FlutterActivity() {
     private val attachedPluginNames = mutableSetOf<String>()
     private var configuredEngine: FlutterEngine? = null
     private var startupChannel: MethodChannel? = null
+    private var backgroundTasks: BackgroundTasksHost? = null
     private var pendingTraceResult: MethodChannel.Result? = null
     private var pendingTraceBytes: ByteArray? = null
     // ACTION_CREATE_DOCUMENT normally returns through onActivityResult before
@@ -138,6 +139,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onPause() {
+        backgroundTasks?.resumed = false
         if (pendingTraceResult != null) {
             traceExportHostPaused = true
             startupLog("trace-export-host-paused")
@@ -147,6 +149,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        backgroundTasks?.resumed = true
         startupLog("activity-onResume")
         // For startActivityForResult the normal result callback is dispatched
         // before onResume. If we get here after the picker paused us and the
@@ -187,6 +190,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         startupLog("configureFlutterEngine-start")
         configuredEngine = flutterEngine
+        backgroundTasks = BackgroundTasksHost(this, flutterEngine.dartExecutor.binaryMessenger)
         // FlutterActivity's default implementation registers every generated
         // plugin before Dart main(). rhttp performs a synchronous Rust library
         // load and Android verifier setup from onAttachedToEngine. The jni
@@ -1655,6 +1659,8 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         startupLog("activity-onDestroy-start engineAttached=${configuredEngine != null}")
+        backgroundTasks?.close()
+        backgroundTasks = null
         pendingTraceResult?.error(
             "trace-export-cancelled",
             "activity destroyed during trace export",

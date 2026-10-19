@@ -16,7 +16,8 @@ Android OCR 使用 PaddleOCR ONNX/OpenCV，支持自动、日、英、中与独�
 本地文本翻译支持 Hy-MT1.5 1.8B 2-bit GGUF 和导入 CTranslate2 模型包；本地文本 runtime 为 arm64。
 Hy-MT 需要 ARMv8.2-A/DotProd；基线 JNI 在加载优化库前检查 CPU 能力，不兼容时可改选其他模型或 API 后端。
 模型通过长度、SHA-256 和原子发布校验，支持中断后的下载恢复。
-OCR 切换保留 detector；相同翻译模型跨漫画复用，最后租约后最多保温 30 秒，后台/内存压力等待调用退出后回收。
+OCR 切换保留 detector；相同翻译模型跨漫画复用，最后租约后最多保温 30 秒，内存压力或后台无受保护整章任务时等待调用退出后回收。
+Android App 的显式整章预翻译可借助已确认的前台服务继续后台处理；Reader 翻译仍独立暂停，通知停止和系统超时交回原任务取消并排空。
 内容缓存的 JSON/base64 编解码与 OCR 摘要在存储 worker 执行；缓存命中不加载推理模型。
 分组仅在单次解析中复用密集蒙版几何，避免成对比较时重复展开与扫描。
 OpenAI-compatible 与 DeepL 使用显式 API profile，不自动回退到远程。

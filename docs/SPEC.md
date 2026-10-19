@@ -312,7 +312,7 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   启动校准若 persisted download summaries/orphans 未变化 MUST NOT 重写 Home snapshot。
   durable exact READY promotion 或 canonical physical partial checkpoint 在持久提交成功且 mutation generation 仍有效后 MUST 发布 management-projection invalidation；
   该信号只表示 durable inventory 可能变化，consumer MUST 重新读取 authority，stale/rollback mutation MUST NOT 发布该信号。
-- 首帧前只允许建立轻量 startup/trace channel；
+- 首帧前只允许建立轻量 startup/trace 与后台任务命令 channel，后者 MUST NOT 在显式任务出现前启动服务、申请权限或创建通知；
   native decode、`media_core` texture、rhttp 和 feature bridge MUST 在实际 Reader/source/platform capability 使用前保持未初始化或未挂载，
   首次使用只能由对应 capability 自己按需挂载。
 - 用户 MAY 在 bootstrap Home 可见时立即进入 Reader，加载路由 MUST 可先显示；
@@ -360,6 +360,11 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   进入 cleanup 前 MUST 先持久化 `cleanupPending`；
   cleanup 失败 MUST 保留 debt 供 durable handoff 自动恢复，且该 journal 控制状态 MUST NOT 推进 Home projection revision。
 - 快照序列化结果超过 64 KiB 时 SHOULD 使用 gzip，读取 MUST 同时兼容明文与 gzip；旧 v1 或大型明文快照读取成功后 MUST 自动原子重写为 v2 compact gzip。
+- Android 显式下载和整章预翻译 SHOULD 通过 `dataSync` 前台服务显示低优先级进度通知并支持退后台/锁屏执行；Reader 自动缓存与交互翻译 MUST NOT 因此获得后台执行许可。
+  通知 MUST 仅显示任务数量与页进度，不含标题、封面、正文或凭据；进度 SHOULD 合并至每秒一次，开始/停止等生命周期变化 MUST 及时提交。CPU WakeLock MUST 有界，等待队列网络/供电条件时 MUST 释放。
+  显式章节执行租约 MUST 从准备开始保持至命令实际退出；取消快照 MUST NOT 代替退出证明。通知停止 MUST 转发整本队列暂停、章节取消和整章翻译取消，保留已有内容，不创建第二调度/重试 owner，MUST NOT 提前释放 NetLane 容量。
+  无活动任务 MUST 结束服务及通知。系统超时 MUST 及时停止服务、撤销后台翻译许可并让原 owner 停止和排空；MUST NOT 无条件重启。划掉任务、强制停止和重启设备不承诺自动恢复。
+  Android 13+ 首次前台任务 SHOULD 按需请求通知权限；拒绝 MUST NOT 阻止任务开始。设置 MUST 提供系统通知/电池设置入口，不自动索取电池优化例外。服务确认前或失效后，整章任务 MUST 遵守后台暂停。
 - Whole-comic queue MUST 保持为独立队列状态文件，不得复制 Home entries 或章节正文；
   恢复 SHOULD 通过章节下载索引的 `inspectMany()` 批量投影，并在 Home primary 可见后后台完成，queue `ready` 不得成为更新漫画或阅读历史首显的硬门槛。
 - 空的或从未产生阅读记录的 imported library 打开 MUST NOT 创建 Reader progress writer或第二个 SQLite/WAL 连接；
@@ -1511,7 +1516,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   不得另开图片请求、改变媒体 identity、播放状态、网络准入或 encoded/decode 水位。
   Pipeline 完整图片通知早于异步输入检查返回，或到达旧任务退出间隙时，旁路 MUST 在该任务退出后重放通知，MUST NOT 依赖再次翻页。重放 MUST 仅唤醒同代、仍在配置范围内且等待图片的页面，MUST NOT 轮询或重复推理就绪页面；缓存恢复与邻页推理均遵守此边界。
 - 显式整章预翻译 MUST 由 App 持有并通过既有章节下载服务准备完整图片，MUST NOT 新建网络调度队列。一次 MUST 仅处理一章，当前页保存及租约释放完成后才按原始页序推进，只保留当前页和配置的前页上下文；默认 MUST 跳过动图。
-  离开 Reader MUST 保留任务；取消 MUST 停止后续页、等待实际调用退出并保留有效译文，MUST NOT 撤销共享图片下载。App services 关闭 MUST 先排空任务，活动任务期间 MUST 拒绝切换存储根；后台 MUST 暂停新推理，恢复后继续。
+  离开 Reader MUST 保留任务；取消 MUST 停止后续页、等待实际调用退出并保留有效译文，MUST NOT 撤销共享图片下载。App services 关闭 MUST 先排空任务，活动任务期间 MUST 拒绝切换存储根；Android 前台服务确认后 MAY 在后台继续整章任务，其他后台任务 MUST 暂停新推理，恢复后继续。
   Reader 与整章任务请求相同内容、引擎及完整配置时 MUST 共用在途 OCR/翻译，MUST NOT 重复调用模型。各消费者 MUST 持有自身输入和引擎租约至实际退出，单个消费者取消 MUST NOT 提前释放共享调用容量或使其他消费者失去结果。
 - 下载后的静态图片 MUST 可携带已生成的 OCR/译文，并在本机内容缓存缺失时恢复；保存或读取 MUST NOT 因此调用推理模型或创建图片请求。恢复 MUST 校验实际图片摘要、原始 OCR payload 摘要及译文关联身份，完整验证后事务导入，MUST NOT 覆盖已有结果或忽略当前引擎/模型/参数/目标语言身份。
   单页 companion MUST 限于 64MiB、最多八份译文配置；MUST NOT 包含 API 凭据。最近使用 MUST 决定有界变体选择，同一集合 MUST 稳定序列化，单纯缓存访问 MUST NOT 导致 companion 重写。自动原文语言只有唯一匹配的已存日/韩 OCR 时 MAY 沿用，手动语言 MUST 优先。
@@ -1520,7 +1525,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   本地推理 MUST 在 Android worker 执行；无模型或运行时 MUST 显式报告，不得静默使用远程后端。
   Hy-MT 优化运行库及其依赖加载前 MUST 以基线 ISA 检查 CPU 是否支持编译所需的 ARMv8.2-A/DotProd 能力；不支持 MUST 返回不可用。
 - 模型驻留 MUST 由统一 engine registry 管理。相同翻译模型跨语言/漫画 MUST 可复用，日/韩 OCR 切换 MUST 保留 detector 并只驻留一个识别器。
-  最后租约/禁用后的模型 MAY 保温最多 30 秒；进入后台或内存压力 MUST 在正在执行的调用实际退出后回收。后台 MUST 停止新翻译工作，恢复后按有效观察继续；切书 MUST 清除前书上下文。
+  最后租约/禁用后的模型 MAY 保温最多 30 秒；内存压力或进入后台且没有受保护整章任务时 MUST 在正在执行的调用实际退出后回收。后台 MUST 停止 Reader 的新翻译工作，恢复后按有效观察继续；切书 MUST 清除前书上下文。
 - 本地翻译 MUST 保留可与源行对应的段落换行，不得在 OCR 行间注入可见分隔符；协议改变 MUST 更新译文缓存身份。
   文字响应 MUST 校验单元身份并拒绝原始空白或缺失行。OpenAI-compatible MAY 仅对空行单元补译一次，MUST 保留其余有效结果；补译仍空或缺失 MUST 报错，取消 MUST NOT 补发。非空响应经原文标点清理后无可显示文字时 MUST 保留对应原图，MUST NOT 阻塞其他单元或擦除该区域。
 - 气泡外低置信度独立一至三位纯数字 MUST 保留原图。低置信度单字若独占轮廓且墨迹边界框占轮廓边界框至少一半，MUST NOT 仅凭该轮廓视为对白；可靠识别、留白充足的短回答及共用轮廓的正文 MUST 继续保留翻译资格。
@@ -1539,7 +1544,7 @@ mounted与detached消费者 MUST共享该准入事实；已挂载的屏外PageHo
   排队中被调度器撤销的请求 MUST 完成取消，不得等待无关任务或保持未完成的 Future；文字后端 MUST NOT 重试已取消的请求。
 - 文字后端 MUST 统一拥有连接/握手中断、连接超时及 HTTP 408/429/500/502/503/504 的有界重试，最多追加五次，默认间隔 2/5/15/30/60 秒；整章任务与 Reader MUST NOT 叠加重试。
   `Retry-After` 秒数或 HTTP 日期 MAY 延长等待，超过五分钟 MUST 返回失败，MUST NOT 提前重发。取消、证书校验失败、发送/接收超时、鉴权及格式错误 MUST 直接失败。
-  MUST 仅重发失败批次并保留同次调用已成功的批次与已保存页面；等待 MUST NOT 占用 NetLane 容量。一个共享消费者退出 MUST NOT 撤销其他消费者的重试；全部退出、不再保留该页或后台暂停 MUST 立即结束等待且不发起下一次请求，正在执行的调用 MUST 等待真实退出。页面快速返回 MUST 重放新需求，MUST NOT 发布旧需求的取消错误。
+  MUST 仅重发失败批次并保留同次调用已成功的批次与已保存页面；等待 MUST NOT 占用 NetLane 容量。一个共享消费者退出 MUST NOT 撤销其他消费者的重试；全部退出、不再保留该页或该消费者因后台暂停 MUST 立即结束等待且不发起下一次请求，正在执行的调用 MUST 等待真实退出。页面快速返回 MUST 重放新需求，MUST NOT 发布旧需求的取消错误。
   页/章节状态 MUST 提供只读重试次数与间隔，失败仍显示处理进度；Trace MUST 记录重试间隔、次数、错误类型及状态码，MUST NOT 包含正文或凭据。重试策略变化 MUST NOT 使有效 OCR/译文缓存失效。
 - API key MUST 独立本机保存，不进入库备份、普通偏好或 OCR/译文 artifact。
   远程请求 MUST 仅携带 OCR 文字及用户配置的上下文/提示词。

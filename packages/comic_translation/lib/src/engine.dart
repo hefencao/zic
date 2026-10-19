@@ -659,10 +659,24 @@ final class ComicTranslationEngineRegistry {
   final Duration idleRetention;
   final ValueNotifier<bool> _workPaused = ValueNotifier(false);
   ValueListenable<bool> get workPaused => _workPaused;
+  final ValueNotifier<bool> _backgroundWorkPaused = ValueNotifier(false);
+  bool _backgroundWorkAllowed = false;
+
+  ValueListenable<bool> pauseState({bool backgroundExecution = false}) =>
+      backgroundExecution ? _backgroundWorkPaused : _workPaused;
+
+  /// Only the app's acknowledged foreground-service lifetime grants this.
+  /// Reader sessions continue observing [workPaused] independently.
+  Future<void> setBackgroundWorkAllowed(bool allowed) {
+    _backgroundWorkAllowed = allowed;
+    _backgroundWorkPaused.value = workPaused.value && !allowed;
+    return workPaused.value && !allowed ? trimMemory() : Future<void>.value();
+  }
 
   Future<void> setBackground(bool background) {
     _workPaused.value = background;
-    return background ? trimMemory() : Future<void>.value();
+    _backgroundWorkPaused.value = background && !_backgroundWorkAllowed;
+    return background && !_backgroundWorkAllowed ? trimMemory() : Future<void>.value();
   }
 
   _EngineConfiguration _configuration = const _EngineConfiguration();
@@ -728,10 +742,12 @@ final class ComicTranslationEngineRegistry {
   Future<ComicOcrArtifact> recognize(
     ComicTranslationEnginePair pair,
     String sourceLanguage,
-    ComicOcrInput input,
-  ) => _serializeOcr(() async {
+    ComicOcrInput input, {
+    bool Function()? backgroundConsumerActive,
+  }) => _serializeOcr(() async {
     final state = _lease(pair);
-    await _ensureOcrLoaded(state, sourceLanguage);
+    await _ensureOcrLoaded(state, sourceLanguage,
+      backgroundExecution: backgroundConsumerActive?.call() ?? false);
     final result = await pair.ocr.recognize(input);
     if (pair.ocr case final ComicOcrLanguageSwitcher switcher) {
       state.ocrLanguage = switcher.recognitionKey(sourceLanguage);
@@ -747,10 +763,12 @@ final class ComicTranslationEngineRegistry {
 
   Future<ComicTranslationResult> translate(
     ComicTranslationEnginePair pair,
-    ComicTranslationRequest request,
-  ) => _serializeTranslator(() async {
+    ComicTranslationRequest request, {
+    bool Function()? backgroundConsumerActive,
+  }) => _serializeTranslator(() async {
     final state = _lease(pair);
-    await _ensureTranslatorLoaded(state);
+    await _ensureTranslatorLoaded(state,
+      backgroundExecution: backgroundConsumerActive?.call() ?? false);
     return pair.translator.translate(request);
   });
 
@@ -921,9 +939,12 @@ final class ComicTranslationEngineRegistry {
 
   Future<void> _ensureOcrLoaded(
     _EngineLeaseState state,
-    String sourceLanguage,
-  ) async {
-    if (workPaused.value) throw StateError('Translation is paused in the background');
+    String sourceLanguage, {
+    bool backgroundExecution = false,
+  }) async {
+    if (pauseState(backgroundExecution: backgroundExecution).value) {
+      throw StateError('Translation is paused in the background');
+    }
     final ocr = state.pair.ocr;
     final key = switch (ocr) {
       ComicOcrLanguageSwitcher switcher => switcher.recognitionKey(sourceLanguage),
@@ -966,9 +987,12 @@ final class ComicTranslationEngineRegistry {
   }
 
   Future<void> _ensureTranslatorLoaded(
-    _EngineLeaseState state,
-  ) async {
-    if (workPaused.value) throw StateError('Translation is paused in the background');
+    _EngineLeaseState state, {
+    bool backgroundExecution = false,
+  }) async {
+    if (pauseState(backgroundExecution: backgroundExecution).value) {
+      throw StateError('Translation is paused in the background');
+    }
     final active = _activeTranslator;
     if (identical(active, state) && state.translatorLoaded) return;
     if (active?.translatorLoaded == true &&

@@ -17,6 +17,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'app_preferences.dart';
+import 'background_tasks.dart';
 import 'chapter_download_directory.dart';
 import 'artifact_presentation_file_bridge.dart';
 import 'debug_trace.dart';
@@ -123,6 +124,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   late final ResourceCacheCoordinator _bootstrapCache;
   late final HomeProjectionSnapshotStore _homeProjectionSnapshotStore;
   late final HomeServiceHandoff _serviceHandoff;
+  late final AppBackgroundTasks _backgroundTasks;
   _AppServices? _services;
   Timer? _servicesStartupTimer;
   Future<void>? _servicesOpening;
@@ -133,6 +135,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   void initState() {
     super.initState();
     _preferences = AppPreferencesController();
+    _backgroundTasks = AppBackgroundTasks(translations: AppTranslationChapterJobs.instance);
     // Resolve the platform support directory once and start it during the
     // bootstrap turn. The first Android startup-channel call can otherwise
     // take hundreds of milliseconds and block the snapshot before Home can
@@ -230,12 +233,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_disposed) return;
-    if (state == AppLifecycleState.resumed) {
-      unawaited(ComicTranslationEngineRegistry.instance.setBackground(false));
-    } else if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused ||
+    _backgroundTasks.setLifecycle(state);
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       ComicTranslationOverlayController.clearRetainedLayouts();
-      unawaited(ComicTranslationEngineRegistry.instance.setBackground(true));
     }
     final clock = SystemClock();
     _debugTrace.record(
@@ -398,6 +399,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     }
     previous?.transferExternalPluginOwnershipTo(services);
     _services = services;
+    _backgroundTasks.bind(downloads: services.chapterDownloads, queue: services.wholeComicDownloads);
     _publishExternalPluginsWhenReady(services);
     if (!services.hasCoreServices) {
       // Empty installs deliberately remain memory-backed. In particular, do
@@ -744,6 +746,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       _persistStorageRootAccessAliasProof(services);
       previous.transferExternalPluginOwnershipTo(services);
       _services = services;
+      _backgroundTasks.bind(downloads: services.chapterDownloads, queue: services.wholeComicDownloads);
       _publishExternalPluginsWhenReady(services);
       _serviceHandoff.updateServices(
         libraryStore: services.libraryStore,
@@ -807,7 +810,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     WidgetsBinding.instance.removeObserver(this);
     final services = _services;
     if (services != null) {
-      unawaited(services.close());
+      unawaited(services.close().whenComplete(_backgroundTasks.close));
+    } else {
+      unawaited(_backgroundTasks.close());
     }
     unawaited(_bootstrapLibrary.close());
     unawaited(_preferences.flush());

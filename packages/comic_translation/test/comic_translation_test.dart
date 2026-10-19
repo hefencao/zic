@@ -1057,6 +1057,87 @@ void main() {
     await registry.trimMemory();
   });
 
+  test('chapter keeps a Reader-originated queued OCR alive after backgrounding', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var index = 0; index < 2; index++) {
+      final file = File('${temp.path}/shared-background-$index.bin');
+      await file.writeAsBytes([74, 18, index]);
+      pages.add(ComicTranslationPageIdentity(imageKey: file.uri.toString(),
+        sourceKey: 'shared-background', comicId: 'comic', chapterId: 'chapter',
+        pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final entered = Completer<void>();
+    final gate = Completer<void>();
+    final queued = Completer<void>();
+    final shared = Completer<void>();
+    final ocr = _OcrEngine(version: 'shared-background', recognizeStarted: entered, recognizeGate: gate);
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator;
+    await registry.setBackgroundWorkAllowed(true);
+    final blocker = ComicTranslationSession(enabled: true, sourceLanguage: 'ja',
+      targetLanguage: 'zh-CN', engines: registry);
+    final reader = ComicTranslationSession(enabled: true, sourceLanguage: 'ja',
+      targetLanguage: 'zh-CN', engines: registry, onDiagnostic: (_, event) {
+        if (event['stage'] == 'ocr-started' && !queued.isCompleted) queued.complete();
+      });
+    blocker.reportPages(current: [pages.first], interaction: ComicTranslationInteraction.idle);
+    await entered.future.timeout(const Duration(seconds: 5));
+    reader.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+    await queued.future.timeout(const Duration(seconds: 5));
+    final chapter = ComicTranslationChapterTask(pages: [pages.last],
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+      backgroundExecution: true, inputResolver: const ComicTranslationInputResolver(),
+      onDiagnostic: (_, event) {
+        if (event['stage'] == 'ocr-shared' && !shared.isCompleted) shared.complete();
+      });
+    addTearDown(() async {
+      if (!gate.isCompleted) gate.complete();
+      await chapter.close();
+      await reader.close();
+      await blocker.close();
+    });
+    await shared.future.timeout(const Duration(seconds: 5));
+    await registry.setBackground(true);
+    gate.complete();
+    await chapter.completion.timeout(const Duration(seconds: 5));
+    expect(chapter.state.value.phase, ComicTranslationChapterPhase.complete);
+    expect(ocr.calls, 2, reason: 'the queued Reader OCR must be shared, not rejected or duplicated');
+    expect(translator.calls, 1, reason: 'the paused Reader must not start translation');
+    await registry.setBackgroundWorkAllowed(false);
+  });
+
+  test('protected chapter continues in background while Reader stays paused', () async {
+    final pages = <ComicTranslationPageIdentity>[];
+    for (var index = 0; index < 3; index++) {
+      final file = File('${temp.path}/foreground-chapter-$index.bin');
+      await file.writeAsBytes([73, 17, index]);
+      pages.add(ComicTranslationPageIdentity(imageKey: file.uri.toString(),
+        sourceKey: 'foreground-chapter', comicId: 'comic', chapterId: 'chapter',
+        pageIndex: index, mediaKind: ComicTranslationMediaKind.staticImage));
+    }
+    final ocr = _OcrEngine(version: 'foreground-chapter');
+    final translator = _TranslationEngine();
+    final registry = ComicTranslationEngineRegistry()..ocrEngine = ocr..translationEngine = translator;
+    await registry.setBackgroundWorkAllowed(true);
+    await registry.setBackground(true);
+    final reader = ComicTranslationSession(enabled: true, sourceLanguage: 'ja',
+      targetLanguage: 'zh-CN', engines: registry);
+    reader.reportPages(current: [pages.last], interaction: ComicTranslationInteraction.idle);
+    final chapter = ComicTranslationChapterTask(pages: pages.take(2).toList(),
+      sourceLanguage: 'ja', targetLanguage: 'zh-CN', engines: registry,
+      backgroundExecution: true, inputResolver: const ComicTranslationInputResolver());
+    await chapter.completion.timeout(const Duration(seconds: 5));
+    expect(chapter.state.value.phase, ComicTranslationChapterPhase.complete);
+    expect(chapter.state.value.completedPages, 2);
+    expect(ocr.calls, 2);
+    expect(translator.calls, 2);
+    expect(reader.listenable(pages.last).value.phase, ComicTranslationPhase.queued);
+    await registry.setBackgroundWorkAllowed(false);
+    expect(registry.pauseState(backgroundExecution: true).value, true);
+    await chapter.close();
+    await reader.close();
+  });
+
   test('background trim waits for OCR exit and resumes from its stored result', () async {
     final image = File('${temp.path}/background-ocr.bin');
     await image.writeAsBytes(List<int>.filled(283, 29));

@@ -2,6 +2,7 @@ import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 
 import 'home_library_session.dart';
+import 'download_command_lifetimes.dart';
 
 typedef HomeChapterRefresh = Future<ImportedLibraryEntry> Function(
   ImportedLibraryEntry entry, {
@@ -35,7 +36,8 @@ final class HomeDownloadCommands {
     required this.requiresSourceLocatorRefresh,
     required this.refreshRemoteEntry,
     required this.refreshStaleChapter,
-  });
+    DownloadCommandLifetimes? commandLifetimes,
+  }) : commandLifetimes = commandLifetimes ?? DownloadCommandLifetimes.instance;
 
   final HomeLibrarySession session;
   final Future<void> Function() ensureDurableServices;
@@ -44,6 +46,7 @@ final class HomeDownloadCommands {
       requiresSourceLocatorRefresh;
   final HomeChapterRefresh refreshRemoteEntry;
   final HomeStaleChapterRefresh refreshStaleChapter;
+  final DownloadCommandLifetimes commandLifetimes;
 
   final Map<String, ({ChapterDownloadService downloads, ImportedLibraryEntry entry})>
       _activeFileAudits =
@@ -163,7 +166,7 @@ final class HomeDownloadCommands {
       return;
     }
     if (job.phase == WholeComicQueuePhase.paused) {
-      await session.wholeComicDownloads.resume(job.jobId);
+      await resumeWholeComicJob(job.jobId);
     }
   }
 
@@ -171,13 +174,32 @@ final class HomeDownloadCommands {
       _runWholeComicMutation((queue) => queue.pause(jobId));
 
   Future<void> resumeWholeComicJob(String jobId) =>
-      _runWholeComicMutation((queue) => queue.resume(jobId));
+      _runWholeComicStart((queue) => queue.resume(jobId));
 
   Future<void> cancelWholeComicJob(String jobId) =>
       _runWholeComicMutation((queue) => queue.cancel(jobId));
 
   Future<void> retryWholeComicJob(String jobId) =>
-      _runWholeComicMutation((queue) => queue.retry(jobId));
+      _runWholeComicStart((queue) => queue.retry(jobId));
+
+  Future<void> _runWholeComicStart(
+    Future<void> Function(WholeComicDownloadQueue queue) mutation,
+  ) => commandLifetimes.run((command) async {
+    await ensureDurableServices();
+    final queue = session.wholeComicDownloads;
+    await queue.ready;
+    command.check();
+    await mutation(queue);
+    // An enqueue/resume may have awaited queue persistence while Stop arrived.
+    try {
+      command.check();
+    } on Failure {
+      await Future.wait([for (final job in queue.snapshot.jobs.where((job) => job.canPause))
+        queue.pause(job.jobId)]);
+      rethrow;
+    }
+    session.refreshWholeComicSnapshot();
+  });
 
   Future<void> removeWholeComicJob(String jobId) =>
       _runWholeComicMutation((queue) => queue.remove(jobId));
@@ -271,15 +293,26 @@ final class HomeDownloadCommands {
     ImportedLibraryEntry entry, {
     required bool retry,
     void Function(ImportedLibraryEntry)? onResolved,
+  }) => commandLifetimes.run((command) => _executeChapterTransfer(entry,
+      retry: retry, onResolved: onResolved, command: command));
+
+  Future<ChapterDownloadSnapshot> _executeChapterTransfer(
+    ImportedLibraryEntry entry, {
+    required bool retry,
+    required DownloadCommandLifetime command,
+    void Function(ImportedLibraryEntry)? onResolved,
   }) async {
     await ensureDurableServices();
+    command.check();
     final hydrated = await session.hydrateEntry(entry);
+    command.check();
     var current = requiresSourceLocatorRefresh(hydrated.chapter)
         ? await refreshRemoteEntry(
             hydrated,
             forceSourceRefresh: true,
           )
         : hydrated;
+    command.check();
     var downloads = session.chapterDownloads;
     try {
       // Conflict confirmation may claim placement asynchronously. Read it back
@@ -288,12 +321,14 @@ final class HomeDownloadCommands {
         sourceId: current.chapter.sourceId,
         comicId: current.chapter.comicId,
       );
+      command.check();
       if (retry) {
         await downloads.retry(current);
       } else {
         await downloads.download(current);
       }
     } on Object catch (error) {
+      command.check();
       final message = error.toString();
       final terminalSourceGeneration =
           sourceResourceGenerationRefreshEligible(error);
@@ -301,6 +336,7 @@ final class HomeDownloadCommands {
           message.contains('must use a runtime token') ||
           message.contains('token expired')) {
         final refreshed = await refreshStaleChapter(current);
+        command.check();
         if (refreshed == null) rethrow;
         current = refreshed;
         downloads = session.chapterDownloads;
@@ -364,11 +400,19 @@ final class HomeDownloadCommands {
   Future<HomeWholeComicDownloadStart> downloadComicEntries(
     String comicIdentity,
     Iterable<ImportedLibraryEntry> entries,
+  ) => commandLifetimes.run((command) => _enqueueComicEntries(comicIdentity, entries, command));
+
+  Future<HomeWholeComicDownloadStart> _enqueueComicEntries(
+    String comicIdentity,
+    Iterable<ImportedLibraryEntry> entries,
+    DownloadCommandLifetime command,
   ) async {
     await ensureDurableServices();
+    command.check();
     final chapters = <ImportedLibraryEntry>[];
     for (final entry in entries) {
       final hydrated = await session.hydrateEntry(entry);
+      command.check();
       chapters.add(
         requiresSourceLocatorRefresh(hydrated.chapter)
             ? await refreshRemoteEntry(
@@ -377,6 +421,7 @@ final class HomeDownloadCommands {
               )
             : hydrated,
       );
+      command.check();
     }
     if (chapters.isEmpty) {
       throw StateError('没有可下载的章节');
@@ -394,10 +439,12 @@ final class HomeDownloadCommands {
       throw StateError('整本下载身份与章节所有者不一致');
     }
     await ensurePlatformEnvironment();
+    command.check();
     final placement = await session.chapterDownloads.getDownloadPlacement(
       sourceId: first.sourceId,
       comicId: first.comicId,
     );
+    command.check();
     await session.wholeComicDownloads.enqueue(
       sourceId: first.sourceId,
       comicId: first.comicId,
@@ -408,6 +455,17 @@ final class HomeDownloadCommands {
       observedOwnerKey: placement?.observedOwnerKey,
       pageOrder: placement?.pageOrder ?? ComicPageOrder.auto,
     );
+    try {
+      command.check();
+    } on Failure {
+      final queue = session.wholeComicDownloads;
+      for (final job in queue.snapshot.jobs) {
+        if (job.sourceId == first.sourceId && job.comicId == first.comicId && job.canPause) {
+          await queue.pause(job.jobId);
+        }
+      }
+      rethrow;
+    }
     session.refreshWholeComicSnapshot();
     return HomeWholeComicDownloadStart(
       sourceId: first.sourceId,

@@ -3,6 +3,7 @@
 - `main`，`0.31.0-beta.1`/`0.31.0-beta.1+332`；当前验证和 GitHub beta 发布结果见 `docs/IMPLEMENTATION_STATE.json`。Release 不内置源仓库索引，不自动加载默认仓库；用户手填，已安装插件按已有精确索引更新。README 提供三 ABI beta APK 直接下载。
 - zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
+- 后台任务：显式下载/整章预翻译由App只读聚合，Android dataSync通知与有界CPU锁；通知停止/超时转发原owner，Reader后台策略不变。整章仅在服务确认后允许后台推理；设置→下载可管理通知/电池。验证与剩余验收只见状态JSON，不扩大NetLane/Reader职责。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
 - 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
@@ -44,8 +45,7 @@
   真机肉漫屋《要成為男子漢》已验证：50% 来源置信 + `韓國` + 异常切片得到 vertical 70.83%、samples=3、modelVersion=8，持续停留后 samples 不增长。
   漫画级显式方向只覆盖方向，不能阻止 profile 继续驱动其它行为；当前长按放大按“漫画显式覆盖 > adaptive 类型建议 > 模式默认”解析，条漫默认关、页漫/动图默认开。
   全局/漫画级 adaptive 开关独立于手动 override master；Reader 不得复制来源设置 authority，也不得借 adaptive 接管 Pipeline 调度。
-- 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。
-  旧 plugin-scoped trust 的 source 迁移只有在 installed record 能证明 source 集完整时才退休 plugin fallback；runtime discovery 不完整时必须继续保留。
+- 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。 旧 plugin-scoped trust 的 source 迁移只有在 installed record 能证明 source 集完整时才退休 plugin fallback；runtime discovery 不完整时必须继续保留。
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
   每漫画“使用自适应设置”独立于手动 override master，清除手动覆盖不清 adaptive policy/profile。全局分页方向默认 LTR；`ReaderModeSettings` 分 paged/continuous，双击两级 slider 与独立长按倍率按 mode 保存。
   点击区域按当前 mode 保存；Reader 内用当前页面沉浸覆层编辑，可拖两横两竖线；grid 与真实 hit-test 共用 authority，覆层 cell 覆盖完整 viewport 截获编辑输入且不改变 ReaderView ancestry，drag 只更新 overlay-local State。PageHost 仍唯一负责手势消歧；顶部强制重载、本漫画底栏设置及杂项 Web 入口不变。

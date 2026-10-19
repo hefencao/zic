@@ -35,6 +35,9 @@ final class AppTranslationChapterJobs extends ChangeNotifier {
 
   bool get hasActive => _jobs.values.any((job) => job.state.isActive);
 
+  List<ComicTranslationChapterState> get activeStates => List.unmodifiable(
+    _jobs.values.where((job) => job.state.isActive).map((job) => job.state));
+
   ComicTranslationChapterState? stateFor(String key) => _jobs[key]?.state;
 
   Future<void> start(ImportedLibraryEntry entry, {
@@ -77,6 +80,7 @@ final class AppTranslationChapterJobs extends ChangeNotifier {
       final preferences = settings.forComic(chapter.sourceId, chapter.comicId);
       final ocrVersion = ComicTranslationEngineRegistry.instance.ocrEngine?.modelVersion ?? '';
       final task = job.task = ComicTranslationChapterTask(
+        backgroundExecution: true,
         pages: [for (final page in manifest.pages) ComicTranslationPageIdentity(
           imageKey: jsonEncode([chapter.sourceRevision, page.uri.toString()]),
           sourceKey: chapter.sourceId, comicId: chapter.comicId, chapterId: chapter.chapterId,

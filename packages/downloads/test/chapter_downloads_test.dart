@@ -2506,7 +2506,14 @@ void main() {
       ),
     );
 
+    final lifetimes = <int>[];
+    final lifetimeSubscription = service.downloadExecutionChanges.listen((_) {
+      lifetimes.add(service.activeDownloadEntries.length);
+    });
+    addTearDown(lifetimeSubscription.cancel);
     final run = service.download(entry);
+    expect(service.activeDownloadEntries, [entry],
+        reason: 'preparation must already have a foreground-service lifetime');
     await opened[0].future.timeout(const Duration(seconds: 5));
     await opened[1].future.timeout(const Duration(seconds: 5));
     expect(opened[2].isCompleted, isFalse);
@@ -2516,10 +2523,13 @@ void main() {
     await opened[2].future.timeout(const Duration(seconds: 5));
     expect(releaseSecond.isCompleted, isFalse,
         reason: 'page 3 must enter while page 2 is still blocked');
+    expect(service.activeDownloadEntries, [entry]);
     expect(maxActiveOpens, lessThanOrEqualTo(2));
 
     releaseSecond.complete();
     await run.timeout(const Duration(seconds: 5));
+    expect(service.activeDownloadEntries, isEmpty);
+    expect(lifetimes, [1, 0]);
     final snapshot = await service.inspect(entry);
     expect(snapshot.phase, ChapterDownloadPhase.complete);
     expect(snapshot.exactCompletedPages, 3);
@@ -2605,6 +2615,8 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect(opened[2].isCompleted, isFalse,
         reason: 'a failed page must stop sliding-window admission');
+    expect(service.activeDownloadEntries, [entry],
+        reason: 'failure must keep the task visible until admitted work exits');
 
     releaseSecond.complete();
     await expectLater(
@@ -2620,6 +2632,7 @@ void main() {
       ),
     );
     expect(opened[2].isCompleted, isFalse);
+    expect(service.activeDownloadEntries, isEmpty);
     final snapshot = await service.inspect(entry);
     expect(snapshot.phase, ChapterDownloadPhase.failed);
   });

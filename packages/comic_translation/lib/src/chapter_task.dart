@@ -38,6 +38,7 @@ final class ComicTranslationChapterTask {
     required ComicTranslationInputResolver inputResolver,
     ComicTranslationPolicy policy = const ComicTranslationPolicy(),
     ComicTranslationEngineRegistry? engines,
+    bool backgroundExecution = false,
     String? detectedSourceLanguage,
     Future<void> Function(String language)? onSourceLanguageDetected,
     void Function(ComicTranslationPageIdentity, Map<String, Object?>)? onDiagnostic,
@@ -47,6 +48,7 @@ final class ComicTranslationChapterTask {
          detectedSourceLanguage: detectedSourceLanguage,
          onSourceLanguageDetected: onSourceLanguageDetected, onDiagnostic: onDiagnostic,
          inputResolver: inputResolver, engines: engines,
+         backgroundExecution: backgroundExecution,
          policy: policy.withPrefetch(pages: 0, cachedPages: 0),
        ),
        state = ValueNotifier(ComicTranslationChapterState(

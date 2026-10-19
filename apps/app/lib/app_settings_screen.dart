@@ -14,6 +14,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'dialog_actions.dart';
 
 import 'app_preferences.dart';
+import 'background_tasks_platform.dart';
 import 'comic_translation_settings_entry.dart';
 import 'chapter_download_directory.dart';
 import 'directory_picker.dart';
@@ -1781,6 +1782,20 @@ final class DownloadSettingsScreen extends StatelessWidget {
                   '不建立第二套下载缓存。',
                 ),
               ),
+              if (Theme.of(context).platform == TargetPlatform.android) ...[
+                ListTile(
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('下载与翻译通知'),
+                  subtitle: const Text('显示后台任务进度；点击前往系统通知设置'),
+                  onTap: () => unawaited(AndroidBackgroundTasksPlatform.openSettings()),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.battery_saver_outlined),
+                  title: const Text('后台电池设置'),
+                  subtitle: const Text('若锁屏后任务中断，可在系统中允许 ZIC 后台运行'),
+                  onTap: () => unawaited(AndroidBackgroundTasksPlatform.openSettings(battery: true)),
+                ),
+              ],
             ],
           );
         },

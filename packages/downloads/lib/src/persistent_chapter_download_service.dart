@@ -14,6 +14,7 @@ String? _sourceCrc32Constraint(PageAsset page) {
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
+        ChapterDownloadExecutionSource,
         ChapterDownloadManagementProjectionReader,
         ChapterCacheManagementProjectionReader,
         ChapterDeleteImpactProjectionReader,
@@ -160,6 +161,16 @@ final class PersistentChapterDownloadService
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
   final Map<String, Future<void>> _runs = <String, Future<void>>{};
+  final Map<String, ImportedLibraryEntry> _activeDownloadEntries = {};
+  final StreamController<void> _downloadExecutionChanges =
+      StreamController<void>.broadcast(sync: true);
+
+  @override
+  List<ImportedLibraryEntry> get activeDownloadEntries =>
+      List.unmodifiable(_activeDownloadEntries.values);
+
+  @override
+  Stream<void> get downloadExecutionChanges => _downloadExecutionChanges.stream;
   final Map<String, CancelToken> _auditTokens = <String, CancelToken>{};
   final Map<String, Future<ChapterFileAuditReport>> _auditRuns =
       <String, Future<ChapterFileAuditReport>>{};
@@ -332,14 +343,18 @@ final class PersistentChapterDownloadService
     if (active != null) {
       return active;
     }
-    final run = _runDownload(entry);
-    _runs[identity] = run;
-    return run.whenComplete(() {
+    _activeDownloadEntries[identity] = entry;
+    final run = _runDownload(entry).whenComplete(() {
       _runs.remove(identity);
+      _activeDownloadEntries.remove(identity);
       _tokens.remove(identity);
       _startedRuns.remove(identity);
       _deletedIdentities.remove(identity);
+      _downloadExecutionChanges.add(null);
     });
+    _runs[identity] = run;
+    _downloadExecutionChanges.add(null);
+    return run;
   }
 
   Future<Map<int, String>> _predecessorPageIdsByIndex({
@@ -2499,6 +2514,7 @@ final class PersistentChapterDownloadService
       _deletedIdentities.clear();
       _transport.close(force: true);
       await _changes.close();
+      await _downloadExecutionChanges.close();
       await _managementProjectionChanges.close();
     }
     if (_ownsTransferComposition && !_ownedTransferCompositionDisposed) {

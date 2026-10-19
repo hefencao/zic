@@ -183,6 +183,13 @@ abstract interface class ChapterDeleteImpactProjectionReader {
   );
 }
 
+/// Read-only lifetime of explicit chapter commands, including preparation and
+/// cancellation drain. Reader cache traffic is deliberately absent.
+abstract interface class ChapterDownloadExecutionSource {
+  List<ImportedLibraryEntry> get activeDownloadEntries;
+  Stream<void> get downloadExecutionChanges;
+}
+
 abstract interface class ChapterDownloadService {
   Stream<ChapterDownloadSnapshot> get changes;
 

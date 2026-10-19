@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "release":{"version":"0.31.0-beta.1","build":332,"tag":"v0.31.0-beta.1","status":"published","url":"https://github.com/hefencao/zic/releases/tag/v0.31.0-beta.1","anonymous_assets_verified":4,"signing":"existing development key","ci":"39252409793:all3jobs passed","latest":true,"prerelease":false,"test_release":"deleted"},
-  "updated_at":"2026-10-19T13:12:26Z",
-  "objective":"Fix Actions;beta visible as Latest;initial test release/APKs removed.",
+  "updated_at":"2026-10-19T13:53:47Z",
+  "objective":"Android foreground notifications/background support for explicit downloads and chapter translation.",
   "status": "partial",
-  "scope":["GitHub CI/OpenCV handoff + async test;Latest beta;delete test release"],
+  "scope":["Explicit download command lifetime,foreground service/notification,chapter background policy"],
   "preserve": [
     "已验生产合同与用户数据",
     "NetLane唯一network authority与真实退出容量边界",
@@ -141,8 +141,8 @@
     {"id": "SWG-PLAN-111", "status": "verified_device", "current_contract": "Android fixture reopens SQLite/response-cache owners with changed cover tokens and no active source: stable keys hit durable bytes without source requests. Explicit proven artifact equivalence returns the original physical identity, does not create target exact authority, and rejects an unproven page. Real source proof discovery remains independent.", "evidence_reproducibility": "current_available"},
     {"id": "SWG-PLAN-112", "status": "verified_device", "current_contract": "On Android Profile after force-stop and a different process PID, persisted same-source canonical aliases produce one shelf card without an active source. Unopened shelf mounts no cover subtree and records no hidden cover request. Durable cover hits reach first frame with zero source calls; no raw-key-first compatibility path is restored. Controlled inputs do not replace independent real-origin or final-display acceptance.", "evidence_reproducibility": "current_available; historical_raw_files_missing"}
   ],
-  "current_device_installation":{"verified_for_current_change":false,"serial":"72b08a1c","version":"0.31.0-beta.1+332 Release","arm64_sha256":"e2a4ee064f4a960d523d1bd47a2d9179e5725658005a395d0aed99849703bc14","observation":"Updated Release/data/history pass;natural95 remains non-media. User:Venera/EHViewer fail,website works. Trace:Range->200;7790283B prefix retained;manual retry force-resets0(pre-existing). Eager body-error source retry reverted;source success unclaimed. Original/current traces:/tmp/zic-image-open-fix."},
-  "validation":{"command":"CI=true tool/check.sh --require-toolchains (native rhttp);4 JVM targets;artifact closure;GitHub CI39252409793","exit_code":0,"dart_flutter_tests":{"passed":2600,"skipped":3},"rust_tests_passed":25,"owned_jvm_tests_passed":110,"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS unverified"],"scope":"Local28 suites/2600+110JVM+25Rust pass;3 skips. GitHub39252409793 all3jobs pass;live artifact validates both runtimes."},
+  "current_device_installation":{"verified_for_current_change":false,"serial":"72b08a1c","version":"0.31.0-beta.1+332 debug","observation":"Background-task acceptance running;210 offline. Earlier EH body/Range fault remains source-limited;inputs:/tmp/zic-image-open-fix."},
+  "validation":{"command":"CI=true tool/check.sh --require-toolchains;host-rhttp focused;4 JVM targets","exit_code":0,"dart_flutter_tests":{"passed":2609,"skipped":3},"rust_tests_passed":25,"owned_jvm_tests_passed":110,"missing_toolchains":["pwsh:Windows unverified","xcodebuild:iOS unverified"],"scope":"28 suites:2607 pass/5skip;host-rhttp executes2 skips.3ABI debug and closure pass.9 new lifecycle regressions pass;device pending:notification/background/stop/chapter/timeout/denial."},
   "new_user_task_acceptance": {
     "JM_browser_title_search_original_tag": "docs/archive/audits/mihon-CookieJar-boundary-2026-10-07.json",
     "Mihon_installed_extension_metadata_scope": "docs/archive/audits/state-governance-closure-2026-10-01.json#supplemental_acceptance/mihon-device-extension-metadata-scope-2026-10-03",

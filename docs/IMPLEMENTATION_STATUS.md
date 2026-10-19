@@ -15,8 +15,7 @@
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝cold partial由SQLite/文件裁决，不随意materialize durable-store。borrowed staging强刷修正空记录幂等失效及canonical READY仅删索引；复用原store副本清理。三回归/170测试通过；普通Release273实际借用1,112,520B后单次强刷，同physical epoch0→1、静置新帧及17,528,576B完整缓存提交通过，taskFailed0。
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。
-- 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
-- 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
+- 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。元数据权威由 physical source metadata 提供 generation-local metadataPrefix 保证。
 - artwork持久化：retained晋升复用canonical key；已有副本只改元数据，缺失transient副本从未过期内存响应后台补写，不重下或阻塞呈现。ResourceCacheManager独占晋升claim，失效/刷新/clear撤销旧意图。
   58项Home验收通过：持久缓存无勾，单章空心/整本绿实心及入详情清除（031关闭）；23项source-card通过显式精确刷新、健康不重下及provider退休旧错误。033–035/083/108保持；原19/20正文、真实来源与durable损坏开放。
 - external-static 状态治理已把 presentation generation 与 raster residency 拆开：Pipeline 保持 same-generation identity，`PipelinePresentationRasterCache`独占 decoded raster residency；
@@ -194,9 +193,10 @@
   真正毫秒级的 resident source reserve/copy/file-range 继续由 native source-write worker 执行，既有 priority/cancellation 贯穿 pending queue；decode/source-write worker lifecycle 显式拆分。
   artifact object/replica/root 约0.13ms的 metadata 读取已撤销常驻 read worker，直接在 SqliteIndex owner connection 使用短单事务 snapshot；recency touch 的同步写成本约2ms，仍先经过既有 StorageWriteScheduler admission 后交给 worker。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
+- Android 后台任务：App只读聚合显式下载/整本队列/整章翻译，dataSync前台服务、私密进度通知、按需通知授权和有界CPU锁；等待条件释放CPU锁，通知停止转发原owner，超时停止不重启。整章后台许可以服务确认生效，Reader仍暂停；下载设置可打开系统通知/电池设置。验收见状态JSON。
 - 漫画翻译：底栏第三项点击面板，左下开关；面板管漫画语言/OCR/内容/指示器，右上全局。指示器缺省自动，保留已存偏好。首次独立三步引导，已配置跳过、退出不保存，可重开；全局模型/服务/高级/测试/默认/档位排列，仅右上保存，高级/导入/多API管理折叠。静态WebP优先Pipeline同代事实，未决查完整文件；整章/归档同理。当前输入优先，缓存不等推理；通知重放。worker摘要/JSON、1.5ms排版、LRU8页/128块；压力清除。OpenCV保留SIMD/TBB/HAL及推理内核。
-  App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/后台回收、NetLane至真实退出；验收见状态JSON。
-  远程连接/握手及临时HTTP错误统一追加至多5次重试，间隔2/5/15/30/60秒；Retry-After可延长至5分钟。只重发失败批次，等待不占NetLane；全消费者退出/离页/后台唤醒等待，快速返回重放新需求，单方退出保留共享请求。页/章节显示重试与失败进度，Trace脱敏；鉴权/证书/格式/发送接收超时不重试，缓存身份保持。
+  App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/无受保护整章任务时后台回收、NetLane至真实退出；验收见状态JSON。
+  远程连接/握手及临时HTTP错误统一追加至多5次重试，间隔2/5/15/30/60秒；Retry-After可延长至5分钟。只重发失败批次，等待不占NetLane；全消费者退出/离页/对应后台暂停唤醒等待，快速返回重放新需求，单方退出保留共享请求。页/章节显示重试与失败进度，Trace脱敏；鉴权/证书/格式/发送接收超时不重试，缓存身份保持。
 
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。
