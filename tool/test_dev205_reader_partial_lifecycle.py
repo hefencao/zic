@@ -22,7 +22,7 @@ ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 ARCH = (ROOT / 'docs/ARCHITECTURE.md').read_text()
 SPEC = (ROOT / 'docs/SPEC.md').read_text()
 
-current_version = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+current_version = re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC)
 if current_version is not None and int(current_version.group(1)) >= 206:
     # dev.206 deliberately supersedes dev.205's route-checkpoint/cache-manager
     # wiring while retaining the two correctness discoveries: durable partial
@@ -91,7 +91,7 @@ for marker in (
 ):
     if marker not in CHAPTER_TEST + DECODE_TEST:
         raise SystemExit(f'dev.205 Dart regression contract missing: {marker}')
-m = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+m = re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC)
 if not m or int(m.group(1)) < 205:
     raise SystemExit('dev.205 pubspec version missing')
 m = re.search(r'versionCode=(\d+)', ANDROID)

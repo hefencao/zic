@@ -74,7 +74,7 @@ for relative in ('packages/sessions/lib/src/decode_session.dart',
 
 pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
 properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
-app = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+app = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.MULTILINE)
 android = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
 if app is None or int(app.group(1)) < 195:
     raise SystemExit('dev.195-or-newer app build missing')

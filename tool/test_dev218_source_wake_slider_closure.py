@@ -22,7 +22,7 @@ architecture = read('docs/ARCHITECTURE.md')
 
 require(live, 'int _availableSourceRevision(DownloadId id)', 'projection revision state lookup')
 pubspec = read('apps/app/pubspec.yaml')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.MULTILINE)
 if version_match is None:
     raise SystemExit('dev.218 app version mismatch')
 build = int(version_match.group(1))

@@ -18,7 +18,7 @@ def require(path: str, *tokens: str) -> None:
     req(not missing, f'{path} missing dev.270 contract: {missing}')
 
 pub = read('apps/app/pubspec.yaml')
-m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
+m = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 270, 'App build must be >=270')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 

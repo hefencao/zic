@@ -12,7 +12,7 @@ transport=read('packages/downloads/lib/src/artifact_cache_transport.dart')
 pipeline=read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 for token in ('Future<bool> contains(', 'ArtifactCacheTier.memory', 'ArtifactCacheTier.persistent'):
     require(manager, token, 'central cache lookup')
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 build = int(version.group(1)) if version is not None else 0
 presence = 'await cache.containsBackendExact(' if build >= 230 else 'await cache.containsBackend('
 for token in (presence, "action: 'skip-existing'", 'final builder = BytesBuilder(copy: false);'):

@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def text(path): return (ROOT/path).read_text(encoding='utf-8')
 def req(ok,msg):
     if not ok: raise SystemExit(f'FAIL: {msg}')
-pub=text('apps/app/pubspec.yaml'); m=re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$',pub,re.M)
+pub=text('apps/app/pubspec.yaml'); m=re.search(r'^version:\s+\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',pub,re.M)
 req(m is not None and int(m.group(1))>=286,'dev.286 version lineage missing')
 adr=text('docs/archive/adr/0265-live-aspect-projection-over-frozen-vertical-layout.md')
 req('状态：Superseded' in adr and 'dev.287' in adr,'dev.286 ADR must be superseded by device evidence')

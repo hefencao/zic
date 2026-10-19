@@ -94,7 +94,7 @@ for token in (
     require(details, token, 'detail capability compile closure')
 require(check, 'test_dev145_source_target_cache_cloudflare_cover_identity.py', 'repository check')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 145:
     raise SystemExit('App build must be at least 145')
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)

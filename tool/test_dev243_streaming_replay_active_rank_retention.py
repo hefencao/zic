@@ -23,7 +23,7 @@ arch = read('docs/ARCHITECTURE.md')
 spec = read('docs/SPEC.md')
 check = read('tool/check.sh')
 
-m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+m = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.M)
 require(m is not None and int(m.group(1)) >= 243, 'App build must be >=243')
 m2 = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 require(m2 is not None and m2.group(1) == m.group(1), 'Android versionCode must match App build')

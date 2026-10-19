@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def read(p): return (ROOT/p).read_text(encoding='utf-8')
 def req(c,m):
     if not c: raise SystemExit('FAIL: '+m)
-build=int(re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$',read('apps/app/pubspec.yaml'),re.M).group(1))
+build=int(re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',read('apps/app/pubspec.yaml'),re.M).group(1))
 req(build>=267,'dev.265 gate must run under dev.267+ supersession')
 adr=read('docs/archive/adr/0243-near-two-flow-retention-protection.md')
 req('Status: Superseded' in adr and 'ADR 0245' in adr,'ADR0243 must be superseded by ADR0245')

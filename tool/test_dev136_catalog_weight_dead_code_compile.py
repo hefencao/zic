@@ -91,7 +91,7 @@ if (ROOT / "apps/app/lib/local_webp_folder.dart").exists():
 if (ROOT / "apps/app/lib/local_image_folder.dart").exists():
     raise SystemExit("dead App local_image_folder facade remains")
 
-app_match = re.search(r"^version: 0\.31\.0\+(\d+)$", app_pubspec, re.MULTILINE)
+app_match = re.search(r"^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$", app_pubspec, re.MULTILINE)
 if app_match is None or int(app_match.group(1)) < 136:
     raise SystemExit("dev.136+ app version contract is missing")
 android_match = re.search(r"^versionCode=(\d+)$", android_version, re.MULTILINE)

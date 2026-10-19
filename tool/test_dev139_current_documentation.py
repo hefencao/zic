@@ -109,7 +109,7 @@ for token in (
 ):
     require(architecture, token, "Architecture")
 pubspec_for_spec = read("apps/app/pubspec.yaml")
-spec_version = re.search(r"^version:\s*0\.31\.0\+(\d+)$", pubspec_for_spec, re.M)
+spec_version = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$", pubspec_for_spec, re.M)
 spec_build = int(spec_version.group(1)) if spec_version is not None else 0
 spec_window_token = (
     "encoded逻辑/retention与network-demand window：前 7 / 后 3"
@@ -183,13 +183,16 @@ require(read("docs/archive/adr/0122-current-reader-pipeline-authority-consolidat
         "**状态：Accepted**", "ADR 0122")
 
 pubspec = read("apps/app/pubspec.yaml")
-version = re.search(r"^version:\s*0\.31\.0\+(\d+)$", pubspec, re.M)
+version = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$", pubspec, re.M)
 if version is None or int(version.group(1)) < 139:
     raise SystemExit("dev.139 documentation gate requires App build >= 139")
 build = version.group(1)
-if f"0.31.0-dev.{build}" not in status or f"0.31.0+{build}" not in status:
+app_build = version.group(0).split(':', 1)[1].strip()
+app_version = app_build.split('+', 1)[0]
+source_version = app_version if '-' in app_version else f"{app_version}-dev.{build}"
+if f"源码版本：{source_version}" not in status or f"App build：{app_build}" not in status:
     raise SystemExit("Implementation Status does not match App build")
-if f"dev.{build}" not in handoff:
+if app_build not in handoff:
     raise SystemExit("Handoff does not match App build")
 
 # Historical requirements must not become a repair backlog for retired owners.

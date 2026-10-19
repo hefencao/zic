@@ -19,7 +19,7 @@ coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 physical_owner = (transfer_owner_path.read_text(encoding='utf-8')
                   if transfer_owner_path.exists() else coordinator)
-build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+build_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 build = int(build_match.group(1)) if build_match is not None else 0
 retention_tokens = [
     ("reason: 'inactive-physical-retention'"
@@ -275,7 +275,7 @@ for token in (
 check = read('tool/check.sh')
 require(check, 'test_dev177_vibevenera_retained_preemption_download_manager_route_first.py', 'release gate wiring')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 177:
     raise SystemExit('App build must be at least 177')
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)

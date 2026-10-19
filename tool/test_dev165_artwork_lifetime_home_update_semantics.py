@@ -91,7 +91,7 @@ require(home, 'if (!previous.inShelf && updated.inShelf)', 'shelf transition upd
 require(home, 'saved.copyWith(', 'stale pre-shelf update owner')
 require(home, 'clearSourceUpdateAt: true', 'stale pre-shelf update reset')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 165:
     raise SystemExit('App build must be at least 165')
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)

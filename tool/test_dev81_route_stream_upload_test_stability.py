@@ -119,7 +119,7 @@ for fixed_wait in ('Duration(milliseconds: 80)', 'Duration(milliseconds: 50)', '
     assert fixed_wait not in reader_test
 assert 'nowMicros = widget.clock.nowMicros()' in read('packages/reader/lib/src/reader_view.dart')
 pubspec = read('apps/app/pubspec.yaml')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 current_dev = int(version_match.group(1)) if version_match else 0
 settled_gesture_count = reader_test.count(
     'await gesture.up();\n      await tester.pumpAndSettle();'

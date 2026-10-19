@@ -14,7 +14,7 @@ def require(path, *markers):
     req(not missing, f'{path} missing dev.290 contract: {missing}')
 
 pub = text('apps/app/pubspec.yaml')
-m = re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$', pub, re.M)
+m = re.search(r'^version:\s+\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 290, 'dev.290 app version missing')
 app_version = int(m.group(1))
 props = text('apps/app/android/zic-version.properties')

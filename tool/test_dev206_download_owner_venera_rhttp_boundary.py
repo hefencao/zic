@@ -12,7 +12,7 @@ read = lambda p: (ROOT / p).read_text(encoding='utf-8')
 
 PUBSPEC = read('apps/app/pubspec.yaml')
 ANDROID = read('apps/app/android/zic-version.properties')
-build = int(re.search(r'^version:\s*0\.31\.0\+(\d+)$', PUBSPEC, re.M).group(1))
+build = int(re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', PUBSPEC, re.M).group(1))
 if build < 206:
     raise SystemExit('dev.206 app build missing')
 if f'versionCode={build}' not in ANDROID:

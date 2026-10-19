@@ -19,7 +19,7 @@ owner_test = read("packages/sessions/test/download_transfer_owner_test.dart")
 spec = read("docs/SPEC.md")
 architecture = read("docs/ARCHITECTURE.md")
 
-m = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.M)
+m = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec, re.M)
 require(m is not None and int(m.group(1)) >= 240, "App build must be >=240")
 m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")

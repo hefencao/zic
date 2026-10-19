@@ -66,7 +66,7 @@ require(
 require("tool/check.sh", "test_dev188_venera_dynamic_priority_observation.py")
 
 pubspec = read("apps/app/pubspec.yaml")
-version_match = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.MULTILINE)
+version_match = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec, re.MULTILINE)
 if not version_match or int(version_match.group(1)) < 188:
     raise SystemExit("app version is below dev.188")
 android = read("apps/app/android/zic-version.properties")

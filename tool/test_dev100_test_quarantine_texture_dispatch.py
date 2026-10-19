@@ -23,7 +23,7 @@ def forbid(path: str, *tokens: str) -> None:
 
 
 import re
-version = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
+version = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
 if version is None or int(version.group(1)) < 100:
     raise SystemExit("FAIL: App build must be at least dev.100")
 require(

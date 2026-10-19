@@ -105,7 +105,7 @@ for token in (
 check = read('tool/check.sh')
 require(check, 'test_dev180_openjdk25_previous_window_owner.py', 'dev.180 release gate wiring')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
 if version is None or int(version.group(1)) < 180 or android is None or android.group(1) != version.group(1):
     raise SystemExit('dev.180 version floor / Android parity mismatch')

@@ -8,7 +8,7 @@ def require(text, token, label):
 def forbid(text, token, label):
     if token in text: raise SystemExit(f'dev.317 forbidden {label}: {token}')
 version=read('apps/app/pubspec.yaml'); props=read('apps/app/android/zic-version.properties')
-m=re.search(r'^version: 0\.31\.0\+(\d+)$', version, re.M)
+m=re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', version, re.M)
 if m is None or int(m.group(1)) < 317:
     raise SystemExit('dev.317+ version mismatch')
 code=int(m.group(1))

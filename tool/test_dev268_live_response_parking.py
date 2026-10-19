@@ -23,7 +23,7 @@ def reject(path: str, *tokens: str) -> None:
     req(not present, f'{path} contains superseded response-lifetime path: {present}')
 
 pub = read('apps/app/pubspec.yaml')
-m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
+m = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 268, 'App build must be >=268')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 

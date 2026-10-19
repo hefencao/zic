@@ -53,7 +53,7 @@ if "test_dev209_removed_version_signal_call_closure.py" not in check:
     raise SystemExit("dev.209 closure gate is not wired into tool/check.sh")
 
 version = re.search(
-    r"^version:\s*0\.31\.0\+(\d+)\s*$",
+    r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$",
     read("apps/app/pubspec.yaml"),
     re.M,
 )

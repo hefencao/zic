@@ -17,7 +17,7 @@ def forbid(text, token, label):
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-m = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+m = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 if m is None or int(m.group(1)) < 319:
     raise SystemExit('dev.319+ version mismatch')
 version = int(m.group(1))

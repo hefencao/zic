@@ -21,7 +21,7 @@ def forbid(text: str, token: str, label: str) -> None:
 
 
 version = read('apps/app/pubspec.yaml')
-build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)$', version, re.M)
+build_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', version, re.M)
 if build_match is None:
     raise SystemExit('dev.213 app version missing')
 build = int(build_match.group(1))

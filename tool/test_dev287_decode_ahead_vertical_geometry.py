@@ -10,7 +10,7 @@ def require(path,*markers):
     body=text(path); missing=[m for m in markers if m not in body]
     req(not missing,f'{path} missing dev.287 contract: {missing}')
 
-pub=text('apps/app/pubspec.yaml'); m=re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$',pub,re.M)
+pub=text('apps/app/pubspec.yaml'); m=re.search(r'^version:\s+\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',pub,re.M)
 req(m is not None and int(m.group(1))>=287,'dev.287 app version missing')
 props=text('apps/app/android/zic-version.properties'); m=re.search(r'^versionCode=(\d+)\s*$',props,re.M)
 req(m is not None and int(m.group(1))>=287,'dev.287 Android version missing')

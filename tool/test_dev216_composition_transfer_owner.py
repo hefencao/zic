@@ -21,7 +21,7 @@ def forbid(text: str, token: str, label: str) -> None:
 import re
 pubspec = read('apps/app/pubspec.yaml')
 version_props = read('apps/app/android/zic-version.properties')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.MULTILINE)
 android_match = re.search(r'^versionCode=(\d+)$', version_props, re.MULTILINE)
 if version_match is None or android_match is None:
     raise SystemExit('dev.216 app version missing')

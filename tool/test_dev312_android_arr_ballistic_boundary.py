@@ -13,7 +13,7 @@ def require(text: str, token: str, label: str) -> None:
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 if match is None or int(match.group(1)) < 312:
     raise SystemExit('dev.312 app version missing/regressed')
 version = int(match.group(1))

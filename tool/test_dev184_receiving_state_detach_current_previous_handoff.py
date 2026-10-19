@@ -30,7 +30,7 @@ physical_owner_path = (
     else 'packages/sessions/lib/src/live_coordinator.dart'
 )
 pubspec_text = read('apps/app/pubspec.yaml')
-build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec_text, re.MULTILINE)
+build_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec_text, re.MULTILINE)
 build = int(build_match.group(1)) if build_match is not None else 0
 if build < 243:
     require(
@@ -127,7 +127,7 @@ require(
 require('tool/check.sh', 'test_dev184_receiving_state_detach_current_previous_handoff.py')
 
 pubspec = read('apps/app/pubspec.yaml')
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.MULTILINE)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.MULTILINE)
 android = re.search(
     r'^versionCode=(\d+)\s*$',
     read('apps/app/android/zic-version.properties'),

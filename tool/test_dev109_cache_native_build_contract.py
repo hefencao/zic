@@ -22,7 +22,7 @@ def forbid(path: str, *tokens: str) -> None:
 
 
 version_text = read('apps/app/pubspec.yaml')
-version_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', version_text, re.M)
+version_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', version_text, re.M)
 build = int(version_match.group(1)) if version_match is not None else 0
 backend_probe = 'Future<bool> containsBackendExact(' if build >= 230 else 'Future<bool> containsBackend('
 handoff_probe = 'cache.containsBackendExact(' if build >= 230 else 'cache.containsBackend('

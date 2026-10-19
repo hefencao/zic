@@ -12,7 +12,7 @@ def require(text: str, token: str, label: str) -> None:
         raise SystemExit(f'dev.311 history missing {label}: {token}')
 
 pubspec = read('apps/app/pubspec.yaml')
-match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 if match is None or int(match.group(1)) < 311:
     raise SystemExit('dev.311 history version missing/regressed')
 

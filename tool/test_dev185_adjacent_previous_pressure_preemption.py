@@ -25,7 +25,7 @@ def reject(path: str, *tokens: str) -> None:
 
 
 pubspec = read('apps/app/pubspec.yaml')
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.MULTILINE)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.MULTILINE)
 if version is None or int(version.group(1)) < 185:
     raise SystemExit('App build is below dev.185')
 build = int(version.group(1))

@@ -21,7 +21,7 @@ def reject(path: str, *tokens: str) -> None:
         raise SystemExit(f'{path} contains out-of-scope dev.251 shape: {present}')
 
 pubspec = read('apps/app/pubspec.yaml')
-m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+m = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 251:
     raise SystemExit('App build must be >=251')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -107,7 +108,8 @@ for rel in (
 
 pubspec = read('apps/app/pubspec.yaml')
 version_props = read('apps/app/android/zic-version.properties')
-if not any(f'version: 0.31.0+{build}' in pubspec for build in range(215, 1000)):
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
+if version is None or int(version.group(1)) < 215:
     raise SystemExit('dev.215 requires app build >= 215')
 if not any(f'versionCode={build}' in version_props for build in range(215, 1000)):
     raise SystemExit('dev.215 requires Android versionCode >= 215')

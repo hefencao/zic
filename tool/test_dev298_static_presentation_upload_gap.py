@@ -11,7 +11,7 @@ def forbid(path: str, *tokens: str) -> None:
     text = read(path); found = [token for token in tokens if token in text]
     if found: raise SystemExit(f'FAIL: {path} contains forbidden dev.298 tokens: {found}')
 def current_dev() -> int:
-    m = re.search(r'^version: 0\.31\.0\+(\d+)$', read('apps/app/pubspec.yaml'), re.MULTILINE)
+    m = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', read('apps/app/pubspec.yaml'), re.MULTILINE)
     if m is None: raise SystemExit('FAIL: app version missing')
     return int(m.group(1))
 dev=current_dev()

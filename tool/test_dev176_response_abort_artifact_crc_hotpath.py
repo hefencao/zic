@@ -54,7 +54,7 @@ require(
 check = read('tool/check.sh')
 require(check, 'test_dev176_response_abort_artifact_crc_hotpath.py', 'release gate wiring')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
 if version is None or int(version.group(1)) < 176:
     raise SystemExit('App build must be at least 176')

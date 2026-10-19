@@ -57,7 +57,7 @@ for rel in (
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.MULTILINE)
 android_match = re.search(r'^versionCode=(\d+)$', props, re.MULTILINE)
 if version_match is None or int(version_match.group(1)) < 217:
     raise SystemExit('dev.217 app version regression')

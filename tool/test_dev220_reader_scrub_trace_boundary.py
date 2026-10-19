@@ -68,7 +68,7 @@ for token in (
     '} finally {',
 ):
     require(accept, token, 'Reader-local viewport/playback boundary')
-current_version = int(re.search(r'^version: 0\.31\.0\+(\d+)$',
+current_version = int(re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$',
                                 read('apps/app/pubspec.yaml'), re.M).group(1))
 if current_version >= 306:
     require(accept, '_syncPlayback(viewport);',
@@ -115,7 +115,7 @@ for rel in (
 
 pubspec = read('apps/app/pubspec.yaml')
 version_props = read('apps/app/android/zic-version.properties')
-pub_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+pub_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 android_match = re.search(r'^versionCode=(\d+)$', version_props, re.M)
 if pub_match is None or int(pub_match.group(1)) < 220:
     raise SystemExit('dev.220+ app version mismatch')

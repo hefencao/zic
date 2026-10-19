@@ -75,7 +75,7 @@ import re
 
 pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
 properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
-pubspec_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+pubspec_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.MULTILINE)
 properties_match = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
 if pubspec_match is None or int(pubspec_match.group(1)) < 192:
     raise SystemExit('dev.192-or-newer app version missing')

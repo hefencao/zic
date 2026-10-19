@@ -76,7 +76,7 @@ for token in ('1,197', '132', 'control no-op', '250ms', '500ms'):
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 if match is None or int(match.group(1)) < 306:
     raise SystemExit('dev.306 app version missing/regressed')
 version = int(match.group(1))

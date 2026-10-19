@@ -8,7 +8,7 @@ def req(text, token, label):
 def forbid(text, token, label):
     if token in text: raise SystemExit(f'dev.221 forbidden {label}: {token}')
 pub=read('apps/app/pubspec.yaml')
-vm=re.search(r'^version: 0\.31\.0\+(\d+)$', pub, re.M)
+vm=re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pub, re.M)
 version=int(vm.group(1)) if vm else 0
 session=read('packages/sessions/lib/src/download_session.dart')
 registry=read('packages/sessions/lib/src/download_ingress_registry.dart')
@@ -49,6 +49,6 @@ req(live, 'residentReplaySource: (physical, endExclusive) async', 'late coordina
 for rel in ('docs/archive/adr/0202-resident-encoded-source-replay-authority.md','docs/archive/audits/dev221-resident-replay-root-cause-audit.md','docs/archive/audits/dev221-validation-results.md'):
     if not (ROOT/rel).exists(): raise SystemExit(f'dev.221 missing governance: {rel}')
 props=read('apps/app/android/zic-version.properties')
-m=re.search(r'^version: 0\.31\.0\+(\d+)$',pub,re.M); a=re.search(r'^versionCode=(\d+)$',props,re.M)
+m=re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$',pub,re.M); a=re.search(r'^versionCode=(\d+)$',props,re.M)
 if m is None or int(m.group(1)) < 221 or a is None or int(a.group(1)) < 221: raise SystemExit('dev.221 version mismatch')
 print('dev.221 resident encoded-source replay authority: OK')

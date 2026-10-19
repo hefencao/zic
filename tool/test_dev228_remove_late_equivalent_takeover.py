@@ -54,7 +54,7 @@ for token in (
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-pub = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+pub = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 android = re.search(r'^versionCode=(\d+)$', props, re.M)
 if pub is None or int(pub.group(1)) < 228:
     raise SystemExit('dev.228 app version mismatch')

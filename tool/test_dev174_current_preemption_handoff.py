@@ -15,7 +15,7 @@ def require(text: str, token: str, label: str) -> None:
 
 
 version_match = re.search(
-    r'^version:\s*0\.31\.0\+(\d+)\s*$',
+    r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',
     read('apps/app/pubspec.yaml'),
     re.M,
 )
@@ -86,7 +86,7 @@ check = read('tool/check.sh')
 require(check, 'test_dev174_current_preemption_handoff.py', 'release gate wiring')
 
 version = re.search(
-    r'^version:\s*0\.31\.0\+(\d+)\s*$',
+    r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',
     read('apps/app/pubspec.yaml'),
     re.M,
 )

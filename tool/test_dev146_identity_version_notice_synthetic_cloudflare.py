@@ -119,7 +119,7 @@ for token in (
     require(architecture, token, 'architecture identity taxonomy')
 require(check, 'test_dev146_identity_version_notice_synthetic_cloudflare.py', 'repository check')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 146:
     raise SystemExit('App build must be at least 146')
 print('dev.146 identity / version notice / synthetic / Cloudflare contract: OK')

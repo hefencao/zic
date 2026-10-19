@@ -13,7 +13,7 @@ PUBSPEC = (ROOT / 'apps/app/pubspec.yaml').read_text()
 ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 
 block = NET[NET.index('NetPolicyRank _policyRank('):NET.index('void _notifyIdle()', NET.index('NetPolicyRank _policyRank('))]
-if int(re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC).group(1)) <= 203:
+if int(re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC).group(1)) <= 203:
     for marker in (
         'timeScaleMicros = 5 * 1000 * 1000',
         'byteScale = 4 * 1024 * 1024',
@@ -43,7 +43,7 @@ for forbidden in (
         raise SystemExit(f'dev.203 retention contains non-cost input: {forbidden}')
 if 'restart cost remains economically meaningful after priority drops to zero' in TEST:
     raise SystemExit('dev.203 still freezes superseded base=0 headroom behavior')
-build = int(re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC).group(1))
+build = int(re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC).group(1))
 markers = (
     ("current preempts even a saturated restart-cost victim", "expect(investedToken.preemptionSnapshot?.retentionPriority, 880)")
     if build <= 203 else
@@ -55,7 +55,7 @@ for marker in markers:
 for body,name in ((ARCH,'architecture'),(SPEC,'spec'),(STATUS,'status'),(HANDOFF,'handoff')):
     if 'bounded' not in body.lower() and '最多+60' not in body and '最多+40' not in body:
         raise SystemExit(f'dev.203 bounded semantics missing from {name}')
-m=re.search(r'version:\s*0\.31\.0\+(\d+)',PUBSPEC)
+m=re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)',PUBSPEC)
 if not m or int(m.group(1)) < 203:
     raise SystemExit('dev.203 pubspec version floor missing')
 m=re.search(r'versionCode=(\d+)',ANDROID)

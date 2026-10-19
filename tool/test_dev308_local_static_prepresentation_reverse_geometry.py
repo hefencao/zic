@@ -29,7 +29,7 @@ for token in (
     require(policy, token, 'bounded local static presentation')
 
 pubspec = read('apps/app/pubspec.yaml')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 version = int(version_match.group(1)) if version_match is not None else 0
 if version < 314 or version >= 316:
     require(policy, '!localStaticReady &&', 'dev.308 active-scroll local static exception')

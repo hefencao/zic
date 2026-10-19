@@ -18,7 +18,7 @@ reader = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 ingress = read("packages/sessions/lib/src/download_ingress_registry.dart")
 test = read("packages/pipeline_runtime/test/pipeline_transfer_progress_test.dart")
 
-m = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.M)
+m = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec, re.M)
 require(m is not None and int(m.group(1)) >= 236, "App build must be >=236")
 m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")

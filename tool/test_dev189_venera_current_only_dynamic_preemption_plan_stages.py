@@ -84,7 +84,7 @@ require(
 require("tool/check.sh", "test_dev189_venera_current_only_dynamic_preemption_plan_stages.py")
 
 pubspec = read("apps/app/pubspec.yaml")
-version_match = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.MULTILINE)
+version_match = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec, re.MULTILINE)
 if not version_match or int(version_match.group(1)) < 189:
     raise SystemExit("app version is below dev.189")
 android = read("apps/app/android/zic-version.properties")

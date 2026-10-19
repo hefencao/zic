@@ -47,7 +47,7 @@ for token in (
     "keepAlive: _keepAlive",
 ):
     require(reader, token, "vertical host retention")
-version_match = re.search(r"^version: 0\.31\.0\+(\d+)$", read("apps/app/pubspec.yaml"), re.M)
+version_match = re.search(r"^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$", read("apps/app/pubspec.yaml"), re.M)
 version = int(version_match.group(1)) if version_match else 0
 keepalive_token = (
     "(widget.index - widget.keepAliveCenter.value).abs() <= 7"

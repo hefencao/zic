@@ -22,7 +22,7 @@ def forbid(path: str, *tokens: str) -> None:
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
 import re
-dev = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+dev = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.M)
 android_dev = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 if dev is None or int(dev.group(1)) < 294:
     raise SystemExit('FAIL: dev.294+ app version missing')

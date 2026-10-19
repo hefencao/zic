@@ -13,7 +13,7 @@ FILTER = (ROOT / 'tool/filter_debug_trace.py').read_text()
 PUBSPEC = (ROOT / 'apps/app/pubspec.yaml').read_text()
 ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 
-build_match = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+build_match = re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC)
 build = int(build_match.group(1)) if build_match else 0
 
 required_net = (
@@ -66,7 +66,7 @@ if 'downloadPreempted' not in TRACE or 'TraceEventKind.downloadPreempted' not in
 if "'downloadPreempted'" not in FILTER:
     raise SystemExit('dev.201 network trace profile missing downloadPreempted')
 
-m = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+m = re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC)
 if not m or int(m.group(1)) < 201:
     raise SystemExit('dev.201 pubspec version floor missing')
 m = re.search(r'versionCode=(\d+)', ANDROID)

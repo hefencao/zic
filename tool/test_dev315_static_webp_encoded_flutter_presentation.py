@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # dev.316 keeps this experiment only as historical evidence; production behavior is rolled back.
 _version_text = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
-_version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', _version_text, re.M)
+_version_match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', _version_text, re.M)
 if _version_match is not None and int(_version_match.group(1)) >= 316:
     for _rel in (
         'docs/archive/adr/0294-static-webp-encoded-flutter-presentation-boundary.md',
@@ -123,7 +123,7 @@ for token in (
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+match = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 if match is None or int(match.group(1)) < 315:
     raise SystemExit('dev.315 app version missing/regressed')
 version = int(match.group(1))

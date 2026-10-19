@@ -109,7 +109,7 @@ for token in (
     require(home_source, token, 'current plugin source callbacks')
 
 require(check, 'test_dev143_cover_stability_preview_rows_cookie_runtime_refresh.py', 'repository check')
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 143:
     raise SystemExit('App build must be at least 143')
 print('dev.143 cover stability / preview rows / cookie runtime / refresh: OK')

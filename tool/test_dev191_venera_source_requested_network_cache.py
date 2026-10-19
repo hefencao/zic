@@ -64,7 +64,7 @@ for relative in ('packages/sessions/lib', 'packages/pipeline_runtime/lib', 'apps
 
 pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
 android_version = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
-app_match = __import__('re').search(r'^version: 0\.31\.0\+(\d+)$', pubspec, __import__('re').MULTILINE)
+app_match = __import__('re').search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, __import__('re').MULTILINE)
 android_match = __import__('re').search(r'^versionCode=(\d+)$', android_version, __import__('re').MULTILINE)
 if app_match is None or int(app_match.group(1)) < 191:
     raise SystemExit('dev.191 app version floor missing')

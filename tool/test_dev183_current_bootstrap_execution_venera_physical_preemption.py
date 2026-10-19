@@ -132,7 +132,7 @@ require(
 require('tool/check.sh', 'test_dev183_current_bootstrap_execution_venera_physical_preemption.py')
 
 pubspec = read('apps/app/pubspec.yaml')
-version_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.MULTILINE)
+version_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.MULTILINE)
 if not version_match or int(version_match.group(1)) < 183:
     raise SystemExit('app version is below dev.183')
 android = read('apps/app/android/zic-version.properties')

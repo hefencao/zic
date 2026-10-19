@@ -104,7 +104,7 @@ for token in (
 job_test = read('packages/sessions/test/download_job_test.dart')
 require(job_test, 'coalesces tiny transport chunks before native/artifact ingress', 'DownloadJob framing regression')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
 if version is None or int(version.group(1)) < 179 or android is None or android.group(1) != version.group(1):
     raise SystemExit('dev.179+ version mismatch')

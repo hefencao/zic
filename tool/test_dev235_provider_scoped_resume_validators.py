@@ -15,7 +15,7 @@ def forbid(text: str, token: str, label: str) -> None:
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-build = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+build = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 android = re.search(r'^versionCode=(\d+)$', props, re.M)
 if build is None or int(build.group(1)) < 235:
     raise SystemExit('dev.235 app version missing')

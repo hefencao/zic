@@ -17,7 +17,7 @@ def require(body: str, token: str, label: str) -> None:
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-app_version = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+app_version = re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', pubspec, re.M)
 android_version = re.search(r'^versionCode=(\d+)$', props, re.M)
 if (app_version is None or android_version is None or
         app_version.group(1) != android_version.group(1) or

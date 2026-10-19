@@ -16,7 +16,7 @@ def require(text: str, token: str, owner: str) -> None:
 
 
 build_match = re.search(
-    r'^version:\s*0\.31\.0\+(\d+)\s*$',
+    r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',
     read('apps/app/pubspec.yaml'),
     re.M,
 )

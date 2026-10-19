@@ -19,7 +19,7 @@ def forbid(path, *markers):
     req(not present, f"{path} retains forbidden dev.292 coupling: {present}")
 
 pub = text("apps/app/pubspec.yaml")
-m = re.search(r"^version:\s+0\.31\.0\+(\d+)\s*$", pub, re.M)
+m = re.search(r"^version:\s+\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pub, re.M)
 req(m is not None and int(m.group(1)) >= 292, "dev.292 app version missing")
 
 require(

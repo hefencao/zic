@@ -122,7 +122,7 @@ require(cat_test, 'default filter browse has a distinct cache mode from source s
 plugin_test = read('packages/plugin_host/test/runtime_source_adapter_test.dart')
 require(plugin_test, "arguments['useFilters'], isTrue", 'runtime mode regression test')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 171:
     raise SystemExit('App build must be at least 171')
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)

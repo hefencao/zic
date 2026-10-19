@@ -9,7 +9,7 @@ def require(path: str, *tokens: str) -> None:
     if missing: raise SystemExit(f'FAIL: {path} missing dev.296 tokens: {missing}')
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-dev_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+dev_match = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.M)
 android_match = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 if dev_match is None or int(dev_match.group(1)) < 296:
     raise SystemExit('FAIL: dev.296+ app version missing')

@@ -7,7 +7,7 @@ def read(p): return (ROOT/p).read_text(encoding='utf-8')
 def req(c,m):
     if not c: raise SystemExit('FAIL: '+m)
 pub=read('apps/app/pubspec.yaml')
-m=re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$',pub,re.M)
+m=re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$',pub,re.M)
 req(m is not None and int(m.group(1))>=268,'App build must be >=268')
 req(f'versionCode={m.group(1)}' in read('apps/app/android/zic-version.properties'),'Android version mismatch')
 net=read('packages/sessions/lib/src/net_lane.dart')

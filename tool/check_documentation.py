@@ -113,14 +113,15 @@ if "章节目录直接以 `SliverList`" in architecture[home_start:details_start
     raise SystemExit("FAIL: details layout leaked into Home composition architecture")
 
 app_pubspec = (ROOT / "apps/app/pubspec.yaml").read_text(encoding="utf-8")
-match = re.search(r"^version:\s*0\.31\.0\+(\d+)$", app_pubspec, re.M)
+match = re.search(r"^version:\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\+(\d+)$", app_pubspec, re.M)
 if match is None:
     raise SystemExit("FAIL: cannot read App build number")
-build = match.group(1)
-if f"0.31.0-dev.{build}" not in status or f"0.31.0+{build}" not in status:
+version, build = match.groups()
+source_version = version if '-' in version else f"{version}-dev.{build}"
+if f"源码版本：{source_version}" not in status or f"App build：{version}+{build}" not in status:
     raise SystemExit("FAIL: Status version does not match App pubspec")
 handoff = (ROOT / "docs/NEXT_CHAT_HANDOFF.md").read_text(encoding="utf-8")
-if f"dev.{build}" not in handoff:
+if f"{version}+{build}" not in handoff:
     raise SystemExit("FAIL: Handoff baseline does not match App build")
 
 print("documentation responsibilities: OK")

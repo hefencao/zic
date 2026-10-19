@@ -21,7 +21,7 @@ def require(path: str, *markers: str) -> None:
     req(not missing, f'{path} missing dev.284 supersession contract: {missing}')
 
 pubspec = text('apps/app/pubspec.yaml')
-m = re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+m = re.search(r'^version:\s+\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.M)
 req(m is not None and int(m.group(1)) >= 284, 'dev.284 app version history missing')
 
 adr = text('docs/archive/adr/0263-vertical-composition-boundary-retention.md')

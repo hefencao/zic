@@ -41,7 +41,7 @@ for marker in (
     if marker not in TEST:
         raise SystemExit(f'dev.204 NetLane test contract missing: {marker}')
 
-build = int(re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC).group(1))
+build = int(re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC).group(1))
 if build >= 206:
     resolver = (ROOT / 'packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart').read_text()
     kotlin = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraResolverHttpTransport.kt').read_text()
@@ -73,7 +73,7 @@ for marker in ('is InputStream -> runCatching { connection.close() }', 'is HttpU
     if marker not in cancel_block:
         raise SystemExit(f'dev.204 request-scoped physical cancel marker missing: {marker}')
 
-m = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+m = re.search(r'version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)', PUBSPEC)
 if not m or int(m.group(1)) < 204:
     raise SystemExit('dev.204 pubspec version missing')
 m = re.search(r'versionCode=(\d+)', ANDROID)

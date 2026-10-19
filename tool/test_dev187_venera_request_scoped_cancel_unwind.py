@@ -23,7 +23,7 @@ def reject(path: str, *tokens: str) -> None:
 venera_path = "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt"
 
 pubspec_now = read("apps/app/pubspec.yaml")
-build_now = int(re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec_now, re.MULTILINE).group(1))
+build_now = int(re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec_now, re.MULTILINE).group(1))
 if build_now >= 206:
     require(
         venera_path,
@@ -94,7 +94,7 @@ require(
 require("tool/check.sh", "test_dev187_venera_request_scoped_cancel_unwind.py")
 
 pubspec = read("apps/app/pubspec.yaml")
-version_match = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.MULTILINE)
+version_match = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", pubspec, re.MULTILINE)
 if not version_match or int(version_match.group(1)) < 187:
     raise SystemExit("app version is below dev.187")
 android = read("apps/app/android/zic-version.properties")

@@ -104,7 +104,7 @@ require(
 require('tool/check.sh', 'test_dev186_venera_previous_pressure_source_open_stages.py')
 
 pubspec = read('apps/app/pubspec.yaml')
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.MULTILINE)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', pubspec, re.MULTILINE)
 android = re.search(
     r'^versionCode=(\d+)\s*$',
     read('apps/app/android/zic-version.properties'),

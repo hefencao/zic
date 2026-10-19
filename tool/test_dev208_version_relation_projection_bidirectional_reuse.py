@@ -113,7 +113,7 @@ require(
     "resolved related reuse is bidirectional across an inserted page",
     "bidirectional reuse regression coverage",
 )
-version = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
+version = re.search(r"^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
 if version is None or int(version.group(1)) < 208:
     raise SystemExit("App build must be at least 208")
 if int(version.group(1)) >= 230:

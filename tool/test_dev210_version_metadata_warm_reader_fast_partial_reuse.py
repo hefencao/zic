@@ -262,7 +262,7 @@ for token in (
 ):
     require(reuse_test, token, 'dev.210 reuse regression coverage')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+version = re.search(r'^version:\s*\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 210:
     raise SystemExit('App build must be at least 210')
 build = int(version.group(1))

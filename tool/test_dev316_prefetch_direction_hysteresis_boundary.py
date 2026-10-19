@@ -4,7 +4,7 @@ import re
 ROOT=Path(__file__).resolve().parents[1]
 def read(p): return (ROOT/p).read_text(encoding='utf-8')
 version=read('apps/app/pubspec.yaml'); props=read('apps/app/android/zic-version.properties')
-m=re.search(r'^version: 0\.31\.0\+(\d+)$', version, re.M)
+m=re.search(r'^version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+(\d+)$', version, re.M)
 if m is None or 'versionCode=' not in props: raise SystemExit('dev.316 version metadata missing')
 code=int(m.group(1))
 predictor=read('packages/pipeline/lib/src/browsing_direction_predictor.dart')
