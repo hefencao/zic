@@ -112,6 +112,7 @@ extension _HomeShellDetailsActions on _HomeShellState {
         for (final entry in entries) {
           final folder = await widget.folderRefresher(entry.chapter);
           final refreshed = imageFolderChapterRecord(folder).copyWith(
+            directoryRecursive: entry.chapter.directoryRecursive,
             comicId: entry.chapter.comicId,
             comicTitle: entry.chapter.comicTitle,
             comicAuthors: entry.chapter.comicAuthors,

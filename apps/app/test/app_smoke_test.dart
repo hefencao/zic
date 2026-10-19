@@ -420,31 +420,23 @@ void main() {
     expect(find.byTooltip('删除本地记录'), findsNothing);
   });
 
-  testWidgets('picked folder navigates to the folder reader', (tester) async {
-    final result = Completer<PickedImageFolder?>();
-    final folder = _folderFixture();
-    await tester.pumpWidget(App(folderPicker: () => result.future));
+  testWidgets('local import opens a preview before choosing or publishing content', (tester) async {
+    var picks = 0;
+    final store = MemoryImportedLibraryStore();
+    await tester.pumpWidget(App(libraryStore: store,
+      directoryPicker: () async { picks++; return null; }));
 
     final folderEntry = find.byKey(homeFolderImportActionKey);
     await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);
-    await tester.pump();
-    expect(find.byKey(localImageFolderPickerProgressKey), findsOneWidget);
-
-    result.complete(folder);
-    await _pumpUntilFound(
-      tester,
-      find.byKey(imageFolderScreenKey, skipOffstage: false),
-    );
-
-    expect(
-      find.byKey(imageFolderScreenKey, skipOffstage: false),
-      findsOneWidget,
-    );
-
-    await _disposePipelineReader(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('导入本地漫画'), findsOneWidget);
+    expect(find.byKey(imageFolderScreenKey), findsNothing);
+    expect(picks, 0);
+    expect(await store.list(), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('folder reader switches mixed image files by explicit identity', (
@@ -538,24 +530,25 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
-  testWidgets('cancelled folder picker stays on home', (tester) async {
-    final result = Completer<PickedImageFolder?>();
-    await tester.pumpWidget(App(folderPicker: () => result.future));
+  testWidgets('cancelled directory picker keeps the import preview empty', (tester) async {
+    final result = Completer<String?>();
+    await tester.pumpWidget(App(directoryPicker: () => result.future));
 
     final folderEntry = find.byKey(homeFolderImportActionKey);
     await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选择目录'));
     await tester.pump();
-    expect(find.byKey(localImageFolderPickerProgressKey), findsOneWidget);
 
     result.complete(null);
     await tester.pumpAndSettle();
 
     expect(find.byKey(imageFolderScreenKey), findsNothing);
-    expect(find.byKey(homeFolderImportActionKey), findsOneWidget);
-    expect(find.byKey(localImageFolderPickerProgressKey), findsNothing);
+    expect(find.text('选择目录'), findsOneWidget);
+    expect(find.text('导入所选漫画'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

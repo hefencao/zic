@@ -602,6 +602,22 @@ final class PersistentChapterDownloadService
                     _downloadId(manifest, manifest.pages.first),
                   ),
           );
+          // Migration rewrites the exact locators and may remove the flat
+          // files. Refresh affected snapshot entries before building the reuse
+          // index; its strong identity must resolve the current physical file.
+          final migratedKeys = indexedRecords.values.where((record) =>
+              record.id.content.sourceId == manifest.sourceId &&
+              record.id.content.comicId == entry.chapter.comicId &&
+              record.id.content.chapterId == previous.chapterId)
+            .map((record) => record.key).toList();
+          for (final key in migratedKeys) {
+            final current = await artifactStore._index.get(key);
+            if (current == null) {
+              indexedRecords.remove(key);
+            } else {
+              indexedRecords[key] = current;
+            }
+          }
         }
       }
 

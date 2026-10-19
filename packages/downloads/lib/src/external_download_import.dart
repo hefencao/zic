@@ -19,10 +19,11 @@ import 'external_download_tree.dart';
 part 'external_download_metadata.dart';
 part 'external_download_archive.dart';
 
-enum ExternalDownloadFormat { auto, ehViewer, mihon, venera }
+enum ExternalDownloadFormat { auto, localFolder, ehViewer, mihon, venera }
 
 String externalDownloadFormatName(ExternalDownloadFormat format) => switch (format) {
   ExternalDownloadFormat.auto => '自动识别',
+  ExternalDownloadFormat.localFolder => '普通本地目录',
   ExternalDownloadFormat.ehViewer => 'EHViewer',
   ExternalDownloadFormat.mihon => 'Mihon / Tachiyomi',
   ExternalDownloadFormat.venera => 'Venera',
@@ -66,6 +67,8 @@ final class ExternalDownloadComic {
   final String? description;
   final String? foreignIdentity;
   int get pageCount => chapters.fold(0, (sum, chapter) => sum + chapter.pages.length);
+  bool get canReadDirectly => format == ExternalDownloadFormat.localFolder &&
+      chapters.every((chapter) => !chapter.archive);
 }
 
 final class ExternalDownloadScan {
@@ -109,6 +112,7 @@ final class ExternalDownloadScanner {
             externalChildPath(directory.key, file.name),
     ];
     final venera = <_VeneraComic>[];
+    final veneraRoots = databasePaths.map((path) => p.posix.dirname(path)).toSet();
     if (format == ExternalDownloadFormat.venera || format == ExternalDownloadFormat.auto) {
       if (databasePaths.length == 1) {
         try {
@@ -128,9 +132,29 @@ final class ExternalDownloadScanner {
     for (final directory in directories.entries) {
       check();
       final files = directory.value.where((file) => !file.isDirectory).toList();
-      final images = files.where((file) => _isExternalPage(file.name)).map(
+      final images = files.where((file) => _isExternalPage(file.name) ||
+          ((format == ExternalDownloadFormat.auto || format == ExternalDownloadFormat.localFolder) &&
+            !_skipExternalName(file.name) && RegExp(r'\.(jpe?g|png|gif|webp|avif|jxl|bmp|heic|heif)$',
+              caseSensitive: false).hasMatch(file.name))).map(
         (file) => externalChildPath(directory.key, file.name),
       ).toList();
+      // Ordinary folders also accept images with an absent/unusual extension,
+      // matching the local-media header-based import contract.
+      if (format == ExternalDownloadFormat.auto || format == ExternalDownloadFormat.localFolder) {
+        for (final file in files) {
+          if (_skipExternalName(file.name) || _isExternalPage(file.name) ||
+              RegExp(r'^(cover|thumb|thumbnail)\.|\.(cbz|xml|db)(-wal|-shm)?$',
+                caseSensitive: false).hasMatch(file.name)) continue;
+          final path = externalChildPath(directory.key, file.name);
+          try {
+            if (await _externalHasImageHeader(tree, path, check)) images.add(path);
+          } on Object catch (error) {
+            check();
+            warnings.add('$path：无法检查文件，$error');
+          }
+        }
+        images.sort(_naturalCompare);
+      }
       final inputs = <({String path, List<String> pages, bool archive})>[
         if (images.isNotEmpty) (path: directory.key, pages: images, archive: false),
         for (final file in files)
@@ -170,10 +194,22 @@ final class ExternalDownloadScanner {
           if (pages.length > _maxEntries) throw const FormatException('单章页数过多');
           final effective = format != ExternalDownloadFormat.auto ? format
               : eh || info.isEh ? ExternalDownloadFormat.ehViewer
-              : venera.isNotEmpty ? ExternalDownloadFormat.venera
-              : ExternalDownloadFormat.mihon;
+              : veneraRoots.any((root) => root == '.' || input.path == root ||
+                  input.path.startsWith('$root/')) ? ExternalDownloadFormat.venera
+              : info.hasComicInfo ? ExternalDownloadFormat.mihon
+              : ExternalDownloadFormat.localFolder;
+          if (!input.archive) {
+            final body = pages.where((path) => !(effective == ExternalDownloadFormat.localFolder
+                ? RegExp(r'^cover\.', caseSensitive: false)
+                : RegExp(r'^(cover|thumb|thumbnail)\.', caseSensitive: false))
+                  .hasMatch(p.posix.basename(path))).toList();
+            pages = body.isEmpty && effective == ExternalDownloadFormat.localFolder
+                ? pages.take(1).toList() : body;
+            if (pages.isEmpty) continue;
+          }
           var comicPath = effective == ExternalDownloadFormat.ehViewer
               ? (input.archive ? p.posix.dirname(input.path) : input.path)
+              : effective == ExternalDownloadFormat.localFolder ? input.path
               : p.posix.dirname(input.path);
           if (comicPath == '.') comicPath = '';
           _VeneraComic? databaseComic;
@@ -250,7 +286,9 @@ final class ExternalDownloadScanner {
         path: group.key,
         title: db?.title ?? info.series ??
             (formats[group.key] == ExternalDownloadFormat.ehViewer ? info.title : null) ??
-            _externalDisplayName(group.key, tree.displayName),
+            (group.value.singleOrNull?.archive == true
+                ? p.posix.basenameWithoutExtension(group.key)
+                : _externalDisplayName(group.key, tree.displayName)),
         format: formats[group.key]!, chapters: List.unmodifiable(group.value),
         authors: db?.authors ?? info.authors, tags: db?.tags ?? info.tags,
         description: db?.description ?? info.description,
@@ -470,6 +508,18 @@ Future<({String hash, String crc32, String extension, int length})>
 }
 
 String _digestText(String text) => sha256.convert(utf8.encode(text)).toString();
+Future<bool> _externalHasImageHeader(ExternalDownloadTree tree, String path,
+    void Function() check) async {
+  final prefix = BytesBuilder(copy: false);
+  await for (final chunk in tree.read(path)) {
+    check();
+    prefix.add(chunk.length > 128 - prefix.length
+        ? chunk.sublist(0, 128 - prefix.length) : chunk);
+    if (prefix.length >= 128) break;
+  }
+  check();
+  return sniffImageExtensionFromBytes(prefix.takeBytes()) != 'bin';
+}
 String _externalDisplayName(String path, String fallback) =>
     path.isEmpty || path == '.' ? fallback : p.posix.basename(path);
 bool _skipExternalName(String name) => name.startsWith('.') ||

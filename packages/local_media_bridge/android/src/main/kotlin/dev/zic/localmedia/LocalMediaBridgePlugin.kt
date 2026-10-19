@@ -498,7 +498,11 @@ class LocalMediaBridgePlugin :
     }
 
     private fun scanDirectory(treeUri: Uri): DirectoryScan {
-        val rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+        val rootDocumentId = if (treeUri.pathSegments.contains("document")) {
+            DocumentsContract.getDocumentId(treeUri)
+        } else {
+            DocumentsContract.getTreeDocumentId(treeUri)
+        }
         val rootUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocumentId)
         val rootName = queryDisplayName(rootUri).ifBlank { "本地图片" }
         val pending = ArrayDeque<PendingDirectory>()

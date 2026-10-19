@@ -11,7 +11,7 @@
 - dev.269 区分 demanded=true 与闲置流；TaskControl 支持有界 paced drain 与单 invocation 串行保障。
 - 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。rhttp前缀/正文异常统一typed network/cancelled failure，正文错误不附资源URL；已接纳的注入正文断流由provider retry保留原plan/Range/validators，不额外消耗source恢复次数。semantic admission失败在generation退休前记录既有恢复计数与丢弃字节。
 ### 存储与恢复 (Storage & Ingress)
-- Implemented：外部下载导入支持 EHViewer、Mihon 目录/CBZ、Venera DB/WAL 快照；只读原库，逐章校验后由原下载 owner 生成 ZIC 清单/索引与本地书架记录。重复导入、目录冲突和原文件移除后的 durable 读取已通过定向回归；设备及全门禁见状态JSON。
+- Verified-device：统一“导入本地漫画”，自动识别普通目录、EHViewer、Mihon/CBZ、Venera DB/WAL，预览漫画/章节。普通散图默认复制，可逐本显式直接读取；App/CBZ只复制。新链接持久化直属扫描，旧记录递归保持；SAF用实际子目录URI。多章迁移后定点刷新复用locator。验证见状态JSON。
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝cold partial由SQLite/文件裁决，不随意materialize durable-store。borrowed staging强刷修正空记录幂等失效及canonical READY仅删索引；复用原store副本清理。三回归/170测试通过；普通Release273实际借用1,112,520B后单次强刷，同physical epoch0→1、静置新帧及17,528,576B完整缓存提交通过，taskFailed0。
 - 断点恢复：保持 SourceEpoch、generation 与 frameUploaded / decode/upload 代际一致，提供 recoverable canonical partial。

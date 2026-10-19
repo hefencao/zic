@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
+import 'package:crypto/crypto.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
@@ -14,6 +15,45 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  for (final useSaf in [false, true]) {
+  test('multi-chapter transition reuses identical imported bytes at their migrated locator (SAF=$useSaf)', () async {
+    final temp = await Directory.systemTemp.createTemp('zic-import-chapter-transition-');
+    addTearDown(() => temp.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final input = await File('${temp.path}/input.png').writeAsBytes(body);
+    final uri = Uri.parse('zic-import://sha256/${sha256.convert(body)}/0');
+    final saf = useSaf ? _MemorySafIo(<String, Uint8List>{}) : null;
+    Future<PersistentChapterDownloadService> open() => PersistentChapterDownloadService.open(temp.path,
+      safTreeIo: saf, safTreeUri: useSaf ? 'content://fixture/tree/downloads' : null);
+    var service = await open();
+    addTearDown(() => service.close());
+    final entries = [for (var chapter = 1; chapter <= 2; chapter++) ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(directoryId: 'import:comic',
+        displayName: 'Chapter $chapter', sourceId: externalDownloadsSourceId,
+        comicId: 'comic', comicTitle: 'Imported comic', chapterId: 'chapter-$chapter',
+        sourceRevision: 'revision-$chapter', sequence: chapter,
+        pages: [ImportedPageRecord(displayName: '1.png', sourceId: uri.toString(),
+          pageId: 'same-page', contentKindHint: ContentKindHint.png, byteLength: body.length)]),
+    )];
+    for (final entry in entries) {
+      await service.importLocalChapter(entry, {uri: input});
+      expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
+    }
+    final records = await service.artifactStore.indexedRecords();
+    for (var index = 0; index < entries.length; index++) {
+      final record = records.values.singleWhere((record) => record.id.content.chapterId == 'chapter-${index + 1}');
+      final path = parseSafRecordPath(record.path)?.relativePath ?? record.path;
+      expect(path, endsWith('Chapter ${index + 1}/001.png'));
+    }
+    await service.close();
+    service = await open();
+    for (final entry in entries) expect(await service.readPage(entry, 0), body);
+    await service.delete(entries.first);
+    expect(await service.readPage(entries.last, 0), body);
+    expect(await input.readAsBytes(), body);
+  });
+  }
+
   for (final chapterCount in <int>[1, 128]) {
   test('large management projection yields event turns across $chapterCount chapters',
       () async {

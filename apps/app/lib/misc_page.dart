@@ -111,7 +111,7 @@ final class MiscPage extends StatelessWidget {
               child: _QuickAction(
                 key: miscImportEntryKey,
                 icon: Icons.create_new_folder_outlined,
-                label: '导入漫画',
+                label: '导入本地漫画',
                 onTap: onImportFolder,
               ),
             ),

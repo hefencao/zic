@@ -3,7 +3,7 @@ part of 'external_download_import.dart';
 final class _ExternalMetadata {
   const _ExternalMetadata({this.title, this.series, this.description,
     this.authors = const [], this.tags = const [], this.pageCount,
-    this.identity, this.isEh = false});
+    this.identity, this.isEh = false, this.hasComicInfo = false});
   final String? title;
   final String? series;
   final String? description;
@@ -12,6 +12,7 @@ final class _ExternalMetadata {
   final int? pageCount;
   final String? identity;
   final bool isEh;
+  final bool hasComicInfo;
 
   _ExternalMetadata mergeEh(Uint8List bytes) {
     // Legacy SpiderInfo VERSION2 and v1 are line based. Current binary
@@ -28,7 +29,8 @@ final class _ExternalMetadata {
     return _ExternalMetadata(title: title, series: series, description: description,
       authors: authors, tags: tags,
       pageCount: count != null && count > 0 ? count : pageCount,
-      identity: gid != null && gid > 0 ? 'eh:$gid' : identity, isEh: true);
+      identity: gid != null && gid > 0 ? 'eh:$gid' : identity, isEh: true,
+      hasComicInfo: hasComicInfo);
   }
 }
 
@@ -56,7 +58,7 @@ _ExternalMetadata _readComicInfo(Uint8List bytes) {
     authors: {...list('Writer'), ...list('Penciller')}.toList(),
     tags: {...list('Genre'), ...list('Tags'), ...list('CategoriesTachiyomi')}.toList(),
     pageCount: pageCount != null && pageCount > 0 ? pageCount : null,
-    identity: web == null ? null : _digestText(web), isEh: isEh,
+    identity: web == null ? null : _digestText(web), isEh: isEh, hasComicInfo: true,
   );
 }
 

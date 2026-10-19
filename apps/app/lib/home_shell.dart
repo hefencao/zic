@@ -28,7 +28,8 @@ import 'debug_trace_export.dart';
 import 'diagnostic_error_ui.dart';
 import 'deferred_reader_route.dart';
 import 'download_manager.dart';
-import 'external_download_import_screen.dart';
+import 'local_comic_import_screen.dart';
+import 'local_comic_import_source.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'library_backup.dart';
 import 'library_diagnostics.dart';
@@ -157,7 +158,7 @@ String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
 final class HomeShell extends StatefulWidget {
   const HomeShell({
     required this.picker,
-    required this.folderPicker,
+    required this.directoryPicker,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     this.homeProjectionSnapshotStore,
@@ -183,7 +184,7 @@ final class HomeShell extends StatefulWidget {
           'a supplied whole-comic queue must share the supplied chapter service',
         );
   final WebpPicker picker;
-  final ImageFolderPicker folderPicker;
+  final Future<String?> Function() directoryPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
   final HomeProjectionSnapshotStore? homeProjectionSnapshotStore;
@@ -1319,45 +1320,26 @@ final class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  Future<void> _importImageFolder() async {
+  Future<void> _importLocalComics() async {
     if (_picking || _pickingFolder) {
       return;
     }
     setState(() => _pickingFolder = true);
     try {
-      await attachAndroidPlugin('file_selector_android');
-      await attachAndroidPlugin('local_media_bridge');
-      final folder = await widget.folderPicker();
-      if (!mounted || folder == null) {
-        return;
-      }
       await _ensureLibraryReady();
-      final record = imageFolderChapterRecord(folder);
-      // Match the local-comic ownership used by Venera without copying the
-      // whole SAF tree: publish a small retained cover artifact before the
-      // library entry becomes the long-lived Home/Bookshelf identity.
-      await this._materializeLocalFolderCover(record);
-      final entry = await _librarySession.upsertChapter(record);
-      final existingPreference = await _library.getComicPreference(
-        record.sourceId,
-        record.comicId,
-      );
-      if (existingPreference == null) {
-        final preference = ComicPreference.defaults(
-          sourceId: record.sourceId,
-          comicId: record.comicId,
-          customOrder: _preferences.length,
-        ).copyWith(updatedAt: DateTime.now().toUtc());
-        await _librarySession.persistPreference(preference);
-      }
-      if (!mounted) {
-        return;
-      }
-      await _openImportedChapter(entry);
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(MaterialPageRoute(
+        builder: (_) => LocalComicImportScreen(
+          directoryPicker: widget.directoryPicker,
+          importChapter: _downloadCommands.importLocalChapter,
+          linkChapter: _linkLocalChapter,
+          stopImports: _downloadCommands.stopLocalImports,
+        ),
+      ));
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          copyableDiagnosticSnackBar('导入图片文件夹失败：$error'),
+          copyableDiagnosticSnackBar('导入本地漫画失败：$error'),
         );
       }
     } finally {
@@ -1367,15 +1349,29 @@ final class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  Future<void> _importExternalDownloads() async {
+  Future<ImportedLibraryEntry> _linkLocalChapter(
+    ExternalDownloadTree tree, ExternalDownloadComic comic, ExternalDownloadChapter chapter,
+    {required void Function() checkCancelled}
+  ) async {
     await _ensureLibraryReady();
-    if (!mounted) return;
-    await Navigator.of(context).push<void>(MaterialPageRoute(
-      builder: (_) => ExternalDownloadImportScreen(
-        importChapter: _downloadCommands.importLocalChapter,
-        stopImports: _downloadCommands.stopLocalImports,
-      ),
-    ));
+    checkCancelled();
+    await attachAndroidPlugin('local_media_bridge');
+    final record = await linkedLocalComicChapter(tree, comic, chapter,
+      checkCancelled: checkCancelled);
+    await this._materializeLocalFolderCover(record);
+    checkCancelled();
+    final existing = await _library.get(record.sourceId, record.chapterId);
+    checkCancelled();
+    final entry = await _librarySession.upsertChapter(existing == null ? record :
+        record.copyWith(importedAt: existing.chapter.importedAt));
+    final preference = await _library.getComicPreference(record.sourceId, record.comicId);
+    if (preference == null) {
+      await _librarySession.persistPreference(ComicPreference.defaults(
+        sourceId: record.sourceId, comicId: record.comicId,
+        customOrder: _preferences.length,
+      ).copyWith(updatedAt: DateTime.now().toUtc()));
+    }
+    return entry;
   }
 
   Future<void> _openImportedChapter(
@@ -1725,15 +1721,9 @@ final class _HomeShellState extends State<HomeShell> {
             ),
           if (_navigationIndex < 2)
             IconButton(
-              tooltip: '导入其他 App 下载',
-              onPressed: _importExternalDownloads,
-              icon: const Icon(Icons.move_to_inbox_outlined),
-            ),
-          if (_navigationIndex < 2)
-            IconButton(
               key: homeFolderImportActionKey,
-              tooltip: '导入漫画文件夹',
-              onPressed: _picking || _pickingFolder ? null : _importImageFolder,
+              tooltip: '导入本地漫画',
+              onPressed: _picking || _pickingFolder ? null : _importLocalComics,
               icon: _pickingFolder
                   ? const SizedBox.square(
                       key: localImageFolderPickerProgressKey,

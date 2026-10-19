@@ -183,6 +183,7 @@ class SafStore {
             name: map['name'] as String? ?? '',
             isDirectory: map['isDirectory'] == true,
             length: (map['length'] as num?)?.toInt() ?? 0,
+            uri: map['uri'] as String?,
           );
         }).toList();
       },
@@ -195,11 +196,13 @@ final class SafEntry {
     required this.name,
     required this.isDirectory,
     required this.length,
+    this.uri,
   });
 
   final String name;
   final bool isDirectory;
   final int length;
+  final String? uri;
 }
 
 enum SafMode { read, writeAppend, writeTruncate }

@@ -21,6 +21,7 @@ import 'background_tasks.dart';
 import 'chapter_download_directory.dart';
 import 'artifact_presentation_file_bridge.dart';
 import 'debug_trace.dart';
+import 'directory_picker.dart';
 import 'home_shell.dart';
 import 'home_library_session.dart';
 import 'resettable_single_flight.dart';
@@ -1575,7 +1576,7 @@ final class App extends StatefulWidget {
   const App({
     this.useLightStartupTheme = false,
     this.picker = defaultWebpPicker,
-    this.folderPicker = defaultImageFolderPicker,
+    this.directoryPicker = pickDirectory,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     this.homeProjectionSnapshotStore,
@@ -1604,7 +1605,7 @@ final class App extends StatefulWidget {
 
   final bool useLightStartupTheme;
   final WebpPicker picker;
-  final ImageFolderPicker folderPicker;
+  final Future<String?> Function() directoryPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
   final HomeProjectionSnapshotStore? homeProjectionSnapshotStore;
@@ -1672,7 +1673,7 @@ final class _AppState extends State<App> {
           child: HomeShell(
             key: widget.homeKey,
             picker: widget.picker,
-            folderPicker: widget.folderPicker,
+            directoryPicker: widget.directoryPicker,
             folderRefresher: widget.folderRefresher,
             libraryStore: widget.libraryStore,
             homeProjectionSnapshotStore: widget.homeProjectionSnapshotStore,
@@ -1799,7 +1800,7 @@ ColorScheme _darkColorScheme({required bool amoled}) {
 
 Widget createApp({
   dynamic picker,
-  dynamic folderPicker,
+  dynamic directoryPicker,
   dynamic folderRefresher,
   dynamic libraryStore,
   dynamic homeProjectionSnapshotStore,
@@ -1822,9 +1823,9 @@ Widget createApp({
 }) {
   return App(
     picker: picker is WebpPicker ? picker : defaultWebpPicker,
-    folderPicker: folderPicker is ImageFolderPicker
-        ? folderPicker
-        : defaultImageFolderPicker,
+    directoryPicker: directoryPicker is Future<String?> Function()
+        ? directoryPicker
+        : pickDirectory,
     folderRefresher: folderRefresher is ImageFolderRefresher
         ? folderRefresher
         : defaultImageFolderRefresher,

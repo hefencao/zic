@@ -1065,6 +1065,7 @@ class MainActivity : FlutterActivity() {
                 "name" to file.name,
                 "isDirectory" to file.isDirectory,
                 "length" to file.length(),
+                "uri" to file.uri.toString(),
             )
         }
     }

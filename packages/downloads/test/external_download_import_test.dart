@@ -25,6 +25,45 @@ void main() {
     return file.writeAsBytes(bytes);
   }
 
+  test('auto scan keeps ordinary directories separate and recognizes unusual image extensions', () async {
+    await write('ordinary/A/10.png', _png);
+    await write('ordinary/A/2.bin', _png);
+    await write('ordinary/A/cover.png', _png);
+    await write('ordinary/A/thumb.png', _png);
+    await write('ordinary/B/cover.png', _png);
+    final scan = await ExternalDownloadScanner().scan(DirectoryExternalDownloadTree('${root.path}/ordinary'));
+    expect(scan.warnings, isEmpty);
+    expect(scan.comics.map((comic) => comic.path), ['A', 'B']);
+    expect(scan.comics.every((comic) => comic.format == ExternalDownloadFormat.localFolder && comic.canReadDirectly), true);
+    expect(scan.comics.first.chapters.single.pages, ['A/2.bin', 'A/10.png', 'A/thumb.png']);
+    expect(scan.comics.last.chapters.single.pages, ['B/cover.png']);
+  });
+
+  test('auto scan restricts App metadata and archives to copy import', () async {
+    await write('mixed/Ordinary/1.png', _png);
+    await write('mixed/Source/Series/Chapter/1.png', _png);
+    await write('mixed/Source/Series/Chapter/ComicInfo.xml', utf8.encode(
+      '<ComicInfo><Series>Series</Series><Title>First</Title></ComicInfo>'));
+    final archive = Archive()..add(ArchiveFile('1.png', _png.length, _png));
+    await write('mixed/Archive.cbz', ZipEncoder().encode(archive));
+    final scan = await ExternalDownloadScanner().scan(DirectoryExternalDownloadTree('${root.path}/mixed'));
+    expect(scan.comics, hasLength(3));
+    expect(scan.comics.singleWhere((comic) => comic.title == 'Ordinary').canReadDirectly, true);
+    expect(scan.comics.singleWhere((comic) => comic.format == ExternalDownloadFormat.mihon).canReadDirectly, false);
+    expect(scan.comics.singleWhere((comic) => comic.title == 'Archive').canReadDirectly, false);
+  });
+
+  test('a nested App database does not classify unrelated ordinary directories as App downloads', () async {
+    await write('mixed/Ordinary/1.png', _png);
+    await write('mixed/Venera/Comic/1.png', _png);
+    await write('mixed/Venera/local.db', utf8.encode('invalid snapshot'));
+    final scan = await ExternalDownloadScanner().scan(DirectoryExternalDownloadTree('${root.path}/mixed'));
+    expect(scan.comics, hasLength(2));
+    expect(scan.comics.singleWhere((comic) => comic.path == 'Ordinary').canReadDirectly, true);
+    expect(scan.comics.singleWhere((comic) => comic.format == ExternalDownloadFormat.venera).canReadDirectly, false);
+    expect(scan.warnings, contains(contains('无法采用 Venera 数据库')));
+  });
+
   test('EHViewer legacy manifest preserves natural page order and reports a partial gallery', () async {
     await write('foreign/Gallery/00000010.jpg', _png);
     await write('foreign/Gallery/00000002.jpg', _png);

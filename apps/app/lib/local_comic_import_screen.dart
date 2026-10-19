@@ -13,24 +13,32 @@ import 'startup_platform.dart';
 
 typedef ExternalChapterImport = Future<ImportedLibraryEntry> Function(
   PreparedExternalChapter prepared, {required void Function() checkCancelled});
+typedef LocalChapterLink = Future<ImportedLibraryEntry> Function(
+  ExternalDownloadTree tree, ExternalDownloadComic comic, ExternalDownloadChapter chapter,
+  {required void Function() checkCancelled});
+
+enum LocalComicImportMode { copy, direct }
 
 /// Selection/progress only. Catalog publication and durable placement remain
 /// in HomeDownloadCommands; byte ownership remains in the download service.
-final class ExternalDownloadImportScreen extends StatefulWidget {
-  const ExternalDownloadImportScreen({super.key,
-    required this.importChapter, required this.stopImports});
+final class LocalComicImportScreen extends StatefulWidget {
+  const LocalComicImportScreen({super.key,
+    required this.importChapter, required this.linkChapter, required this.stopImports,
+    this.directoryPicker = pickDirectory});
   final ExternalChapterImport importChapter;
+  final LocalChapterLink linkChapter;
   final Future<void> Function() stopImports;
+  final Future<String?> Function() directoryPicker;
 
   @override
-  State<ExternalDownloadImportScreen> createState() => _ExternalDownloadImportScreenState();
+  State<LocalComicImportScreen> createState() => _LocalComicImportScreenState();
 }
 
-final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImportScreen> {
-  ExternalDownloadFormat _format = ExternalDownloadFormat.auto;
+final class _LocalComicImportScreenState extends State<LocalComicImportScreen> {
   ExternalDownloadTree? _tree;
   ExternalDownloadScan? _scan;
   final Set<String> _selected = {};
+  final Map<String, LocalComicImportMode> _modes = {};
   bool _busy = false;
   bool _stopped = false;
   String _progress = '';
@@ -52,7 +60,7 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
   Future<void> _chooseDirectory() async {
     setState(() { _busy = true; _error = null; });
     try {
-      final path = await pickDirectory();
+      final path = await widget.directoryPicker();
       if (!mounted || path == null) return;
       final tree = path.startsWith('saf://')
           ? SafExternalDownloadTree(
@@ -60,7 +68,7 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
               identity: path, displayName: _safRootName(path),
             )
           : DirectoryExternalDownloadTree(path);
-      setState(() { _tree = tree; _scan = null; _selected.clear(); _results.clear(); });
+      setState(() { _tree = tree; _scan = null; _selected.clear(); _modes.clear(); _results.clear(); });
     } on Object catch (error) {
       if (mounted) setState(() => _error = '选择目录失败：$error');
     } finally {
@@ -74,17 +82,18 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
     if (tree == null || _busy) return;
     setState(() {
       _busy = true; _stopped = false; _error = null; _scan = null;
-      _progress = '正在扫描下载目录与文件清单…'; _results.clear();
+      _progress = '正在识别漫画格式与章节…'; _results.clear();
     });
     try {
       final scan = await DownloadCommandLifetimes.instance.run((command) =>
-        ExternalDownloadScanner().scan(tree, format: _format,
+        ExternalDownloadScanner().scan(tree,
           checkCancelled: () => _check(command)));
       if (!mounted) return;
       setState(() {
         _scan = scan;
         _selected..clear()..addAll(scan.comics.map((comic) => comic.path));
-        _progress = scan.comics.isEmpty ? '没有找到可导入的下载内容' : '请选择要复制到 ZIC 的漫画';
+        _modes.clear();
+        _progress = scan.comics.isEmpty ? '没有找到可导入的漫画' : '核对漫画与章节后导入';
       });
     } on Object catch (error) {
       if (mounted) setState(() => _error = '扫描未完成：$error');
@@ -103,28 +112,40 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
     final total = comics.fold(0, (sum, comic) => sum + comic.chapters.length);
     try {
       await DownloadCommandLifetimes.instance.run((command) async {
-        final root = await getDefaultZicStorageRoot(applicationSupportPath: getStartupApplicationSupportPath);
-        _check(command);
         // This screen admits one import operation; its private run directory is
         // cleaned only after all transfer/worker futures have physically exited.
-        final run = await ExternalDownloadImportRun.open('$root/external_import_staging',
-          checkCancelled: () => _check(command));
+        ExternalDownloadImportRun? run;
         try {
+          if (comics.any((comic) => !comic.canReadDirectly ||
+              _modes[comic.path] != LocalComicImportMode.direct)) {
+            final root = await getDefaultZicStorageRoot(applicationSupportPath: getStartupApplicationSupportPath);
+            _check(command);
+            run = await ExternalDownloadImportRun.open('$root/external_import_staging',
+              checkCancelled: () => _check(command));
+          }
           for (final comic in comics) {
             for (final chapter in comic.chapters) {
               _check(command);
               PreparedExternalChapter? prepared;
               try {
                 setState(() => _progress = '${completed + failed + 1}/$total · ${comic.title} · ${chapter.title}');
-                prepared = await run.prepare(
-                  tree: tree, comic: comic, chapter: chapter,
-                  checkCancelled: () => _check(command),
-                );
-                _check(command);
-                await widget.importChapter(prepared, checkCancelled: () => _check(command));
+                final direct = comic.canReadDirectly &&
+                    _modes[comic.path] == LocalComicImportMode.direct;
+                if (direct) {
+                  await widget.linkChapter(tree, comic, chapter,
+                    checkCancelled: () => _check(command));
+                } else {
+                  prepared = await run!.prepare(
+                    tree: tree, comic: comic, chapter: chapter,
+                    checkCancelled: () => _check(command),
+                  );
+                  _check(command);
+                  await widget.importChapter(prepared, checkCancelled: () => _check(command));
+                }
                 _check(command);
                 completed++;
-                setState(() => _results.add('${comic.title} · ${chapter.title}：已导入 ${chapter.pages.length} 页'));
+                setState(() => _results.add('${comic.title} · ${chapter.title}：'
+                  '${direct ? '已添加，直接读取' : '已复制到 ZIC'} · ${chapter.pages.length} 页'));
               } on Object catch (error) {
                 _check(command);
                 failed++;
@@ -135,7 +156,7 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
             }
           }
         } finally {
-          await run.dispose();
+          await run?.dispose();
         }
       });
       if (mounted) setState(() => _progress = '完成 $completed 章，失败 $failed 章');
@@ -143,7 +164,7 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
       if (mounted) {
         setState(() {
           _progress = '已导入 $completed 章，失败 $failed 章';
-          _error = '$error。已完成的副本保留，可重新扫描后继续导入。';
+          _error = '$error。已完成的漫画保留，可重新扫描后继续导入。';
         });
       }
     } finally {
@@ -157,24 +178,14 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
     return PopScope(
       canPop: !_busy,
       child: Scaffold(
-        appBar: AppBar(title: const Text('导入其他 App 下载')),
+        appBar: AppBar(title: const Text('导入本地漫画')),
         body: ListView(padding: const EdgeInsets.all(16), children: [
-          const Text('将 EHViewer、Mihon 或 Venera 的下载复制到 ZIC，原文件保留。导入后可离线阅读；同名漫画会使用独立目录。'),
+          const Text('选择目录后自动识别普通图片目录、EHViewer、Mihon / Tachiyomi 和 Venera 下载，预览漫画与章节后导入。'),
           const SizedBox(height: 12),
-          DropdownButtonFormField<ExternalDownloadFormat>(
-            initialValue: _format,
-            decoration: const InputDecoration(labelText: '原 App 格式'),
-            items: [for (final format in ExternalDownloadFormat.values)
-              DropdownMenuItem(value: format, child: Text(externalDownloadFormatName(format)))],
-            onChanged: _busy ? null : (format) => setState(() {
-              _format = format!; _scan = null; _selected.clear(); _results.clear();
-            }),
-          ),
-          const SizedBox(height: 12),
-          const Text('选择下载根目录或单本漫画目录。Mihon 支持图片章节与 CBZ；Venera 可在目录中附带导出的 local.db，以保留章节标题和顺序。请先停止原 App 的下载，再扫描。'),
+          const Text('默认复制到 ZIC，原文件保留。普通图片目录可自行选择直接读取；App 下载与 CBZ 使用复制导入。扫描 App 下载前请先停止原 App 的下载；Venera 可附带导出的 local.db 保留章节信息。'),
           const SizedBox(height: 8),
           OutlinedButton.icon(onPressed: _busy ? null : _chooseDirectory,
-            icon: const Icon(Icons.folder_open), label: const Text('选择下载目录')),
+            icon: const Icon(Icons.folder_open), label: const Text('选择目录')),
           if (_tree != null) ...[
             SelectableText(_tree!.displayName),
             TextButton(onPressed: _busy ? null : _scanDirectory, child: const Text('重新扫描')),
@@ -188,26 +199,53 @@ final class _ExternalDownloadImportScreenState extends State<ExternalDownloadImp
           if (scan != null) ...[
             for (final warning in scan.warnings) Padding(padding: const EdgeInsets.only(bottom: 8),
               child: Text(warning)),
-            for (final comic in scan.comics) CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(comic.title),
-              subtitle: Text('${externalDownloadFormatName(comic.format)} · ${comic.chapters.length} 章 · ${comic.pageCount} 页\n'
-                '${comic.path.isEmpty ? _tree!.displayName : comic.path}'
-                '${comic.chapters.any((c) => c.warning != null) ? '\n${comic.chapters.where((c) => c.warning != null).map((c) => '${c.title}：${c.warning}').join('\n')}' : ''}'),
-              value: _selected.contains(comic.path),
-              onChanged: _busy ? null : (selected) => setState(() {
-                if (selected == true) { _selected.add(comic.path); }
-                else { _selected.remove(comic.path); }
-              }),
-            ),
+            for (final comic in scan.comics) _comicPreview(comic),
             FilledButton.icon(onPressed: _busy || _selected.isEmpty ? null : _import,
-              icon: const Icon(Icons.file_download_outlined), label: const Text('复制并导入到 ZIC')),
+              icon: const Icon(Icons.file_download_outlined), label: const Text('导入所选漫画')),
           ],
           for (final result in _results) Padding(padding: const EdgeInsets.only(top: 8),
             child: SelectableText(result)),
         ]),
       ),
     );
+  }
+
+  Widget _comicPreview(ExternalDownloadComic comic) {
+    final mode = _modes[comic.path] ?? LocalComicImportMode.copy;
+    return Card(key: ValueKey(comic.path),
+      child: Padding(padding: const EdgeInsets.only(bottom: 8), child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CheckboxListTile(
+          title: Text(comic.title),
+          subtitle: Text('${externalDownloadFormatName(comic.format)} · ${comic.chapters.length} 章 · ${comic.pageCount} 页\n'
+            '${comic.path.isEmpty ? _tree!.displayName : comic.path}'),
+          value: _selected.contains(comic.path),
+          onChanged: _busy ? null : (selected) => setState(() {
+            if (selected == true) { _selected.add(comic.path); }
+            else { _selected.remove(comic.path); }
+          }),
+        ),
+        if (comic.canReadDirectly) Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: SegmentedButton<LocalComicImportMode>(
+            segments: const [
+              ButtonSegment(value: LocalComicImportMode.copy, label: Text('复制到 ZIC')),
+              ButtonSegment(value: LocalComicImportMode.direct, label: Text('直接读取')),
+            ],
+            selected: {mode},
+            onSelectionChanged: _busy ? null : (modes) => setState(() => _modes[comic.path] = modes.single),
+          )),
+        if (comic.canReadDirectly && mode == LocalComicImportMode.direct)
+          const Padding(padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text('直接读取依赖原目录和访问权限；移走或删除原文件后将无法阅读。')),
+        ExpansionTile(title: const Text('查看章节'), children: [
+          for (final chapter in comic.chapters) ListTile(dense: true,
+            title: Text(chapter.title),
+            subtitle: Text('${chapter.archive ? 'CBZ · ' : ''}${chapter.pages.length} 页'
+              '${chapter.warning == null ? '' : '\n${chapter.warning}'}')),
+        ]),
+      ],
+    )));
   }
 }
 

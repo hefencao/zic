@@ -153,7 +153,7 @@ extension _HomeShellViews on _HomeShellState {
                 onOpenDownloads: _openDownloadManager,
                 onImportFolder: _picking || _pickingFolder
                     ? null
-                    : () => unawaited(_importImageFolder()),
+                    : () => unawaited(_importLocalComics()),
               ),
             ),
           ],

@@ -8,6 +8,10 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Unify local and App-download import under “导入本地漫画”, with automatic format detection and expandable chapter previews. Default ordinary image folders to copies, allow explicit direct reading per comic, and keep App formats/CBZ copy-only. Persist direct-folder scan scope, preserve legacy recursion and resolve SAF subfolders through actual provider document URIs.
+
+- Refresh affected download-index locators after a single chapter moves into a multi-chapter layout, so identical images in later chapters reuse the migrated files. Cover Direct and SAF storage, restart and deletion with regression tests.
+
 - Import EHViewer image galleries, Mihon image chapters/CBZ and Venera downloads through a read-only preview and copy flow. Preserve available chapter metadata from ComicInfo and a private DB/WAL snapshot, verify page bytes and archive CRCs, and publish independent local library records through ZIC's existing manifest, download index, placement and pin owners. Support repeated imports, isolated title conflicts, cancellation and offline reading after source removal.
 
 - Fix the GitHub Actions translation artifact handoff to include the source-built OCR OpenCV package. Wait for both far-page warm requests before exercising raster eviction so the test does not assume asynchronous completion order.

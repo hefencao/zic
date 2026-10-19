@@ -296,11 +296,18 @@ Future<PickedImageFolder?> defaultImageFolderPicker() => pickLocalImageFolder();
 Future<PickedImageFolder> refreshPickedImageFolder(
   ImportedChapterRecord chapter, {
   LocalImageDirectoryRefresher? refreshDirectory,
+}) => loadImageFolder(chapter.directoryId,
+    recursive: chapter.directoryRecursive, refreshDirectory: refreshDirectory);
+
+Future<PickedImageFolder> loadImageFolder(
+  String directoryId, {
+  bool recursive = true,
+  LocalImageDirectoryRefresher? refreshDirectory,
 }) async {
   final selection = await (refreshDirectory ?? refreshLocalImageDirectory)(
-    chapter.directoryId,
+    directoryId,
   );
-  return _pickedImageFolderFromScan(
+  final folder = _pickedImageFolderFromScan(
     directoryId: selection.directoryId,
     displayName: selection.displayName,
     scan: selection.scan,
@@ -308,6 +315,12 @@ Future<PickedImageFolder> refreshPickedImageFolder(
         ? null
         : selection.directoryId,
   );
+  if (recursive) return folder;
+  final files = folder.files.where((image) => !image.displayName.replaceAll('\\', '/').contains('/')).toList();
+  if (files.isEmpty) throw const FormatException('原目录中没有可识别的直属图片，请重新扫描');
+  return PickedImageFolder(directoryPath: folder.directoryPath,
+    displayName: folder.displayName, files: files,
+    scannedFiles: folder.scannedFiles, unreadableFiles: folder.unreadableFiles);
 }
 
 Future<PickedImageFolder> defaultImageFolderRefresher(

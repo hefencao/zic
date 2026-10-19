@@ -45,7 +45,7 @@ Native implementation
 只有 `imageBytes` 读取/写入 byte store；details、browse、preview/comment 与 chapter metadata 的类型化响应只在当前 manager 内存中复用，冷 owner 重新调用 source。
 catalog response revision 分隔内存响应，不迁移或失效书库记录。`SavedComicRecord`/`ImportedChapterRecord` 属于独立 library authority，来源刷新与旧 locator 兼容继续由 Home composition 消费。
 retained 晋升沿用同一 response key：byte store 返回有效 durable payload 是否存在，已有副本只改生命周期元数据；transient 副本缺失时，manager 将仍未过期的内存响应后台补写为 retained，不重新请求来源。晋升意图由 manager 内部 claim 标识，精确失效、强制刷新和 clear 撤销该 claim；内存容量淘汰不撤销持久化意图。补写沿用原 persistence tail，不阻塞呈现或增加网络调度权威。
-Android `local-folder` 导入保持正文 SAF/document-tree identity，不复制整本图册；但 cover 是独立的长期 artwork resource：
+统一“导入本地漫画”先自动识别并预览；普通图片目录默认复制，显式选择直接读取才发布 `local-folder`，保持正文 SAF/document-tree identity。新链接只扫描当前目录直属图片，`directoryRecursive=false` 随章节持久化并约束刷新；旧记录缺省保留递归。cover 是独立的长期 artwork resource：
 根目录签名有效且主名精确为 `cover` 的图片优先作为封面并从 Reader 页序列排除，否则第一页同时承担封面与正文。
 App composition 在显式导入/刷新时预先 materialize retained cover：静态格式可由 `local_media_bridge` 生成约512×768的有界 derivative；
 GIF/WebP animation candidate 则持久化原始 encoded cover，避免把动画所有权错误降格为 Bitmap 首帧；
@@ -110,7 +110,7 @@ Android SAF 的 provider document-id/children-listing 缓存只属于路径解�
 
 composition-owned `ArtifactCacheManager`、artifact transport/read scheduler、
 verified-equivalence proof、章节/整本持久下载与来源 transport 组合。页面 session 状态本身由 `sessions` 拥有。
-外部下载导入的只读 tree、格式扫描、数据库快照和逐章私有 staging 归 `downloads`；
+本地漫画导入的只读 tree、普通目录/外部格式扫描、数据库快照和逐章私有 staging 归 `downloads`；无 App 清单的普通目录按图片所在目录独立成书，不猜测相邻目录的章节归属。
 EHViewer legacy `.ehviewer`/ComicInfo、Mihon 图片目录/CBZ、Venera `local.db` 分别投影成现有图片的章节模型。
 外部 SQLite 只在复制 DB 与 WAL 且复核输入稳定后，于私有快照上只读查询；它不替代 ZIC 的库或下载 index。
 解压、图片校验及 DB worker 仅接收文件路径/值与顶层函数，不传递 UI、取消回调或命令生命周期对象；调用者等待实际退出后再清理文件。
@@ -215,7 +215,8 @@ cache invalidation、session reset 与 network re-admission 全部留在 Pipelin
 ### Home 组合与生命周期
 
 首页顶栏显示 zic 文字名称。Debug 模式下单击应用名打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
-顶栏的外部下载导入页只持有选择、扫描/复制进度与取消 intent；`HomeDownloadCommands` 负责 durable service adoption、独立目录认领、`HomeLibrarySession` 章节/本地书架偏好发布和原下载服务调用。
+首页、书架顶栏与杂项共用“导入本地漫画”预览页，只持有目录/漫画选择、显式读取方式、章节预览、进度与取消 intent。普通图片目录默认复制，可逐本显式选择直接读取；App 格式与 CBZ 只复制，不推断外部远程关联。
+`HomeDownloadCommands` 负责副本的 durable service adoption、独立目录认领和原下载服务调用；Home 的直接读取入口解析实际目录 URI、限定预览图片并 materialize cover，两者均经 `HomeLibrarySession` 发布章节/本地书架偏好。SAF 子目录 URI 来自 provider 枚举，不拼接 document ID，刷新使用该 document 而非授权根。
 扫描及复制沿 `DownloadCommandLifetimes` 申请既有后台保护；停止等待读流、解压 worker 与 transfer 实际退出，才清理该次私有 staging。导入不修改原 App 文件/数据库，成功与已晋升 partial 均由原下载管理投影展示。
 测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
 Debug 首页的一键 Trace 导出位于顶栏应用名之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
@@ -2169,6 +2170,7 @@ explicit exact persistence仍通过metadata binding/materialization满足用户d
 结构化导出的单章 flat→首次多章转换由 `.zic.json` 的 per-chapter `chapterDirectories` 作为布局 commit marker：
 当前 manifest 已有目录映射的历史章节不得因后续新增章节再次进入全表迁移扫描；缺 mapping 的单章/旧 manifest 仍按可重入恢复路径重新检查 root-level indexed pages，
 迁移每成功一页先更新 exact binding path 再删旧位置，因此进程中断后只剩未提交页继续成为候选。
+迁移后，章节命令必须从 durable index 定点刷新受影响章节的 snapshot entries，再构建强身份复用索引；不得继续读取已被迁走或删除的 flat locator。
 章节命令开始时已经持有的 indexed chapter snapshot MAY 作为本命令下载前的兼容/布局 hint：
 manifest 首写、无 placement 的 legacy目录恢复，以及旧 structured 文件补 export ordinal 都应优先消费该 snapshot，
 避免同一命令重复 whole-index read；manifest writer 在目录锁内仍 MUST 合并最新 previous manifest。

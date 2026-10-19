@@ -105,6 +105,7 @@ final class ImportedChapterRecord {
     this.coverSourceId,
     this.coverMediaFormat,
     this.coverAnimatedHint = false,
+    this.directoryRecursive = true,
     this.sequence = 0,
     this.readingDirection = ReadingDirection.ltr,
     this.sourceUpdatedAt,
@@ -298,6 +299,7 @@ final class ImportedChapterRecord {
   final String? coverSourceId;
   final String? coverMediaFormat;
   final bool coverAnimatedHint;
+  final bool directoryRecursive;
   final int sequence;
   final List<ImportedPageRecord> pages;
   final ReadingDirection readingDirection;
@@ -323,6 +325,7 @@ final class ImportedChapterRecord {
     String? coverMediaFormat,
     bool clearCoverMediaFormat = false,
     bool? coverAnimatedHint,
+    bool? directoryRecursive,
     String? chapterId,
     String? sourceRevision,
     int? sequence,
@@ -349,6 +352,7 @@ final class ImportedChapterRecord {
           ? null
           : (coverMediaFormat ?? this.coverMediaFormat),
       coverAnimatedHint: coverAnimatedHint ?? this.coverAnimatedHint,
+      directoryRecursive: directoryRecursive ?? this.directoryRecursive,
       chapterId: chapterId ?? this.chapterId,
       sourceRevision: sourceRevision ?? this.sourceRevision,
       sequence: sequence ?? this.sequence,
@@ -400,6 +404,7 @@ final class ImportedChapterRecord {
 
   Map<String, Object?> toJson() => <String, Object?>{
         'directoryId': directoryId,
+        if (!directoryRecursive) 'directoryRecursive': false,
         'displayName': displayName,
         'sourceId': sourceId,
         'comicId': comicId,
@@ -467,6 +472,10 @@ final class ImportedChapterRecord {
       throw const FormatException('coverAnimatedHint must be a boolean');
     }
     final rawSequence = json['sequence'];
+    final rawDirectoryRecursive = json['directoryRecursive'];
+    if (rawDirectoryRecursive != null && rawDirectoryRecursive is! bool) {
+      throw const FormatException('directoryRecursive must be a boolean');
+    }
     if (rawSequence != null && rawSequence is! int) {
       throw const FormatException('sequence must be an integer');
     }
@@ -487,6 +496,7 @@ final class ImportedChapterRecord {
     }
     return ImportedChapterRecord(
       directoryId: _requiredString(json, 'directoryId'),
+      directoryRecursive: (rawDirectoryRecursive as bool?) ?? true,
       displayName: _requiredString(json, 'displayName'),
       sourceId: _requiredString(json, 'sourceId'),
       comicId: _requiredString(json, 'comicId'),

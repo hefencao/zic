@@ -225,7 +225,7 @@ def check_animated_demo() -> None:
         'Reader 媒体管线',
         '内置动图 WebP',
         '导入本地 WebP',
-        '导入图片文件夹',
+        '导入本地漫画',
     ):
         if label not in home:
             fail(f'app demo entry is missing: {label}')
