@@ -2616,6 +2616,18 @@ final class DownloadTransferOwner {
     int? attempt,
   }) async {
     final rejectedBytes = session.committedLength;
+    if (claim != null) {
+      _recordError(
+        claim,
+        id,
+        failure,
+        details: <String, Object?>{
+          'stage': 'image-media-admission',
+          'discardedBytes': rejectedBytes,
+          if (attempt != null) 'attempt': attempt,
+        },
+      );
+    }
     try {
       await session.reset(
         removeCacheRecord: true,

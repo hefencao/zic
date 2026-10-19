@@ -9,7 +9,7 @@
 - 传输并发状态：dev.271 globalRunning 统计受限，支持 active current-class demotion 与 40分 差值抢占。
 - 任务排队在 Venera gate wait 期间保持实时优先级感知；响应停驻采用 dev.268 parked-response-eviction 机制。
 - dev.269 区分 demanded=true 与闲置流；TaskControl 支持有界 paced drain 与单 invocation 串行保障。
-- 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。
+- 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。rhttp前缀/正文异常统一为typed network/cancelled failure；source transport观察注入正文失败，下一provider attempt先换链，取消不消耗恢复次数。semantic admission失败在generation退休前记录既有恢复计数与丢弃字节。
 
 ### 存储与恢复 (Storage & Ingress)
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。

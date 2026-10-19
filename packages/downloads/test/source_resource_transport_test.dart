@@ -281,6 +281,49 @@ void main() {
     ]);
   });
 
+  for (final cancelled in <bool>[false, true]) {
+    test('injected body ${cancelled ? 'cancellation preserves' : 'failure replaces'} '
+        'the source request plan', () async {
+      final stale = Uri.parse('https://fixture/stale-body');
+      final fresh = Uri.parse('https://fixture/fresh-body');
+      final source = _FixtureSource(
+        request: ComicResourceRequest(uri: stale),
+        retryRequest: ComicResourceRequest(uri: fresh),
+      );
+      final failure = Failure(
+        code: cancelled ? ErrorCode.cancelled : ErrorCode.network,
+        message: 'fixture body failure',
+      );
+      final opened = <Uri>[];
+      const prefix = <int>[0xff, 0xd8, 0xff, 1];
+      Stream<List<int>> failedBody() async* {
+        yield prefix;
+        throw failure;
+      }
+      final pool = ExternalPluginResourceTransportPool(directOpen: (request) async {
+        opened.add(request.uri);
+        return ByteResponse(
+          bytes: opened.length == 1
+              ? failedBody() : Stream<List<int>>.value(prefix),
+          statusCode: HttpStatus.ok, rangeStart: 0, totalLength: 8,
+          flowControl: ByteResponseFlowControl.consumerPacing,
+        );
+      });
+      addTearDown(pool.close);
+      final loader = pool.loaderFor(source, Uri.parse('venera-resource:body-failure'));
+      final first = await loader();
+      expect(first.flowControl, ByteResponseFlowControl.consumerPacing);
+      await expectLater(_collect(first.bytes), throwsA(same(failure)));
+      final second = await loader();
+      expect(await _collect(second.bytes), prefix);
+      expect(opened, <Uri>[stale, cancelled ? stale : fresh]);
+      expect(source.retryCalls, cancelled ? 0 : 1);
+      expect(source.resolveCalls, 1);
+      expect(source.refreshCalls, 0);
+      expect(source.loadCalls, 0);
+    });
+  }
+
   test('fresh resource generation drops a retained request plan', () async {
     final locator = Uri.parse('venera-resource:fresh-generation');
     final source = _FixtureSource(

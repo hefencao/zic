@@ -15,7 +15,7 @@
 - 013独立网络接收未验：SDK36无android.network_packets；取得wire/Rust观测后才采集，20ms Dart progress不能代替。089默认DNS物理退出缺有效解析控制。新强刷6.712s自动呈现、首次换页57.393s；660→0→780始终active，016入场未验，不重复该输入。057仅余真实Web登录，已验设置/身份不重跑。
 - 097真实21旧manifest第3話/66页未改；22设置保存修复、6回归/Android121与真实拒绝/规范化/同值重入保持。独立包用声明的rouman5.com连到::1被拒绝，Reader未创建；公开DNS非回环、VPN活跃，解析来源未定。新manifest/代际与19/20独立开放，不绕过DNS或重复失败输入。
 - 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；标识验收Releaseec6f9e5a；当前Releaseadb4e36b/72b/PID2921/Home/无forward，210掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。
-- rhttp取消与borrowed reset保持。DecodeSession补same-epoch实例校验及新frame0前清旧续帧floor，晚帧丢弃/typed cancel、cursor等原Future。四分支先失败、38 decode/55关联及实际native换源/同prefix重建/新Texture通过，0失败；隐藏同源fill保持。097真实代际及016/client/原加载其余开放。
+- rhttp取消/borrowed reset保持；前缀及正文SDK异常统一typed failure，注入正文失败后下一attempt先换链，取消不消耗恢复预算；semantic rejection写恢复计数。DecodeSession校验same-epoch实例，新frame0清续帧floor，晚帧/typed cancel/cursor原Future保持。四分支、38 decode/55关联和native换源/同prefix/新Texture已验，隐藏同源fill保持；其余见JSON。
 - 0395/0396/0397与JM index3、TTL/LRU/used texture/active decode/prepare/pending present保持。prepare原Future重入1/12已验，另11未覆盖；631事件/0失败/0重读。005复用020新frame blit3087us/schedule1313us/deadline0；快滑视觉/GPU与真实代际开放。19话原APK/官方1.6.22 provenance保持。
 - Home shell 的route admission与书架管理分别归 `HomeRouteAdmission`、`HomeShelfManagement`；selected version-view preparation归 `HomeVersionReuseLifecycle`，`HomeShell` 不持 version preparation map。
   navigation/source-search与picker/trace-export busy flag仍服务当前Scaffold/route intent。后续只从明确重复状态或route builder adapter收口，不为瘦身强抽owner、不建跨owner facade，不把service generation/route admission/version preparation/shelf selection镜像回`HomeShell`。

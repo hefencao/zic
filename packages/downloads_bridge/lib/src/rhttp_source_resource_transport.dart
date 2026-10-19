@@ -295,6 +295,17 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
           // A cancelled async* body must resume normally before it can close.
           // Keep the typed terminal cancellation out of that abandoned await.
           if (aborted && error is rhttp.RhttpCancelException) return false;
+          if (error is rhttp.RhttpException) {
+            Error.throwWithStackTrace(
+              Failure(
+                code: error is rhttp.RhttpCancelException
+                    ? ErrorCode.cancelled : ErrorCode.network,
+                message: 'source media response failed for $locator',
+                cause: error,
+              ),
+              stackTrace,
+            );
+          }
           Error.throwWithStackTrace(error, stackTrace);
         },
       );

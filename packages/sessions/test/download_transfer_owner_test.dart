@@ -354,6 +354,12 @@ void main() {
     expect(failure!.code, ErrorCode.source);
     expect(failure.details['sourceMediaSemanticRejected'], isTrue);
     expect(transport.opens, 1);
+    final admissionFailure = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.taskFailed &&
+          event.payload['stage'] == 'image-media-admission',
+    );
+    expect(admissionFailure.payload['sourceMediaSemanticRejected'], isTrue);
+    expect(admissionFailure.payload['discardedBytes'], body.length);
     expect(
       trace.events.any(
         (event) =>

@@ -388,6 +388,8 @@ final class _SourceResourceTransport
     hostOpenWatch.stop();
     return _withSourceOpenDiagnostics(
       response,
+      locator: uri,
+      control: control,
       requestPlanMicros: requestPlanWatch.elapsedMicroseconds,
       requestPlanCacheHit: resolved.cacheHit,
       sourcePlanDiagnostics: sourcePlanDiagnostics,
@@ -1145,6 +1147,8 @@ final class _SourceResourceTransport
 
   ByteResponse _withSourceOpenDiagnostics(
     ByteResponse response, {
+    required Uri locator,
+    TaskControl? control,
     required int requestPlanMicros,
     required bool requestPlanCacheHit,
     required Map<String, Object?> sourcePlanDiagnostics,
@@ -1154,7 +1158,17 @@ final class _SourceResourceTransport
     required String? verifiedReuseIdentity,
   }) {
     return ByteResponse(
-      bytes: response.bytes,
+      // Injected transports must report failed bodies just like the built-in
+      // HTTP path, so the next provider attempt consumes the source's retry
+      // plan rather than reopening the same broken host. Cancellation keeps
+      // its request plan and never spends source semantic recovery budget.
+      bytes: response.bytes.handleError((Object error, StackTrace stackTrace) {
+        if (control?.cancelled != true &&
+            (error is! Failure || error.code != ErrorCode.cancelled)) {
+          _failedStreams.add(locator);
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }),
       statusCode: response.statusCode,
       rangeStart: response.rangeStart,
       totalLength: response.totalLength,

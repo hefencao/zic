@@ -955,6 +955,8 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   当前单invocation runtime已提供比same-path prevent-parallel更强的物理串行保证，不得因此新增第二scheduler或JS并发。
   Venera bridge正常完整消费Network HTTP response后 SHOULD保留原resolver client与持久连接复用机会；
   异常或request-scoped cancel MUST终止该请求与正文读取，不得为单个请求关闭共享client或重建native HTTP/DNS owner。
+  host rhttp在媒体前缀及后续正文读取中产生的SDK异常 MUST映射为`Failure.network/cancelled`。
+  `SourceResourceTransport` MUST统一观察注入transport的正文失败，下一次provider attempt MUST先请求source replacement plan；主动取消 MUST NOT标记坏链或消耗source恢复预算。此观察 MUST保留原始stream cadence、discard及TaskControl退出边界，不得另起重试循环。
   Venera `onLoadFailed`属于source-owned image semantic recovery而非generic transport retry：
   public `Network.fetchBinary/http_binary` MUST继续保持通用binary API，不得因图片恢复语义被收窄；
   只有host-private image binary seam及JS image transform的完整/首段2xx body MUST先以bounded magic-prefix验证为受支持编码图片；

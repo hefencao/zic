@@ -113,6 +113,67 @@ void main() {
     );
   });
 
+  test('rhttp body decode failure before media admission is a network failure',
+      () async {
+    if (!await _requireNativeRhttp()) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    unawaited(server.forEach((request) async {
+      request.response.headers.set(HttpHeaders.contentEncodingHeader, 'gzip');
+      request.response.add(List<int>.filled(64, 0));
+      await request.response.close();
+    }));
+    final transport = RhttpSourceResourceDirectTransport();
+    addTearDown(transport.close);
+
+    await expectLater(
+      transport.open(ComicResourceRequest(
+        uri: Uri.parse('http://${server.address.address}:${server.port}/broken'),
+      )),
+      throwsA(isA<Failure>().having(
+        (error) => error.code, 'network failure', ErrorCode.network,
+      ).having(
+        (error) => error.message, 'body failure', contains('response failed'),
+      )),
+    );
+  });
+
+  test('rhttp truncated admitted body preserves typed network failure', () async {
+    if (!await _requireNativeRhttp()) return;
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    Socket? peer;
+    addTearDown(() => peer?.destroy());
+    final prefix = <int>[0xff, 0xd8, 0xff, ...List<int>.filled(61, 1)];
+    server.listen((socket) {
+      peer = socket;
+      var responded = false;
+      socket.listen((_) {
+        if (responded) return;
+        responded = true;
+        socket.write('HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n');
+        socket.add(prefix);
+        unawaited(socket.flush());
+      });
+    });
+    final transport = RhttpSourceResourceDirectTransport();
+    addTearDown(transport.close);
+    final response = await transport.open(ComicResourceRequest(
+      uri: Uri.parse('http://${server.address.address}:${server.port}/truncated'),
+    )).timeout(const Duration(seconds: 5));
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    addTearDown(iterator.cancel);
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current, prefix);
+    peer!.destroy();
+    await expectLater(
+      iterator.moveNext().timeout(const Duration(seconds: 5)),
+      throwsA(isA<Failure>().having(
+        (error) => error.code, 'network failure', ErrorCode.network,
+      )),
+    );
+  });
+
   test('JSON queue adapter restores policy and pending chapters', () async {
     final directory = await Directory.systemTemp.createTemp('zic-whole-queue-');
     addTearDown(() => directory.delete(recursive: true));
@@ -165,6 +226,16 @@ void main() {
     expect(restored!.totalChapters, 2);
     expect(restored.phase, WholeComicQueuePhase.waitingForPolicy);
   });
+}
+
+Future<bool> _requireNativeRhttp() async {
+  try {
+    await prewarmPlatformSourceResourceTransport();
+    return true;
+  } on Object catch (error) {
+    markTestSkipped('rhttp native library unavailable: ${error.runtimeType}');
+    return false;
+  }
 }
 
 Future<void> _waitForPhase(

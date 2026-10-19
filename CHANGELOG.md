@@ -8,6 +8,8 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Normalize rhttp prefix/body failures to typed transport errors. Replace failed injected source-body request plans through the existing source retry path on the next bounded provider attempt; cancellation preserves plans and budgets. Record semantic media rejection details before retiring the invalid generation.
+
 - Switch the launcher artwork to the supplied transparent comic book, preserve its alpha in the Android foreground and brand source, and composite opaque iOS assets. Restore the Home title to zic text with existing Debug routes and Trace adjacency; remove the unused Flutter thumbnail.
 
 - Use the supplied illustrated comic book as the launcher and home title icon. Generate bounded Android/iOS and home thumbnail assets from the cropped master; preserve Debug tap/long press, Trace adjacency and the accessible app name, with a matching book outline for themed icons.
