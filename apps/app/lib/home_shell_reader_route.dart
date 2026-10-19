@@ -270,7 +270,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     if (adjacent == null) return null;
     final existing = adjacent.entry;
     if (existing != null) return existing;
-    if (current.chapter.sourceId == 'local-folder') return null;
+    if (isLocalLibrarySource(current.chapter.sourceId)) return null;
 
     await _externalSources.waitForSource(current.chapter.sourceId);
     final source = _sourceForId(current.chapter.sourceId);

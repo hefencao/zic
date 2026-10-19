@@ -110,6 +110,13 @@ Android SAF 的 provider document-id/children-listing 缓存只属于路径解�
 
 composition-owned `ArtifactCacheManager`、artifact transport/read scheduler、
 verified-equivalence proof、章节/整本持久下载与来源 transport 组合。页面 session 状态本身由 `sessions` 拥有。
+外部下载导入的只读 tree、格式扫描、数据库快照和逐章私有 staging 归 `downloads`；
+EHViewer legacy `.ehviewer`/ComicInfo、Mihon 图片目录/CBZ、Venera `local.db` 分别投影成现有图片的章节模型。
+外部 SQLite 只在复制 DB 与 WAL 且复核输入稳定后，于私有快照上只读查询；它不替代 ZIC 的库或下载 index。
+解压、图片校验及 DB worker 仅接收文件路径/值与顶层函数，不传递 UI、取消回调或命令生命周期对象；调用者等待实际退出后再清理文件。
+`ChapterDownloadLocalImportSink` 把已校验 staging 映射成同一命令的受控 staged transport，沿原 consumer、NetLane、CRC promotion、pin 与 structured placement 写入；临时文件不能成为 source-resident replay authority。
+导入数据使用 catalog 的 `local-download-import` namespace 与内容散列 page URI；原 tree/grant、格式及相对路径限定本地实体，来源远程 ID 不建立跨源等价关系。
+Reader 仍只读 artifact/Pipeline 输出，副本缺失时提示重新导入；cover 从已晋升副本进入原 retained artwork cache。
 Automatic hot-transfer checkpoint 与显式 download placement 是不同 ownership：
 canonical physical 与 exact-fallback unfinished checkpoint 都优先在 downloads-owned App-private Direct staging 保存 mutable recovery state；
 全局/来源 SAF 可继续承载 generic/historical partial 兼容，但不得仅因配置存在就成为 Reader/composition automatic checkpoint 的默认根。
@@ -208,6 +215,8 @@ cache invalidation、session reset 与 network re-admission 全部留在 Pipelin
 ### Home 组合与生命周期
 
 首页顶栏显示 zic 文字名称。Debug 模式下单击应用名打开翻译测试，长按打开已展开的开发与媒体诊断页；翻译测试位于诊断项首位。
+顶栏的外部下载导入页只持有选择、扫描/复制进度与取消 intent；`HomeDownloadCommands` 负责 durable service adoption、独立目录认领、`HomeLibrarySession` 章节/本地书架偏好发布和原下载服务调用。
+扫描及复制沿 `DownloadCommandLifetimes` 申请既有后台保护；停止等待读流、解压 worker 与 transfer 实际退出，才清理该次私有 staging。导入不修改原 App 文件/数据库，成功与已晋升 partial 均由原下载管理投影展示。
 测试页独立选择本次语言并跳转全局翻译设置，不持有或改变 Reader/Pipeline 的资源与调度状态。
 Debug 首页的一键 Trace 导出位于顶栏应用名之后，沿用同一导出命令和用户目录配置，执行中禁止重复提交；正文不保留第二入口。
 阅读历史的网格、横向书架或列表布局以及列数/行数由 `AppPreferencesController` 持久化，标题旁打开布局面板，即选即用，独立于书架视图偏好。默认三列网格，可选二至六列；窄窗口按最小封面宽度减少实际列数但不覆盖保存值。横向书架可选一至三行，列表显示保存的章节与页码。

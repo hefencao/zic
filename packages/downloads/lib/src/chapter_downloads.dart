@@ -33,6 +33,16 @@ part 'persistent_download_saf_body_transaction.dart';
 
 enum ChapterDownloadPhase { idle, downloading, complete, failed, cancelled }
 
+/// Promotes validated private import staging through the normal download
+/// consumer, layout, CRC, pin and manifest authorities. The caller retains
+/// the files until this future physically exits, also after cancellation.
+abstract interface class ChapterDownloadLocalImportSink {
+  Future<void> importLocalChapter(
+    ImportedLibraryEntry entry,
+    Map<Uri, File> preparedFiles,
+  );
+}
+
 final class ChapterDownloadSnapshot {
   const ChapterDownloadSnapshot({
     required this.sourceId,

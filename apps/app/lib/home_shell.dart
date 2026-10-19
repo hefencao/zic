@@ -28,6 +28,7 @@ import 'debug_trace_export.dart';
 import 'diagnostic_error_ui.dart';
 import 'deferred_reader_route.dart';
 import 'download_manager.dart';
+import 'external_download_import_screen.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'library_backup.dart';
 import 'library_diagnostics.dart';
@@ -1088,10 +1089,10 @@ final class _HomeShellState extends State<HomeShell> {
         comic.sourceId,
         comic.comicId,
         aliases: aliases,
-        fallbackSourceKind: comic.sourceId == 'local-folder'
+        fallbackSourceKind: isLocalLibrarySource(comic.sourceId)
             ? ComicSourceKind.local
             : ComicSourceKind.remote,
-        fallbackInShelf: comic.sourceId == 'local-folder',
+        fallbackInShelf: isLocalLibrarySource(comic.sourceId),
       );
 
   ComicPreference _mergedPreferenceFor(
@@ -1117,7 +1118,7 @@ final class _HomeShellState extends State<HomeShell> {
         sourceId: sourceId,
         comicId: comicId,
         sourceKind: fallbackSourceKind ??
-            (sourceId == 'local-folder'
+            (isLocalLibrarySource(sourceId)
                 ? ComicSourceKind.local
                 : ComicSourceKind.remote),
       ).copyWith(inShelf: fallbackInShelf);
@@ -1366,6 +1367,17 @@ final class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  Future<void> _importExternalDownloads() async {
+    await _ensureLibraryReady();
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(MaterialPageRoute(
+      builder: (_) => ExternalDownloadImportScreen(
+        importChapter: _downloadCommands.importLocalChapter,
+        stopImports: _downloadCommands.stopLocalImports,
+      ),
+    ));
+  }
+
   Future<void> _openImportedChapter(
     ImportedLibraryEntry entry, {
     bool? refreshRemote,
@@ -1375,7 +1387,7 @@ final class _HomeShellState extends State<HomeShell> {
       () => Future<ImportedLibraryEntry>.value(entry),
       title: entry.chapter.displayName,
       refreshRemote: refreshRemote ??
-          (entry.chapter.sourceId != 'local-folder' &&
+          (!isLocalLibrarySource(entry.chapter.sourceId) &&
               entry.chapter.pages.isEmpty),
       initialPageIndex: initialPageIndex,
     );
@@ -1404,7 +1416,10 @@ final class _HomeShellState extends State<HomeShell> {
     required ImportedLibraryEntry? fallbackChapter,
   }) async {
     final fallback = fallbackChapter;
-    final fallbackPage = sourceId != 'local-folder' ||
+    if (sourceId == externalDownloadsSourceId && fallback != null) {
+      return _chapterDownloads.readPage(fallback, 0);
+    }
+    final fallbackPage = !isLocalLibrarySource(sourceId) ||
             fallback == null ||
             fallback.chapter.pages.isEmpty
         ? null
@@ -1416,7 +1431,7 @@ final class _HomeShellState extends State<HomeShell> {
       throw StateError('漫画详情没有可用封面');
     }
     final uri = Uri.tryParse(sourceValue);
-    if (sourceId != 'local-folder' && uri != null) {
+    if (!isLocalLibrarySource(sourceId) && uri != null) {
       return _sourceResources.loadArtworkBytes(
         cache: _cacheCoordinator.responses,
         sourceId: sourceId,
@@ -1445,7 +1460,18 @@ final class _HomeShellState extends State<HomeShell> {
     required String resourceRole,
   }) async {
     final fallback = fallbackChapter;
-    final fallbackPage = sourceId != 'local-folder' ||
+    if (sourceId == externalDownloadsSourceId && fallback != null) {
+      final page = fallback.chapter.pages.first;
+      return loadCachedComicImageSource(
+        cache: _cacheCoordinator.responses,
+        sourceId: sourceId, comicId: comicId,
+        imageIdentity: page.sourceId, resourceRole: resourceRole,
+        revision: '${comicArtworkCacheSchemaRevision}:${fallback.chapter.sourceRevision}',
+        retention: ResourceCacheRetention.retained,
+        loader: () => _chapterDownloads.readPage(fallback, 0),
+      );
+    }
+    final fallbackPage = !isLocalLibrarySource(sourceId) ||
             fallback == null ||
             fallback.chapter.pages.isEmpty
         ? null
@@ -1457,7 +1483,7 @@ final class _HomeShellState extends State<HomeShell> {
       throw StateError('漫画详情没有可用封面');
     }
     final uri = Uri.tryParse(sourceValue);
-    if (sourceId == 'local-folder' &&
+    if (isLocalLibrarySource(sourceId) &&
         resourceRole == 'cover' &&
         uri?.scheme.toLowerCase() == 'content') {
       return this._loadLocalFolderCoverArtifact(
@@ -1473,7 +1499,7 @@ final class _HomeShellState extends State<HomeShell> {
         path: directPath,
       );
     }
-    if (sourceId != 'local-folder' && uri != null) {
+    if (!isLocalLibrarySource(sourceId) && uri != null) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
         sourceId: sourceId,
@@ -1533,7 +1559,7 @@ final class _HomeShellState extends State<HomeShell> {
       };
 
   bool _coverSourceAvailableForComic(LibraryComic comic) =>
-      comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null;
+      isLocalLibrarySource(comic.sourceId) || _sourceForId(comic.sourceId) != null;
 
   Future<void> _withComicRouteLock(
     LibraryComic comic,
@@ -1696,6 +1722,12 @@ final class _HomeShellState extends State<HomeShell> {
               tooltip: '下载管理',
               onPressed: _openDownloadManager,
               icon: const Icon(Icons.download_for_offline_outlined),
+            ),
+          if (_navigationIndex < 2)
+            IconButton(
+              tooltip: '导入其他 App 下载',
+              onPressed: _importExternalDownloads,
+              icon: const Icon(Icons.move_to_inbox_outlined),
             ),
           if (_navigationIndex < 2)
             IconButton(

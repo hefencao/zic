@@ -264,7 +264,18 @@ final class HomeReaderChapterComposition {
     ChapterManifest readerManifest,
     Map<String, LocalImageFileBytesLoader> byteLoaders,
   ) =>
-      readerManifest.sourceId == 'local-folder'
+      readerManifest.sourceId == externalDownloadsSourceId
+          ? <String, LocalImageResponseSource>{
+              for (final page in readerManifest.pages)
+                page.uri.toString(): LocalImageResponseSource(
+                  openControlledResponse: ({range, validators, control}) async {
+                    control?.throwIfCancelled();
+                    throw const Failure(code: ErrorCode.source,
+                      message: 'ZIC 导入副本缺失，请重新选择原目录导入');
+                  },
+                ),
+            }
+          : isLocalLibrarySource(readerManifest.sourceId)
           ? const <String, LocalImageResponseSource>{}
           : <String, LocalImageResponseSource>{
               for (final page in readerManifest.pages)

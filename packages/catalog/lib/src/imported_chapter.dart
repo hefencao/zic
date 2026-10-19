@@ -1,5 +1,11 @@
 import 'package:domain/domain.dart';
 
+/// Copies owned by ZIC, independently of the application they came from.
+const externalDownloadsSourceId = 'local-download-import';
+
+bool isLocalLibrarySource(String sourceId) =>
+    sourceId == 'local-folder' || sourceId == externalDownloadsSourceId;
+
 final class ImportedPageRecord {
   const ImportedPageRecord({
     required this.displayName,

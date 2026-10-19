@@ -2259,7 +2259,7 @@ final class _LocalComicDetailsScreenState
             pageCount: pageCount,
           ),
           isNew: _library.unseenChapterIds.contains(chapter.chapterId),
-          canDownload: widget.comic.sourceId != 'local-folder',
+          canDownload: !isLocalLibrarySource(widget.comic.sourceId),
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
               _downloadSnapshots[identity]?.isActive == true,
@@ -2311,7 +2311,7 @@ final class _LocalComicDetailsScreenState
           ),
           isNew:
               _library.unseenChapterIds.contains(entry.chapter.chapterId),
-          canDownload: entry.chapter.sourceId != 'local-folder',
+          canDownload: !isLocalLibrarySource(entry.chapter.sourceId),
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
               _downloadSnapshots[identity]?.isActive == true,
@@ -2406,7 +2406,7 @@ final class _LocalComicDetailsScreenState
           : _continueReading,
       downloadingComic: _downloadingComic,
       onDownloadComic:
-          comic.sourceId == 'local-folder' ? null : _downloadComic,
+          isLocalLibrarySource(comic.sourceId) ? null : _downloadComic,
       onToggleWholeComicPause: () => widget.downloadActions
           .toggleWholeComicPause(comic.sourceId, comic.comicId),
       wholeComicPausable: widget.downloadActions.cachedWholeComicJob(
@@ -4936,7 +4936,7 @@ String _comicSourceLabel(
   BrowsableComicSource? source,
   String sourceId,
 ) {
-  if (sourceId == 'local-folder') {
+  if (isLocalLibrarySource(sourceId)) {
     return '本地';
   }
   final raw = source?.descriptor.name.trim() ?? '';

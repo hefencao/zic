@@ -65,7 +65,7 @@ extension _HomeShellDetailsActions on _HomeShellState {
         fallbackPreference: preference,
         fallbackSourceKind: preference?.sourceKind,
         fallbackInShelf:
-            preference?.inShelf ?? sourceId == 'local-folder',
+            preference?.inShelf ?? isLocalLibrarySource(sourceId),
       ),
     );
   }
@@ -100,7 +100,7 @@ extension _HomeShellDetailsActions on _HomeShellState {
         : null;
     final effectiveComicId = preferred?.comicId ?? comicId;
     ComicManifest? sourceManifest;
-    if (refreshContent) {
+    if (refreshContent && sourceId != externalDownloadsSourceId) {
       if (sourceId == 'local-folder') {
         final entries = _libraryEntries
             .where(

@@ -40,6 +40,8 @@ export 'src/version_page_authority.dart';
 
 export 'src/comic_conflict_inspector.dart';
 export 'src/chapter_downloads.dart';
+export 'src/external_download_tree.dart';
+export 'src/external_download_import.dart';
 export 'src/whole_comic_downloads.dart';
 
 export 'src/source_resource_transport.dart';

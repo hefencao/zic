@@ -106,7 +106,7 @@ for token in (
     'onMigrateSource: ({versionState}) {',
     'return _openSourceMigrationForSummary(active, comic, versionState: versionState);',
     "onMigrateSource: resolvedSource == null ||",
-    "comic.sourceId == 'local-folder'",
+    "isLocalLibrarySource(comic.sourceId)",
     ': ({versionState}) => _openSourceMigration(comic, versionState: versionState)',
 ):
     require(compat, token, 'detail migration composition')

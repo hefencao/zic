@@ -48,6 +48,76 @@ final class HomeDownloadCommands {
   final HomeStaleChapterRefresh refreshStaleChapter;
   final DownloadCommandLifetimes commandLifetimes;
 
+  final Map<String, ({ChapterDownloadService service, ImportedLibraryEntry entry})>
+      _localImports = {};
+
+  Future<void> stopLocalImports() async {
+    for (final active in _localImports.values.toList()) {
+      await active.service.cancel(active.entry);
+    }
+  }
+
+  /// The import screen owns selection and private staging. This owner publishes
+  /// the durable library entry and delegates every byte/manifest/index write to
+  /// the current persistent download service, including partial cancellation.
+  Future<ImportedLibraryEntry> importLocalChapter(
+    PreparedExternalChapter prepared, {
+    required void Function() checkCancelled,
+  }) async {
+    await ensureDurableServices();
+    checkCancelled();
+    final downloads = session.chapterDownloads;
+    if (downloads is! ChapterDownloadLocalImportSink) {
+      throw StateError('下载存储尚未就绪，无法导入副本');
+    }
+    final record = prepared.record;
+    final placement = await downloads.getDownloadPlacement(
+      sourceId: record.sourceId, comicId: record.comicId,
+    );
+    checkCancelled();
+    if (placement == null) {
+      final report = await downloads.inspectComicConflicts(
+        sourceId: record.sourceId, sourceDisplayName: '导入',
+        comicId: record.comicId, comicTitle: record.comicTitle,
+      );
+      checkCancelled();
+      final exact = report.candidates.where((candidate) => candidate.isExactMatch);
+      await downloads.claimComicDirectory(
+        sourceId: record.sourceId, comicId: record.comicId,
+        comicTitle: record.comicTitle,
+        directoryName: exact.isEmpty
+            ? report.recommendedDirectoryName : exact.first.folderName,
+        mode: exact.isEmpty ? DownloadPlacementMode.createNew : DownloadPlacementMode.incremental,
+      );
+    }
+    checkCancelled();
+    final existing = await session.library.get(record.sourceId, record.chapterId);
+    final entry = await session.upsertChapter(existing == null ? record :
+        record.copyWith(importedAt: existing.chapter.importedAt));
+    if (await session.library.getComicPreference(record.sourceId, record.comicId) == null) {
+      await session.persistPreference(ComicPreference.defaults(
+        sourceId: record.sourceId, comicId: record.comicId,
+      ).copyWith(updatedAt: DateTime.now().toUtc()));
+    }
+    checkCancelled();
+    _localImports[entry.identity] = (service: downloads, entry: entry);
+    try {
+      await (downloads as ChapterDownloadLocalImportSink).importLocalChapter(entry, prepared.files);
+      checkCancelled();
+      final snapshot = await downloads.inspect(entry);
+      session.acceptDownloadSnapshot(snapshot);
+      if (snapshot.phase != ChapterDownloadPhase.complete) {
+        throw snapshot.failure ?? const Failure(
+          code: ErrorCode.cancelled, message: '导入已停止，已完成的页面保留',
+        );
+      }
+      return entry;
+    } finally {
+      _localImports.remove(entry.identity);
+      session.acceptDownloadSnapshot(await downloads.inspect(entry));
+    }
+  }
+
   final Map<String, ({ChapterDownloadService downloads, ImportedLibraryEntry entry})>
       _activeFileAudits =
       <String, ({ChapterDownloadService downloads, ImportedLibraryEntry entry})>{};

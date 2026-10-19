@@ -43,7 +43,7 @@ home = read('apps/app/lib/home_shell.dart')
 # dev.156 generalizes dev.155 HTTP-only recovery to every non-local artwork
 # locator (including mihon:resource) and separates raw runtime locator from the
 # canonical durable cache identity.
-require(home, "sourceId != 'local-folder' && uri != null", 'external artwork routing')
+require(home, "!isLocalLibrarySource(sourceId) && uri != null", 'external artwork routing')
 require(home, 'cacheComicId: _canonicalComicId(sourceId, comicId)', 'canonical durable artwork probe')
 
 plugins = read('packages/plugin_host_bridge/lib/src/external_plugin_controller.dart')

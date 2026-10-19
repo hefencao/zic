@@ -79,7 +79,7 @@ forbid(views, "key: ValueKey<String>(\n                '${history ? 'home-histor
 home = read('apps/app/lib/home_shell.dart')
 for token in (
     'bool _coverSourceAvailableForComic(LibraryComic comic)',
-    "comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null",
+    "isLocalLibrarySource(comic.sourceId) || _sourceForId(comic.sourceId) != null",
 ):
     require(home, token, 'explicit source-availability dependency')
 

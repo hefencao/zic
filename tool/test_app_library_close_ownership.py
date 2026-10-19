@@ -37,7 +37,7 @@ if not (
     raise SystemExit('shared bootstrap durable store must release _AppServices close ownership')
 
 close_start = RUNTIME.index('Future<void> _close({', RUNTIME.index('final class _AppServices'))
-close_end = RUNTIME.index('\n}\n\n/// Binds the app-side SAF', close_start)
+close_end = RUNTIME.index('\n}\n\nfinal class _AndroidArtifactPresentationFileLeaseFactory', close_start)
 close_body = RUNTIME[close_start:close_end]
 if close_body.count('await libraryStore?.close();') != 1:
     raise SystemExit('AppServices close must have exactly one owner-guarded library close')

@@ -52,6 +52,10 @@ dev_dependencies:
     path: ../../packages/bridge
   pipeline:
     path: ../../packages/pipeline
+  sessions:
+    path: ../../packages/sessions
+  storage:
+    path: ../../packages/storage
   transport:
     path: ../../packages/transport
   flutter_test:

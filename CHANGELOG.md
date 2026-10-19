@@ -8,6 +8,8 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Import EHViewer image galleries, Mihon image chapters/CBZ and Venera downloads through a read-only preview and copy flow. Preserve available chapter metadata from ComicInfo and a private DB/WAL snapshot, verify page bytes and archive CRCs, and publish independent local library records through ZIC's existing manifest, download index, placement and pin owners. Support repeated imports, isolated title conflicts, cancellation and offline reading after source removal.
+
 - Fix the GitHub Actions translation artifact handoff to include the source-built OCR OpenCV package. Wait for both far-page warm requests before exercising raster eviction so the test does not assume asynchronous completion order.
 
 - Preserve typed rhttp prefix/body failures and semantic admission diagnostics. Revert automatic source-plan replacement on admitted injected-body network failures: provider retries retain the existing plan, Range/validators and playable partials without spending semantic recovery budget. Omit raw request URLs from the new body-error messages.

@@ -1698,6 +1698,11 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   不能恢复2/4 eligibility、whole-body估算budget或cancel/reopen式流控。
 
 ## 5. 下载、partial 与 artifact
+- 外部下载导入 MUST 只读原 App 目录并默认复制到 ZIC；EHViewer 支持图片与 legacy `.ehviewer`/ComicInfo，Mihon 支持章节目录/CBZ（跳过 `_tmp`/临时页、保留拆分页），Venera 用 `local.db` 的章节 ID、标题、顺序及 downloadedChapters 识别实际完成章节。未知 EH 清单或缺失 Venera DB MUST 明示仅采用现有文件，缺页 MUST 在预览报告，不得宣称原下载完整。
+- 外部数据库 MUST 连同可见 WAL 复制到私有快照并复核稳定，再以只读事务检查/查询；MUST NOT 直接恢复外部 schema、丢弃 WAL 或改写原 DB。数据库旧绝对目录仅 MAY 按选择树内唯一同名目录重定位；路径穿越、链接、重名归属冲突 MUST 拒绝。CBZ MUST 限定条目/解压大小，校验 CRC，并拒绝重复/越界路径、链接与加密条目。
+- 导入 MUST 在逐章 staging 内验证图片签名、长度和散列，以独立 `local-download-import` 身份发布；同一 grant/格式/相对路径重复导入 MUST 复用实体，内容改变 MUST 改变 revision。不同来源根或同名漫画 MUST NOT 自动归并或覆盖；来源远程 ID/URL MUST NOT 成为 plugin 身份或媒体等价证明。
+- 导入 MUST 通过原 persistent download consumer、唯一 NetLane 和 promotion/placement owner 生成 ZIC 目录、`.zic.json`、pin 与 App-private 下载索引，经 `HomeLibrarySession` 发布章节及本地书架偏好。完成副本 MUST 脱离原目录并在重启后可读；删除副本 MUST NOT 删除原文件。已有本地图片文件夹的 source-owned 模式保持原合同。
+- 扫描/复制 MAY 使用既有显式下载后台通知；取消 MUST 停止新章、排空实际读流/worker/transfer 并清理私有 staging，保留已晋升副本。导入页 MUST NOT 自建网络队列、正文索引或 Reader retry 状态。导入副本缺失 MUST 提示重新导入，不能等待不存在的远程插件。
 - HomeLibrarySession MUST 拥有下载投影读取的 admission、代际和关闭生命周期。扫描期间收到的章节事件（包括 revision 替换、停止/删除后的进度回落）优先于旧扫描基线；
   服务替换前 MUST 排空已接纳读取，关闭后不得新增扫描。下载管理两种标签 MUST 自动重绑新服务并在首帧后请求一次 Home-owned reconciliation；
   通知合并必须有界，不能以手动下载压住独立缓存变更，也不能用额外 UI 网络状态机替代投影。

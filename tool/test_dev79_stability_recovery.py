@@ -18,7 +18,7 @@ assert 'async function __zicInvoke' in venera
 home = text('apps/app/lib/home_shell.dart')
 # dev.156 supersedes the old scheme-specific migration fallback: every
 # non-local artwork URI, including mihon:resource, uses the source gateway.
-assert home.count("if (sourceId != 'local-folder' && uri != null)") >= 2
+assert home.count("if (!isLocalLibrarySource(sourceId) && uri != null)") >= 2
 assert "if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https'))" not in home
 migration = home[home.index('Future<Uint8List> _loadMigrationCoverBytes'):home.index('Future<EncodedResourceSource> _loadCoverSource')]
 assert '_sourceResources.loadArtworkBytes(' in migration

@@ -1711,7 +1711,7 @@ final class HomeLibrarySession extends ChangeNotifier {
             (
               sourceId: entry.chapter.sourceId,
               comicId: entry.chapter.comicId,
-              sourceKind: entry.chapter.sourceId == 'local-folder'
+              sourceKind: isLocalLibrarySource(entry.chapter.sourceId)
                   ? ComicSourceKind.local
                   : ComicSourceKind.remote,
             ),
@@ -1719,7 +1719,7 @@ final class HomeLibrarySession extends ChangeNotifier {
             (
               sourceId: comic.sourceId,
               comicId: comic.comicId,
-              sourceKind: comic.sourceId == 'local-folder'
+              sourceKind: isLocalLibrarySource(comic.sourceId)
                   ? ComicSourceKind.local
                   : ComicSourceKind.remote,
             ),

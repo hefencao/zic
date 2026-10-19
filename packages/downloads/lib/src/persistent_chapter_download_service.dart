@@ -15,6 +15,7 @@ final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
         ChapterDownloadExecutionSource,
+        ChapterDownloadLocalImportSink,
         ChapterDownloadManagementProjectionReader,
         ChapterCacheManagementProjectionReader,
         ChapterDeleteImpactProjectionReader,
@@ -336,7 +337,50 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<void> download(ImportedLibraryEntry entry) {
+  Future<void> download(ImportedLibraryEntry entry) => _startDownload(entry);
+
+  @override
+  Future<void> importLocalChapter(
+    ImportedLibraryEntry entry,
+    Map<Uri, File> preparedFiles,
+  ) {
+    _requireOpen();
+    if (entry.chapter.sourceId != externalDownloadsSourceId ||
+        preparedFiles.length != entry.chapter.pages.length ||
+        entry.chapter.pages.any((page) =>
+            page.uri.scheme != 'zic-import' || !preparedFiles.containsKey(page.uri))) {
+      throw ArgumentError('local import requires an exact prepared page mapping');
+    }
+    if (_runs.containsKey(_identity(entry))) {
+      throw StateError('this chapter already has an active download command');
+    }
+    final transport = LoaderTransport({
+      for (final page in entry.chapter.pages)
+        page.uri: LoaderTransportSource(
+          revision: entry.chapter.sourceRevision,
+          openControlledResponse: ({range, validators, control}) async {
+            final response = await const FileTransport().openControlled(
+              preparedFiles[page.uri]!.uri,
+              range: range, validators: validators, control: control,
+            );
+            // Import staging is temporary. It must enter the ordinary staged
+            // artifact writer, not become source-resident replay authority.
+            return ByteResponse(
+              bytes: response.bytes, statusCode: response.statusCode,
+              rangeStart: response.rangeStart, totalLength: response.totalLength,
+              validators: response.validators, rangeSupported: response.rangeSupported,
+              flowControl: response.flowControl,
+              onDiscard: () => response.discard(control: control),
+            );
+          },
+        ),
+    });
+    return _startDownload(entry, importTransport: transport);
+  }
+
+  Future<void> _startDownload(ImportedLibraryEntry entry, {
+    Transport? importTransport,
+  }) {
     _requireOpen();
     final identity = _identity(entry);
     final active = _runs[identity];
@@ -344,7 +388,7 @@ final class PersistentChapterDownloadService
       return active;
     }
     _activeDownloadEntries[identity] = entry;
-    final run = _runDownload(entry).whenComplete(() {
+    final run = _runDownload(entry, importTransport: importTransport).whenComplete(() {
       _runs.remove(identity);
       _activeDownloadEntries.remove(identity);
       _tokens.remove(identity);
@@ -460,7 +504,9 @@ final class PersistentChapterDownloadService
     }
   }
 
-  Future<void> _runDownload(ImportedLibraryEntry entry) async {
+  Future<void> _runDownload(ImportedLibraryEntry entry, {
+    Transport? importTransport,
+  }) async {
     final identity = _identity(entry);
     _deletedIdentities.remove(identity);
     final token = CancelToken();
@@ -508,7 +554,7 @@ final class PersistentChapterDownloadService
     token.throwIfCancelled();
     final transports = <Uri, Transport>{
       for (final page in manifest.pages)
-        page.uri: _transportForPage(manifest, page),
+        page.uri: importTransport ?? _transportForPage(manifest, page),
     };
     final consumer = transferRuntime.attachConsumer(
       scopeId: 'chapter-command:$identity',

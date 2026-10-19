@@ -85,7 +85,7 @@ for stale in (
     "subtitle: updates.isEmpty ? '导入漫画后会显示最近更新' : null",
 ):
     forbid(views, stale, 'metadata-recency update feed')
-require(home, "fallbackInShelf: comic.sourceId == 'local-folder'", 'remote unknown shelf fallback')
+require(home, "fallbackInShelf: isLocalLibrarySource(comic.sourceId)", 'remote unknown shelf fallback')
 require(home, 'bool fallbackInShelf = false,', 'neutral preference fallback')
 require(home, 'if (!previous.inShelf && updated.inShelf)', 'shelf transition update reset')
 require(home, 'saved.copyWith(', 'stale pre-shelf update owner')

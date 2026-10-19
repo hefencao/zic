@@ -131,7 +131,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
-    if (entry.chapter.sourceId == 'local-folder') {
+    if (isLocalLibrarySource(entry.chapter.sourceId)) {
       return entry;
     }
     await _externalSources.waitForSource(entry.chapter.sourceId);
@@ -267,7 +267,10 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
       throw RangeError.index(pageIndex, pages, 'pageIndex');
     }
     final page = pages[pageIndex];
-    if (entry.chapter.sourceId != 'local-folder') {
+    if (entry.chapter.sourceId == externalDownloadsSourceId) {
+      return _chapterDownloads.readPage(entry, pageIndex);
+    }
+    if (!isLocalLibrarySource(entry.chapter.sourceId)) {
       await _externalSources.waitForSource(entry.chapter.sourceId);
     }
     final source = _sourceForId(entry.chapter.sourceId);
@@ -275,7 +278,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
     if (source != null && uri != null) {
       return _loadSourcePageBytes(entry.chapter.sourceId, uri);
     }
-    if (entry.chapter.sourceId == 'local-folder') {
+    if (isLocalLibrarySource(entry.chapter.sourceId)) {
       return readLocalImageSource(page.sourceId);
     }
     throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用，无法加载页面 $pageIndex');
@@ -757,7 +760,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
                 originComicId: comic.comicId,
               )),
               onMigrateSource: resolvedSource == null ||
-                      comic.sourceId == 'local-folder'
+                      isLocalLibrarySource(comic.sourceId)
                   ? null
                   : ({versionState}) => _openSourceMigration(comic, versionState: versionState),
               loadVersionState: resolvedSource == null ||
@@ -1013,7 +1016,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
       return;
     }
     if (comic.sourceChapters.length == 1) {
-      if (comic.sourceId != 'local-folder') {
+      if (!isLocalLibrarySource(comic.sourceId)) {
         await _externalSources.waitForSource(comic.sourceId);
       }
       final source = _sourceForId(comic.sourceId);
