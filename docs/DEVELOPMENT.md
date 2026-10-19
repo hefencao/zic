@@ -116,6 +116,8 @@ release 默认使用 `--split-per-abi`；构建成功后移除该模式遗留的
 首次构建会准备固定版本的 OCR 专用 OpenCV，保留 SIMD、TBB 和原有 HAL 加速；后续校验并复用，不打包模型权重。
 原生库在 APK 内压缩，由系统安装时解压，运行时加载原始库文件；这会缩小 APK，但增加安装后的总占用。
 
+GitHub Actions 的 `android-native` 任务构建并上传翻译 `runtime/` 和 OCR `opencv-runtime/`，两者共用 `android-translation-runtime` artifact；`flutter` 任务将它们恢复到 `.deps/comic_translation_native/`，按固定配方与摘要校验后用于 APK 打包。
+
 ## 应用图标
 
 源图 `assets/branding/zic.png` 来自用户提供的透明漫画书插画，保留完整画布与透明通道并缩至 1024px，供 README 与宿主图标派生，不进入 Flutter 资源包。首页顶栏显示 zic 文字，Debug 点击/长按行为沿用原入口。

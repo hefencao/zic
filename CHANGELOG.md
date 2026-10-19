@@ -8,6 +8,8 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Fix the GitHub Actions translation artifact handoff to include the source-built OCR OpenCV package. Wait for both far-page warm requests before exercising raster eviction so the test does not assume asynchronous completion order.
+
 - Preserve typed rhttp prefix/body failures and semantic admission diagnostics. Revert automatic source-plan replacement on admitted injected-body network failures: provider retries retain the existing plan, Range/validators and playable partials without spending semantic recovery budget. Omit raw request URLs from the new body-error messages.
 
 - Switch the launcher artwork to the supplied transparent comic book, preserve its alpha in the Android foreground and brand source, and composite opaque iOS assets. Restore the Home title to zic text with existing Debug routes and Trace adjacency; remove the unused Flutter thumbnail.

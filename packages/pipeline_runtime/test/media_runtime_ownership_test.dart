@@ -1655,9 +1655,10 @@ void main() {
 
       session.accept(observationAt(0, 1));
       final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
-      while (warmed.where((request) => request.asset.index == 7).isEmpty) {
+      while (warmed.where((request) => request.asset.index == 6).isEmpty ||
+          warmed.where((request) => request.asset.index == 7).isEmpty) {
         if (DateTime.now().isAfter(firstDeadline)) {
-          fail('outer far page never reached managed presentation warm');
+          fail('outer far pages never reached managed presentation warm');
         }
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }

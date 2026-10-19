@@ -32,7 +32,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: android-translation-runtime
-          path: .deps/comic_translation_native/runtime
+          path: .deps/comic_translation_native
       - name: Validate staged Android native layout
         run: ./tool/check_android_native.sh
       - name: Build split Android debug APKs without native dependency rebuild
@@ -95,7 +95,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-translation-runtime
-          path: .deps/comic_translation_native/runtime/
+          path: |
+            .deps/comic_translation_native/runtime/
+            .deps/comic_translation_native/opencv-runtime/
           if-no-files-found: error
           retention-days: 1
       - name: Upload source-built Android native libraries and notices
