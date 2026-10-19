@@ -1,16 +1,18 @@
 part of 'home_shell.dart';
 
-// This projection lives for one synchronous query/build only. A later query
-// reads the current source and library again, including offline identities.
+// Shared only within a Flutter build/layout frame. Outside that frame each
+// query reads current source/library authority, including offline identities.
 final class _HomeCatalogIdentityQuery {
   _HomeCatalogIdentityQuery({
     required this.entries,
     required this.savedComics,
+    required this.sources,
     required this.sourceForId,
   });
 
   final List<ImportedLibraryEntry> entries;
   final List<SavedComicRecord> savedComics;
+  final List<BrowsableComicSource> sources;
   final BrowsableComicSource? Function(String sourceId) sourceForId;
   final Map<String, String> _canonicalIds = <String, String>{};
   final Map<String, BrowsableComicSource?> _sources =
@@ -69,12 +71,35 @@ final class _HomeCatalogIdentityQuery {
 }
 
 extension _HomeShellCatalogIdentity on _HomeShellState {
-  _HomeCatalogIdentityQuery _catalogIdentityQuery() =>
-      _HomeCatalogIdentityQuery(
-        entries: _libraryEntries,
-        savedComics: _savedComics,
-        sourceForId: _sourceForId,
-      );
+  _HomeCatalogIdentityQuery _catalogIdentityQuery() {
+    final entries = _libraryEntries;
+    final savedComics = _savedComics;
+    final sources = _sourceProjection.sources;
+    final binding = SchedulerBinding.instance;
+    final inFrame = binding.schedulerPhase == SchedulerPhase.persistentCallbacks;
+    final existing = _frameCatalogIdentityQuery;
+    if (inFrame && existing != null &&
+        identical(existing.entries, entries) &&
+        identical(existing.savedComics, savedComics) &&
+        identical(existing.sources, sources)) {
+      return existing;
+    }
+    final query = _HomeCatalogIdentityQuery(
+      entries: entries,
+      savedComics: savedComics,
+      sources: sources,
+      sourceForId: _sourceForId,
+    );
+    if (inFrame) {
+      _frameCatalogIdentityQuery = query;
+      binding.addPostFrameCallback((_) {
+        if (identical(_frameCatalogIdentityQuery, query)) {
+          _frameCatalogIdentityQuery = null;
+        }
+      });
+    }
+    return query;
+  }
 
   String? _sourceCanonicalComicId(String sourceId, String comicId) {
     final source = _sourceForId(sourceId);
@@ -119,28 +144,8 @@ extension _HomeShellCatalogIdentity on _HomeShellState {
     return '$sourceId\u0000${_canonicalComicId(sourceId, comicId)}';
   }
 
-  Set<String> _canonicalComicAliases(String sourceId, String comicId) {
-    final canonical = _canonicalComicKey(sourceId, comicId);
-    final aliases = <String>{comicId};
-    // A single live card query needs only its matching aliases. Building a
-    // reverse index here would allocate the whole catalog again per card.
-    final examined = <String>{comicId};
-    for (final saved in _savedComics) {
-      if (saved.sourceId == sourceId &&
-          examined.add(saved.comicId) &&
-          _canonicalComicKey(sourceId, saved.comicId) == canonical) {
-        aliases.add(saved.comicId);
-      }
-    }
-    for (final entry in _libraryEntries) {
-      if (entry.chapter.sourceId == sourceId &&
-          examined.add(entry.chapter.comicId) &&
-          _canonicalComicKey(sourceId, entry.chapter.comicId) == canonical) {
-        aliases.add(entry.chapter.comicId);
-      }
-    }
-    return aliases;
-  }
+  Set<String> _canonicalComicAliases(String sourceId, String comicId) =>
+      _catalogIdentityQuery().aliasesFor(sourceId, comicId);
 
   List<SavedComicRecord> _savedComicAliasesFor(
     String sourceId,

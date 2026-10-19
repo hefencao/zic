@@ -10,7 +10,7 @@
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
 3. `docs/IMPLEMENTATION_STATUS.md`与`docs/IMPLEMENTATION_STATE.json`：当前实现、唯一有效状态及剩余验收；归档只在追溯具体决定时按需读，不据旧待办修改生产。
 ## 3. 当前开放问题
-- Reader：SQL/解析及warm125.934ms/0下载失败保持已验，31存储/2385全仓、三ABI包通过。设置后8.483s/933CPU有真实drag/ballistic，UI11.578/GC7.519ms；纵向退出raster19.724/20.825ms失败。分页kernel样本15.243ms中运行14.975ms，不证明纵向失败根因。SDK堆字段不是总分配；原9.779s/首次覆盖安装/210及物理显示开放。
+- Reader：沿用MaterialPageRoute原动画；同帧别名共享、backfill既有4ms/64预算，首页发布等反向动画/overlay退役。210原动画Profile：Namaniku UI11.211/raster12.978ms，Cos UI11.543/raster27.070ms；绘制/120Hz仍开放。2596项/Rust25通过；Release a8d306c9已装210并验进退。SQL/解析/warm及独立开放项见JSON。
 - 013独立网络接收未验：SDK36无android.network_packets；取得wire/Rust观测后才采集，20ms Dart progress不能代替。089默认DNS物理退出缺有效解析控制。新强刷6.712s自动呈现、首次换页57.393s；660→0→780始终active，016入场未验，不重复该输入。057仅余真实Web登录，已验设置/身份不重跑。
 - 097真实21旧manifest第3話/66页未改；22设置保存修复、6回归/Android121与真实拒绝/规范化/同值重入保持。独立包用声明的rouman5.com连到::1被拒绝，Reader未创建；公开DNS非回环、VPN活跃，解析来源未定。新manifest/代际与19/20独立开放，不绕过DNS或重复失败输入。
 - 023肉漫屋真实《要成為男子漢》搜索卡片的左上书架/变暗与右上更新已验；标识验收Releaseec6f9e5a；当前Releaseadb4e36b/72b/PID2921/Home/无forward，210掉线。只余唯一latest动作，不能把Home缺该标识当缺陷。EH predecessor/ACK/提醒仍开放；099受控及实际canonical已验，停止重复。compact focus仅hydrate，真实carrier/epoch保持，371→424/Reader80静置通过。

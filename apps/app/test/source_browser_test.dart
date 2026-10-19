@@ -3917,9 +3917,11 @@ void main() {
       find.byKey(comicCoverKey(sourceId, source._comicId)),
     );
     await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
-    expect(find.byType(NavigationBar), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 500));
+    final homeNavigation = find.byType(NavigationBar, skipOffstage: false);
+    expect(homeNavigation, findsOneWidget);
     final coveredHomeNavigation = tester.widget<NavigationBar>(
-      find.byType(NavigationBar),
+      homeNavigation,
     );
     final reader = tester.widget<ImportedImageChapterScreen>(
       find.byType(ImportedImageChapterScreen),
@@ -3929,7 +3931,7 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.widget<NavigationBar>(find.byType(NavigationBar)),
+      tester.widget<NavigationBar>(homeNavigation),
       same(coveredHomeNavigation),
       reason: 'Home presentation must not rebuild under an active Reader route',
     );
@@ -3941,10 +3943,17 @@ void main() {
 
     Navigator.of(tester.element(find.byType(ImportedImageChapterScreen))).pop();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      tester.widget<NavigationBar>(homeNavigation),
+      same(coveredHomeNavigation),
+      reason: 'Reader coverage includes the reverse transition',
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
     expect(find.byType(ImportedImageChapterScreen), findsNothing);
     expect(
-      tester.widget<NavigationBar>(find.byType(NavigationBar)),
+      tester.widget<NavigationBar>(homeNavigation),
       isNot(same(coveredHomeNavigation)),
       reason: 'Reader exit must publish one catch-up Home rebuild',
     );

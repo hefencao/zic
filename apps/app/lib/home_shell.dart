@@ -4,6 +4,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:network_bridge/network_bridge.dart';
@@ -213,6 +214,7 @@ final class _HomeShellState extends State<HomeShell> {
   late final HomeReaderChapterComposition _readerChapterComposition;
   final HomeRouteAdmission _routeAdmission = HomeRouteAdmission();
   late final HomeSourceProjection _sourceProjection;
+  _HomeCatalogIdentityQuery? _frameCatalogIdentityQuery;
   late final HomeLibrarySession _librarySession;
   late final HomeServiceAdoptionCoordinator _serviceAdoption;
   late final HomeExternalSourceLifecycle _externalSources;

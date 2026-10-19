@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -1817,6 +1818,63 @@ void main() {
       gapBytes.lengthInBytes,
       reason: 'inactive projection gaps must remain exact',
     );
+  });
+
+  test('canonical backfill yields while scanning unrelated cache rows', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-backfill-yield-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final chapter = _chapter(
+      comicId: 'current',
+      revision: 'r1',
+      urls: <String>[
+        'https://cdn.invalid/0123456789abcdef0123456789abcdef.jpg',
+      ],
+    );
+    final authorities = <CanonicalMediaChapterAuthority>[
+      CanonicalMediaChapterAuthority(manifest: chapter),
+    ];
+    for (final state in CacheState.values) {
+      for (var index = 0; index < 128; index++) {
+        await store.index.put(
+          CacheRec(
+            id: DownloadId(
+              content: ContentId(
+                sourceId: chapter.sourceId,
+                comicId: 'unrelated',
+                chapterId: 'old-chapter',
+                pageId: '${state.name}-$index',
+              ),
+              sourceRevision: 'old',
+              canonicalUri: Uri.parse('https://cdn.invalid/$index.jpg'),
+            ),
+            state: state,
+            path: '${root.path}/${state.name}-$index',
+            bytes: 4,
+            checksum: '12345678',
+            createdUs: 0,
+            touchedUs: 0,
+          ),
+        );
+      }
+    }
+    for (final ready in <bool>[true, false]) {
+      var eventTurnRan = false;
+      final event = Timer(Duration.zero, () => eventTurnRan = true);
+      addTearDown(event.cancel);
+      final migrated = ready
+          ? await store.backfillCanonicalReadyArtifacts(authorities)
+          : await store.backfillCanonicalPartials(authorities);
+      expect(migrated, 0);
+      expect(
+        eventTurnRan,
+        isTrue,
+        reason: 'Cache-only Futures must not monopolize the microtask queue',
+      );
+    }
   });
 
   test('resource reuse identity accepts only strong media keys', () {

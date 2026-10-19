@@ -2269,32 +2269,41 @@ final class PersistentDownloadArtifactStore
     Iterable<CanonicalMediaChapterAuthority> authorities,
   ) async {
     _requireOpen();
-    final authorityList = authorities.toList(growable: false);
+    final authorityList = authorities
+        .where((authority) => authority.hasResolvablePhysicalMedia)
+        .toList(growable: false);
     if (authorityList.isEmpty) return 0;
 
+    final workBudget = _DownloadProjectionWorkBudget();
+    final chapterKeys = <String>{
+      for (final authority in authorityList) authority.exactKey,
+    };
     final readyByChapter = <String, List<CacheRec>>{};
     for (final record in await _index.list(state: CacheState.ready)) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
+      final chapterKey = canonicalMediaExactChapterKeyForDownload(record.id);
+      if (!chapterKeys.contains(chapterKey)) continue;
       if (!_isVerifiedReadyRecord(record)) continue;
       readyByChapter
-          .putIfAbsent(
-            canonicalMediaExactChapterKeyForDownload(record.id),
-            () => <CacheRec>[],
-          )
+          .putIfAbsent(chapterKey, () => <CacheRec>[])
           .add(record);
     }
     if (readyByChapter.isEmpty) return 0;
 
     final candidatesByPhysical = <PhysicalMediaId, Map<String, DownloadId>>{};
     for (final authority in authorityList) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
       final records = readyByChapter[authority.exactKey];
       if (records == null || records.isEmpty) continue;
       final manifest = authority.manifest;
       final exactPages = <String, DownloadId>{};
       for (final page in manifest.pages) {
+        if (workBudget.exhausted) await workBudget.yieldTurn();
         final exactId = readerPageDownloadId(manifest, page);
         exactPages[exactId.key] = exactId;
       }
       for (final record in records) {
+        if (workBudget.exhausted) await workBudget.yieldTurn();
         final exactId = exactPages[record.id.key];
         if (exactId == null) continue;
         final physicalId = authority.resolve(exactId);
@@ -2307,6 +2316,7 @@ final class PersistentDownloadArtifactStore
 
     var newlyBound = 0;
     for (final entry in candidatesByPhysical.entries) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
       if (await _index.getPhysicalMediaArtifact(entry.key) != null) continue;
       final bound = await bindPhysicalArtifactFromCandidates(
         physicalId: entry.key,
@@ -2332,17 +2342,23 @@ final class PersistentDownloadArtifactStore
     Iterable<CanonicalMediaChapterAuthority> authorities,
   ) async {
     _requireOpen();
-    final authorityList = authorities.toList(growable: false);
+    final authorityList = authorities
+        .where((authority) => authority.hasResolvablePhysicalMedia)
+        .toList(growable: false);
     if (authorityList.isEmpty) return 0;
 
+    final workBudget = _DownloadProjectionWorkBudget();
+    final chapterKeys = <String>{
+      for (final authority in authorityList) authority.exactKey,
+    };
     final partialByChapter = <String, List<CacheRec>>{};
     for (final record in await _index.list(state: CacheState.partial)) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
+      final chapterKey = canonicalMediaExactChapterKeyForDownload(record.id);
+      if (!chapterKeys.contains(chapterKey)) continue;
       if (record.bytes <= 0) continue;
       partialByChapter
-          .putIfAbsent(
-            canonicalMediaExactChapterKeyForDownload(record.id),
-            () => <CacheRec>[],
-          )
+          .putIfAbsent(chapterKey, () => <CacheRec>[])
           .add(record);
     }
     if (partialByChapter.isEmpty) return 0;
@@ -2350,14 +2366,17 @@ final class PersistentDownloadArtifactStore
     final candidatesByPhysical =
         <PhysicalMediaId, List<({CacheRec record, DownloadId id})>>{};
     for (final authority in authorityList) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
       final records = partialByChapter[authority.exactKey];
       if (records == null || records.isEmpty) continue;
       final exactPages = <String, DownloadId>{};
       for (final page in authority.manifest.pages) {
+        if (workBudget.exhausted) await workBudget.yieldTurn();
         final exactId = readerPageDownloadId(authority.manifest, page);
         exactPages[exactId.key] = exactId;
       }
       for (final record in records) {
+        if (workBudget.exhausted) await workBudget.yieldTurn();
         // Rebuild from the current exact manifest rather than trusting legacy
         // pageIndexHint metadata; the download key remains the exact identity.
         final exactId = exactPages[record.id.key];
@@ -2375,11 +2394,13 @@ final class PersistentDownloadArtifactStore
 
     var retiredExactPartials = 0;
     for (final entry in candidatesByPhysical.entries) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
       // Start from the longest known prefix. Shorter duplicate exact prefixes
       // can then retire without copying over a longer canonical body.
       final candidates = entry.value
         ..sort((left, right) => right.record.bytes.compareTo(left.record.bytes));
       for (final candidate in candidates) {
+        if (workBudget.exhausted) await workBudget.yieldTurn();
         final retired = await _serializeArtifactMutation(candidate.id, () async {
           // Hold the existing per-exact mutation boundary across source
           // validation, canonical copy and exact retirement. Without this,

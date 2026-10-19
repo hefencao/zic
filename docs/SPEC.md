@@ -122,10 +122,10 @@
   persistence helper 返回的 concrete library identity MUST 在 projection publish 前同步重验。
   批量 comic preference MUST 支持该批 durable writes 全部完成后单次 projection publication。
   同来源漫画别名查询 MUST 按当前 raw comic identity 判定等价，不得因同漫画章节数增长而重复解析同一候选；
-  去重 MUST 限于单次查询，下一查询 MUST 读取当前来源 authority，仍保留离线 saved canonical identity 兜底及全部别名偏好合并。
+  去重 MAY 在同一 Flutter build/layout 帧内共享；post-frame MUST 释放，library entries、saved comics 或 source projection 列表换代 MUST 立即重建。帧外查询与下一帧 MUST 读取当前来源 authority，仍保留离线 saved canonical identity 兜底及全部实时别名偏好合并。
   首页更新筛选 MUST 先检查更新证据，未更新漫画不得触发该筛选的别名偏好查询；更新与入架条件、历史展示语义保持。
   首页同次同步构建的更新与历史列表 MUST 共用一份当前只读漫画库聚合；下一构建 MUST 重读当前 library/source authority，不得跨构建缓存该结果。
-  同次构建的聚合、更新候选偏好与卡片身份 SHOULD 复用 source/raw comic identity 解析及按来源建立的反向别名索引，避免更新漫画数乘以全库别名扫描；卡片 live preference 查询 MUST 重读当前 authority。
+  同帧构建及布局中的聚合、更新候选偏好与可见卡片身份 SHOULD 复用 source/raw comic identity 解析及按来源建立的反向别名索引，避免卡片数乘以全库别名扫描；偏好值 MUST 保持实时读取。
   Home snapshot 编码 worker MUST 只接收持久字段投影，不得复制普通章节的完整 pages/prepared manifest 或投影容器的非持久 owner 状态。
   JSON 编码/压缩 MUST 保持异步 worker；compact 普通章节与完整 orphan download metadata、写入串行及完成屏障 MUST 保持。
   durable catalog/preference/read-state DTO 的 JSON 字段转换 MUST 留在该 worker，不得为缩小输入图把整份大目录的转换移回 caller。
@@ -1311,6 +1311,8 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
 - Reader 正常返回前 MUST 等待最终 progress writer drain **以及** checkpoint store durable flush barrier；
   flush 失败 MAY记录并允许 route退出，但不得把“已入消息队列”伪称为 durable。
   详情页等待 Reader route返回后 MUST 使用 route-local final progress更新当前投影，不得为此重读整库。
+  返回后的最终progress发布及Home整库刷新 MUST 等待Reader反向动画结束和overlay移除；push Future在pop起点完成 MUST NOT 提前结束Home覆盖状态，pop前durable barrier保持。
+  Reader进入/退出 MUST 保留`MaterialPageRoute`原平台转场；性能修复 MUST NOT通过替换动画、切换媒体generation或扩大资源窗口规避卡顿。
   异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 - 阅读设置中同时适用于 paged 与 continuous 的 presentation/gesture 项 MUST 按 mode 独立持久化，不能共享同一可变值；当前至少包括“连续阅读”、双击倍率/锚点、长按启用/倍率/移动/拖动边界与 zoom decode boost。只适用于单一 mode 的分页方向、纵向拼接仍保持各自单一 owner；系统栏等真正全局 UI policy 不得复制成两份。
@@ -2153,6 +2155,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   未验证、proof 已撤销或无法安全 canonicalize 的缓存保持 Exact 行。
   历史 exact mutable partial 只有在当前 active proof（或更强 stable media identity）可解析到 canonical physical coordinate 时 MAY 由后台 cache-residency backfill 先提交 canonical physical partial、
   再以 expected-record guard 退休未变化的 exact row；不得扫描未缓存页，gap/revoked proof MUST 保持 Exact。
+  READY/partial backfill MUST 跳过无可解析 physical media 的 authority，且只归组当前 authority 章节；记录扫描、manifest 匹配与 physical 候选循环 MUST 按 downloads-owned 4ms/64 work-unit 预算让出 event turn，不得只依赖立即完成的 SQLite Future。让步 MUST NOT 跨越持有中的事务或改变 NetLane admission，绑定及 exact retirement MUST 继续复核当前记录。
   重试 MUST 严格重放当前 downloadHead 主实体自身的 placement。
 
 新 placement 的目录、模式与 observed owner MUST 整体替换旧授权；当目录被选为 `createNew` 时，observed owner MUST 可为空，不能从旧任务继承。

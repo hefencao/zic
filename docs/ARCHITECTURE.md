@@ -312,9 +312,9 @@ comic/source preference 与 chapter read-state 的 durable write-through 也由 
 helper 返回稳定写入的 library identity，caller 在无 await 的同步 continuation 再确认仍是 current 后才发布 projection。
 批量 comic preference（例如书架 reorder/alias neutralization）必须先完成同一 current store 的该批 durable writes，
 再一次性发布 Home projection，不能退回 UI `save* + replace*` 或逐项 rebuild。
-Home 的 canonical identity 查询在单次同步调用内按 source/raw comic ID 复用解析结果，并按当前目标来源建立反向别名索引；共享漫画 ID 的章节不重复解析。
-首页同次构建的漫画聚合、更新筛选及卡片身份共用该查询；更新先检查只读更新证据，再对候选合并别名偏好，更新与历史仍分别排序。
-查询继续采用当前 source authority 优先、已保存 canonical ID 离线兜底，下一构建重新读取；卡片 live preference 查询也读取当前 authority，偏好合并顺序不变，不持久缓存别名。
+Home 的 canonical identity 查询在同一 Flutter build/layout 帧内按 source/raw comic ID 复用解析结果及按来源建立的反向别名索引；共享漫画 ID 的章节与可见卡片不重复扫描全库。
+该查询在 post-frame 释放，library entries、saved comics 或 source projection 列表换代时立即重建；帧外命令每次读取当前 authority，不跨帧缓存别名。
+漫画聚合、更新筛选及卡片身份共用该查询；更新先检查只读更新证据，更新与历史仍分别排序。当前 source authority 优先、已保存 canonical ID 离线兜底及实时偏好合并顺序保持。
 同一 stable mutation owner 也覆盖 session-owned chapter、SavedComic 与非 Reader progress write-through；
 chapter/SavedComic 的 write+readback 必须在同一个 concrete store 内完成，
 跨 adoption 时整轮重试 current store，caller 同步确认 persisted store 仍是 current 后才发布 Home projection。
@@ -1131,7 +1131,8 @@ Reader 热路径只将 checkpoint 有序入队，不执行同步 sqlite3、章�
 writer尚未ready/启动失败时persistent store只保留每章latest checkpoint并以有界backoff重试writer，
 只有route/lifecycle flush或close durability barrier允许同步fallback。
 每个 Reader route 只在 composition 内持有自己的 latest progress；
-正常route pop前先drain Reader-local writer并等待storage-owned durable flush；失败可记录后退出。route返回后只把最终progress发布到 `HomeLibrarySession` 一次，不再等待额外barrier或reload library/history。
+正常route pop前先drain Reader-local writer并等待storage-owned durable flush；失败可记录后退出。Home的Reader覆盖状态延续到反向动画结束、overlay移除，随后合并最终checkpoint并定向hydrate最新progress，只向 `HomeLibrarySession` 发布一次，不reload library/history；不得在push Future刚完成的pop起点刷新首页整库投影。
+Reader路由沿用`MaterialPageRoute`的原平台转场；性能修复不替换动画、改变媒体generation或扩大Pipeline资源窗口。
 磁盘完成不得成为普通翻页的前置条件；最终退出barrier不扩散到逐页checkpoint（ADR0303）。
 `HomeLibrarySession` 同时记录 library projection revision；
 reload 在开始阶段捕获的 entries/SavedComic snapshot如果在 enrichment期间已被 write-through mutation超越，
@@ -1931,6 +1932,7 @@ cache/artifact owner 独立消费完整 source-verified version relations 与已
 自动缓存 Tab 是 physical management projection：
 active verified shared media 归并为 family/chapter Canonical 行，未验证/gap/revoked 状态保留 Exact。
 Home relation publication 后的 cache-residency backfill 只扫描已经存在的 READY/partial index；
+无可解析 physical media 的 authority 不参与扫描；只归组当前 authority 的章节。记录扫描、manifest 匹配和 physical 候选处理共用 downloads-owned 4ms/64 work-unit event-turn 预算，已完成的 SQLite Future 不能替代事件让步；让步不持有事务或新增调度门禁。
 READY 通过 physical binding 零正文复制收口，historical exact partial 仅在 live authority 能解析 canonical physical coordinate 时先提交 physical prefix 再删除未变化 exact row，
 busy/race/gap 全部 fail-closed。几十个未打开/临时版本因此只增加 compact history，不产生下载管理逐页状态或 UI 热路径图搜索。
 ## 8. Animated WebP 生产与播放

@@ -1036,6 +1036,9 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     routeActive = true;
     try {
       await Navigator.of(context).push(route);
+      // push completes when pop starts. Keep Home publication outside the
+      // reverse transition, until the Reader overlay has actually retired.
+      await route.completed;
       try {
         await _flushReaderProgressCheckpoints();
       } on Object catch (error) {

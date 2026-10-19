@@ -60,7 +60,7 @@
   terminal Reader refresh 仍只由当前失败页触发，fresh chapter matched page carriers按稳定page identity原子换代并保留旧page order，不再单页splice制造同sourceRevision新旧generation混合。
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；独立来源/性能验收见状态JSON。
 ### 渲染与几何 (Pipeline & Reader View)
-- Reader进退：compiled upsert连接复用/释放、31存储/2385全仓及三ABI包已验。设置后完整8.483s/933CPU含真实drag/ballistic，267UI帧峰11.578ms/GC7.519ms；纵向退出raster19.724/20.825ms仍超预算。分页调度样本raster15.243ms中运行14.975ms，不代表纵向失败根因；总分配/原始输入/物理显示开放，SQL/解析不重开。
+- Reader进退：沿用MaterialPageRoute原动画；同帧别名共享、backfill既有4ms/64预算，首页发布等反向动画/overlay退役。210原动画Profile：Namaniku UI11.211/raster12.978ms，Cos UI11.543/raster27.070ms；绘制/120Hz仍开放。2596项/Rust25通过；Release a8d306c9已装210并验进退。SQL/解析/warm及独立开放项见JSON。
 - 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
   `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），

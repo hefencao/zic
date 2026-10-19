@@ -2540,7 +2540,8 @@ final class PersistentChapterDownloadService
 }
 
 // Immediate cache/SQLite Futures only yield microtasks. A large management
-// projection must also let platform reads, UI frames and other event work run.
+// projection or canonical cache backfill must also let platform reads, UI
+// frames and other event work run.
 // This bounds computation, not transport admission or Reader eligibility.
 final class _DownloadProjectionWorkBudget {
   final Stopwatch _watch = Stopwatch()..start();

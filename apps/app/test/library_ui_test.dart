@@ -19,6 +19,7 @@ import 'package:zic/library_diagnostics.dart';
 import 'package:zic/app.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/operation_hint.dart';
+import 'package:zic/reader_runtime.dart';
 
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
@@ -466,6 +467,9 @@ void main() {
       final reads = source.identityReads;
       final cards = tester.widgetList<ComicCoverCard>(find.byType(ComicCoverCard));
       expect(cards, isNotEmpty);
+      expect(reads, lessThanOrEqualTo(comicIds.length + cards.length * 4),
+          reason: 'Visible cards must share the catalog alias lookup within '
+              'one frame instead of scanning it again per card');
       expect(cards.every((card) => card.preference.inShelf), isTrue);
       expect(cards.any((card) => card.comic.comicId == 'updated-off'), isFalse);
       if (!allUpdated) expect(cards.single.comic.comicId, 'updated-on');
@@ -537,6 +541,76 @@ void main() {
       lessThanOrEqualTo(comicCount),
       reason: 'Sections without cards must not duplicate the catalog query',
     );
+  });
+
+  testWidgets('home catalog refresh waits for the Reader exit transition',
+      (tester) async {
+    final source = _CountingCanonicalSource()..collapseAliases = false;
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    final chapter = ImportedChapterRecord(
+      directoryId: 'reader-exit',
+      displayName: 'Reader exit',
+      sourceId: source.sourceId,
+      comicId: 'reading',
+      chapterId: 'reading-chapter',
+      sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'https://example.invalid/001.png',
+          contentKindHint: ContentKindHint.png,
+          mediaFormat: 'png',
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    await store.saveProgress(ReadingProgress(
+      sourceId: chapter.sourceId, comicId: chapter.comicId,
+      chapterId: chapter.chapterId, pageIndex: 0, subPageOffset: 0,
+      readerMode: ReaderMode.paged, updatedAt: DateTime.utc(2026, 10, 18),
+    ));
+    for (var index = 0; index < 32; index++) {
+      await store.upsertSavedComic(SavedComicRecord(
+        sourceId: source.sourceId, comicId: 'unrelated-$index',
+        title: 'Unrelated $index',
+      ));
+    }
+    await tester.pumpWidget(App(
+      libraryStore: store, comicSources: <BrowsableComicSource>[source],
+      preferences: preferences, persistHomeProjectionSnapshot: false,
+    ));
+    final historyEntry = find.byKey(
+      historyChapterEntryKey(chapter.sourceId, chapter.chapterId),
+    );
+    await _pumpUntilFound(tester, historyEntry);
+    await tester.tap(historyEntry);
+    final reader = find.byType(ReaderRuntimeScreen);
+    await _pumpUntilFound(tester, reader);
+    await tester.pump(const Duration(milliseconds: 400));
+    final route = ModalRoute.of(tester.element(reader))!;
+    source.identityReads = 0;
+
+    Navigator.of(tester.element(reader)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(route.animation!.status, AnimationStatus.reverse);
+    expect(source.identityReads, 0,
+        reason: 'Post-pop Home publication must not rebuild the catalog '
+            'during the reverse transition');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(reader, findsNothing);
+    expect(historyEntry, findsOneWidget);
+    expect(source.identityReads, greaterThanOrEqualTo(32),
+        reason: 'Home must refresh the current catalog after route removal');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(minutes: 2));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('long reading history stays lazy across layouts and narrow windows', (tester) async {
