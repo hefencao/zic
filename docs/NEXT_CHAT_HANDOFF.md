@@ -1,6 +1,6 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- `feat/external-download-import`：EHViewer、Mihon目录/CBZ、Venera DB/WAL 只读导入，逐章复制经原下载 owner 写 ZIC 清单/私有索引；本地身份、冲突隔离、取消与重启脱源阅读。当前验收见状态JSON。公开 beta 仍为 main 的 `0.31.0-beta.1+332`，此分支功能尚未发布；Release不内置源仓库索引。
+- `feat/external-download-import`：EHViewer、Mihon目录/CBZ、Venera DB/WAL 只读导入，逐章复制经原下载 owner 写 ZIC 清单/私有索引；本地身份、冲突隔离、取消与重启脱源阅读。当前验收见状态JSON。公开 beta 为 `0.31.0-beta.1+332`，此分支功能尚未发布；Release不内置源仓库索引。
 - zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 后台任务：显式下载/整章预翻译由App只读聚合，Android dataSync通知与有界CPU锁；通知停止/超时转发原owner，Reader后台策略不变。整章仅在服务确认后允许后台推理；设置→下载可管理通知/电池。验证与剩余验收只见状态JSON，不扩大NetLane/Reader职责。
