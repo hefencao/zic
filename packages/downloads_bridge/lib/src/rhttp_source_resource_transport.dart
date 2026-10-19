@@ -300,7 +300,7 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
               Failure(
                 code: error is rhttp.RhttpCancelException
                     ? ErrorCode.cancelled : ErrorCode.network,
-                message: 'source media response failed for $locator',
+                message: 'source media response body failed',
                 cause: error,
               ),
               stackTrace,

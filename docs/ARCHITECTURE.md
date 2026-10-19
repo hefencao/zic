@@ -2436,8 +2436,8 @@ Presentation 不得自行构造 HTTP client。
 
   生产 Flutter composition由 `downloads_bridge` 注入可取消的 Rust/rhttp streaming transport并复用client/keep-alive；
   response cleanup持同一个终止Future，control取消/discard共同等待原pending read与native typed取消/EOF后再关闭Dart订阅；主动取消的typed终止结果让原正文正常结束，不向已取消async*传入晚到异常。
-  rhttp在媒体前缀读取及后续正文中的异常同样映射为`Failure.network/cancelled`，不向source-recovery owner泄漏SDK异常。
-  `SourceResourceTransport`统一观察注入transport的正文失败，使下一次provider attempt先消费source replacement plan；主动取消不标记坏链、不消耗source恢复预算。
+  rhttp在媒体前缀读取及后续正文中的异常同样映射为`Failure.network/cancelled`；正文错误消息不附加原始资源URL。
+  已返回的注入transport正文网络失败沿既有provider `RetryPolicy`重试当前request plan并保留Range/validators；普通断流不标记坏链、不消耗source semantic recovery预算。
   DownloadJob先启动原response discard，再等待正文订阅取消与该discard完成；正文watchdog沿同一收尾，不等待Dart流退出后才发送底层abort。
   终止期间收到的正文只丢弃，不写入ingress/cache，也不改变NetLane资格或chunk framing。
   rangeStart=0 的完整/首段response通过媒体前缀校验后保持raw streaming cadence，

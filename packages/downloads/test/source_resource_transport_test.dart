@@ -282,30 +282,34 @@ void main() {
   });
 
   for (final cancelled in <bool>[false, true]) {
-    test('injected body ${cancelled ? 'cancellation preserves' : 'failure replaces'} '
-        'the source request plan', () async {
-      final stale = Uri.parse('https://fixture/stale-body');
-      final fresh = Uri.parse('https://fixture/fresh-body');
+    test('injected body ${cancelled ? 'cancellation' : 'network failure'} '
+        'preserves the source resume plan', () async {
+      final initial = Uri.parse('https://fixture/partial-body');
+      final replacement = Uri.parse('https://fixture/replacement-body');
       final source = _FixtureSource(
-        request: ComicResourceRequest(uri: stale),
-        retryRequest: ComicResourceRequest(uri: fresh),
+        request: ComicResourceRequest(uri: initial),
+        retryRequest: ComicResourceRequest(uri: replacement),
       );
       final failure = Failure(
         code: cancelled ? ErrorCode.cancelled : ErrorCode.network,
         message: 'fixture body failure',
       );
-      final opened = <Uri>[];
+      final opened = <ComicResourceRequest>[];
       const prefix = <int>[0xff, 0xd8, 0xff, 1];
+      const tail = <int>[2, 3, 0xff, 0xd9];
+      const validators = Validators(etag: '"partial-body"');
       Stream<List<int>> failedBody() async* {
         yield prefix;
         throw failure;
       }
       final pool = ExternalPluginResourceTransportPool(directOpen: (request) async {
-        opened.add(request.uri);
+        opened.add(request);
+        final firstOpen = opened.length == 1;
         return ByteResponse(
-          bytes: opened.length == 1
-              ? failedBody() : Stream<List<int>>.value(prefix),
-          statusCode: HttpStatus.ok, rangeStart: 0, totalLength: 8,
+          bytes: firstOpen ? failedBody() : Stream<List<int>>.value(tail),
+          statusCode: firstOpen ? HttpStatus.ok : HttpStatus.partialContent,
+          rangeStart: firstOpen ? 0 : prefix.length, totalLength: 8,
+          validators: validators,
           flowControl: ByteResponseFlowControl.consumerPacing,
         );
       });
@@ -314,10 +318,16 @@ void main() {
       final first = await loader();
       expect(first.flowControl, ByteResponseFlowControl.consumerPacing);
       await expectLater(_collect(first.bytes), throwsA(same(failure)));
-      final second = await loader();
-      expect(await _collect(second.bytes), prefix);
-      expect(opened, <Uri>[stale, cancelled ? stale : fresh]);
-      expect(source.retryCalls, cancelled ? 0 : 1);
+      final second = await loader(
+        range: const ByteRange(start: 4), validators: validators,
+      );
+      expect(await _collect(second.bytes), tail);
+      expect(second.rangeStart, prefix.length);
+      expect(second.validators.matches(validators), isTrue);
+      expect(opened.map((request) => request.uri), <Uri>[initial, initial]);
+      expect(opened.last.headers[HttpHeaders.rangeHeader], 'bytes=${prefix.length}-');
+      expect(opened.last.headers[HttpHeaders.ifRangeHeader], validators.etag);
+      expect(source.retryCalls, 0);
       expect(source.resolveCalls, 1);
       expect(source.refreshCalls, 0);
       expect(source.loadCalls, 0);

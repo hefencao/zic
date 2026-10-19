@@ -8,7 +8,7 @@
 
 ## Unreleased — state governance and device acceptance
 
-- Normalize rhttp prefix/body failures to typed transport errors. Replace failed injected source-body request plans through the existing source retry path on the next bounded provider attempt; cancellation preserves plans and budgets. Record semantic media rejection details before retiring the invalid generation.
+- Preserve typed rhttp prefix/body failures and semantic admission diagnostics. Revert automatic source-plan replacement on admitted injected-body network failures: provider retries retain the existing plan, Range/validators and playable partials without spending semantic recovery budget. Omit raw request URLs from the new body-error messages.
 
 - Switch the launcher artwork to the supplied transparent comic book, preserve its alpha in the Android foreground and brand source, and composite opaque iOS assets. Restore the Home title to zic text with existing Debug routes and Trace adjacency; remove the unused Flutter thumbnail.
 

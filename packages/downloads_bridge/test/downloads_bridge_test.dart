@@ -6,6 +6,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
+import 'package:rhttp/rhttp.dart' as rhttp;
 import 'package:test/test.dart';
 
 void main() {
@@ -125,15 +126,18 @@ void main() {
     }));
     final transport = RhttpSourceResourceDirectTransport();
     addTearDown(transport.close);
+    final uri = Uri.parse(
+      'http://${server.address.address}:${server.port}/broken?token=private-fixture',
+    );
 
     await expectLater(
-      transport.open(ComicResourceRequest(
-        uri: Uri.parse('http://${server.address.address}:${server.port}/broken'),
-      )),
+      transport.open(ComicResourceRequest(uri: uri)),
       throwsA(isA<Failure>().having(
         (error) => error.code, 'network failure', ErrorCode.network,
       ).having(
-        (error) => error.message, 'body failure', contains('response failed'),
+        (error) => error.cause, 'body failure', isA<rhttp.RhttpException>(),
+      ).having(
+        (error) => error.message, 'request credential', isNot(contains('private-fixture')),
       )),
     );
   });
