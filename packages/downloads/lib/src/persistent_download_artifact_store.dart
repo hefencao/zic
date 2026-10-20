@@ -2183,9 +2183,59 @@ final class PersistentDownloadArtifactStore
     return projection;
   }
 
-  Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
-        for (final record in await _index.list()) record.key: record,
-      };
+  Future<Map<String, CacheRec>> indexedRecords({
+    Iterable<CacheBindingScope>? scopes,
+    Map<String, Set<String>> identitiesBySource = const {},
+  }) async {
+    final query = _index;
+    final records = <String, CacheRec>{};
+    if (scopes != null) {
+      for (final record in await query.listScopedBindings(scopes)) {
+        records[record.key] = record;
+      }
+      for (final source in identitiesBySource.entries) {
+        for (final record in await query.listIdentityBindings(
+          sourceId: source.key, identities: source.value,
+        )) {
+          records[record.key] = record;
+        }
+      }
+      return records;
+    }
+    return {for (final record in await _index.list()) record.key: record};
+  }
+
+  Future<Map<String, CacheRec>> indexedRecordsForEntries(
+    Iterable<ImportedLibraryEntry> entries, {
+    bool includeComicRecords = false,
+  }) {
+    final scopes = <CacheBindingScope>{};
+    final identities = <String, Set<String>>{};
+    for (final entry in entries) {
+      final chapter = entry.chapter;
+      scopes.add(CacheBindingScope(
+        sourceId: chapter.sourceId, comicId: chapter.comicId,
+        chapterId: includeComicRecords ? null : chapter.chapterId,
+        sourceRevision: includeComicRecords ? null : chapter.sourceRevision,
+      ));
+      for (final page in chapter.toManifest().pages) {
+        identities.putIfAbsent(chapter.sourceId, () => <String>{})
+          .addAll(verifiedPageIdentities(page));
+      }
+      for (final baseline in _downloadBaselinePredecessorMappings(entry)) {
+        final mapping = baseline.mapping;
+        if (mapping.successorSourceRevision != chapter.sourceRevision ||
+            mapping.predecessorSourceRevision == null) continue;
+        scopes.add(CacheBindingScope(
+          sourceId: chapter.sourceId,
+          comicId: baseline.relation.predecessorComicId,
+          chapterId: mapping.predecessorChapterId,
+          sourceRevision: mapping.predecessorSourceRevision,
+        ));
+      }
+    }
+    return indexedRecords(scopes: scopes, identitiesBySource: identities);
+  }
 
   Future<ChapterDeleteImpactProjection> inspectChapterDeleteImpact(
     ImportedLibraryEntry entry, {

@@ -1703,6 +1703,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - 外部下载导入 MUST 只读原 App 目录并默认复制到 ZIC；EHViewer 支持图片与 legacy `.ehviewer`/ComicInfo，Mihon 支持章节目录/CBZ（跳过 `_tmp`/临时页、保留拆分页），Venera 用 `local.db` 的章节 ID、标题、顺序及 downloadedChapters 识别实际完成章节。未知 EH 清单或缺失 Venera DB MUST 明示仅采用现有文件，缺页 MUST 在预览报告，不得宣称原下载完整。
 - 外部数据库 MUST 连同可见 WAL 复制到私有快照并复核稳定，再以只读事务检查/查询；MUST NOT 直接恢复外部 schema、丢弃 WAL 或改写原 DB。数据库旧绝对目录仅 MAY 按选择树内唯一同名目录重定位；路径穿越、链接、重名归属冲突 MUST 拒绝。CBZ MUST 限定条目/解压大小，校验 CRC，并拒绝重复/越界路径、链接与加密条目。
 - 导入 MUST 在逐章 staging 内验证图片签名、长度和散列，以独立 `local-download-import` 身份发布；同一 grant/格式/相对路径重复导入 MUST 复用实体，内容改变 MUST 改变 revision。不同来源根或同名漫画 MUST NOT 自动归并或覆盖；来源远程 ID/URL MUST NOT 成为 plugin 身份或媒体等价证明。
+- ZIC `.zic.json` v1/v2 SHOULD 由统一导入入口识别并保持复制模式。v2 MUST 按清单 logical index 恢复页序，在 staging 独立核对长度及带算法 checksum；缺失页 MUST 明示，未列入的文件 MUST NOT 自动纳入，损坏/未知清单 MUST NOT 静默视作普通目录。清单远程 ID MUST NOT 自动成为本地副本的远程复用证明。
 - 复制导入 MUST 通过原 persistent download consumer、唯一 NetLane 和 promotion/placement owner 生成 ZIC 目录、`.zic.json`、pin 与 App-private 下载索引，经 `HomeLibrarySession` 发布章节及本地书架偏好。完成副本 MUST 脱离原目录并在重启后可读；删除副本 MUST NOT 删除原文件。直接读取正文仍归原目录所有，封面沿既有 retained artwork 合同。
 - 扫描/复制 MAY 使用既有显式下载后台通知；取消 MUST 停止新章、排空实际读流/worker/transfer 并清理私有 staging，保留已晋升副本。导入页 MUST NOT 自建网络队列、正文索引或 Reader retry 状态。导入副本缺失 MUST 提示重新导入，不能等待不存在的远程插件。
 - HomeLibrarySession MUST 拥有下载投影读取的 admission、代际和关闭生命周期。扫描期间收到的章节事件（包括 revision 替换、停止/删除后的进度回落）优先于旧扫描基线；
@@ -1993,8 +1994,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   Home章节upsert MUST保留持久化回读及最新progress；仅在完整持久化payload一致时 MAY复用传入不可变记录的已准备manifest。实际metadata、页序或locator变化 MUST采用回读结果；不得新增scope级缓存或延迟authority提交。
   详情的来源章节准备在source fallback前 MUST先通过session hydrate已有exact source/comic/chapter的持久完整记录，再检查revision、已知pageCount与locator有效性；有效记录 MUST保留importedAt及最新进度，MUST NOT仅因紧凑Home占位投影重载来源。缺失、版本/页数变化或旧locator MUST继续来源加载。
   内存 store 仍按有限工作量让出 event turn，且不得跨让步持有 SQLite 事务；精确章节读取和显式原子备份保持原有窄路径与事务语义；
-  cache schema 20 MUST 为 `artifact_replica(access_locator)` 提供非唯一查询索引；
-  v19→20 只安装该索引，不重放历史 identity backfill、不改变 authority、不跳过 crash recovery。
+  cache schema 21 MUST 保留 `artifact_replica(access_locator)` 索引，并为 source/comic/chapter/revision 与同源内容标识提供候选查询索引。
+  候选投影 MUST 与 binding 在同一事务维护，删除 MUST 撤销对应 token；升级 MAY 一次性回填，当前版本重开 MUST NOT 重放回填或改变 artifact/replica authority。
+  章节下载、状态和就绪页的 CacheRec 候选查询 SHOULD 仅读取当前 scope 与可验证复用候选；MUST 保留同源跨 comicId 的强内容标识候选及显式版本页面证明，MUST NOT 将候选统一限定到当前漫画、下载头或 pinned 记录。既有 revision、歧义、撤销及物理校验 MUST 保持。
   `CacheScanner` 的 trace MUST 分开记录 `cacheScan.scanMicros` 和 `phaseMicros`；
   DB/live owner 已保护的 sidecar MAY 作为扫描提示免除冗余正文类型探测，但不得代替正文存在性、缺失 partial 校验或持久归属证明。
 - 设置 MUST 提供缓存上限（MB，默认 512，范围 64–8192）。该上限是用户对页面 artifact 容量策略的单一输入：持久 artifact 层按上限整理、回落到其 75% 目标；
@@ -2119,7 +2121,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   物理存在的非空目录冲突时弹出用户选择，严禁静默重命名或让历史 SQLite 幽灵记录阻断纯标题目录。
   冲突恢复/`forcePrompt` MUST 将当前 persisted `DownloadPlacement.relativeDirectory` 作为 required conflict target 重新交给 storage conflict inspector，MUST NOT 因目录名不匹配 comic title 而忽略；即使目标目录尚未物化，只要 durable placement owner claim 存在，也 MUST 形成可解释的冲突候选并携带 storage-projected `observedOwnerKey`。UI MUST NOT 从路径、异常文本或标题推断 owner；overwrite 仍 MUST 由 storage owner 对该 observed owner 重新校验。若 Presentation 过滤 exact/self candidate，MUST 另行保留完整 occupied directory 集合用于 `saveAsNew` 唯一命名，禁止重新选择被过滤的 exact occupied 推荐目录。整本任务查找 MUST 使用 `(sourceId, comicId)` 组合身份；相同 comicId 的不同 sourceId MUST 保持不同 job。
   每本漫画根目录 MUST 写入 `.zic.json`，提交前 MUST 重新校验 owner，不同 comicId 不得 last-writer-wins；
-  manifest MUST 保存单调 generation、内容 fingerprint、`pageOrder` 和稳定 chapter-id→directory 映射，损坏 fingerprint MUST 拒绝。SAF manifest replace/delete MUST 在任何 SAF mutation 前 flush App-private transaction intent，并保留 deterministic `.zic.json.zic-old` 直到 `DownloadPlacement` commit point；重启 MUST 以 intent + exact token 决定 rollback/forward。无 intent 的较新 target MUST NOT 仅因 generation 更高而推进 placement。generic SAF page/partial 不复用 manifest token，而按 ADR0343 在任何 target mutation 前 flush 独立 App-private body intent，保留 deterministic `target.zic-old`，并以现有 `CacheRec` / `PhysicalPartialRecord` 精确新记录作为唯一 commit point。低层 `commitSafTemporary` 只允许 rename 到空 target；生产路径禁止 `safReplace`、delete-then-rename 和随机隐藏 backup。
+  manifest MUST 保存单调 generation、内容 fingerprint、`pageOrder` 和稳定 chapter-id→directory 映射，损坏 fingerprint MUST 拒绝。
+  大型清单解析/指纹/序列化 SHOULD 离开 UI isolate，worker MUST 只接收值，提交/恢复/锁 MUST 留在原 owner 且调用者等待真实退出。新写入 v2 MUST 逐章保存 sourceRevision、预期页数及 logical index/pageId/章节内文件名/长度/带算法 checksum；页索引、文件名及 pageId MUST 唯一且路径不得越界。删除章节 MUST 同步删除其文件列表并保留页序策略。旧 v1 MUST 继续可读；清单 MUST NOT 替代 SQLite artifact/replica authority。
+  SAF manifest replace/delete MUST 在任何 SAF mutation 前 flush App-private transaction intent，并保留 deterministic `.zic.json.zic-old` 直到 `DownloadPlacement` commit point；重启 MUST 以 intent + exact token 决定 rollback/forward。无 intent 的较新 target MUST NOT 仅因 generation 更高而推进 placement。generic SAF page/partial 不复用 manifest token，而按 ADR0343 在任何 target mutation 前 flush 独立 App-private body intent，保留 deterministic `target.zic-old`，并以现有 `CacheRec` / `PhysicalPartialRecord` 精确新记录作为唯一 commit point。低层 `commitSafTemporary` 只允许 rename 到空 target；生产路径禁止 `safReplace`、delete-then-rename 和随机隐藏 backup。
   SAF body 的 stale/crash intent recovery MUST独立验证完整 length+CRC，partial 也 MUST NOT以 equal length 代替 staged content proof。相同 partial 重存可能在 mutation 前就匹配现有 index authority；target 缺失时，只有 backup 的完整 length+CRC 与该 authority 一致才 MAY恢复 backup。已存在但 CRC 不匹配的 target、缺失或不匹配的 backup MUST保留 intent/正文证据并 fail closed。正常 live staging/index commit 的清理 SHOULD复用该次 copy 已累计的 proof，MUST NOT因此给普通 checkpoint 增加整段正文扫描；MUST NOT新增 placement/generation 或第二 index authority。
   单章漫画 MAY 将页面直接放在漫画根目录且省略该章 directory mapping；
   首次进入多章布局时只有缺失 directory mapping 的既有章节 MAY 进入 flat→subdirectory 可重入迁移，

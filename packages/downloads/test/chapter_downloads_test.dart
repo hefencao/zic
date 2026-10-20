@@ -93,7 +93,7 @@ void main() {
   });
   }
 
-  test('READY inventory yields even when the requested chapter has one page',
+  test('large relevant READY inventory yields for a one-page request',
       () async {
     final directory = await Directory.systemTemp.createTemp('zic-ready-yield-');
     addTearDown(() => directory.delete(recursive: true));
@@ -135,14 +135,15 @@ void main() {
           ImportedPageRecord(
             displayName: '001.webp',
             sourceId: 'https://origin.test/${hashFor(255)}.webp',
+            checksum: '12345678', checksumAlgorithm: 'crc32',
             pageId: 'p1',
             contentKindHint: ContentKindHint.webp,
           ),
         ],
       ),
     );
-    // Warm the immutable inventory. One target page alone cannot exercise
-    // the chapter/page projection budget; the READY scan must yield too.
+    // All 256 records are legitimate same-source checksum candidates. A
+    // one-page request must yield while processing that relevant inventory.
     expect(await service.readyPageIndices(entry), <int>{0});
     var eventTurnRan = false;
     Timer.run(() => eventTurnRan = true);
@@ -4119,6 +4120,13 @@ void main() {
     expect(memoryStorage['航海王/第 1 话/001.png.zic-data'], companion);
     expect(memoryStorage, isNot(contains('航海王/001.png.zic-data')));
     expect(await service.artifactStore.readArtifactCompanion(firstId), companion);
+
+    final restoredSaf = await ExternalDownloadScanner().scan(SafExternalDownloadTree(
+      io: memorySaf, identity: service.artifactStore.safTreeUri!, displayName: 'downloads',
+    ));
+    expect(restoredSaf.warnings, isEmpty);
+    expect(restoredSaf.comics.single.chapters.map((chapter) => chapter.pages.single),
+      ['航海王/第 1 话/001.png', '航海王/第 2 话/001.png']);
 
     final entry3 = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(

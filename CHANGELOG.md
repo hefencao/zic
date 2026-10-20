@@ -8,6 +8,9 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Index chapter/comic cache queries and same-source content-identity candidates transactionally in cache schema21. Avoid full-library CacheRec copies during chapter downloads, status and ready-page queries while preserving verified cross-version reuse, pin scope and exact storage authority.
+- Write portable ZIC v2 chapter file lists with logical page order, lengths and typed checksums. Recognize v1/v2 downloads through the unified copy-import flow, verify original files independently and report missing/unlisted pages without inferring remote cache equivalence.
+
 - Unify local and App-download import under “导入本地漫画”, with automatic format detection and expandable chapter previews. Default ordinary image folders to copies, allow explicit direct reading per comic, and keep App formats/CBZ copy-only. Persist direct-folder scan scope, preserve legacy recursion and resolve SAF subfolders through actual provider document URIs.
 
 - Refresh affected download-index locators after a single chapter moves into a multi-chapter layout, so identical images in later chapters reuse the migrated files. Cover Direct and SAF storage, restart and deletion with regression tests.

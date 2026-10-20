@@ -11,6 +11,7 @@
 - dev.269 区分 demanded=true 与闲置流；TaskControl 支持有界 paced drain 与单 invocation 串行保障。
 - 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。rhttp前缀/正文异常统一typed network/cancelled failure，正文错误不附资源URL；已接纳的注入正文断流由provider retry保留原plan/Range/validators，不额外消耗source恢复次数。semantic admission失败在generation退休前记录既有恢复计数与丢弃字节。
 ### 存储与恢复 (Storage & Ingress)
+- Verified-toolchain：cache schema21 提供章节/漫画/revision 与同源内容标识索引，章节操作的 CacheRec 查询仅合并当前记录及跨版本候选；READY/proof/pin/Reader cache owner 保持。ZIC清单v2保存页序与文件校验，统一入口可复制恢复v1/v2；当前验证及真机剩余验收见状态JSON。
 - Verified-device：统一“导入本地漫画”，自动识别普通目录、EHViewer、Mihon/CBZ、Venera DB/WAL，预览漫画/章节。普通散图默认复制，可逐本显式直接读取；App/CBZ只复制。新链接持久化直属扫描，旧记录递归保持；SAF用实际子目录URI。多章迁移后定点刷新复用locator。验证见状态JSON。
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝cold partial由SQLite/文件裁决，不随意materialize durable-store。borrowed staging强刷修正空记录幂等失效及canonical READY仅删索引；复用原store副本清理。三回归/170测试通过；普通Release273实际借用1,112,520B后单次强刷，同physical epoch0→1、静置新帧及17,528,576B完整缓存提交通过，taskFailed0。
@@ -22,7 +23,6 @@
   mounted adapter 在 eviction/revoke 时清掉本地 attempt/provider 并允许 same-identity regrant，detached resident provider 不再被二次 resize/cache wrap。
 - 只有携带 exact `storageId + ArtifactCache mutation generation` authority 的 presentation rejection 才允许 `DownloadTransferOwner` 失效 durable body；
   无 authority 的错误不再自动制造新的 presentation/source generation。widget/page-output 的本地异步 fence 已分别命名为 `loadEpoch` / `bindingEpoch`。
-
 ### Home 组合与服务代际
 - `HomeShell`/`home_shell_*`为入口，旧`DemoHome`仅历史。Trace紧跟zic；历史网格2–6列/横向1–3行/列表，默认三列、持久化、窄屏/sliver。书架来源循环；与漫画源共用全透明紧凑悬浮面板，行高40/行距6，无背景/阴影/提示杠；所有/本地优先，长按复选。展开独立保存，来源/分类/插件由默认关闭的保存过滤控制跨重启恢复。首次遮罩复用`showOperationHint`，确认持久化；元数据只读/canonical续读保留。
 - `HomeShell` 只持Navigator/presentation wiring，authority归各自owner。封面局部订阅source signal，source-failed只在unavailable→available重试；canonical artwork与raw点击key同级。32 UI回归及冷启动8/组合3真机通过，063/066/082收口。

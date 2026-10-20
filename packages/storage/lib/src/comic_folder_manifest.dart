@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'download_placement.dart';
+import 'comic_folder_file_list.dart';
 
 /// Filename of the self-describing comic metadata manifest stored in each
 /// downloaded comic directory.
@@ -8,6 +10,44 @@ const String comicManifestFileName = '.zic.json';
 
 /// Version tag for [ComicFolderManifest] serialization format.
 const String comicManifestFormatV1 = 'zic-comic-v1';
+const String comicManifestFormatV2 = 'zic-comic-v2';
+
+typedef DecodedComicFolderManifest = ({
+  ComicFolderManifest? manifest, bool fingerprintValid,
+});
+
+typedef PreparedComicFolderManifest = ({
+  ComicFolderManifest manifest, String encoded,
+});
+
+// These callables capture values only, never the storage owner or its locks.
+// The caller keeps commit/recovery authority and awaits physical worker exit.
+final class _DecodeComicFolderManifest {
+  const _DecodeComicFolderManifest(this.content);
+  final String content;
+
+  DecodedComicFolderManifest call() {
+    final manifest = ComicFolderManifest.decode(content);
+    return (manifest: manifest, fingerprintValid: manifest?.fingerprintValid ?? false);
+  }
+}
+
+final class _PrepareComicFolderManifest {
+  const _PrepareComicFolderManifest(this.draft);
+  final ComicFolderManifest draft;
+
+  PreparedComicFolderManifest call() {
+    final manifest = draft.copyWith(fingerprint: draft.computedFingerprint);
+    return (manifest: manifest, encoded: manifest.encode());
+  }
+}
+
+Future<DecodedComicFolderManifest> decodeComicFolderManifestAsync(String content) =>
+    Isolate.run(_DecodeComicFolderManifest(content).call);
+
+Future<PreparedComicFolderManifest> prepareComicFolderManifestAsync(
+  ComicFolderManifest draft,
+) => Isolate.run(_PrepareComicFolderManifest(draft).call);
 
 /// Sanitizes a string for use as a filesystem directory or file name across
 /// POSIX, Windows, and Android FAT32/exFAT/ext4 filesystems.
@@ -163,6 +203,7 @@ final class ComicFolderManifest {
     this.chapterDirectories = const <String, String>{},
     this.chapterTitles = const <String, String>{},
     this.chapterSequences = const <String, int>{},
+    this.chapterFiles = const <String, ComicChapterFileList>{},
     this.generation = 0,
     this.fingerprint,
     this.pageOrder = ComicPageOrder.auto,
@@ -181,6 +222,7 @@ final class ComicFolderManifest {
   final Map<String, String> chapterDirectories;
   final Map<String, String> chapterTitles;
   final Map<String, int> chapterSequences;
+  final Map<String, ComicChapterFileList> chapterFiles;
 
   /// Monotonic manifest generation. Writers use it to detect stale export
   /// ownership observations before committing a replacement.
@@ -203,6 +245,7 @@ final class ComicFolderManifest {
     Map<String, String>? chapterDirectories,
     Map<String, String>? chapterTitles,
     Map<String, int>? chapterSequences,
+    Map<String, ComicChapterFileList>? chapterFiles,
     int? generation,
     String? fingerprint,
     ComicPageOrder? pageOrder,
@@ -218,6 +261,7 @@ final class ComicFolderManifest {
       chapterDirectories: chapterDirectories ?? this.chapterDirectories,
       chapterTitles: chapterTitles ?? this.chapterTitles,
       chapterSequences: chapterSequences ?? this.chapterSequences,
+      chapterFiles: chapterFiles ?? this.chapterFiles,
       generation: generation ?? this.generation,
       fingerprint: fingerprint ?? this.fingerprint,
       pageOrder: pageOrder ?? this.pageOrder,
@@ -238,6 +282,10 @@ final class ComicFolderManifest {
         if (chapterTitles.isNotEmpty) 'chapterTitles': chapterTitles,
         if (chapterSequences.isNotEmpty)
           'chapterSequences': chapterSequences,
+        if (chapterFiles.isNotEmpty) 'chapterFiles': {
+          for (final chapter in chapterFiles.entries)
+            chapter.key: chapter.value.toJson(),
+        },
         'generation': generation,
         if (fingerprint != null) 'fingerprint': fingerprint,
         if (pageOrder != ComicPageOrder.auto) 'pageOrder': pageOrder.name,
@@ -263,6 +311,7 @@ final class ComicFolderManifest {
       chapterDirectories: _stringMap(json['chapterDirectories']),
       chapterTitles: _stringMap(json['chapterTitles']),
       chapterSequences: _intMap(json['chapterSequences']),
+      chapterFiles: _chapterFiles(json['chapterFiles']),
       generation: (json['generation'] as num?)?.toInt() ?? 0,
       fingerprint: json['fingerprint'] as String?,
       pageOrder: pageOrder,
@@ -341,5 +390,18 @@ Map<String, int> _intMap(Object? value) {
     for (final entry in value.entries)
       if (entry.key is String && entry.value is int)
         entry.key as String: entry.value as int,
+  };
+}
+
+Map<String, ComicChapterFileList> _chapterFiles(Object? value) {
+  if (value == null) return const {};
+  if (value is! Map<String, dynamic>) {
+    throw const FormatException('invalid comic chapter files');
+  }
+  return {
+    for (final entry in value.entries)
+      entry.key: ComicChapterFileList.fromJson(
+        Map<String, dynamic>.from(entry.value as Map),
+      ),
   };
 }

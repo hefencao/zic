@@ -18,8 +18,9 @@ import 'external_download_tree.dart';
 
 part 'external_download_metadata.dart';
 part 'external_download_archive.dart';
+part 'external_download_zic.dart';
 
-enum ExternalDownloadFormat { auto, localFolder, ehViewer, mihon, venera }
+enum ExternalDownloadFormat { auto, localFolder, ehViewer, mihon, venera, zic }
 
 String externalDownloadFormatName(ExternalDownloadFormat format) => switch (format) {
   ExternalDownloadFormat.auto => '自动识别',
@@ -27,6 +28,7 @@ String externalDownloadFormatName(ExternalDownloadFormat format) => switch (form
   ExternalDownloadFormat.ehViewer => 'EHViewer',
   ExternalDownloadFormat.mihon => 'Mihon / Tachiyomi',
   ExternalDownloadFormat.venera => 'Venera',
+  ExternalDownloadFormat.zic => 'ZIC',
 };
 
 const _maxPageBytes = 128 * 1024 * 1024;
@@ -44,7 +46,7 @@ Future<T> _externalWorker<A, T>(A input, FutureOr<T> Function(A) worker) =>
 final class ExternalDownloadChapter {
   const ExternalDownloadChapter({required this.path, required this.title,
     required this.pages, this.archive = false, this.sequence = 0,
-    this.expectedPages, this.warning});
+    this.expectedPages, this.warning, this.fileProofs = const {}});
   final String path;
   final String title;
   final List<String> pages;
@@ -52,6 +54,7 @@ final class ExternalDownloadChapter {
   final int sequence;
   final int? expectedPages;
   final String? warning;
+  final Map<String, ComicPageFile> fileProofs;
 }
 
 final class ExternalDownloadComic {
@@ -87,6 +90,8 @@ final class ExternalDownloadScanner {
     void check() => checkCancelled?.call();
     final directories = <String, List<ExternalDownloadFile>>{};
     final warnings = <String>[];
+    final nativeComics = <ExternalDownloadComic>[];
+    final nativeRoots = <String>{};
     var count = 0;
     Future<void> walk(String directory, int depth) async {
       check();
@@ -97,6 +102,22 @@ final class ExternalDownloadScanner {
       if (count > _maxEntries) throw const FormatException('目录项目过多，请分批选择漫画目录');
       entries.sort((a, b) => _naturalCompare(a.name, b.name));
       directories[directory] = entries;
+      if ((format == ExternalDownloadFormat.auto || format == ExternalDownloadFormat.zic) &&
+          entries.any((entry) => !entry.isDirectory && entry.name == comicManifestFileName)) {
+        nativeRoots.add(directory);
+        try {
+          final comic = await _scanZicComic(tree, directory, entries, warnings, check);
+          // Root files already contributed to walk's entry budget.
+          count += comic.chapters.where((chapter) => chapter.path != directory)
+              .fold<int>(0, (sum, chapter) => sum + chapter.pages.length);
+          if (count > _maxEntries) throw const FormatException('目录项目过多，请分批选择漫画目录');
+          if (comic.chapters.isNotEmpty) nativeComics.add(comic);
+        } on Object catch (error) {
+          check();
+          warnings.add('$directory：无法采用 ZIC 清单，$error');
+        }
+        return;
+      }
       for (final entry in entries) {
         final path = externalChildPath(directory, entry.name);
         if (entry.isDirectory && !_skipExternalName(entry.name)) {
@@ -105,6 +126,9 @@ final class ExternalDownloadScanner {
       }
     }
     await walk('', 0);
+    if (format == ExternalDownloadFormat.zic) {
+      return ExternalDownloadScan(List.unmodifiable(nativeComics), List.unmodifiable(warnings));
+    }
     final databasePaths = <String>[
       for (final directory in directories.entries)
         for (final file in directory.value)
@@ -131,6 +155,7 @@ final class ExternalDownloadScanner {
     final matchedVenera = <String, _VeneraComic>{};
     for (final directory in directories.entries) {
       check();
+      if (nativeRoots.contains(directory.key)) continue;
       final files = directory.value.where((file) => !file.isDirectory).toList();
       final images = files.where((file) => _isExternalPage(file.name) ||
           ((format == ExternalDownloadFormat.auto || format == ExternalDownloadFormat.localFolder) &&
@@ -268,7 +293,7 @@ final class ExternalDownloadScanner {
         }
       }
     }
-    final comics = <ExternalDownloadComic>[];
+    final comics = <ExternalDownloadComic>[...nativeComics];
     for (final group in matchedVenera.entries) {
       final present = grouped[group.key]?.map((c) => p.posix.basename(c.path)).toSet() ?? <String>{};
       for (final chapter in group.value.chapters.entries) {
@@ -411,6 +436,17 @@ Future<PreparedExternalChapter> prepareExternalChapter({
       check();
       final proof = await _proveExternalPage(file);
       check();
+      final expected = chapter.fileProofs[source];
+      if (expected != null) {
+        final checksum = switch (expected.checksumAlgorithm.trim().toLowerCase()) {
+          'crc32' => proof.crc32,
+          'sha256' => proof.hash,
+          _ => throw FormatException('不支持的清单校验算法：${expected.checksumAlgorithm}'),
+        };
+        if (proof.length != expected.bytes || checksum != expected.checksum.trim().toLowerCase()) {
+          throw FormatException('ZIC 清单文件校验失败：$source');
+        }
+      }
       // The existing physical-media resolver recognizes the first URI digest
       // as content identity. Only the independently measured page SHA belongs
       // here; comic/chapter hashes would incorrectly merge different pages.

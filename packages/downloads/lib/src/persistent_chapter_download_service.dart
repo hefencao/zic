@@ -519,7 +519,9 @@ final class PersistentChapterDownloadService
       'comicId': entry.chapter.comicId,
       'chapterId': entry.chapter.chapterId,
     });
-    final indexedRecords = await artifactStore.indexedRecords();
+    final indexedRecords = await artifactStore.indexedRecordsForEntries(
+      [entry], includeComicRecords: true,
+    );
     await _emitInspection(
       entry,
       phase: ChapterDownloadPhase.downloading,
@@ -879,7 +881,9 @@ final class PersistentChapterDownloadService
       );
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;
-      final finalIndexedRecords = await artifactStore.indexedRecords();
+      final finalIndexedRecords = await artifactStore.indexedRecordsForEntries(
+        [entry], includeComicRecords: true,
+      );
       final finalChapterIds = artifactStore.downloadedChapterIdsFromRecords(
         finalIndexedRecords.values,
         sourceId: manifest.sourceId,
@@ -1382,7 +1386,9 @@ final class PersistentChapterDownloadService
         entry,
         comicDirectoryName: comicDirName,
       );
-      final remainingAll = (await artifactStore.indexedRecords()).values.any((
+      final remainingAll = (await artifactStore.indexedRecords(scopes: [
+        CacheBindingScope(sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId),
+      ])).values.any((
         record,
       ) {
           final content = record.id.content;
@@ -1514,7 +1520,9 @@ final class PersistentChapterDownloadService
     _requireOpen();
     control.throwIfCancelled();
     final manifest = entry.chapter.toManifest();
-    var records = await artifactStore.indexedRecords();
+    var records = await artifactStore.indexedRecordsForEntries(
+      [entry], includeComicRecords: true,
+    );
     var indexedReadyPages = 0;
     var verifiedIndexedPages = 0;
     var invalidIndexedPages = 0;
@@ -1559,7 +1567,9 @@ final class PersistentChapterDownloadService
       }
 
       control.throwIfCancelled();
-      records = await artifactStore.indexedRecords();
+      records = await artifactStore.indexedRecordsForEntries(
+        [entry], includeComicRecords: true,
+      );
       final comicDirectoryName = await artifactStore
           .resolveStructuredComicDirectory(entry, knownRecords: records.values);
       final disk = await artifactStore.scanExistingPages(
@@ -1706,7 +1716,7 @@ final class PersistentChapterDownloadService
       return const <ChapterDownloadSnapshot>[];
     }
     final startedUs = _traceClock.nowMicros();
-    final indexed = await artifactStore.indexedRecords();
+    final indexed = await artifactStore.indexedRecordsForEntries(requested);
     final indexedUs = _traceClock.nowMicros() - startedUs;
     final physicalStartedUs = _traceClock.nowMicros();
     final physicalState = await _loadManagementPhysicalState();
@@ -2152,7 +2162,7 @@ final class PersistentChapterDownloadService
     final records =
         indexedRecords ??
         (chapterRecords == null
-            ? await artifactStore.indexedRecords()
+            ? await artifactStore.indexedRecordsForEntries([entry])
             : const <String, CacheRec>{});
     final recordsByPage = <String, CacheRec>{};
     final targetRecords = chapterRecords ?? records.values;
@@ -2384,7 +2394,7 @@ final class PersistentChapterDownloadService
     final manifest = entry.chapter.toManifest();
     final total = manifest.pages.length;
     if (total == 0) return const <int>{};
-    final indexedRecords = await artifactStore.indexedRecords();
+    final indexedRecords = await artifactStore.indexedRecordsForEntries([entry]);
     final ready = <int>{};
     final missing = <int>[];
     for (var i = 0; i < total; i++) {

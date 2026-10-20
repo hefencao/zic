@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:domain/domain.dart';
+import 'cache_record_query.dart';
 import 'download_placement.dart';
 import 'physical_media_artifact_index.dart';
 import 'physical_partial_index.dart';
@@ -423,6 +424,7 @@ final class MemIndex
         CacheBindingOperations,
         CachePathBindingQuery,
         CacheLogicalBindingQuery,
+        CacheRecordQuery,
         PhysicalMediaArtifactIndex,
         PhysicalPartialIndex {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
@@ -490,6 +492,29 @@ final class MemIndex
         .toList(growable: false)
       ..sort((a, b) => a.key.compareTo(b.key));
     return records;
+  }
+
+  @override
+  Future<List<CacheRec>> listScopedBindings(
+    Iterable<CacheBindingScope> scopes,
+  ) async {
+    _requireOpen();
+    final selected = scopes.toSet();
+    return _records.values.where((record) => selected.any(
+      (scope) => scope.contains(record),
+    )).toList(growable: false)..sort((a, b) => a.key.compareTo(b.key));
+  }
+
+  @override
+  Future<List<CacheRec>> listIdentityBindings({required String sourceId,
+    required Iterable<String> identities}) async {
+    _requireOpen();
+    final selected = identities.toSet();
+    return _records.values.where((record) =>
+      record.state == CacheState.ready &&
+      record.id.content.sourceId == sourceId &&
+      cacheRecordIdentityTerms(record).any(selected.contains),
+    ).toList(growable: false)..sort((a, b) => a.key.compareTo(b.key));
   }
 
   @override

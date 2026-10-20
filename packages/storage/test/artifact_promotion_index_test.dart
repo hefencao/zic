@@ -97,7 +97,7 @@ void main() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 20);
+    expect(checked.select('PRAGMA user_version').single.values.single, 21);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type='table' "

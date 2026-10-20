@@ -92,8 +92,9 @@ generic open watchdog真正超时时，DownloadJob必须只abort当前controlled
 内存 store 以有限 event-turn 预算让步。
 `SqliteImportedLibraryStore`在当前连接内惰性复用版本关系upsert的compiled statement，避免批量发现逐条编译SQL；写入仍同步完成并沿原session persistence顺序提交。
 statement由store在关闭foreground连接前显式释放并清空；重开重新编译，不跨library adoption传递，失败后的参数重绑与原SQL错误传播保持。
-schema 20 的 `artifact_replica(access_locator)` 索引和 `CacheScanner.phaseMicros` 服务于恢复扫描诊断，
-sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
+cache schema 21 在同一 binding 事务内维护 source/comic/chapter 列与 `cache_entry_identity` 候选索引；删除通过外键级联撤销候选。升级一次性回填，当前版本重开不扫描旧行或重写正文/replica authority。
+`CacheRecordQuery` 按漫画/章节/revision 或同源内容标识查询，不依赖全库内存快照；标识 token 与下载复用使用同一投影，候选本身不授予等价或正文权威。
+保留 `artifact_replica(access_locator)` 索引与 `CacheScanner.phaseMicros` 恢复诊断；sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
 
 partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。
 对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；
@@ -112,6 +113,7 @@ composition-owned `ArtifactCacheManager`、artifact transport/read scheduler、
 verified-equivalence proof、章节/整本持久下载与来源 transport 组合。页面 session 状态本身由 `sessions` 拥有。
 本地漫画导入的只读 tree、普通目录/外部格式扫描、数据库快照和逐章私有 staging 归 `downloads`；无 App 清单的普通目录按图片所在目录独立成书，不猜测相邻目录的章节归属。
 EHViewer legacy `.ehviewer`/ComicInfo、Mihon 图片目录/CBZ、Venera `local.db` 分别投影成现有图片的章节模型。
+ZIC `.zic.json` v1/v2 由同一只读扫描器恢复漫画/章节；v2 按显式 logical index 选取文件并在 staging 独立核对长度/checksum，未列入的图片不自动纳入，损坏/未知清单不降级成普通目录。ZIC 复制导入仍建立本地身份，不凭清单中的远程 ID 恢复网络等价或已有 pin。
 外部 SQLite 只在复制 DB 与 WAL 且复核输入稳定后，于私有快照上只读查询；它不替代 ZIC 的库或下载 index。
 解压、图片校验及 DB worker 仅接收文件路径/值与顶层函数，不传递 UI、取消回调或命令生命周期对象；调用者等待实际退出后再清理文件。
 `ChapterDownloadLocalImportSink` 把已校验 staging 映射成同一命令的受控 staged transport，沿原 consumer、NetLane、CRC promotion、pin 与 structured placement 写入；临时文件不能成为 source-resident replay authority。
@@ -2131,7 +2133,8 @@ presentation identity 只表示页面位置/输出。
   external artwork 使用 source-confirmed canonical comic identity + role，
   raw runtime locator 不参与 durable artwork 分区；
 - `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
-  底层 `SqliteIndex` 与 `PersistentDownloadArtifactStore` 维护内存快照并对 `readyPageIndices` 与 `indexedRecords` 提供 O(1) 探查；
+  `PersistentDownloadArtifactStore` 的章节查询合并当前 exact scope、同源强内容标识的跨 comicId 候选及经验证的前驱 chapter/revision；Reader 自动缓存复用仍由 `ArtifactCacheManager` 独立接收完整版本关系。
+  下载启动/结束、单章/批量状态及 ready-page 查询不再复制全库 CacheRec；全局管理、孤立记录发现和删除影响分析仍可读取完整 inventory，状态查询的物理 artifact/partial/projection 管理投影仍为全局读取。每个候选继续经过既有 READY、版本、歧义与物理 locator 校验。
   正常 sealed Reader 热读只做存在性/长度等 O(1) 元数据校验并直接流式消费，完整 CRC-32 属于 seal/materialize/显式 repair-audit 边界，不得在每次读取时全量重算。
   SQLite schema 8 已把 immutable object proof 与 physical copy 分开：
   `artifact_object` 保留 bytes/checksum 与兼容 locator mirror，`artifact_replica` 才是 sealed 物理副本权威；
@@ -2244,6 +2247,7 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 当前支持 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF，ISO-BMFF 必须命中明确 AVIF/HEIF brand，generic `ftyp` 不得猜作 AVIF。
 已进入结构化图片导出的正文若无任一支持签名 MUST 作为 `artifactCorruption` 拒绝，`ContentKindHint` 不得覆盖实际非图片 bytes。
 每个目录的 `.zic.json` 描述当前 owner、稳定章节目录映射、单调 generation 与内容 fingerprint，placement 镜像最近提交 token；
+清单批量解析、指纹与序列化由 storage-owned 短生命周期纯值 worker 执行，提交/恢复/目录锁留在原 owner，调用者等待 worker 真实退出。新写入采用 v2，逐章保存 sourceRevision、预期页数以及 logical index/pageId/文件名/长度/带算法 checksum。文件名相对章节目录，使 flat→多章迁移无需改写页列表；删除章节同步移除其列表并保留 pageOrder。旧 v1 保持可读，未升级章节可在重新下载完成时补齐列表；清单仅是可移植恢复描述，不替代 SQLite artifact/replica authority。
 POSIX 继续通过目录锁串行提交。SAF manifest 由 structured placement owner 在任何 SAF mutation 前先 flush App-private transaction intent，再以 deterministic `.zic.json.zic-old` + `DownloadPlacement` commit point 做 recoverable replace/delete；恢复只接受 intent 或 legacy backup 的 exact token 证据，禁止按“target generation 更高”猜测 forward。该协议位于唯一 metadata process owner 内并按 exact manifest path 串行，见 ADR 0342。
 page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。重存相同 partial 时旧 index 已可匹配预期 authority，因此 target 缺失但 backup 的完整 length+CRC 匹配该 authority 时恢复 backup，不增加 commit token。stale/crash intent 恢复独立读取完整 CRC，未知 target 或不匹配 backup 保留证据并拒绝恢复；正常 live staging/index commit 的清理复用本次累计的 copy proof，不额外扫描 partial 正文。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。
 整本队列把执行期 `ErrorCode.policy` 提升为持久化 `requiresUserAction` 阶段，保存冲突目录、existing/request owner 和触发章节，停止后续调度；

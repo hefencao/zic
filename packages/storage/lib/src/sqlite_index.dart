@@ -7,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'cache_index.dart';
+import 'cache_record_query.dart';
 import 'download_placement.dart';
 import 'physical_media_artifact_index.dart';
 import 'physical_media_projection_index.dart';
@@ -14,6 +15,7 @@ import 'physical_partial_index.dart';
 import 'storage_root_access.dart';
 
 part 'sqlite_artifact_touch_worker.dart';
+part 'sqlite_cache_record_query.dart';
 
 /// Immutable durable authority needed to open one artifact from the owning
 /// SQLite connection as one transactionally consistent snapshot.
@@ -35,6 +37,7 @@ final class SqliteIndex
         CacheBindingOperations,
         CachePathBindingQuery,
         CacheLogicalBindingQuery,
+        CacheRecordQuery,
         StorageAccessAuthorityQuery,
         ArtifactPromotionIndex,
         PhysicalMediaArtifactIndex,
@@ -44,7 +47,7 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 20;
+  static const int _schemaVersion = 21;
   static const _replicaLocatorIndexSql =
       'CREATE INDEX IF NOT EXISTS artifact_replica_access_locator '
       'ON artifact_replica(access_locator)';
@@ -103,6 +106,7 @@ final class SqliteIndex
         // v19 -> v20 adds only an access path. Do not replay historical
         // identity backfills or rewrite body/replica authority on cold open.
         db.execute(_replicaLocatorIndexSql);
+        _createCacheRecordQueryIndexes(db);
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -307,6 +311,7 @@ final class SqliteIndex
       if (version < 11) {
         _migrateLegacyPinnedRetention(db);
       }
+      _createCacheRecordQueryIndexes(db);
       db.execute('PRAGMA user_version = $_schemaVersion');
       db.execute('COMMIT');
     } on Object {
@@ -364,23 +369,6 @@ final class SqliteIndex
     required String sourceRevision,
     CacheState? state,
   }) async {
-    final cached = _cachedEntries;
-    if (cached != null) {
-      final records =
-          cached.values
-              .where(
-                (record) =>
-                    record.id.content == content &&
-                    record.id.sourceRevision == sourceRevision &&
-                    (state == null || record.state == state),
-              )
-              .toList(growable: false)
-            ..sort((left, right) {
-              final touched = right.touchedUs.compareTo(left.touchedUs);
-              return touched != 0 ? touched : left.key.compareTo(right.key);
-            });
-      return records;
-    }
     final db = _requireDb();
     final rows = state == null
         ? db.select(
@@ -397,6 +385,16 @@ final class SqliteIndex
           );
     return rows.map(_read).toList(growable: false);
   }
+
+  @override
+  Future<List<CacheRec>> listScopedBindings(
+    Iterable<CacheBindingScope> scopes,
+  ) async => _readScopedBindings(this, scopes);
+
+  @override
+  Future<List<CacheRec>> listIdentityBindings({required String sourceId,
+    required Iterable<String> identities}) async =>
+      _readIdentityBindings(this, sourceId, identities);
 
   Future<ArtifactObjectRecord?> getArtifactObject(String artifactId) async {
     final normalized = artifactId.trim();
@@ -2845,8 +2843,8 @@ final class SqliteIndex
       INSERT INTO cache_entry (
         key, download_json, state, path, bytes, checksum, created_us, touched_us,
         pinned, checksum_algorithm, artifact_id, storage_root_id,
-        content_key, source_revision
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_key, source_revision, source_id, comic_id, chapter_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         download_json = excluded.download_json,
         state = excluded.state,
@@ -2860,7 +2858,10 @@ final class SqliteIndex
         artifact_id = excluded.artifact_id,
         storage_root_id = excluded.storage_root_id,
         content_key = excluded.content_key,
-        source_revision = excluded.source_revision
+        source_revision = excluded.source_revision,
+        source_id = excluded.source_id,
+        comic_id = excluded.comic_id,
+        chapter_id = excluded.chapter_id
     ''',
       <Object?>[
       record.key,
@@ -2877,8 +2878,12 @@ final class SqliteIndex
       record.storageRootId,
         record.id.content.key,
         record.id.sourceRevision,
+        record.id.content.sourceId,
+        record.id.content.comicId,
+        record.id.content.chapterId,
       ],
     );
+    _putCacheIdentityTerms(db, record);
   }
 
   CacheRec _read(sql.Row row) {

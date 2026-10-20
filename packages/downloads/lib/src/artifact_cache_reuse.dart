@@ -1,11 +1,10 @@
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:storage/storage.dart' show CacheRec;
+import 'package:storage/storage.dart'
+    show CacheRec, cacheRecordIdentityTerms, cacheUriIdentityTerms;
 
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';
-
-final RegExp _uriContentHashPattern = RegExp(r'[a-fA-F0-9]{32,64}');
 
 typedef VerifiedPageReuseIdentityResolver =
     Future<String?> Function(PageAsset page);
@@ -850,19 +849,7 @@ Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
   if (checksum != null && algorithm != null && algorithm.isNotEmpty) {
     yield 'checksum:$algorithm:$checksum';
   }
-  final segments = page.uri.pathSegments;
-  final marker = segments.indexOf('s');
-  if (marker >= 0 && marker + 1 < segments.length) {
-    final imageKey = segments[marker + 1].trim().toLowerCase();
-    if (imageKey.isNotEmpty) {
-      yield 'eh:$imageKey';
-    }
-  }
-  final hash = _uriContentHashPattern
-      .firstMatch(page.uri.toString())?.group(0)?.toLowerCase();
-  if (hash != null) {
-    yield 'hash:$hash';
-  }
+  yield* cacheUriIdentityTerms(page.uri);
 }
 
 /// Primary verified identity for a page asset.
@@ -886,17 +873,7 @@ String? stablePhysicalPageIdentity(PageAsset page) {
   // through [verifiedPageIdentities]: doing so normalizes an identity we must
   // discard and also evaluates the URI hash even after an E-Hentai locator is
   // already sufficient.
-  final segments = uri.pathSegments;
-  final marker = segments.indexOf('s');
-  if (marker >= 0 && marker + 1 < segments.length) {
-    final imageKey = segments[marker + 1].trim().toLowerCase();
-    if (imageKey.isNotEmpty) return 'eh:$imageKey';
-  }
-  final hash = _uriContentHashPattern
-      .firstMatch(uri.toString())
-      ?.group(0)
-      ?.toLowerCase();
-  return hash == null ? null : 'hash:$hash';
+  return cacheUriIdentityTerms(uri).firstOrNull;
 }
 
 PhysicalMediaId? verifiedPhysicalMediaId({
@@ -912,27 +889,8 @@ PhysicalMediaId? verifiedPhysicalMediaId({
 }
 
 /// Computes all content-based verified identities for an indexed cache record.
-Iterable<String> verifiedRecordIdentities(CacheRec record) sync* {
-  final checksum = record.checksum.trim().toLowerCase();
-  final algorithm = record.checksumAlgorithm.trim().toLowerCase();
-  if (checksum.isNotEmpty && algorithm.isNotEmpty) {
-    yield 'checksum:$algorithm:$checksum';
-  }
-  final uri = record.id.canonicalUri;
-  final segments = uri.pathSegments;
-  final marker = segments.indexOf('s');
-  if (marker >= 0 && marker + 1 < segments.length) {
-    final imageKey = segments[marker + 1].trim().toLowerCase();
-    if (imageKey.isNotEmpty) {
-      yield 'eh:$imageKey';
-    }
-  }
-  final hash = _uriContentHashPattern
-      .firstMatch(uri.toString())?.group(0)?.toLowerCase();
-  if (hash != null) {
-    yield 'hash:$hash';
-  }
-}
+Iterable<String> verifiedRecordIdentities(CacheRec record) =>
+    cacheRecordIdentityTerms(record);
 
 /// Primary verified identity for a cache record.
 String? verifiedRecordIdentity(CacheRec record) =>
