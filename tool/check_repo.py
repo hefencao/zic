@@ -7,7 +7,9 @@ import re
 import struct
 import sys
 
-from check_dart_structure import DartStructureError, check_repository
+from check_dart_structure import (
+    DartStructureError, check_repository, _strip_comments_and_strings,
+)
 from test_dart_library_directive_order import check as check_directive_order
 from pathlib import Path
 
@@ -276,12 +278,7 @@ def check_dart_sources() -> None:
             for forbidden in ("import 'dart:io';", 'Directory(', 'RandomAccessFile', 'Isolate.run('):
                 if forbidden in source:
                     fail(f'app local-media facade contains platform/file I/O ({forbidden}): {path}')
-        stripped = re.sub(
-            r"//.*?$|/\*.*?\*/|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"",
-            '',
-            source,
-            flags=re.M | re.S,
-        )
+        stripped = _strip_comments_and_strings(source)
         for opening, closing in [('(', ')'), ('[', ']'), ('{', '}')]:
             if stripped.count(opening) != stripped.count(closing):
                 fail(f'unbalanced {opening}{closing} in {path.relative_to(ROOT)}')
