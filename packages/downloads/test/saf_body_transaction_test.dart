@@ -65,6 +65,28 @@ void main() {
     expect(await orphan.exists(), isFalse);
   });
 
+  test('body intent retired after enumeration does not abort other recovery', () async {
+    final fixture = await _fixture('retired-intent');
+    addTearDown(fixture.dispose);
+    await _createIndex(fixture.indexPath);
+    await _writeIntent(fixture.indexPath, fixture.newRecord, hadTarget: false);
+    fixture.io.storage[target] = fixture.newBytes;
+    final directory = Directory('${fixture.indexPath}.saf-body-transactions');
+    final retired = File('${directory.path}/txn-retired.json');
+    await retired.writeAsString('{already retired by another page');
+    final racingDirectory = _RetiringIntentDirectory(directory, retired.path);
+    final store = await IOOverrides.runWithIOOverrides(
+      fixture.open,
+      _RetiringIntentOverrides(racingDirectory),
+    );
+    addTearDown(store.close);
+
+    expect(racingDirectory.retiredAfterListing, isTrue);
+    expect(fixture.io.storage.containsKey(target), isFalse);
+    expect(await store.index.get(fixture.newRecord.key), isNull);
+    expect(await _intentFiles(fixture.indexPath), isEmpty);
+  });
+
   test('crash after target backup restores old body when index stayed old', () async {
     final fixture = await _fixture('backup-only');
     addTearDown(fixture.dispose);
@@ -509,6 +531,42 @@ Future<List<FileSystemEntity>> _intentFiles(String indexPath) async {
   final directory = Directory('$indexPath.saf-body-transactions');
   if (!await directory.exists()) return const <FileSystemEntity>[];
   return directory.list(followLinks: false).toList();
+}
+
+final class _RetiringIntentOverrides extends IOOverrides {
+  _RetiringIntentOverrides(this.directory);
+  final _RetiringIntentDirectory directory;
+
+  @override
+  Directory createDirectory(String path) => path == directory.path
+      ? directory : super.createDirectory(path);
+}
+
+final class _RetiringIntentDirectory implements Directory {
+  _RetiringIntentDirectory(this.delegate, this.retiredPath);
+  final Directory delegate;
+  final String retiredPath;
+  int _lists = 0;
+  bool retiredAfterListing = false;
+
+  @override
+  String get path => delegate.path;
+  @override
+  Future<bool> exists() => delegate.exists();
+  @override
+  Stream<FileSystemEntity> list({bool recursive = false, bool followLinks = true}) async* {
+    final recovery = ++_lists == 2; // First pass only removes orphan .tmp files.
+    await for (final entity in delegate.list(recursive: recursive, followLinks: followLinks)) {
+      if (recovery && entity.path == retiredPath) {
+        await entity.delete();
+        retiredAfterListing = true;
+      }
+      yield entity;
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _Fixture {

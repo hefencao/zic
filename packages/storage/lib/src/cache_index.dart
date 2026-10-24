@@ -1,11 +1,19 @@
 import 'dart:convert';
 
 import 'package:domain/domain.dart';
+import 'cache_record_query.dart';
 import 'download_placement.dart';
 import 'physical_media_artifact_index.dart';
 import 'physical_partial_index.dart';
 
 enum CacheState { partial, ready }
+
+/// Accounting only: these totals/identities do not prove body availability.
+typedef CacheBindingUsage = ({
+  int bytes,
+  int entries,
+  Set<String> readyArtifactIds,
+});
 
 String defaultArtifactIdForPath(String path) {
   var hash = 0xcbf29ce484222325;
@@ -367,6 +375,14 @@ abstract interface class StorageAccessAuthorityQuery {
   Future<bool> isStorageAccessLocatorAuthoritative(String accessLocator);
 }
 
+/// Positive preservation hints for one cleanup pass, not body/read authority.
+/// Missing locators still require a live [StorageAccessAuthorityQuery] lookup.
+/// A stale positive may only postpone orphan cleanup until the next pass.
+abstract interface class StorageAccessPreservationQuery
+    implements StorageAccessAuthorityQuery {
+  Future<Set<String>> readStorageAccessPreservationHints();
+}
+
 abstract interface class CacheIndex {
   Future<void> open();
 
@@ -423,6 +439,7 @@ final class MemIndex
         CacheBindingOperations,
         CachePathBindingQuery,
         CacheLogicalBindingQuery,
+        CacheRecordQuery,
         PhysicalMediaArtifactIndex,
         PhysicalPartialIndex {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
@@ -493,6 +510,29 @@ final class MemIndex
   }
 
   @override
+  Future<List<CacheRec>> listScopedBindings(
+    Iterable<CacheBindingScope> scopes,
+  ) async {
+    _requireOpen();
+    final selected = scopes.toSet();
+    return _records.values.where((record) => selected.any(
+      (scope) => scope.contains(record),
+    )).toList(growable: false)..sort((a, b) => a.key.compareTo(b.key));
+  }
+
+  @override
+  Future<List<CacheRec>> listIdentityBindings({required String sourceId,
+    required Iterable<String> identities}) async {
+    _requireOpen();
+    final selected = identities.toSet();
+    return _records.values.where((record) =>
+      record.state == CacheState.ready &&
+      record.id.content.sourceId == sourceId &&
+      cacheRecordIdentityTerms(record).any(selected.contains),
+    ).toList(growable: false)..sort((a, b) => a.key.compareTo(b.key));
+  }
+
+  @override
   Future<List<CacheRec>> listPathBindings(
     String path, {
     String? excludingKey,
@@ -527,9 +567,15 @@ final class MemIndex
   }
 
   @override
-  Future<List<PhysicalPartialRecord>> listPhysicalPartials() async {
+  Future<List<PhysicalPartialRecord>> listPhysicalPartials({
+    Iterable<PhysicalMediaId>? ids,
+  }) async {
     _requireOpen();
-    final records = _physicalPartials.values.toList(growable: false)
+    final selected = ids?.map((id) => id.key).toSet();
+    final records = (selected == null ? _physicalPartials.values : [
+      for (final key in selected)
+        if (_physicalPartials[key] case final record?) record,
+    ]).toList(growable: false)
       ..sort((left, right) => left.key.compareTo(right.key));
     return records;
   }
@@ -564,9 +610,15 @@ final class MemIndex
   }
 
   @override
-  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts() async {
+  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts({
+    Iterable<PhysicalMediaId>? ids,
+  }) async {
     _requireOpen();
-    final records = _physicalArtifacts.values.toList(growable: false)
+    final selected = ids?.map((id) => id.key).toSet();
+    final records = (selected == null ? _physicalArtifacts.values : [
+      for (final key in selected)
+        if (_physicalArtifacts[key] case final record?) record,
+    ]).toList(growable: false)
       ..sort((left, right) => left.id.key.compareTo(right.id.key));
     return records;
   }

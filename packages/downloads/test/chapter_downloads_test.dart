@@ -16,6 +16,79 @@ import 'package:transport/transport.dart';
 
 void main() {
   for (final useSaf in [false, true]) {
+  for (final fail in [false, true]) {
+  test('portable checkpoint keeps verified pages after interruption (SAF=$useSaf, failure=$fail)',
+      () async {
+    final root = await Directory.systemTemp.createTemp('portable-checkpoint-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final saf = useSaf ? _MemorySafIo(<String, Uint8List>{}) : null;
+    final service = await PersistentChapterDownloadService.open(root.path,
+      safTreeIo: saf, safTreeUri: useSaf ? 'content://fixture/tree/downloads' : null);
+    addTearDown(service.close);
+    final entry = ImportedLibraryEntry(chapter: ImportedChapterRecord(
+      directoryId: 'checkpoint', sourceId: 'venera:checkpoint', comicId: 'comic',
+      comicTitle: 'Checkpoint', displayName: 'Chapter', chapterId: 'chapter',
+      sourceRevision: 'r1', pages: [for (var i = 0; i < 34; i++) ImportedPageRecord(
+        displayName: '$i.png', sourceId: 'https://fixture.test/$i.png',
+        pageId: '$i', contentKindHint: ContentKindHint.png, byteLength: body.length)]));
+    var interrupt = true;
+    service.setChapterResourceAccess(ChapterResourceAccess(
+      openControlledResponse: (sourceId, uri, {range, validators, control}) async {
+        final index = int.parse(uri.pathSegments.last.split('.').first);
+        if (interrupt && index >= 32) {
+          if (!fail) await control!.whenCancelled;
+          throw Failure(code: fail ? ErrorCode.source : ErrorCode.cancelled,
+            message: 'fixture interruption');
+        }
+        return ByteResponse(bytes: Stream.value(body), statusCode: 200,
+          rangeStart: 0, totalLength: body.length, rangeSupported: false);
+      },
+    ));
+    Future<String> manifestText() async {
+      if (saf != null) return utf8.decode(saf.storage.entries.singleWhere(
+        (item) => item.key.endsWith('/$comicManifestFileName')).value);
+      final file = (await Directory('${root.path}/offline_chapters').list(recursive: true)
+        .where((item) => item.path.endsWith('/$comicManifestFileName')).toList()).single;
+      return File(file.path).readAsString();
+    }
+    final run = service.download(entry);
+    if (fail) {
+      await expectLater(run, throwsA(isA<Failure>()));
+    } else {
+      // Assert the batched checkpoint exists while later pages are still active.
+      var checkpointed = false;
+      for (var i = 0; i < 500 && !checkpointed; i++) {
+        try {
+          checkpointed = ComicFolderManifest.decode(await manifestText())!
+              .chapterFiles['chapter']!.pages.length == 32;
+        } on Object { /* Initial manifest may still be in preparation. */ }
+        if (!checkpointed) await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(checkpointed, isTrue);
+      await service.cancel(entry);
+      await run;
+    }
+    final partial = ComicFolderManifest.decode(await manifestText())!;
+    expect(partial.fingerprintValid, isTrue);
+    expect(partial.chapterFiles['chapter']!.pageCount, 34);
+    expect(partial.chapterFiles['chapter']!.pages, hasLength(32));
+    expect((await service.inspect(entry)).exactCompletedPages, 32);
+    interrupt = false;
+    await service.retry(entry);
+    final complete = ComicFolderManifest.decode(await manifestText())!;
+    expect(complete.chapterFiles['chapter']!.pages, hasLength(34));
+    expect(complete.generation, partial.generation + 1,
+      reason: 'retry start must not rewrite an unchanged manifest');
+    final before = await manifestText();
+    await service.retry(entry);
+    expect(await manifestText(), before,
+      reason: 'repeating an already complete download must not rewrite metadata');
+  });
+  }
+  }
+
+  for (final useSaf in [false, true]) {
   test('multi-chapter transition reuses identical imported bytes at their migrated locator (SAF=$useSaf)', () async {
     final temp = await Directory.systemTemp.createTemp('zic-import-chapter-transition-');
     addTearDown(() => temp.delete(recursive: true));
@@ -93,7 +166,7 @@ void main() {
   });
   }
 
-  test('READY inventory yields even when the requested chapter has one page',
+  test('large relevant READY inventory yields for a one-page request',
       () async {
     final directory = await Directory.systemTemp.createTemp('zic-ready-yield-');
     addTearDown(() => directory.delete(recursive: true));
@@ -135,14 +208,15 @@ void main() {
           ImportedPageRecord(
             displayName: '001.webp',
             sourceId: 'https://origin.test/${hashFor(255)}.webp',
+            checksum: '12345678', checksumAlgorithm: 'crc32',
             pageId: 'p1',
             contentKindHint: ContentKindHint.webp,
           ),
         ],
       ),
     );
-    // Warm the immutable inventory. One target page alone cannot exercise
-    // the chapter/page projection budget; the READY scan must yield too.
+    // All 256 records are legitimate same-source checksum candidates. A
+    // one-page request must yield while processing that relevant inventory.
     expect(await service.readyPageIndices(entry), <int>{0});
     var eventTurnRan = false;
     Timer.run(() => eventTurnRan = true);
@@ -4119,6 +4193,13 @@ void main() {
     expect(memoryStorage['航海王/第 1 话/001.png.zic-data'], companion);
     expect(memoryStorage, isNot(contains('航海王/001.png.zic-data')));
     expect(await service.artifactStore.readArtifactCompanion(firstId), companion);
+
+    final restoredSaf = await ExternalDownloadScanner().scan(SafExternalDownloadTree(
+      io: memorySaf, identity: service.artifactStore.safTreeUri!, displayName: 'downloads',
+    ));
+    expect(restoredSaf.warnings, isEmpty);
+    expect(restoredSaf.comics.single.chapters.map((chapter) => chapter.pages.single),
+      ['航海王/第 1 话/001.png', '航海王/第 2 话/001.png']);
 
     final entry3 = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(

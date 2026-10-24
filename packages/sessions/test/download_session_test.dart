@@ -721,6 +721,29 @@ void main() {
     session.detachIngressProjection(projection.scopeId);
   });
 
+  test('registry identity snapshots include aliases and unmaterialized bindings', () async {
+    final registry = DownloadRegistry(layout: CacheLayout('${temp.path}/identity-snapshot'),
+      clock: FakeMonoClock());
+    addTearDown(registry.dispose);
+    DownloadId idFor(String page) => DownloadId(content: ContentId(
+      sourceId: 'source', comicId: 'comic', chapterId: 'chapter', pageId: page),
+      sourceRevision: 'r1', canonicalUri: Uri.parse('https://example.test/$page'));
+    final anchor = registry.get(idFor('anchor'));
+    final alias = idFor('alias');
+    registry.aliasPhysical(id: alias, target: anchor.id);
+    final before = registry.knownIds;
+    final bound = idFor('bound');
+    registry.bindPhysicalMedia(id: bound, physicalId: PhysicalMediaId.canonical('fixture'));
+    expect(before, {anchor.id, alias});
+    expect(registry.knownIds, {anchor.id, alias, bound});
+    expect(() => before.clear(), throwsUnsupportedError);
+    expect(registry.sessions, hasLength(1));
+    expect(registry.find(bound), isNull);
+    await registry.dispose();
+    expect(registry.knownIds, isEmpty);
+    expect(before, {anchor.id, alias});
+  });
+
   test('physical aliases cannot be rebound to a different session', () {
     final registry = DownloadRegistry(
       layout: CacheLayout('${temp.path}/aliases'),

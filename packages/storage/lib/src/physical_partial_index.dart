@@ -84,7 +84,10 @@ final class PhysicalPartialRecord {
 abstract interface class PhysicalPartialIndex {
   Future<PhysicalPartialRecord?> getPhysicalPartial(PhysicalMediaId id);
 
-  Future<List<PhysicalPartialRecord>> listPhysicalPartials();
+  /// Null keeps the complete inventory; an empty selection returns no rows.
+  Future<List<PhysicalPartialRecord>> listPhysicalPartials({
+    Iterable<PhysicalMediaId>? ids,
+  });
 
   Future<void> putPhysicalPartial(PhysicalPartialRecord record);
 

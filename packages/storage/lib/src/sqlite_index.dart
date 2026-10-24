@@ -7,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'cache_index.dart';
+import 'cache_record_query.dart';
 import 'download_placement.dart';
 import 'physical_media_artifact_index.dart';
 import 'physical_media_projection_index.dart';
@@ -14,6 +15,8 @@ import 'physical_partial_index.dart';
 import 'storage_root_access.dart';
 
 part 'sqlite_artifact_touch_worker.dart';
+part 'sqlite_cache_record_query.dart';
+part 'sqlite_physical_record_query.dart';
 
 /// Immutable durable authority needed to open one artifact from the owning
 /// SQLite connection as one transactionally consistent snapshot.
@@ -35,7 +38,9 @@ final class SqliteIndex
         CacheBindingOperations,
         CachePathBindingQuery,
         CacheLogicalBindingQuery,
+        CacheRecordQuery,
         StorageAccessAuthorityQuery,
+        StorageAccessPreservationQuery,
         ArtifactPromotionIndex,
         PhysicalMediaArtifactIndex,
         PhysicalMediaProjectionIndex,
@@ -44,25 +49,42 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 20;
+  static const int _schemaVersion = 22;
   static const _replicaLocatorIndexSql =
       'CREATE INDEX IF NOT EXISTS artifact_replica_access_locator '
       'ON artifact_replica(access_locator)';
 
   final String? path;
   sql.Database? _db;
+  Future<void>? _opening;
   Map<String, CacheRec>? _cachedEntries;
   Future<_SqliteArtifactTouchWorker>? _artifactTouchWorker;
+  final Set<Future<void>> _recordReads = {};
+  bool _closingRecordReads = false;
 
   void _invalidateCache() {
     _cachedEntries = null;
   }
 
   @override
-  Future<void> open() async {
-    if (_db != null) {
-      return;
-    }
+  Future<void> open() {
+    final opening = _opening;
+    if (opening != null) return opening;
+    if (_db != null) return Future<void>.value();
+    late final Future<void> operation;
+    operation = _open().catchError((Object error, StackTrace stack) {
+      _db?.close();
+      _db = null;
+      Error.throwWithStackTrace(error, stack);
+    }).whenComplete(() {
+      if (identical(_opening, operation)) _opening = null;
+    });
+    _opening = operation;
+    return operation;
+  }
+
+  Future<void> _open() async {
+    _closingRecordReads = false;
     final dbPath = path;
     if (dbPath == null) {
       _db = sql.sqlite3.openInMemory();
@@ -83,6 +105,10 @@ final class SqliteIndex
     // O(N) cold-start tax and also opens a write transaction before Home's
     // first frame. Version 10 records completion of the v1-v9 backfills.
     if (version == _schemaVersion) return;
+    if (version >= 20 && dbPath != null) {
+      await _migrateCacheRecordQueryIndexesOffIsolate(dbPath);
+      return;
+    }
     if (version >= 11) {
       db.execute('BEGIN IMMEDIATE');
       try {
@@ -103,6 +129,11 @@ final class SqliteIndex
         // v19 -> v20 adds only an access path. Do not replay historical
         // identity backfills or rewrite body/replica authority on cold open.
         db.execute(_replicaLocatorIndexSql);
+        if (version < 21) {
+          _createCacheRecordQueryIndexes(db);
+        } else {
+          _migrateCacheRecordReferenceIds(db);
+        }
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -307,6 +338,7 @@ final class SqliteIndex
       if (version < 11) {
         _migrateLegacyPinnedRetention(db);
       }
+      _createCacheRecordQueryIndexes(db);
       db.execute('PRAGMA user_version = $_schemaVersion');
       db.execute('COMMIT');
     } on Object {
@@ -397,6 +429,16 @@ final class SqliteIndex
           );
     return rows.map(_read).toList(growable: false);
   }
+
+  @override
+  Future<List<CacheRec>> listScopedBindings(
+    Iterable<CacheBindingScope> scopes,
+  ) async => _readScopedBindings(this, scopes);
+
+  @override
+  Future<List<CacheRec>> listIdentityBindings({required String sourceId,
+    required Iterable<String> identities}) async =>
+      _readIdentityBindings(this, sourceId, identities);
 
   Future<ArtifactObjectRecord?> getArtifactObject(String artifactId) async {
     final normalized = artifactId.trim();
@@ -919,6 +961,37 @@ final class SqliteIndex
       <Object?>[locator, locator, locator, locator],
     ).isNotEmpty;
   }
+
+  @override
+  Future<Set<String>> readStorageAccessPreservationHints() =>
+      _readRecords((db) async {
+    // One statement snapshots only locator columns. READY compatibility paths
+    // and sidecars cannot contribute preservation hints or body authority.
+    final rows = db.select(
+      "SELECT path AS locator FROM cache_entry WHERE state = 'partial' "
+      'UNION ALL SELECT path FROM physical_partial '
+      'UNION ALL SELECT access_locator FROM artifact_replica '
+      'UNION ALL SELECT source_access_locator FROM artifact_promotion '
+      'UNION ALL SELECT destination_access_locator FROM artifact_promotion '
+      'UNION ALL SELECT source_access_locator FROM artifact_replica_migration '
+      "WHERE phase = 'copying' "
+      'UNION ALL SELECT destination_access_locator '
+      "FROM artifact_replica_migration WHERE phase IN ('copying', 'cleanupPending') "
+      'UNION ALL SELECT temporary_access_locator FROM artifact_replica_migration '
+      "WHERE phase = 'copying'",
+    );
+    final hints = <String>{};
+    final budget = Stopwatch()..start();
+    for (final row in rows) {
+      final locator = row['locator']! as String;
+      if (locator.isNotEmpty) hints.add(locator);
+      if (budget.elapsedMicroseconds >= 4000) {
+        await Future<void>.delayed(Duration.zero);
+        budget.reset();
+      }
+    }
+    return Set<String>.unmodifiable(hints);
+  });
 
   Future<ArtifactReplicaMigrationRecord?> getArtifactReplicaMigration(
     String replicaId,
@@ -1697,42 +1770,14 @@ final class SqliteIndex
     PhysicalMediaId id,
   ) async {
     final rows = _requireDb().select(
-      '''
-      SELECT p.physical_key, p.physical_json, p.artifact_id,
-             p.created_us AS binding_created_us,
-             p.touched_us AS binding_touched_us,
-             o.path, o.bytes, o.checksum, o.checksum_algorithm,
-             o.storage_root_id
-      FROM physical_media_artifact p
-      JOIN artifact_object o ON o.artifact_id = p.artifact_id
-      WHERE p.physical_key = ?
-      LIMIT 1
-    ''',
-      <Object?>[id.key],
+      '$_physicalArtifactSelect WHERE p.physical_key = ? LIMIT 1', [id.key],
     );
     if (rows.isEmpty) return null;
-    final row = rows.first;
-    final decoded = jsonDecode(row['physical_json']! as String);
-    if (decoded is! Map) {
-      throw const FormatException('physical artifact identity is invalid');
-    }
-    final storedId = PhysicalMediaId.fromJson(
-      Map<String, Object?>.from(decoded),
-    );
-    if (storedId != id || row['physical_key']! as String != id.key) {
+    final record = _readPhysicalArtifact(rows.first);
+    if (record.id != id) {
       throw const FormatException('physical artifact key/identity mismatch');
     }
-    return PhysicalMediaArtifactRecord(
-      id: storedId,
-      artifactId: row['artifact_id']! as String,
-      accessLocator: row['path']! as String,
-      bytes: row['bytes']! as int,
-      checksum: row['checksum']! as String,
-      checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
-      storageRootId: (row['storage_root_id'] as String?) ?? 'default',
-      createdUs: row['binding_created_us']! as int,
-      touchedUs: row['binding_touched_us']! as int,
-    );
+    return record;
   }
 
   /// Atomically drops all readable bindings for an immutable artifact after
@@ -1840,41 +1885,15 @@ final class SqliteIndex
   }
 
   @override
-  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts() async {
-    final rows = _requireDb().select('''
-      SELECT p.physical_key, p.physical_json, p.artifact_id,
-             p.created_us AS binding_created_us,
-             p.touched_us AS binding_touched_us,
-             o.path, o.bytes, o.checksum, o.checksum_algorithm,
-             o.storage_root_id
-      FROM physical_media_artifact p
-      JOIN artifact_object o ON o.artifact_id = p.artifact_id
-      ORDER BY p.physical_key
-    ''');
-    final records = <PhysicalMediaArtifactRecord>[];
-    for (final row in rows) {
-      final decoded = jsonDecode(row['physical_json']! as String);
-      if (decoded is! Map) {
-        throw const FormatException('physical artifact identity is invalid');
-      }
-      final id = PhysicalMediaId.fromJson(Map<String, Object?>.from(decoded));
-      if (row['physical_key']! as String != id.key) {
-        throw const FormatException('physical artifact key/identity mismatch');
-      }
-      records.add(
-        PhysicalMediaArtifactRecord(
-          id: id,
-          artifactId: row['artifact_id']! as String,
-          accessLocator: row['path']! as String,
-          bytes: row['bytes']! as int,
-          checksum: row['checksum']! as String,
-          checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
-          storageRootId: (row['storage_root_id'] as String?) ?? 'default',
-          createdUs: row['binding_created_us']! as int,
-          touchedUs: row['binding_touched_us']! as int,
-        ),
-      );
-    }
+  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts({
+    Iterable<PhysicalMediaId>? ids,
+  }) async {
+    final records = await _readPhysicalRowsByKeys(this,
+      select: _physicalArtifactSelect, keyColumn: 'p.physical_key',
+      orderBy: 'p.physical_key', keys: ids?.map((id) => id.key),
+      read: _readPhysicalArtifact,
+    );
+    if (ids != null) records.sort((a, b) => a.id.key.compareTo(b.id.key));
     return records;
   }
 
@@ -1969,11 +1988,16 @@ final class SqliteIndex
   }
 
   @override
-  Future<List<PhysicalPartialRecord>> listPhysicalPartials() async {
-    final rows = _requireDb().select(
-      'SELECT * FROM physical_partial ORDER BY physical_key',
+  Future<List<PhysicalPartialRecord>> listPhysicalPartials({
+    Iterable<PhysicalMediaId>? ids,
+  }) async {
+    final records = await _readPhysicalRowsByKeys(this,
+      select: 'SELECT * FROM physical_partial', keyColumn: 'physical_key',
+      orderBy: 'physical_key', keys: ids?.map((id) => id.key),
+      read: _readPhysicalPartial,
     );
-    return rows.map(_readPhysicalPartial).toList(growable: false);
+    if (ids != null) records.sort((a, b) => a.key.compareTo(b.key));
+    return records;
   }
 
   @override
@@ -2040,12 +2064,21 @@ final class SqliteIndex
   }
 
   @override
-  Future<List<PhysicalMediaProjectionRecord>>
-  listPhysicalMediaProjections() async {
-    final rows = _requireDb().select(
-      'SELECT * FROM physical_media_projection ORDER BY family_key, exact_key',
+  Future<List<PhysicalMediaProjectionRecord>> listPhysicalMediaProjections({
+    Iterable<String>? exactKeys,
+  }) async {
+    final records = await _readPhysicalRowsByKeys(this,
+      select: 'SELECT * FROM physical_media_projection', keyColumn: 'exact_key',
+      orderBy: 'family_key, exact_key', keys: exactKeys,
+      read: _readPhysicalMediaProjection,
     );
-    return rows.map(_readPhysicalMediaProjection).toList(growable: false);
+    if (exactKeys != null) {
+      records.sort((a, b) {
+        final family = a.familyKey.compareTo(b.familyKey);
+        return family != 0 ? family : a.exactKey.compareTo(b.exactKey);
+      });
+    }
+    return records;
   }
 
   @override
@@ -2303,6 +2336,59 @@ final class SqliteIndex
             as int;
     return ready + partial;
   }
+
+  /// Reads accounting fields without loading full READY DownloadId JSON.
+  /// Partial identities still normalize legacy keys exactly as [list] does.
+  Future<CacheBindingUsage> readBindingUsage() => _readRecords((db) async {
+    final cached = _cachedEntries;
+    final Iterable<(String, int, String?)> bindings;
+    if (cached != null) {
+      // Mutations may update the owner map while this read yields.
+      bindings = cached.values.toList(growable: false).map((record) => (
+        physicalCacheKey(record), record.bytes,
+        record.state == CacheState.ready ? record.effectiveArtifactId : null,
+      ));
+    } else {
+      final rows = db.select('SELECT state, path, bytes, artifact_id, '
+          "CASE WHEN state = 'partial' THEN download_json END AS partial_download "
+          'FROM cache_entry');
+      bindings = rows.map((row) {
+        final state = CacheState.values.byName(row['state']! as String);
+        if (state == CacheState.ready) {
+          final storedId = row['artifact_id']! as String;
+          final artifactId = storedId.isEmpty
+              ? defaultArtifactIdForPath(row['path']! as String) : storedId;
+          return ('artifact:$artifactId', row['bytes']! as int, artifactId);
+        }
+        final decoded = jsonDecode(row['partial_download']! as String);
+        if (decoded is! Map) {
+          throw const FormatException('cached download identity is invalid');
+        }
+        final id = DownloadId.fromJson(Map<String, Object?>.from(decoded));
+        return ('binding:${id.key}', row['bytes']! as int, null);
+      });
+    }
+    final bytesByPhysicalKey = <String, int>{};
+    final readyArtifactIds = <String>{};
+    var entries = 0;
+    final budget = Stopwatch()..start();
+    for (final (key, bytes, artifactId) in bindings) {
+      entries++;
+      if (artifactId != null) readyArtifactIds.add(artifactId);
+      if (bytes > (bytesByPhysicalKey[key] ?? 0)) {
+        bytesByPhysicalKey[key] = bytes;
+      }
+      if (budget.elapsedMicroseconds >= 4000) {
+        await Future<void>.delayed(Duration.zero);
+        budget.reset();
+      }
+    }
+    return (
+      bytes: bytesByPhysicalKey.values.fold<int>(0, (sum, bytes) => sum + bytes),
+      entries: entries,
+      readyArtifactIds: Set<String>.unmodifiable(readyArtifactIds),
+    );
+  });
 
   @override
   Future<DownloadPlacement?> getPlacement({
@@ -2609,6 +2695,16 @@ final class SqliteIndex
 
   @override
   Future<void> close() async {
+    _closingRecordReads = true;
+    final opening = _opening;
+    if (opening != null) {
+      try {
+        await opening;
+      } on Object {
+        // The opener reports migration failure; close still drains its exit.
+      }
+    }
+    await Future.wait(List<Future<void>>.of(_recordReads));
     final touchWorker = _artifactTouchWorker;
     _artifactTouchWorker = null;
     if (touchWorker != null) {
@@ -2624,9 +2720,22 @@ final class SqliteIndex
     _db = null;
   }
 
+  Future<T> _readRecords<T>(FutureOr<T> Function(sql.Database) read) async {
+    if (_closingRecordReads) throw StateError('cache index is closing');
+    final db = _requireDb();
+    final exited = Completer<void>();
+    _recordReads.add(exited.future);
+    try {
+      return await read(db);
+    } finally {
+      _recordReads.remove(exited.future);
+      exited.complete();
+    }
+  }
+
   sql.Database _requireDb() {
     final db = _db;
-    if (db == null) {
+    if (db == null || _opening != null) {
       throw StateError('cache index is not open');
     }
     return db;
@@ -2843,11 +2952,13 @@ final class SqliteIndex
     db.execute(
       '''
       INSERT INTO cache_entry (
-        key, download_json, state, path, bytes, checksum, created_us, touched_us,
+        binding_id, key, download_json, state, path, bytes, checksum, created_us, touched_us,
         pinned, checksum_algorithm, artifact_id, storage_root_id,
-        content_key, source_revision
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_key, source_revision, source_id, comic_id, chapter_id
+      ) VALUES ((SELECT coalesce(max(binding_id), 0) + 1 FROM cache_entry),
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
+        binding_id = coalesce(cache_entry.binding_id, excluded.binding_id),
         download_json = excluded.download_json,
         state = excluded.state,
         path = excluded.path,
@@ -2860,7 +2971,10 @@ final class SqliteIndex
         artifact_id = excluded.artifact_id,
         storage_root_id = excluded.storage_root_id,
         content_key = excluded.content_key,
-        source_revision = excluded.source_revision
+        source_revision = excluded.source_revision,
+        source_id = excluded.source_id,
+        comic_id = excluded.comic_id,
+        chapter_id = excluded.chapter_id
     ''',
       <Object?>[
       record.key,
@@ -2877,11 +2991,17 @@ final class SqliteIndex
       record.storageRootId,
         record.id.content.key,
         record.id.sourceRevision,
+        record.id.content.sourceId,
+        record.id.content.comicId,
+        record.id.content.chapterId,
       ],
     );
+    final bindingId = db.select('SELECT binding_id FROM cache_entry WHERE key = ?',
+      [record.key]).single['binding_id']! as int;
+    _putCacheIdentityTerms(db, record, bindingId: bindingId);
   }
 
-  CacheRec _read(sql.Row row) {
+  static CacheRec _read(sql.Row row) {
     final decoded = jsonDecode(row['download_json']! as String);
     if (decoded is! Map) {
       throw const FormatException('cached download identity is invalid');

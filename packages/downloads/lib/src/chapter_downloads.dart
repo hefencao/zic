@@ -1318,6 +1318,7 @@ final class PersistentDownloadComposition
     Duration pageStallTimeout =
         PersistentChapterDownloadService.defaultPageStallTimeout,
     TraceSink? traceSink,
+    Future<ImportedLibraryEntry?> Function(String, String)? summaryChapterLookup,
   }) async {
     final authorities = await _openPersistentDownloadAuthorities(
       root,
@@ -1342,6 +1343,7 @@ final class PersistentDownloadComposition
         http: HttpTransport(userAgentProvider: userAgentProvider),
       ),
       ownsTransferComposition: false,
+      summaryChapterLookup: summaryChapterLookup,
       pageStallTimeout: pageStallTimeout,
       traceSink: traceSink,
     );
@@ -1667,6 +1669,63 @@ final class _DownloadManagementPhysicalState {
   final Map<PhysicalMediaId, PhysicalPartialRecord> partials;
   final Map<String, VersionChapterCanonicalProjection> projections;
   final Map<String, List<CanonicalMediaActiveRange>> activeProjectionRanges;
+  Map<(VersionFamilyId, CanonicalChapterId, CanonicalMediaSegmentId), Set<int>>?
+      _canonicalOffsets;
+  Map<CanonicalMediaCoordinate,
+      ({PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial})>?
+      _canonicalPages;
+
+  // Inventory-local coordinates avoid rebuilding and hashing long serialized
+  // physical keys for every page of every related version.
+  Map<CanonicalMediaCoordinate,
+      ({PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial})>
+      get _canonicalPageStates => _canonicalPages ??= () {
+    final pages = <CanonicalMediaCoordinate,
+        ({PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial})>{};
+    void add(PhysicalMediaId id, {
+      PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial,
+    }) {
+      if (id.kind != PhysicalMediaIdKind.canonical) return;
+      final coordinate = CanonicalMediaCoordinate.tryParseStableKey(id.value);
+      // A parseable alternate spelling must not gain physical authority that
+      // the exact serialized key lookup did not have.
+      if (coordinate == null || coordinate.stableKey != id.value) return;
+      pages[coordinate] = (artifact: artifact, partial: partial);
+    }
+    for (final record in artifacts.values) {
+      add(record.id, artifact: record);
+    }
+    for (final record in partials.values) {
+      if (!artifacts.containsKey(record.id)) add(record.id, partial: record);
+    }
+    return pages;
+  }();
+
+  /// Reverse only already-materialized coordinates through the exact binding.
+  /// Uncached slots and gaps need no synthetic page identity for statistics.
+  Iterable<int> materializedPageIndicesFor(
+    VersionChapterCanonicalProjection projection,
+  ) sync* {
+    final offsets = _canonicalOffsets ??= () {
+      final result =
+          <(VersionFamilyId, CanonicalChapterId, CanonicalMediaSegmentId), Set<int>>{};
+      for (final id in {...artifacts.keys, ...partials.keys}) {
+        if (id.kind != PhysicalMediaIdKind.canonical) continue;
+        final coordinate = CanonicalMediaCoordinate.tryParseStableKey(id.value);
+        if (coordinate == null) continue;
+        result.putIfAbsent((coordinate.familyId, coordinate.chapterId,
+          coordinate.segmentId), () => <int>{}).add(coordinate.offset);
+      }
+      return result;
+    }();
+    for (final interval in projection.intervals) {
+      for (final offset in offsets[(projection.familyId,
+          projection.canonicalChapterId, interval.segmentId)] ?? const <int>{}) {
+        final index = interval.exactStart + offset - interval.segmentStart;
+        if (interval.containsExactIndex(index)) yield index;
+      }
+    }
+  }
 
   /// Builds cache-management rows from durable physical inventory first.
   ///
@@ -1746,34 +1805,26 @@ final class _DownloadManagementPhysicalState {
   }
 
   bool isProjectionActive({
-    required ImportedLibraryEntry entry,
+    required VersionChapterCanonicalProjection? projection,
     required int pageIndex,
   }) {
-    final projection = projectionFor(entry);
     if (projection == null) return false;
     final ranges = activeProjectionRanges[projection.exactKey];
     if (ranges == null) return false;
     return ranges.any((range) => range.contains(pageIndex));
   }
 
-  CanonicalMediaCoordinate? canonicalCoordinateFor({
-    required ImportedLibraryEntry entry,
-    required int pageIndex,
-  }) => projectionFor(entry)?.coordinateForPageIndexOrNull(pageIndex);
-
   ({PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial})?
       pageState({
     required ImportedLibraryEntry entry,
+    required VersionChapterCanonicalProjection? projection,
     required PageAsset page,
     required int pageIndex,
   }) {
-    final projected = _projectedPhysicalId(entry, pageIndex);
-    if (projected != null) {
-      final artifact = artifacts[projected];
-      final partial = artifact == null ? partials[projected] : null;
-      if (artifact != null || partial != null) {
-        return (artifact: artifact, partial: partial);
-      }
+    final coordinate = projection?.coordinateForPageIndexOrNull(pageIndex);
+    if (coordinate != null) {
+      final projected = _canonicalPageStates[coordinate];
+      if (projected != null) return projected;
     }
     final stable = verifiedPhysicalMediaId(
       sourceId: entry.chapter.sourceId,
@@ -1787,13 +1838,10 @@ final class _DownloadManagementPhysicalState {
   }
 
   PhysicalMediaId? _projectedPhysicalId(
-    ImportedLibraryEntry entry,
+    VersionChapterCanonicalProjection? projection,
     int pageIndex,
   ) {
-    final coordinate = canonicalCoordinateFor(
-      entry: entry,
-      pageIndex: pageIndex,
-    );
+    final coordinate = projection?.coordinateForPageIndexOrNull(pageIndex);
     return coordinate == null
         ? null
         : PhysicalMediaId.canonical(coordinate.stableKey);
@@ -1850,33 +1898,6 @@ String _identity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
 
 bool _isCompactProjectionEntry(ImportedLibraryEntry entry) =>
     chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter);
-
-List<PageAsset> _effectiveCompactPages(
-  List<PageAsset> placeholders,
-  Iterable<CacheRec> records, {
-  required String chapterId,
-}) {
-  final ordered = records.toList(growable: false)
-    ..sort((left, right) {
-      final page = left.id.content.pageId.compareTo(right.id.content.pageId);
-      return page != 0 ? page : left.createdUs.compareTo(right.createdUs);
-    });
-  final materializedCount = ordered.length < placeholders.length
-      ? ordered.length
-      : placeholders.length;
-  return <PageAsset>[
-    for (var index = 0; index < materializedCount; index++)
-      PageAsset(
-        pageId: ordered[index].id.content.pageId,
-        chapterId: chapterId,
-        index: index,
-        uri: ordered[index].id.canonicalUri,
-        byteLength: ordered[index].bytes,
-        checksum: ordered[index].checksum,
-      ),
-    ...placeholders.skip(materializedCount),
-  ];
-}
 
 int? _declaredTotalBytes(ImportedLibraryEntry entry) {
   var total = 0;

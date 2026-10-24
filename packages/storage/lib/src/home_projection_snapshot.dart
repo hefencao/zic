@@ -10,7 +10,7 @@ const _legacyHomeProjectionSnapshotVersion = 1;
 const _compactHomeProjectionSnapshotVersion = 2;
 const _legacyDownloadProjectionHomeSnapshotVersion = 3;
 const _homeProjectionSnapshotVersion = 4;
-const homeProjectionSnapshotPageSourcePrefix = 'zic-home-snapshot-page:';
+const homeProjectionSnapshotPageSourcePrefix = importedChapterSummaryPageSourcePrefix;
 
 bool isHomeProjectionSnapshotPageSource(String sourceId) =>
     sourceId.startsWith(homeProjectionSnapshotPageSourcePrefix);
@@ -18,7 +18,7 @@ bool isHomeProjectionSnapshotPageSource(String sourceId) =>
 bool chapterHasHomeProjectionSnapshotPagePlaceholders(
   ImportedChapterRecord chapter,
 ) =>
-    chapter.pages.any(
+    chapter.isSummary || chapter.pages.any(
       (page) => isHomeProjectionSnapshotPageSource(page.sourceId),
     );
 const _snapshotCompressionThreshold = 512 * 1024;
@@ -36,6 +36,41 @@ final class _HomeProjectionSnapshotEncoder {
 
   _EncodedHomeProjectionSnapshot call() =>
       _encodeHomeProjectionSnapshot(projection);
+}
+
+final class _HomeProjectionSnapshotDecoder {
+  const _HomeProjectionSnapshotDecoder(this.storedBytes);
+
+  final List<int> storedBytes;
+
+  ({HomeProjectionSnapshot? snapshot, int jsonBytes}) call() {
+    final bytesStartedAt = Stopwatch()..start();
+    final compressed = _isGzip(storedBytes);
+    final bytes = compressed ? gzip.decode(storedBytes) : storedBytes;
+    _snapshotLog(
+      'home-snapshot-bytes-decode-complete storedBytes=${storedBytes.length} '
+      'jsonBytes=${bytes.length} compressed=$compressed '
+      'durationMs=${bytesStartedAt.elapsedMilliseconds}',
+    );
+    final jsonDecodeStartedAt = Stopwatch()..start();
+    final decoded = jsonDecode(utf8.decode(bytes));
+    _snapshotLog(
+      'home-snapshot-json-decode-complete '
+      'durationMs=${jsonDecodeStartedAt.elapsedMilliseconds}',
+    );
+    if (decoded is! Map) return (snapshot: null, jsonBytes: bytes.length);
+    final modelDecodeStartedAt = Stopwatch()..start();
+    final snapshot = HomeProjectionSnapshot.fromJson(
+      Map<String, Object?>.from(decoded),
+      storedCompressed: compressed ||
+          storedBytes.length < _snapshotCompressionThreshold,
+    );
+    _snapshotLog(
+      'home-snapshot-model-decode-complete '
+      'durationMs=${modelDecodeStartedAt.elapsedMilliseconds}',
+    );
+    return (snapshot: snapshot, jsonBytes: bytes.length);
+  }
 }
 
 _EncodedHomeProjectionSnapshot _encodeHomeProjectionSnapshot(
@@ -164,6 +199,7 @@ final class HomeProjectionSnapshot {
     this.orphanedDownloadEntries = const <ImportedLibraryEntry>[],
     this.chapterDownloads = const <HomeChapterDownloadSummary>[],
     this.libraryRevision,
+    this.chapterRevision,
     this.entriesAreCompact = false,
     this.storedCompressed = true,
     this.includesDownloadProjection = true,
@@ -179,6 +215,7 @@ final class HomeProjectionSnapshot {
   final List<ImportedLibraryEntry> orphanedDownloadEntries;
   final List<HomeChapterDownloadSummary> chapterDownloads;
   final int? libraryRevision;
+  final String? chapterRevision;
   final bool entriesAreCompact;
   final bool storedCompressed;
   final bool includesDownloadProjection;
@@ -223,6 +260,7 @@ final class HomeProjectionSnapshot {
             ? chapterDownloads.toList(growable: false)
             : chapterDownloads.map((summary) => summary.toJson()).toList(),
         if (libraryRevision != null) 'libraryRevision': libraryRevision,
+        if (chapterRevision != null) 'chapterRevision': chapterRevision,
       };
 
   factory HomeProjectionSnapshot.fromJson(
@@ -278,6 +316,7 @@ final class HomeProjectionSnapshot {
               .toList(growable: false)
           : const <HomeChapterDownloadSummary>[],
       libraryRevision: _optionalNonNegativeInt(json, 'libraryRevision'),
+      chapterRevision: _optionalLooseString(json, 'chapterRevision'),
       entriesAreCompact: isCompact,
       storedCompressed: storedCompressed,
       includesDownloadProjection: includesDownloadProjection,
@@ -318,6 +357,7 @@ final class HomeProjectionSnapshotStore {
   Future<HomeProjectionSnapshot?>? _readOperation;
   HomeProjectionSnapshot? _readCache;
   bool _readCacheValid = false;
+  int _readGeneration = 0;
 
   Future<String> get _path async {
     final fixedPath = _fixedPath;
@@ -374,10 +414,13 @@ final class HomeProjectionSnapshotStore {
       _snapshotLog('home-snapshot-read-joined');
       return existing;
     }
+    final generation = _readGeneration;
     late final Future<HomeProjectionSnapshot?> operation;
     operation = _readFromDisk().then((snapshot) {
-      _readCache = snapshot;
-      _readCacheValid = true;
+      if (generation == _readGeneration) {
+        _readCache = snapshot;
+        _readCacheValid = true;
+      }
       return snapshot;
     }).whenComplete(() {
       if (identical(_readOperation, operation)) {
@@ -412,38 +455,23 @@ final class HomeProjectionSnapshotStore {
         );
         return null;
       }
-      final compressed = _isGzip(storedBytes);
-      final bytes = compressed ? gzip.decode(storedBytes) : storedBytes;
       _snapshotLog(
         'home-snapshot-bytes-read storedBytes=${storedBytes.length} '
-        'jsonBytes=${bytes.length} compressed=$compressed '
         'durationMs=${bytesStartedAt.elapsedMilliseconds}',
       );
-      final jsonDecodeStartedAt = Stopwatch()..start();
-      final decoded = jsonDecode(utf8.decode(bytes));
-      _snapshotLog(
-        'home-snapshot-json-decode-complete '
-        'durationMs=${jsonDecodeStartedAt.elapsedMilliseconds}',
-      );
-      if (decoded is! Map) {
+      // Capture only encoded bytes, never this store or its path-provider owner.
+      final decoder = _HomeProjectionSnapshotDecoder(storedBytes);
+      final decoded = await Isolate.run(decoder.call);
+      final snapshot = decoded.snapshot;
+      if (snapshot == null) {
         _snapshotLog(
-          'home-snapshot-read-invalid-root bytes=${bytes.length} '
+          'home-snapshot-read-invalid-root bytes=${decoded.jsonBytes} '
           'durationMs=${startedAt.elapsedMilliseconds}',
         );
         return null;
       }
-      final modelDecodeStartedAt = Stopwatch()..start();
-      final snapshot = HomeProjectionSnapshot.fromJson(
-        Map<String, Object?>.from(decoded),
-        storedCompressed: compressed ||
-            storedBytes.length < _snapshotCompressionThreshold,
-      );
       _snapshotLog(
-        'home-snapshot-model-decode-complete '
-        'durationMs=${modelDecodeStartedAt.elapsedMilliseconds}',
-      );
-      _snapshotLog(
-        'home-snapshot-read-complete bytes=${bytes.length} '
+        'home-snapshot-read-complete bytes=${decoded.jsonBytes} '
         'entries=${snapshot.entries.length} '
         'saved=${snapshot.savedComics.length} '
         'readStates=${snapshot.readStates.length} '
@@ -508,6 +536,8 @@ final class HomeProjectionSnapshotStore {
         );
         _readCache = null;
         _readCacheValid = false;
+        _readGeneration++;
+        _readOperation = null;
       } on Object catch (error) {
         _snapshotLog(
           'home-snapshot-write-failed '
@@ -569,29 +599,7 @@ Map<String, Object?> _compactEntryToJson(ImportedLibraryEntry entry) =>
     };
 
 Map<String, Object?> _compactChapterToJson(ImportedChapterRecord chapter) =>
-    <String, Object?>{
-      'directoryId': chapter.directoryId,
-      'displayName': chapter.displayName,
-      'sourceId': chapter.sourceId,
-      'comicId': chapter.comicId,
-      'chapterId': chapter.chapterId,
-      'sourceRevision': chapter.sourceRevision,
-      'comicTitle': chapter.comicTitle,
-      'comicAuthors': chapter.comicAuthors,
-      'comicTags': chapter.comicTags,
-      if (chapter.comicDescription != null)
-        'comicDescription': chapter.comicDescription,
-      if (chapter.coverSourceId != null) 'coverSourceId': chapter.coverSourceId,
-      if (chapter.coverMediaFormat != null)
-        'coverMediaFormat': chapter.coverMediaFormat,
-      'coverAnimatedHint': chapter.coverAnimatedHint,
-      'sequence': chapter.sequence,
-      'readingDirection': chapter.readingDirection.name,
-      if (chapter.sourceUpdatedAt != null)
-        'sourceUpdatedAt': chapter.sourceUpdatedAt!.toIso8601String(),
-      'importedAt': chapter.importedAt.toIso8601String(),
-      'pageCount': chapter.pages.length,
-    };
+    chapter.toSummaryJson();
 
 ImportedLibraryEntry _entryFromJson(Object? value) {
   final json = _requiredMap(value, 'entry');
@@ -619,47 +627,8 @@ ImportedLibraryEntry _compactEntryFromJson(Object? value) {
   );
 }
 
-ImportedChapterRecord _compactChapterFromJson(Map<String, Object?> json) {
-  final displayName = _requiredString(json, 'displayName');
-  final pageCount = _requiredPositiveInt(json, 'pageCount');
-  final rawComicTitle = json['comicTitle'];
-  if (rawComicTitle != null &&
-      (rawComicTitle is! String || rawComicTitle.trim().isEmpty)) {
-    throw const FormatException('comicTitle must be a non-empty string');
-  }
-  return ImportedChapterRecord(
-    directoryId: _requiredString(json, 'directoryId'),
-    displayName: displayName,
-    sourceId: _requiredString(json, 'sourceId'),
-    comicId: _requiredString(json, 'comicId'),
-    chapterId: _requiredString(json, 'chapterId'),
-    sourceRevision: _requiredString(json, 'sourceRevision'),
-    comicTitle: (rawComicTitle as String?) ?? displayName,
-    comicAuthors: _optionalStringList(json, 'comicAuthors'),
-    comicTags: _optionalStringList(json, 'comicTags'),
-    comicDescription: _optionalString(json, 'comicDescription'),
-    coverSourceId: _optionalString(json, 'coverSourceId'),
-    coverMediaFormat: _optionalString(json, 'coverMediaFormat'),
-    coverAnimatedHint: (json['coverAnimatedHint'] as bool?) ?? false,
-    sequence: _optionalInteger(json, 'sequence') ?? 0,
-    pages: List<ImportedPageRecord>.generate(
-      pageCount,
-      (index) => ImportedPageRecord(
-        displayName: 'page-${index + 1}',
-        sourceId: '$homeProjectionSnapshotPageSourcePrefix$index',
-        contentKindHint: ContentKindHint.unknown,
-      ),
-      growable: false,
-    ),
-    readingDirection: ReadingDirection.values.byName(
-      (json['readingDirection'] as String?) ?? ReadingDirection.ltr.name,
-    ),
-    sourceUpdatedAt: json['sourceUpdatedAt'] == null
-        ? null
-        : DateTime.parse(_requiredString(json, 'sourceUpdatedAt')),
-    importedAt: DateTime.parse(_requiredString(json, 'importedAt')),
-  );
-}
+ImportedChapterRecord _compactChapterFromJson(Map<String, Object?> json) =>
+    ImportedChapterRecord.fromSummaryJson(json);
 
 SavedComicRecord _savedComicFromJson(Object? value) =>
     SavedComicRecord.fromJson(_requiredMap(value, 'saved comic'));
@@ -786,32 +755,6 @@ bool _requiredBool(Map<String, Object?> json, String key) {
   return value;
 }
 
-int? _optionalInteger(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value == null) {
-    return null;
-  }
-  if (value is! num || value.isNaN || value.isInfinite) {
-    throw FormatException('$key must be an integer');
-  }
-  final integer = value.toInt();
-  if (integer.toDouble() != value) {
-    throw FormatException('$key must be an integer');
-  }
-  return integer;
-}
-
-String? _optionalString(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value == null) {
-    return null;
-  }
-  if (value is! String || value.trim().isEmpty) {
-    throw FormatException('$key must be null or a non-empty string');
-  }
-  return value;
-}
-
 String? _optionalLooseString(Map<String, Object?> json, String key) {
   final value = json[key];
   if (value == null) {
@@ -821,17 +764,6 @@ String? _optionalLooseString(Map<String, Object?> json, String key) {
     throw FormatException('$key must be null or a string');
   }
   return value;
-}
-
-List<String> _optionalStringList(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value == null) {
-    return const <String>[];
-  }
-  if (value is! List || value.any((item) => item is! String)) {
-    throw FormatException('$key must be a string list');
-  }
-  return value.cast<String>();
 }
 
 Future<String> _homeProjectionSnapshotPath(

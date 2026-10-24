@@ -21,6 +21,7 @@ final class LazyImportedLibraryStore
         ReaderProgressCheckpointStore,
         ComicVersionRelationStore,
         ImportedLibraryRevisionStore,
+        ImportedLibraryMetadataStore,
         SourceMigrationJournalStore {
   LazyImportedLibraryStore({required Future<String> Function() rootProvider})
       : _rootProvider = rootProvider;
@@ -56,6 +57,20 @@ final class LazyImportedLibraryStore
     // reconcile instead of trusting a snapshot against an unopened database.
     final durable = _durable;
     return durable == null ? null : await durable.libraryProjectionRevision;
+  }
+
+  @override
+  Future<({int revision, String chapterRevision})?> get libraryMetadataRevision async =>
+      _durable == null ? null : await _durable!.libraryMetadataRevision;
+
+  @override
+  Future<List<ReadingProgress>> listReadingProgress() async {
+    final durable = _durable;
+    if (durable != null) return durable.listReadingProgress();
+    return <ReadingProgress>[
+      for (final entry in await _memory.list())
+        if (entry.progress != null) entry.progress!,
+    ];
   }
 
   @override

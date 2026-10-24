@@ -5,6 +5,54 @@ import 'package:domain/domain.dart';
 import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
+class _LiveIndex implements CacheIndex, StorageAccessAuthorityQuery {
+  _LiveIndex(this.inner);
+
+  final SqliteIndex inner;
+  final authorityQueries = <String>[];
+
+  @override
+  Future<bool> isStorageAccessLocatorAuthoritative(String path) {
+    authorityQueries.add(path);
+    return inner.isStorageAccessLocatorAuthoritative(path);
+  }
+
+  @override
+  Future<List<CacheRec>> list({CacheState? state}) => inner.list(state: state);
+
+  @override
+  Future<void> remove(String key) => inner.remove(key);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _PreservingIndex extends _LiveIndex
+    implements StorageAccessPreservationQuery {
+  _PreservingIndex(super.inner, {this.afterSnapshot});
+
+  final Future<void> Function()? afterSnapshot;
+  int snapshots = 0;
+
+  @override
+  Future<Set<String>> readStorageAccessPreservationHints() async {
+    snapshots++;
+    final hints = await inner.readStorageAccessPreservationHints();
+    await afterSnapshot?.call();
+    return hints;
+  }
+}
+
+CacheRec _partial(DownloadId id, String path) => CacheRec(
+      id: id,
+      state: CacheState.partial,
+      path: path,
+      bytes: 1,
+      checksum: '',
+      createdUs: 1,
+      touchedUs: 2,
+    );
+
 void main() {
   late Directory temp;
   late CacheLayout layout;
@@ -261,5 +309,83 @@ void main() {
     ).scan();
     expect(report.protected, 1);
     expect(await orphan.exists(), isTrue);
+  });
+
+  test('known preservation hints avoid per-file authority queries', () async {
+    final path = '${layout.partialDir}/known.part';
+    await File(path).parent.create(recursive: true);
+    await File(path).writeAsBytes(<int>[1]);
+    await File('$path.meta').writeAsString('malformed sidecar');
+    await index.put(_partial(id, path));
+    final observed = _PreservingIndex(index);
+
+    final report = await CacheScanner(layout: layout, index: observed).scan();
+
+    expect(observed.snapshots, 1);
+    expect(observed.authorityQueries, isEmpty);
+    expect(report.deletedOrphans, 0);
+    expect(await File(path).exists(), isTrue);
+    expect(await File('$path.meta').exists(), isTrue);
+  });
+
+  test('live misses preserve new authority and stale hints only defer cleanup',
+      () async {
+    final stale = '${layout.partialDir}/stale.part';
+    final fresh = '${layout.partialDir}/fresh.part';
+    await File(stale).parent.create(recursive: true);
+    await File(stale).writeAsBytes(<int>[1]);
+    await File('$stale.meta').writeAsString('{}');
+    await index.put(_partial(id, stale));
+    final freshId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source', comicId: 'comic', chapterId: 'chapter', pageId: 'fresh',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/fresh.webp'),
+    );
+    var mutate = true;
+    final observed = _PreservingIndex(index, afterSnapshot: () async {
+      if (!mutate) return;
+      mutate = false;
+      await index.remove(id.key);
+      await File(fresh).writeAsBytes(<int>[2]);
+      await File('$fresh.meta.tmp').writeAsString('{}');
+      await index.put(_partial(freshId, fresh));
+    });
+
+    final scanner = CacheScanner(layout: layout, index: observed);
+    final first = await scanner.scan();
+
+    expect(first.deletedOrphans, 0);
+    expect(observed.authorityQueries, contains(fresh));
+    expect(observed.authorityQueries, isNot(contains(stale)));
+    expect(await File(fresh).readAsBytes(), <int>[2]);
+    expect(await File('$fresh.meta').exists(), isTrue);
+    expect(await File('$fresh.meta.tmp').exists(), isFalse);
+    expect(await File(stale).exists(), isTrue);
+    expect(await index.isStorageAccessLocatorAuthoritative(stale), isFalse);
+
+    // Reusing the scanner cannot retain a previous pass's stale hints.
+    final second = await scanner.scan();
+    expect(observed.snapshots, 2);
+    expect(second.deletedOrphans, 2);
+    expect(await File(stale).exists(), isFalse);
+    expect(await File('$stale.meta').exists(), isFalse);
+    expect(await File(fresh).exists(), isTrue);
+    expect((await scanner.scan()).deletedOrphans, 0);
+  });
+
+  test('indexes without preservation prefetch still use live authority', () async {
+    final path = '${layout.partialDir}/live.part';
+    await File(path).parent.create(recursive: true);
+    await File(path).writeAsBytes(<int>[1]);
+    await index.put(_partial(id, path));
+    final observed = _LiveIndex(index);
+
+    final report = await CacheScanner(layout: layout, index: observed).scan();
+
+    expect(observed.authorityQueries, <String>[path]);
+    expect(report.deletedOrphans, 0);
+    expect(await File(path).exists(), isTrue);
   });
 }

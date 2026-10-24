@@ -41,6 +41,12 @@ final class DownloadRegistry {
 
   Iterable<DownloadSession> get sessions => _sessions.values;
 
+  /// Snapshot of existing provider identities, including aliases and direct
+  /// bindings. Reading it neither creates sessions nor changes physical owners.
+  Set<DownloadId> get knownIds => Set<DownloadId>.unmodifiable({
+    ..._sessions.keys, ..._physicalAliases.keys, ..._physicalMediaBindings.keys,
+  });
+
   /// Publishes a direct exact-provider -> physical-media binding.
   ///
   /// This is intentionally not an alias to another DownloadId. Once an exact

@@ -110,6 +110,9 @@ artifact = (
 reuse = (
     ROOT / 'packages/downloads/lib/src/artifact_cache_reuse.dart'
 ).read_text(encoding='utf-8')
+identity_terms = (
+    ROOT / 'packages/storage/lib/src/cache_record_query.dart'
+).read_text(encoding='utf-8')
 reuse_test = (
     ROOT / 'packages/downloads/test/artifact_cache_reuse_test.dart'
 ).read_text(encoding='utf-8')
@@ -145,10 +148,18 @@ else:
     require(reuse, 'Future<int> rekeyExisting', 'verified E-Hentai-style cache reuse')
 for token in (
     'VerifiedArtifactReusePlan',
-    "segments.indexOf('s')",
     "'checksum:$checksum'",
+    'yield* cacheUriIdentityTerms(page.uri);',
+    'cacheRecordIdentityTerms(record);',
 ):
     require(reuse, token, 'verified E-Hentai-style cache reuse')
+for token in (
+    "segments.indexOf('s')",
+    "yield 'eh:$imageKey'",
+    "yield 'hash:$hash'",
+    "yield 'checksum:$algorithm:$checksum'",
+):
+    require(identity_terms, token, 'shared indexed cache identity projection')
 for unsafe in ('title ==', 'authors'):
     reject(reuse, unsafe, 'unsafe cache-reuse matching')
 for token in (

@@ -25,6 +25,48 @@ void main() {
     return file.writeAsBytes(bytes);
   }
 
+  test('native scan restores the 15000-page manifest larger than the old 8MiB cap',
+      () async {
+    final pages = [for (var i = 0; i < 15000; i++) ComicPageFile(
+      logicalIndex: i, pageId: '${'x' * 450}-$i', fileName: '$i.png',
+      bytes: _png.length, checksum: '12345678', checksumAlgorithm: 'crc32')];
+    final prepared = await prepareComicFolderManifestAsync(ComicFolderManifest(
+      format: comicManifestFormatV2, sourceId: 'source', comicId: 'comic',
+      comicTitle: 'Large', chapters: ['chapter'], updatedAt: DateTime.utc(2026),
+      chapterFiles: {'chapter': ComicChapterFileList(
+        sourceRevision: 'r1', pageCount: pages.length, pages: pages)}));
+    // Retain the previous pretty-printed wire layout as a compatibility input.
+    final legacyBytes = utf8.encode(prepared.manifest.encode());
+    expect(legacyBytes.length, greaterThan(8 * 1024 * 1024));
+    expect(legacyBytes.length, lessThanOrEqualTo(comicManifestMaxBytes));
+    final scan = await ExternalDownloadScanner().scan(_ManifestTree(legacyBytes,
+      [const ExternalDownloadFile(comicManifestFileName),
+        for (final page in pages) ExternalDownloadFile(page.fileName, length: page.bytes)]));
+    expect(scan.warnings, isEmpty);
+    expect(scan.comics.single.pageCount, pages.length);
+    expect(scan.comics.single.chapters.single.fileProofs.length, pages.length);
+    expect(prepared.encoded.length, lessThan(legacyBytes.length));
+  });
+
+  test('external manifests still enforce byte, chapter and page scan budgets', () async {
+    for (final chapterCount in [1, comicManifestMaxEntries + 1]) {
+      final ids = [for (var i = 0; i < chapterCount; i++) 'chapter-$i'];
+      final prepared = await prepareComicFolderManifestAsync(ComicFolderManifest(
+        format: comicManifestFormatV3, sourceId: 'source', comicId: 'comic',
+        comicTitle: 'Large', chapters: ids, updatedAt: DateTime.utc(2026),
+        chapterFiles: {ids.first: const ComicChapterFileList(sourceRevision: 'r1',
+          pageCount: comicManifestMaxEntries + 1, pages: [])}));
+      final scan = await ExternalDownloadScanner().scan(_ManifestTree(
+        utf8.encode(prepared.encoded), [const ExternalDownloadFile(comicManifestFileName)]));
+      expect(scan.comics, isEmpty);
+      expect(scan.warnings, [contains(chapterCount == 1 ? '单章页数过多' : '章节过多')]);
+    }
+    final oversized = await ExternalDownloadScanner().scan(_ManifestTree(
+      Uint8List(comicManifestMaxBytes + 1), [const ExternalDownloadFile(comicManifestFileName)]));
+    expect(oversized.comics, isEmpty);
+    expect(oversized.warnings, [contains('清单过大')]);
+  });
+
   test('auto scan keeps ordinary directories separate and recognizes unusual image extensions', () async {
     await write('ordinary/A/10.png', _png);
     await write('ordinary/A/2.bin', _png);
@@ -348,4 +390,21 @@ final class _ControlledTree implements ExternalDownloadTree {
   ];
   @override
   Stream<List<int>> read(String path) => _read();
+}
+
+final class _ManifestTree implements ExternalDownloadTree {
+  _ManifestTree(this.bytes, this.entries);
+  final List<int> bytes;
+  final List<ExternalDownloadFile> entries;
+  @override
+  String get identity => 'large-native-fixture';
+  @override
+  String get displayName => 'Large native fixture';
+  @override
+  Future<List<ExternalDownloadFile>> list(String directory) async => [...entries];
+  @override
+  Stream<List<int>> read(String path) {
+    if (path != comicManifestFileName) throw StateError('scan must not read image bodies');
+    return Stream.value(bytes);
+  }
 }

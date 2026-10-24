@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -12,6 +13,72 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:zic/home_library_session.dart';
 
 void main() {
+  test('cold SQLite records preserve legacy canonical reuse and refresh locators',
+      () async {
+    final root = await Directory.systemTemp.createTemp('home-summary-reuse-');
+    final composition = await PersistentDownloadComposition.open(root.path,
+      transferNet: DownloadResourceCoordinator().networkLane);
+    final library = SqliteImportedLibraryStore('${root.path}/library.sqlite');
+    await library.open();
+    final oldManifest = _versionManifest(comicId: 'old-comic',
+      chapterId: 'old-chapter', revision: 'old-r1', pageCount: 2);
+    final newManifest = _versionManifest(comicId: 'new-comic',
+      chapterId: 'new-chapter', revision: 'new-r1', pageCount: 3);
+    final oldRecord = ImportedChapterRecord.remote(
+      comic: _versionComic('old-comic'), manifest: oldManifest);
+    final newRecord = ImportedChapterRecord.remote(
+      comic: _versionComic('new-comic'), manifest: newManifest);
+    await library.upsertChapter(oldRecord);
+    await library.upsertChapter(newRecord);
+    await library.saveComicVersionRelation(const ComicVersionRelation(
+      sourceId: 'version-source', predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic', pageMappings: [ComicVersionPageMapping(
+        predecessorChapterId: 'old-chapter', successorChapterId: 'new-chapter',
+        predecessorPageCount: 2, successorPageCount: 3, successorOffset: 1,
+        predecessorSourceRevision: 'old-r1', successorSourceRevision: 'new-r1',
+        verifiedPredecessorPageIndexes: [0, 1],
+      )],
+    ));
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    await composition.artifactStore.storePromotedArtifact(id: oldId, bytes: body);
+    final session = HomeLibrarySession(library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: WholeComicDownloadQueue(downloads: composition.chapterDownloads),
+      sources: const <BrowsableComicSource>[], ownsLibrary: true,
+      ownsChapterDownloads: false, ownsWholeComicDownloads: true);
+    addTearDown(() async {
+      await session.close(); session.dispose();
+      await composition.close(); await root.delete(recursive: true);
+    });
+    await session.ready;
+    expect(session.error, isNull);
+    expect(session.entries.every((entry) => !entry.chapter.isSummary), isTrue);
+    final current = await session.hydrateEntry(session.entries.singleWhere(
+      (entry) => entry.chapter.chapterId == 'new-chapter'));
+    await session.ensureCanonicalMediaForEntry(current);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    final physical = composition.transferRuntime.physicalMediaIdFor(newId);
+    expect(physical.isExactFallback, isFalse);
+    expect(composition.transferRuntime.physicalMediaIdFor(oldId), physical);
+    final cached = await composition.artifactCacheManager.openPhysicalArtifact(physical);
+    expect(cached, isNotNull);
+    final chunks = await cached!.open(start: 0).toList();
+    expect(chunks.expand((chunk) => chunk), orderedEquals(body));
+    final updated = newRecord.copyWith(pages: [
+      newRecord.pages.first,
+      const ImportedPageRecord(displayName: 'fresh.png', sourceId: 'memory:fresh.png',
+        pageId: 'fresh', contentKindHint: ContentKindHint.png),
+      newRecord.pages.last,
+    ]);
+    await library.upsertChapter(updated);
+    await session.reload();
+    final hydrated = await session.hydrateEntry(session.entries.singleWhere(
+      (entry) => entry.chapter.chapterId == 'new-chapter'));
+    expect(hydrated.chapter.sourceRevision, newRecord.sourceRevision);
+    expect(hydrated.chapter.pages[1].sourceId, 'memory:fresh.png');
+  });
+
   test('chapter-download relay publishes capability changes', () {
     final handoff = HomeServiceHandoff();
     addTearDown(handoff.dispose);
@@ -775,7 +842,7 @@ void main() {
   });
 
   test(
-    'hydrated chapter outranks compact Home snapshot for canonical media authority',
+    'cold canonical restore reads only the requested chapter manifest',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'canonical-compact-hydrate-',
@@ -853,8 +920,7 @@ void main() {
       const family = VersionFamilyId('compact-family');
       const canonicalChapter = CanonicalChapterId('compact-chapter');
       const segment = CanonicalMediaSegmentId('compact-segment');
-      await composition.artifactStore.persistCanonicalMediaProjection(
-        VersionChapterCanonicalProjection(
+      final projection = VersionChapterCanonicalProjection(
           familyId: family,
           canonicalChapterId: canonicalChapter,
           sourceId: newManifest.sourceId,
@@ -870,8 +936,15 @@ void main() {
               segmentStart: 0,
             ),
           ],
-        ),
-      );
+        );
+      await composition.artifactStore.persistCanonicalMediaProjection(projection);
+      final oldId = readerPageDownloadId(oldManifest, oldManifest.pages.first);
+      final body = Uint8List.fromList('RIFF....WEBPcanonical'.codeUnits);
+      await composition.artifactStore.storePromotedArtifact(id: oldId, bytes: body);
+      final canonical = PhysicalMediaId.canonical(
+        projection.coordinateForPageIndex(1).stableKey);
+      expect(await composition.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: canonical, sourceId: oldId), isTrue);
       final durable = _GatedLibraryStore(
         library,
         Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
@@ -917,12 +990,23 @@ void main() {
       );
       final hydrated = await session.hydrateEntry(compact);
       expect(hydrated.chapter.pages[1].uri, newManifest.pages[1].uri);
+      await session.ensureCanonicalMediaForEntry(hydrated);
+      expect(durable.getCalls, 1);
+      expect(durable.getManyCalls, 0,
+          reason: 'canonical admission must not hydrate the version family');
+      expect(session.versionAuthorityEntry(sourceId: oldManifest.sourceId,
+        comicId: oldManifest.comicId, chapterId: oldManifest.chapter.chapterId), isNull);
 
       final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
       expect(
         composition.transferRuntime.physicalMediaIdFor(newId).isExactFallback,
         isFalse,
       );
+      expect(composition.transferRuntime.physicalMediaIdFor(newId), canonical);
+      final cached = await composition.artifactCacheManager.openPhysicalArtifact(canonical);
+      expect(cached, isNotNull);
+      expect((await cached!.open(start: 0).toList()).expand((chunk) => chunk),
+        orderedEquals(body));
     },
   );
 
@@ -3960,6 +4044,175 @@ void main() {
     expect(session.loading, isFalse);
   });
 
+  for (final handoff in [false, true]) {
+    test('metadata-only revision recovery preserves chapter scope handoff=$handoff',
+        () async {
+      final root = await Directory.systemTemp.createTemp('home-metadata-recovery-');
+      final library = SqliteImportedLibraryStore('${root.path}/library.sqlite');
+      await library.open();
+      final chapters = [for (var index = 0; index < 3; index++)
+        ImportedChapterRecord.remote(comic: _versionComic('metadata-$index'),
+          manifest: _versionManifest(comicId: 'metadata-$index',
+            chapterId: 'chapter-$index', revision: 'r1', pageCount: 120))];
+      for (final chapter in chapters) {
+        await library.upsertChapter(chapter);
+      }
+      final proof = (await library.libraryMetadataRevision)!;
+      final chapter = chapters.first;
+      final snapshotStore = HomeProjectionSnapshotStore.atPath('${root.path}/home.json');
+      await snapshotStore.write(HomeProjectionSnapshot(
+        entries: [for (final value in chapters) ImportedLibraryEntry(chapter: value)],
+        savedComics: const [], categories: const [], preferences: const [],
+        readStates: const [], sourcePreferences: const [], versionRelations: const [],
+        libraryRevision: proof.revision, chapterRevision: proof.chapterRevision));
+      final progress = ReadingProgress(sourceId: chapter.sourceId,
+        comicId: chapter.comicId, chapterId: chapter.chapterId, pageIndex: 42,
+        subPageOffset: .35, readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 10, 24));
+      library.enqueueProgress(progress);
+      final preference = ComicPreference.defaults(sourceId: chapter.sourceId,
+        comicId: chapter.comicId).copyWith(inShelf: true,
+          updatedAt: DateTime.utc(2026, 10, 24));
+      await library.saveComicPreference(preference);
+      final relation = ComicVersionRelation(sourceId: chapter.sourceId,
+        predecessorComicId: chapter.comicId, successorComicId: chapters[1].comicId,
+        predecessorTitle: 'Updated relation', discoveredAt: DateTime.utc(2026, 10, 24));
+      await library.saveComicVersionRelation(relation);
+      final messages = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) messages.add(message);
+      };
+      addTearDown(() => debugPrint = previousDebugPrint);
+      final downloads = MemoryChapterDownloadService(pageLoader: (_, _) async => Uint8List(1));
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final bootstrap = MemoryImportedLibraryStore();
+      final session = HomeLibrarySession(library: handoff ? bootstrap : library,
+        snapshotStore: snapshotStore, persistSnapshot: !handoff,
+        chapterDownloads: downloads, wholeComicDownloads: queue, sources: const [],
+        ownsLibrary: false, ownsChapterDownloads: true, ownsWholeComicDownloads: true,
+        persistMissingPreferences: false);
+      addTearDown(() async {
+        await session.close();
+        session.dispose();
+        await bootstrap.close();
+        await library.close();
+        await root.delete(recursive: true);
+      });
+      await session.ready;
+      if (handoff) {
+        await session.adoptServices(library: library, chapterDownloads: downloads,
+          wholeComicDownloads: queue, sources: const [], persistSnapshot: true);
+        await session.ready;
+      }
+      expect(session.error, isNull);
+      expect(session.entries.every((entry) => entry.chapter.isSummary), isTrue);
+      final selected = session.entries.singleWhere((entry) => entry.chapter.chapterId == chapter.chapterId);
+      expect(selected.progress!.toJson(), progress.toJson());
+      expect(session.preferences[preference.identity]!.inShelf, isTrue);
+      expect(session.versionRelations.single.predecessorTitle, 'Updated relation');
+      expect(messages.where((message) => message.contains('query-entries-start')), isEmpty);
+      expect(messages.any((message) => message.contains('mode=metadata-only')), isTrue);
+      final hydrated = await session.hydrateEntry(selected);
+      expect(hydrated.chapter.toJson(), chapter.toJson());
+      expect(session.versionAuthorityEntry(sourceId: chapters[1].sourceId,
+        comicId: chapters[1].comicId, chapterId: chapters[1].chapterId), isNull);
+      final retained = hydrated.chapter;
+      await library.saveSourcePreference(ComicSourcePreference.defaults(
+        sourceId: chapter.sourceId, sortOrder: 0).copyWith(enabled: false,
+          updatedAt: DateTime.utc(2026, 10, 24)));
+      await session.reload();
+      expect(session.versionAuthorityEntry(sourceId: chapter.sourceId,
+        comicId: chapter.comicId, chapterId: chapter.chapterId)!.chapter, same(retained),
+        reason: 'metadata reconciliation must not withdraw hydrated authority');
+      await session.flushSnapshotWrites();
+      expect((await snapshotStore.read())!.chapterRevision, proof.chapterRevision);
+      // Same revision/count is insufficient when actual request carriers change.
+      final replacement = chapter.copyWith(pages: [
+        const ImportedPageRecord(displayName: 'fresh.png', sourceId: 'memory:fresh.png',
+          contentKindHint: ContentKindHint.png), ...chapter.pages.skip(1)]);
+      await library.upsertChapter(replacement);
+      messages.clear();
+      await session.reload();
+      expect(messages.any((message) => message.contains('query-entries-start')), isTrue);
+      expect(session.entries.singleWhere((entry) => entry.identity == selected.identity)
+        .chapter.pages.first.sourceId, 'memory:fresh.png');
+      expect((await snapshotStore.read())!.chapterRevision, isNotNull);
+    });
+  }
+
+  test('late snapshot revision cannot bless an older chapter proof', () async {
+    final root = await Directory.systemTemp.createTemp('home-proof-provenance-');
+    final library = SqliteImportedLibraryStore('${root.path}/library.sqlite');
+    await library.open();
+    final chapter = _preparedBoundaryChapter();
+    await library.upsertChapter(chapter);
+    final before = (await library.libraryMetadataRevision)!;
+    final replacement = chapter.copyWith(pages: [
+      const ImportedPageRecord(displayName: 'new.png', sourceId: 'memory:new.png',
+        contentKindHint: ContentKindHint.png), ...chapter.pages.skip(1)]);
+    await library.upsertChapter(replacement);
+    final after = (await library.libraryMetadataRevision)!;
+    final snapshotStore = HomeProjectionSnapshotStore.atPath('${root.path}/home.json');
+    await snapshotStore.write(HomeProjectionSnapshot(
+      entries: [ImportedLibraryEntry(chapter: chapter)], savedComics: const [],
+      categories: const [], preferences: const [], readStates: const [],
+      sourcePreferences: const [], versionRelations: const [],
+      libraryRevision: after.revision, chapterRevision: before.chapterRevision));
+    final downloads = MemoryChapterDownloadService(pageLoader: (_, _) async => Uint8List(1));
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(library: library, snapshotStore: snapshotStore,
+      chapterDownloads: downloads, wholeComicDownloads: queue, sources: const [],
+      ownsLibrary: true, ownsChapterDownloads: true, ownsWholeComicDownloads: true);
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+    expect(session.entries.single.chapter.pages.first.sourceId, 'memory:new.png');
+    await session.flushSnapshotWrites();
+    expect((await snapshotStore.read())!.chapterRevision, after.chapterRevision);
+  });
+
+  test('metadata reconciliation cannot overwrite a concurrent chapter upsert', () async {
+    final root = await Directory.systemTemp.createTemp('home-metadata-concurrent-');
+    final delegate = SqliteImportedLibraryStore('${root.path}/library.sqlite');
+    await delegate.open();
+    final chapter = _preparedBoundaryChapter();
+    await delegate.upsertChapter(chapter);
+    final library = _GatedLibraryStore(delegate, Future.value(const []),
+      readCategoriesFromDelegate: true);
+    final downloads = MemoryChapterDownloadService(pageLoader: (_, _) async => Uint8List(1));
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(library: library,
+      chapterDownloads: downloads, wholeComicDownloads: queue, sources: const [],
+      ownsLibrary: true, ownsChapterDownloads: true, ownsWholeComicDownloads: true);
+    final gate = Completer<void>();
+    addTearDown(() async {
+      if (!gate.isCompleted) gate.complete();
+      await session.close();
+      session.dispose();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+    final listCalls = library.listCalls;
+    library.categoryListCalls = 0;
+    library.categoryListStarted = Completer<void>();
+    library.categoryListReturnGate = gate.future;
+    final reload = session.reload();
+    await library.categoryListStarted!.future;
+    final replacement = chapter.copyWith(displayName: 'Concurrent chapter');
+    await session.upsertChapter(replacement);
+    gate.complete();
+    await reload;
+    expect(library.listCalls, listCalls,
+      reason: 'unchanged chapter proof must keep reconciliation metadata-only');
+    expect(session.entries.single.chapter.displayName, 'Concurrent chapter');
+    expect(session.versionAuthorityEntry(sourceId: chapter.sourceId,
+      comicId: chapter.comicId, chapterId: chapter.chapterId)!.chapter, same(replacement));
+  });
+
   test('bootstrap does not reconcile a snapshot against empty memory storage',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -4618,7 +4871,7 @@ void main() {
     expect(authority.progress?.updatedAt, progress.updatedAt);
   });
 
-  test('unchanged chapter upsert preserves media authority without rebuilding',
+  test('canonical refresh reuses unchanged manifests and evicts removed authority',
       () async {
     final messages = <String>[];
     final previousDebugPrint = debugPrint;
@@ -4653,6 +4906,25 @@ void main() {
       await root.delete(recursive: true);
     });
     await session.ready;
+    final siblingManifest = _versionManifestWithImageKeys(
+      comicId: 'cached-sibling', chapterId: 'cached-sibling-chapter',
+      revision: 'cached-sibling-r1', imageKeys: List<String>.generate(
+        256, (index) => index.toRadixString(16).padLeft(32, 'a')),
+    );
+    final sibling = ImportedChapterRecord.remote(
+      comic: _versionComic(siblingManifest.comicId), manifest: siblingManifest,
+    );
+    // Chapters without resolvable physical media must also avoid repeat page
+    // scans. The runtime filters them out of its published resolvable scope.
+    final opaqueManifest = _versionManifest(comicId: 'cached-unresolved',
+      chapterId: 'cached-unresolved-chapter', revision: 'unresolved-r1',
+      pageCount: 512);
+    await session.upsertChapter(sibling);
+    await session.upsertChapter(ImportedChapterRecord.remote(
+      comic: _versionComic(opaqueManifest.comicId), manifest: opaqueManifest));
+    final siblingId = readerPageDownloadId(siblingManifest, siblingManifest.pages.first);
+    final siblingPhysical = composition.transferRuntime.physicalMediaIdFor(siblingId);
+    expect(siblingPhysical.isExactFallback, isFalse);
     final manifest = _versionManifest(
       comicId: 'unchanged-comic',
       chapterId: 'unchanged-chapter',
@@ -4668,6 +4940,7 @@ void main() {
     final reloaded = ImportedChapterRecord.fromJson(chapter.toJson());
     expect(reloaded, isNot(same(chapter)));
     await session.upsertChapter(reloaded);
+    await session.upsertChapter(ImportedChapterRecord.fromJson(sibling.toJson()));
     expect(
       messages.where((value) =>
           value.contains('canonical-media-authority-refresh-complete')),
@@ -4692,6 +4965,11 @@ void main() {
       hasLength(1),
       reason: 'a real same-revision provider change publishes once',
     );
+    expect(messages.singleWhere((value) =>
+      value.contains('canonical-media-authority-refresh-complete')),
+      contains('rebuilt=1 reused=2 scannedPages=1'),
+      reason: 'one changed page must not rescan 768 unrelated manifest pages');
+    expect(composition.transferRuntime.physicalMediaIdFor(siblingId), siblingPhysical);
     final authority = session.versionAuthorityEntry(
       sourceId: updated.sourceId,
       comicId: updated.comicId,
@@ -4699,6 +4977,40 @@ void main() {
     );
     expect(authority!.chapter.pages.single.sourceId,
         'venera-resource:changed-provider');
+    messages.clear();
+    await session.removeChapter(sibling.sourceId, sibling.chapterId);
+    expect(messages.singleWhere((value) =>
+      value.contains('canonical-media-authority-refresh-complete')),
+      contains('rebuilt=0 reused=2 scannedPages=0'));
+    expect(composition.transferRuntime.physicalMediaIdFor(siblingId).isExactFallback,
+      isTrue, reason: 'a removed chapter cannot retain cached routing authority');
+    messages.clear();
+    await session.upsertChapter(sibling);
+    expect(messages.singleWhere((value) =>
+      value.contains('canonical-media-authority-refresh-complete')),
+      contains('rebuilt=1 reused=2 scannedPages=256'),
+      reason: 'removed authority was evicted even when the same record returns');
+    expect(composition.transferRuntime.physicalMediaIdFor(siblingId), siblingPhysical);
+    await session.upsertChapter(sibling.copyWith(directoryRecursive: false));
+    expect(session.versionAuthorityEntry(sourceId: sibling.sourceId,
+      comicId: sibling.comicId, chapterId: sibling.chapterId)!
+        .chapter.directoryRecursive, isFalse,
+      reason: 'preserving an unchanged record must still compare all persisted fields');
+    ImportedChapterRecord collision(String chapterId, String revision) =>
+      ImportedChapterRecord.remote(comic: _versionComic('collision'),
+        manifest: _versionManifestWithImageKeys(comicId: 'collision',
+          chapterId: chapterId, revision: revision, imageKeys: ['c' * 32]));
+    final first = collision('chapter', 'rev\u0000part');
+    final second = collision('chapter\u0000rev', 'part');
+    await session.upsertChapter(first);
+    final firstManifest = first.toManifest();
+    final firstId = readerPageDownloadId(firstManifest, firstManifest.pages.first);
+    final physical = composition.transferRuntime.physicalMediaIdFor(firstId);
+    await expectLater(session.upsertChapter(second), throwsStateError,
+      reason: 'reuse must preserve runtime duplicate-key rejection, not overwrite it');
+    expect(composition.transferRuntime.physicalMediaIdFor(firstId), physical);
+    await session.removeChapter(second.sourceId, second.chapterId);
+    expect(composition.transferRuntime.physicalMediaIdFor(firstId), physical);
   });
 
   test('hydrated chapter cache follows newer Reader progress projection',
@@ -5385,6 +5697,7 @@ final class _GatedLibraryStore
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
         ImportedLibraryRevisionStore,
+        ImportedLibraryMetadataStore,
         ComicVersionRelationStore {
   _GatedLibraryStore(
     this.delegate,
@@ -5435,6 +5748,16 @@ final class _GatedLibraryStore
 
   ComicVersionRelationStore get _versionRelations =>
       delegate as ComicVersionRelationStore;
+
+  @override
+  Future<({int revision, String chapterRevision})?> get libraryMetadataRevision async =>
+      delegate is ImportedLibraryMetadataStore
+          ? await (delegate as ImportedLibraryMetadataStore).libraryMetadataRevision
+          : null;
+
+  @override
+  Future<List<ReadingProgress>> listReadingProgress() =>
+      (delegate as ImportedLibraryMetadataStore).listReadingProgress();
 
   @override
   Future<int?> get libraryProjectionRevision async {

@@ -691,6 +691,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       );
       final composition = await PersistentDownloadComposition.open(
         storageRoot,
+        summaryChapterLookup: previous.libraryStore?.get,
         directory: safOverride == null ? downloadDirectory : null,
         indexPath: defaultChapterDownloadMetadataPath(storageRoot),
         layoutResolver: sourceDownloadLayoutResolver(_preferences),
@@ -1427,6 +1428,7 @@ Future<_AppServices> _openServices(
     );
     downloadComposition = await PersistentDownloadComposition.open(
       root,
+      summaryChapterLookup: libraryStore.get,
       directory: safOverride == null ? chapterDownloadDirectory : null,
       indexPath: chapterMetadataPath,
       layoutResolver: sourceDownloadLayoutResolver(preferences),

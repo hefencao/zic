@@ -1,7 +1,33 @@
+import 'dart:collection';
+
 import 'package:domain/domain.dart';
 
 /// Copies owned by ZIC, independently of the application they came from.
 const externalDownloadsSourceId = 'local-download-import';
+
+// Retain the existing Home placeholder namespace for snapshot compatibility.
+const importedChapterSummaryPageSourcePrefix = 'zic-home-snapshot-page:';
+
+/// Immutable, count-only page projection. Individual placeholders are produced
+/// only when a metadata consumer actually requests an index.
+final class _ImportedChapterSummaryPages extends ListBase<ImportedPageRecord> {
+  _ImportedChapterSummaryPages(this._length);
+  final int _length;
+  @override
+  int get length => _length;
+  @override
+  set length(int value) => throw UnsupportedError('summary pages are read-only');
+  @override
+  ImportedPageRecord operator [](int index) {
+    RangeError.checkValidIndex(index, this);
+    return ImportedPageRecord(displayName: 'page-${index + 1}',
+      sourceId: '$importedChapterSummaryPageSourcePrefix$index',
+      contentKindHint: ContentKindHint.unknown);
+  }
+  @override
+  void operator []=(int index, ImportedPageRecord value) =>
+      throw UnsupportedError('summary pages are read-only');
+}
 
 bool isLocalLibrarySource(String sourceId) =>
     sourceId == 'local-folder' || sourceId == externalDownloadsSourceId;
@@ -122,7 +148,8 @@ final class ImportedChapterRecord {
               .where((tag) => tag.isNotEmpty)
               .toSet(),
         ),
-        pages = List<ImportedPageRecord>.unmodifiable(pages),
+        pages = pages is _ImportedChapterSummaryPages
+            ? pages : List<ImportedPageRecord>.unmodifiable(pages),
         importedAt = (importedAt ?? DateTime.now()).toUtc() {
     if (directoryId.trim().isEmpty ||
         displayName.trim().isEmpty ||
@@ -151,6 +178,9 @@ final class ImportedChapterRecord {
     if (pages.isEmpty) {
       throw ArgumentError.value(pages, 'pages', 'must not be empty');
     }
+    // This private projection has a positive count and unique generated IDs.
+    // It contains no source locators and must be hydrated before resource use.
+    if (pages is _ImportedChapterSummaryPages) return;
     final pageIds = <String>{};
     for (final page in pages) {
       if (page.displayName.trim().isEmpty || page.sourceId.trim().isEmpty) {
@@ -302,6 +332,10 @@ final class ImportedChapterRecord {
   final bool directoryRecursive;
   final int sequence;
   final List<ImportedPageRecord> pages;
+
+  /// A list-only projection, never a replacement for the persisted chapter.
+  bool get isSummary => pages is _ImportedChapterSummaryPages;
+
   final ReadingDirection readingDirection;
   final DateTime? sourceUpdatedAt;
   final DateTime importedAt;
@@ -402,7 +436,7 @@ final class ImportedChapterRecord {
     );
   }
 
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> _metadataToJson() => <String, Object?>{
         'directoryId': directoryId,
         if (!directoryRecursive) 'directoryRecursive': false,
         'displayName': displayName,
@@ -422,12 +456,46 @@ final class ImportedChapterRecord {
         if (sourceUpdatedAt != null)
           'sourceUpdatedAt': sourceUpdatedAt!.toUtc().toIso8601String(),
         'importedAt': importedAt.toIso8601String(),
-        'pages': pages.map((page) => page.toJson()).toList(growable: false),
       };
 
-  factory ImportedChapterRecord.fromJson(Map<String, Object?> json) {
+  Map<String, Object?> toJson() => <String, Object?>{
+    ..._metadataToJson(),
+    'pages': pages.map((page) => page.toJson()).toList(growable: false),
+  };
+
+  Map<String, Object?> toSummaryJson() {
+    final json = <String, Object?>{
+      ..._metadataToJson(), 'pageCount': pages.length,
+    };
+    // Match full-record decoding before discarding page metadata. Summaries
+    // themselves must remain count-only and never scan generated placeholders.
+    if (!isSummary && coverMediaFormat == null && coverSourceId != null) {
+      for (final page in pages) {
+        if (page.sourceId != coverSourceId) continue;
+        if (page.mediaFormat != null) json['coverMediaFormat'] = page.mediaFormat;
+        break;
+      }
+    }
+    return json;
+  }
+
+  factory ImportedChapterRecord.fromSummaryJson(Map<String, Object?> json) {
+    final count = json['pageCount'];
+    if (count is! int || count <= 0) {
+      throw const FormatException('pageCount must be a positive integer');
+    }
+    return ImportedChapterRecord._fromJson(json,
+      summaryPages: _ImportedChapterSummaryPages(count));
+  }
+
+  factory ImportedChapterRecord.fromJson(Map<String, Object?> json) =>
+      ImportedChapterRecord._fromJson(json);
+
+  factory ImportedChapterRecord._fromJson(Map<String, Object?> json, {
+    List<ImportedPageRecord>? summaryPages,
+  }) {
     final rawPages = json['pages'];
-    if (rawPages is! List<Object?>) {
+    if (summaryPages == null && rawPages is! List<Object?>) {
       throw const FormatException('pages must be a list');
     }
     final rawComicTitle = json['comicTitle'];
@@ -479,14 +547,14 @@ final class ImportedChapterRecord {
     if (rawSequence != null && rawSequence is! int) {
       throw const FormatException('sequence must be an integer');
     }
-    final parsedPages = rawPages.map((value) {
+    final parsedPages = summaryPages ?? (rawPages as List<Object?>).map((value) {
       if (value is! Map) {
         throw const FormatException('page entry must be an object');
       }
       return ImportedPageRecord.fromJson(Map<String, Object?>.from(value));
     }).toList(growable: false);
     ImportedPageRecord? legacyCoverPage;
-    if (rawCoverSourceId is String) {
+    if (summaryPages == null && rawCoverSourceId is String) {
       for (final page in parsedPages) {
         if (page.sourceId == rawCoverSourceId) {
           legacyCoverPage = page;

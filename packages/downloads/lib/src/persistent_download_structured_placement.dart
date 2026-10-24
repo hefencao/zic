@@ -173,7 +173,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   Future<void> _copyStructuredCompanion(String source, String destination,
       {required String storageRootId});
   Future<void> _deleteStructuredCompanion(String source);
-  Future<Map<String, CacheRec>> indexedRecords();
+  Future<Map<String, CacheRec>> indexedRecords({
+    Iterable<CacheBindingScope>? scopes,
+    Map<String, Set<String>> identitiesBySource = const {},
+  });
   Future<ArtifactReplicaMigrationResult> migrateArtifactReplica({
     required DownloadId id,
     required String replicaId,
@@ -772,7 +775,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     }
 
     final allRecords =
-        knownRecords?.toList(growable: false) ?? await _index.list();
+        knownRecords?.toList(growable: false) ??
+        (await indexedRecords(scopes: [CacheBindingScope(
+          sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+        )])).values.toList(growable: false);
     final hasRecords = allRecords.any(
       (r) =>
         r.id.content.sourceId == entry.chapter.sourceId &&
@@ -1170,7 +1176,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
 
     // Compatibility migration: if structured files predate export bindings,
     // preserve their already-visible ordinals instead of renumbering them.
-    final indexed = knownRecords ?? await _index.list();
+    final indexed = knownRecords ?? (await indexedRecords(scopes: [
+      CacheBindingScope(sourceId: chapter.sourceId, comicId: chapter.comicId,
+        chapterId: chapter.chapterId),
+    ])).values;
     for (final record in indexed) {
       if (record.id.content.sourceId != chapter.sourceId ||
           record.id.content.comicId != chapter.comicId ||
@@ -1560,6 +1569,14 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     ImportedLibraryEntry entry, {
     String? comicDirectoryName,
   }) async {
+    await _verifiedStructuredDestinationManifest(entry,
+      comicDirectoryName: comicDirectoryName);
+  }
+
+  Future<ComicFolderManifest?> _verifiedStructuredDestinationManifest(
+    ImportedLibraryEntry entry, {
+    String? comicDirectoryName,
+  }) async {
     final placement = await resolveDownloadPlacement(entry);
     final comicDir = _requireSafeComicDirectoryName(
       comicDirectoryName ?? placement.relativeDirectory,
@@ -1578,7 +1595,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           placement.observedOwnerKey ==
               '${existing.sourceId}\u0000${existing.comicId}') {
         // Explicitly authorized overwrite by user placement contract
-        return;
+        return existing;
       }
       throw Failure(
         code: ErrorCode.policy,
@@ -1593,6 +1610,39 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         },
       );
     }
+    return existing;
+  }
+
+  Future<ComicChapterFileList> _chapterFileList(
+    ImportedLibraryEntry entry,
+    DownloadPlacement placement,
+    String? chapterDirectoryName,
+  ) async {
+    final chapter = entry.chapter.toManifest();
+    final ids = [for (final page in chapter.pages)
+      readerPageDownloadId(chapter, page)];
+    final records = {for (final record in await _index.getMany(
+      ids.map((id) => id.key),
+    )) record.key: record};
+    final pages = <ComicPageFile>[];
+    final relativeDirectory = chapterDirectoryName == null
+        ? placement.relativeDirectory
+        : '${placement.relativeDirectory}/$chapterDirectoryName';
+    for (var index = 0; index < ids.length; index++) {
+      final record = records[ids[index].key];
+      if (record == null || !_isVerifiedReadyRecord(record) ||
+          !_recordBelongsToExportPlacement(record, placement)) continue;
+      final path = parseSafRecordPath(record.path)?.relativePath ??
+          record.path.replaceAll('\\', '/');
+      final name = path.split('/').last;
+      if (path != '$relativeDirectory/$name' &&
+          !path.endsWith('/$relativeDirectory/$name')) continue;
+      pages.add(ComicPageFile(logicalIndex: index,
+        pageId: ids[index].content.pageId, fileName: name, bytes: record.bytes,
+        checksum: record.checksum, checksumAlgorithm: record.checksumAlgorithm));
+    }
+    return ComicChapterFileList(sourceRevision: chapter.chapter.sourceRevision,
+      pageCount: chapter.pages.length, pages: pages);
   }
 
   Future<void> writeComicFolderManifest(
@@ -1611,16 +1661,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     await _serializeStructuredWrite(
       manifestPath,
       () => _withStructuredManifestLock(entry, comicDir, () async {
-      await verifyStructuredDestinationOwner(
+      final previous = await _verifiedStructuredDestinationManifest(
         entry,
         comicDirectoryName: comicDir,
-      );
-      final rootLayout = entry.chapter.pages.isEmpty
-          ? layout
-          : _layoutForEntryPage(entry, 0);
-      final previous = await _readComicFolderManifest(
-        comicDir,
-        rootLayout: rootLayout,
       );
         final isSameComic =
             previous != null &&
@@ -1690,7 +1733,14 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       final baseGeneration = previousGeneration > placement.generation
           ? previousGeneration
           : placement.generation;
+      final chapterFiles = <String, ComicChapterFileList>{
+        if (isSameComic) ...previous.chapterFiles,
+        entry.chapter.chapterId: await _chapterFileList(entry, placement,
+          directories[entry.chapter.chapterId]),
+      };
       final draft = ComicFolderManifest(
+        format: comicManifestFormatV3,
+        chapterFiles: chapterFiles,
         comicTitle: entry.chapter.comicTitle,
         comicId: entry.chapter.comicId,
         sourceId: entry.chapter.sourceId,
@@ -1702,21 +1752,12 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         pageOrder: placement.pageOrder,
         updatedAt: DateTime.now(),
       );
-      final manifest = ComicFolderManifest(
-        format: draft.format,
-        sourceId: draft.sourceId,
-        sourceDisplayName: draft.sourceDisplayName,
-        comicId: draft.comicId,
-        comicTitle: draft.comicTitle,
-        chapters: draft.chapters,
-        chapterDirectories: draft.chapterDirectories,
-        chapterTitles: draft.chapterTitles,
-        chapterSequences: draft.chapterSequences,
-        generation: draft.generation,
-        fingerprint: draft.computedFingerprint,
-        pageOrder: draft.pageOrder,
-        updatedAt: draft.updatedAt,
+      final prepared = await prepareComicFolderManifestUpdateAsync(
+        draft, isSameComic && placement.generation == previous.generation &&
+            placement.fingerprint == previous.fingerprint ? previous : null,
       );
+      if (prepared == null) return;
+      final manifest = prepared.manifest;
       final safIo = safTreeIo;
       if (safIo != null && safTreeUri != null) {
         final committedPlacement = placement.copyWith(
@@ -1726,6 +1767,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         await _commitSafManifestAndPlacement(
           manifestPath: manifestPath,
           manifest: manifest,
+          encodedManifest: prepared.encoded,
           placement: committedPlacement,
         );
         _claimedPlacementsByOwner[placement.ownerKey] = committedPlacement;
@@ -1744,7 +1786,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         storageRootId: root,
       );
       try {
-        await temporary.writeAsString(manifest.encode(), flush: true);
+        await temporary.writeAsString(prepared.encoded, flush: true);
         await temporary.rename(file.path);
       } finally {
         if (await temporary.exists()) {
@@ -1850,7 +1892,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         // even if a stale placement points this entry at the same directory.
         return;
       }
-      final remaining = (await _index.list())
+      final remaining = (await indexedRecords(scopes: [CacheBindingScope(
+        sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+      )])).values
           .where((record) {
             final content = record.id.content;
             return content.sourceId == entry.chapter.sourceId &&
@@ -1928,7 +1972,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           ? existing.generation
           : placement.generation;
       final draft = ComicFolderManifest(
-        format: existing.format,
+        format: comicManifestFormatV3,
         sourceId: existing.sourceId,
         sourceDisplayName: existing.sourceDisplayName,
         comicId: existing.comicId,
@@ -1937,23 +1981,14 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         chapterDirectories: directories,
         chapterTitles: titles,
         chapterSequences: sequences,
+        chapterFiles: {for (final id in chapters)
+          if (existing.chapterFiles[id] case final files?) id: files},
+        pageOrder: existing.pageOrder,
         generation: baseGeneration + 1,
         updatedAt: DateTime.now(),
       );
-      final next = ComicFolderManifest(
-        format: draft.format,
-        sourceId: draft.sourceId,
-        sourceDisplayName: draft.sourceDisplayName,
-        comicId: draft.comicId,
-        comicTitle: draft.comicTitle,
-        chapters: draft.chapters,
-        chapterDirectories: draft.chapterDirectories,
-        chapterTitles: draft.chapterTitles,
-        chapterSequences: draft.chapterSequences,
-        generation: draft.generation,
-        fingerprint: draft.computedFingerprint,
-        updatedAt: draft.updatedAt,
-      );
+      final prepared = await prepareComicFolderManifestAsync(draft);
+      final next = prepared.manifest;
       final safIo = safTreeIo;
       final committedPlacement = placement.copyWith(
         generation: next.generation,
@@ -1963,6 +1998,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         await _commitSafManifestAndPlacement(
           manifestPath: '$comicDir/$comicManifestFileName',
           manifest: next,
+          encodedManifest: prepared.encoded,
           placement: committedPlacement,
         );
       } else {
@@ -1978,7 +2014,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           storageRootId: rootLayout.root,
         );
         try {
-          await temporary.writeAsString(next.encode(), flush: true);
+          await temporary.writeAsString(prepared.encoded, flush: true);
           await temporary.rename(file.path);
         } finally {
           if (await temporary.exists()) await temporary.delete();
@@ -2043,14 +2079,15 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         );
       }
       final bytes = await io.read(handle, length);
-      final manifest = ComicFolderManifest.decode(utf8.decode(bytes));
+      final decoded = await decodeComicFolderManifestAsync(utf8.decode(bytes));
+      final manifest = decoded.manifest;
       if (manifest == null) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'comic folder manifest is invalid',
         );
       }
-      if (!manifest.fingerprintValid) {
+      if (!decoded.fingerprintValid) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'comic folder manifest fingerprint mismatch',
@@ -2156,14 +2193,21 @@ mixin _PersistentDownloadStructuredPlacementMixin {
 
   Future<void> _retireSafManifestTransactionIntent(File file) async {
     if (await file.exists()) await file.delete();
-    final directory = _safManifestTransactionDirectory;
-    if (!await directory.exists()) return;
-    try {
-      if (await directory.list(followLinks: false).isEmpty) {
-        await directory.delete();
+    // Empty-directory retirement belongs to quiescent store close, not an
+    // individual transaction that can overlap another comic's intent writer.
+  }
+
+  Future<void> _retireEmptySafTransactionDirectories() async {
+    for (final directory in [_safManifestTransactionDirectory,
+        _safBodyTransactionDirectory]) {
+      try {
+        if (await directory.exists() &&
+            await directory.list(followLinks: false).isEmpty) {
+          await directory.delete();
+        }
+      } on Object {
+        // Empty directory cleanup never weakens durable journal authority.
       }
-    } on Object {
-      // Empty local journal-directory cleanup is not an authority mutation.
     }
   }
 
@@ -2443,25 +2487,15 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         () => _recoverSafManifestIntent(file, intent),
       );
     }
-    for (final placement in await _index.listPlacements()) {
-      if (placement.storageRootId != treeUri &&
-          placement.storageRootId != 'default') {
-        continue;
-      }
-      final directory = placement.relativeDirectory.trim();
-      if (!_isSafeComicDirectoryName(directory)) continue;
-      final manifestPath = '$directory/$comicManifestFileName';
-      if (!await io.exists('$manifestPath.zic-old')) continue;
-      await _serializeStructuredWrite(
-        manifestPath,
-        () => _recoverLegacySafManifestBackup(manifestPath),
-      );
-    }
+    // Legacy backups have no local journal and cannot affect indexed Reader
+    // bytes. Recover them when that manifest is actually read or written;
+    // probing every placement here delays all durable consumers on SAF I/O.
   }
 
   Future<void> _commitSafManifestAndPlacement({
     required String manifestPath,
     required ComicFolderManifest manifest,
+    required String encodedManifest,
     required DownloadPlacement placement,
   }) async {
     final io = safTreeIo;
@@ -2469,7 +2503,10 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     if (io == null || treeUri == null) {
       throw StateError('SAF manifest commit requires a configured tree');
     }
-    await _recoverSafManifestCommit(manifestPath, requireWritable: true);
+    final previousManifest = await _recoverSafManifestCommit(
+      manifestPath,
+      requireWritable: true,
+    );
     final targetFingerprint = manifest.fingerprint;
     if (targetFingerprint == null) {
       throw const Failure(
@@ -2487,10 +2524,6 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         message: 'SAF manifest commit has no placement authority',
       );
     }
-    final previousManifest = await _readSafComicFolderManifestAt(
-      io,
-      manifestPath,
-    );
     if (previousManifest != null &&
         (previousManifest.sourceId != manifest.sourceId ||
             previousManifest.comicId != manifest.comicId)) {
@@ -2528,7 +2561,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       await _writeBytesToSafTracked(
         io,
         manifestPath,
-        Uint8List.fromList(utf8.encode(manifest.encode())),
+        Uint8List.fromList(utf8.encode(encodedManifest)),
       );
       final installed = await _readSafComicFolderManifestAt(io, manifestPath);
       if (!_manifestMatchesToken(
@@ -2677,21 +2710,28 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     await _awaitStructuredWrite(manifestPath);
     final safIo = safTreeIo;
     if (safIo != null && safTreeUri != null) {
-      return _readSafComicFolderManifestAt(safIo, manifestPath);
+      if (Zone.current[_structuredWriteZoneKey] == manifestPath) {
+        return _recoverSafManifestCommit(manifestPath);
+      }
+      return _serializeStructuredWrite(
+        manifestPath,
+        () => _recoverSafManifestCommit(manifestPath),
+      );
     }
     final file = File(
       '${(rootLayout ?? _registry.layout).root}/$comicDir/$comicManifestFileName',
     );
     _rejectLocalPathLinks(file.path);
     if (!await file.exists()) return null;
-    final manifest = ComicFolderManifest.decode(await file.readAsString());
+    final decoded = await decodeComicFolderManifestAsync(await file.readAsString());
+    final manifest = decoded.manifest;
     if (manifest == null) {
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'comic folder manifest is invalid',
       );
     }
-    if (!manifest.fingerprintValid) {
+    if (!decoded.fingerprintValid) {
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'comic folder manifest fingerprint mismatch',
@@ -2702,7 +2742,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   }
 
   void _validateComicFolderManifest(ComicFolderManifest manifest) {
-    if (manifest.format != comicManifestFormatV1 ||
+    if ((manifest.format != comicManifestFormatV1 &&
+            manifest.format != comicManifestFormatV2 &&
+            manifest.format != comicManifestFormatV3) ||
         manifest.sourceId.trim().isEmpty ||
         manifest.comicId.trim().isEmpty ||
         manifest.generation < 0) {
@@ -2919,7 +2961,9 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   }) async {
     _requireOpen();
     return downloadedChapterIdsFromRecords(
-      (await indexedRecords()).values,
+      (await indexedRecords(scopes: [
+        CacheBindingScope(sourceId: sourceId, comicId: comicId),
+      ])).values,
       sourceId: sourceId,
       comicId: comicId,
     );

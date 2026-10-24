@@ -40,7 +40,11 @@ abstract interface class PhysicalMediaProjectionIndex {
     String exactKey,
   );
 
-  Future<List<PhysicalMediaProjectionRecord>> listPhysicalMediaProjections();
+  /// Null keeps all families. Exact keys only select metadata, never grant
+  /// canonical media equivalence or change existing relation/revision checks.
+  Future<List<PhysicalMediaProjectionRecord>> listPhysicalMediaProjections({
+    Iterable<String>? exactKeys,
+  });
 
   Future<void> putPhysicalMediaProjection(PhysicalMediaProjectionRecord record);
 

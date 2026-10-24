@@ -168,9 +168,16 @@ extension _PersistentSafBodyTransactionExtension
         continue;
       }
       if (!name.endsWith('.json')) continue;
+      final String encoded;
+      try {
+        encoded = await entity.readAsString();
+      } on PathNotFoundException {
+        // Another target may finish and retire its intent after enumeration.
+        continue;
+      }
       result.add((
         entity,
-        _SafBodyReplaceIntent.decode(await entity.readAsString()),
+        _SafBodyReplaceIntent.decode(encoded),
       ));
     }
     return result;
@@ -193,15 +200,8 @@ extension _PersistentSafBodyTransactionExtension
 
   Future<void> _retireSafBodyTransactionIntent(File file) async {
     if (await file.exists()) await file.delete();
-    final directory = _safBodyTransactionDirectory;
-    if (!await directory.exists()) return;
-    try {
-      if (await directory.list(followLinks: false).isEmpty) {
-        await directory.delete();
-      }
-    } on Object {
-      // Empty local journal-directory cleanup is not an authority mutation.
-    }
+    // Keep the directory until the store drains: another page may have just
+    // created it and be about to open its own durable intent staging file.
   }
 
   Future<bool> _safBodyAuthorityCommitted(

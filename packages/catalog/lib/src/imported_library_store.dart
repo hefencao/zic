@@ -111,6 +111,17 @@ abstract interface class ImportedLibraryRevisionStore {
   Future<int?> get libraryProjectionRevision;
 }
 
+/// Optional proof for reusing Home's chapter projection while reconciling
+/// mutable metadata. The chapter revision must change transactionally for
+/// every persisted chapter insert, update and deletion, including same-revision
+/// locator changes, and differ across databases. The two revisions are read
+/// atomically. Progress reads must include already-admitted checkpoints.
+abstract interface class ImportedLibraryMetadataStore {
+  Future<({int revision, String chapterRevision})?> get libraryMetadataRevision;
+
+  Future<List<ReadingProgress>> listReadingProgress();
+}
+
 /// One coherent semantic view used by user-requested library backup/export.
 ///
 /// The snapshot belongs to the library store because only the store can define
@@ -355,6 +366,7 @@ final class MemoryImportedLibraryStore
   @override
   Future<void> upsertChapter(ImportedChapterRecord chapter) async {
     _requireOpen();
+    if (chapter.isSummary) throw ArgumentError('hydrate chapter before upsert');
     final identity = chapterLibraryIdentity(chapter.sourceId, chapter.chapterId);
     final previous = _chapters[identity];
     final progress = reconcileImportedProgress(

@@ -9,6 +9,116 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
+  test('persistent related-chapter batch leaves decoding off the caller and drains on close',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('related-library-reader-');
+    addTearDown(() => dir.delete(recursive: true));
+    final store = SqliteImportedLibraryStore('${dir.path}/library.sqlite');
+    await store.open();
+    addTearDown(store.close);
+    final chapters = List.generate(17, (c) => ImportedChapterRecord.folder(
+      directoryId: '/related/$c', displayName: 'Related $c',
+      pages: List.generate(180, (i) => ImportedPageRecord(
+        displayName: '$i.png', sourceId: '/related/$c/$i.png',
+        contentKindHint: ContentKindHint.png))));
+    for (final chapter in chapters) {
+      await store.upsertChapter(chapter);
+    }
+    final keys = [for (final chapter in chapters)
+      ImportedLibraryChapterKey(sourceId: chapter.sourceId, chapterId: chapter.chapterId)];
+    var eventTurn = false;
+    Timer.run(() => eventTurn = true);
+    final read = store.getMany([...keys, keys.first]).then((entries) {
+      expect(eventTurn, isTrue, reason: 'related payload decoding must not block Home');
+      expect(entries, hasLength(chapters.length));
+      final originals = {for (final chapter in chapters) chapter.chapterId: chapter};
+      for (final entry in entries) {
+        expect(entry.chapter.toJson(), originals[entry.chapter.chapterId]!.toJson());
+        expect(entry.chapter.toManifest().pages, hasLength(180));
+      }
+      return entries;
+    });
+    final closing = store.close();
+    await expectLater(store.getMany(keys), throwsStateError);
+    await read;
+    await closing;
+    await store.open();
+    expect(await store.getMany(keys), hasLength(chapters.length));
+  });
+
+  test('full library read preserves inferred cover format',
+      () async {
+    final store = SqliteImportedLibraryStore(null);
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord(directoryId: 'cover', displayName: 'Cover',
+      sourceId: 'cover-source', comicId: 'cover', chapterId: 'cover',
+      sourceRevision: 'r1', coverSourceId: 'https://fixture.test/opaque',
+      pages: const [ImportedPageRecord(displayName: 'cover.webp',
+        sourceId: 'https://fixture.test/opaque', mediaFormat: 'webp',
+        contentKindHint: ContentKindHint.webp)]);
+    await store.upsertChapter(chapter);
+    final full = (await store.get(chapter.sourceId, chapter.chapterId))!.chapter;
+    expect(full.coverMediaFormat, 'webp');
+    expect((await store.list()).single.chapter.coverMediaFormat,
+      full.coverMediaFormat);
+  });
+
+  for (final version in [11, 12]) {
+  test('schema $version keeps chapter payload and progress authoritative', () async {
+    final dir = await Directory.systemTemp.createTemp('library-compatibility-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/library.sqlite';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    final chapter = _sourceChapter('summary-source');
+    await store.upsertChapter(chapter);
+    final progress = _progressFor(chapter, pageIndex: 1, minute: 5);
+    await store.saveProgress(progress);
+    await store.close();
+    final legacy = sql.sqlite3.open(path);
+    if (version == 12) {
+      // A previously installed branch may leave an obsolete projection. It
+      // must not become authority or require a full-payload migration on open.
+      legacy.execute('CREATE TABLE imported_chapter_summary (summary_json TEXT)');
+      legacy.execute("INSERT INTO imported_chapter_summary VALUES ('malformed')");
+    }
+    legacy.execute('PRAGMA user_version = $version');
+    legacy.dispose();
+    await store.open();
+    addTearDown(store.close);
+    final entry = (await store.list()).single;
+    expect(entry.chapter.isSummary, isFalse);
+    expect(entry.chapter.toJson(), chapter.toJson());
+    expect(entry.progress!.toJson(), progress.toJson());
+    expect((await store.get(chapter.sourceId, chapter.chapterId))!.chapter.toJson(),
+      chapter.toJson());
+    expect((await store.readLibraryBackupSnapshot()).entries.single.chapter.isSummary,
+      isFalse);
+    await expectLater(store.upsertChapter(ImportedChapterRecord.fromSummaryJson(
+      chapter.toSummaryJson())), throwsArgumentError);
+    final updated = chapter.copyWith(displayName: 'Updated', pages: [chapter.pages.first]);
+    await store.upsertChapter(updated);
+    await store.close();
+    await store.open();
+    expect((await store.list()).single.chapter.toJson(), updated.toJson());
+    final versionDb = sql.sqlite3.open(path);
+    expect(versionDb.select('PRAGMA user_version').single.values.single, version);
+    versionDb.dispose();
+    if (version == 12) {
+      final db = sql.sqlite3.open(path);
+      try {
+        expect(db.select('SELECT summary_json FROM imported_chapter_summary')
+          .single['summary_json'], 'malformed');
+      } finally {
+        db.dispose();
+      }
+    }
+    await store.removeChapter(chapter.sourceId, chapter.chapterId);
+    expect(await store.list(), isEmpty);
+  });
+  }
+
   test('version update acknowledgement survives SQLite reopen and backup snapshot',
       () async {
     final dir = await Directory.systemTemp.createTemp('shelf-version-ack-');
@@ -516,6 +626,100 @@ void main() {
     );
     await reopened.close();
   });
+
+  test('chapter proof separates metadata and survives rollback, reopen and old clients',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('library-chapter-proof-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/library.sqlite';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final chapter = _sourceChapter('proof-source');
+    await store.upsertChapter(chapter);
+    final before = (await store.libraryMetadataRevision)!;
+    final progress = _progressFor(chapter, pageIndex: 1, minute: 5);
+    store.enqueueProgress(progress);
+    expect((await store.listReadingProgress()).single.toJson(), progress.toJson());
+    await store.saveComicPreference(ComicPreference.defaults(
+      sourceId: chapter.sourceId, comicId: chapter.comicId));
+    final metadata = (await store.libraryMetadataRevision)!;
+    expect(metadata.revision, greaterThan(before.revision));
+    expect(metadata.chapterRevision, before.chapterRevision);
+    await store.close();
+    // Simulate a schema-11 client predating the optional chapter proof. SQL
+    // triggers must still observe its writes; the client need not know it.
+    final db = sql.sqlite3.open(path);
+    final changed = chapter.copyWith(pages: [
+      ImportedPageRecord(displayName: chapter.pages.first.displayName,
+        sourceId: 'https://fixture.test/new-carrier',
+        contentKindHint: chapter.pages.first.contentKindHint),
+      ...chapter.pages.skip(1),
+    ]);
+    try {
+      db.execute('BEGIN IMMEDIATE');
+      db.execute('UPDATE imported_chapter SET chapter_json = ?',
+        [jsonEncode(changed.toJson())]);
+      db.execute('ROLLBACK');
+    } finally {
+      db.dispose();
+    }
+    await store.open();
+    expect(await store.libraryMetadataRevision, metadata);
+    await store.upsertChapter(changed);
+    final updated = (await store.libraryMetadataRevision)!;
+    expect(updated.chapterRevision, isNot(metadata.chapterRevision));
+    expect(changed.sourceRevision, chapter.sourceRevision);
+    await store.removeChapter(changed.sourceId, changed.chapterId);
+    expect((await store.libraryMetadataRevision)!.chapterRevision,
+      isNot(updated.chapterRevision));
+    final another = SqliteImportedLibraryStore.memory();
+    await another.open();
+    addTearDown(another.close);
+    expect((await another.libraryMetadataRevision)!.chapterRevision,
+      isNot((await store.libraryMetadataRevision)!.chapterRevision));
+  });
+
+  for (final version in [11, 12]) {
+    test('schema $version adds chapter proof without decoding or rewriting chapters',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('library-proof-upgrade-');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/library.sqlite';
+      final store = SqliteImportedLibraryStore(path);
+      await store.open();
+      final chapter = _sourceChapter('upgrade-source');
+      await store.upsertChapter(chapter);
+      await store.close();
+      final old = sql.sqlite3.open(path);
+      for (final operation in ['insert', 'update', 'delete']) {
+        old.execute('DROP TRIGGER imported_chapter_content_revision_$operation');
+      }
+      old.execute('ALTER TABLE library_projection_revision DROP COLUMN chapter_revision');
+      old.execute("UPDATE imported_chapter SET chapter_json = '{broken'");
+      old.execute('PRAGMA user_version = $version');
+      final revision = old.select('SELECT revision FROM library_projection_revision')
+          .single['revision'];
+      old.dispose();
+      await store.open();
+      addTearDown(store.close);
+      expect((await store.libraryMetadataRevision)!.revision, revision);
+      final check = sql.sqlite3.open(path);
+      try {
+        expect(check.select('PRAGMA user_version').single.values.single, version);
+        expect(check.select('SELECT chapter_json FROM imported_chapter')
+          .single['chapter_json'], '{broken');
+      } finally {
+        check.dispose();
+      }
+      final proof = (await store.libraryMetadataRevision)!.chapterRevision;
+      await store.close();
+      await store.open();
+      expect((await store.libraryMetadataRevision)!.chapterRevision, proof);
+      await store.removeChapter(chapter.sourceId, chapter.chapterId);
+      expect((await store.libraryMetadataRevision)!.chapterRevision, isNot(proof));
+    });
+  }
 
   test('sqlite imported library persists chapter, progress, and cascade delete',
       () async {

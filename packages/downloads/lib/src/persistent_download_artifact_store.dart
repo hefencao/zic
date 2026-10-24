@@ -231,6 +231,14 @@ final class PersistentDownloadArtifactStore
     TraceSink? traceSink,
     MonoClock? clock,
   }) async {
+    final openWatch = Stopwatch()..start();
+    final phaseMicros = <String, int>{};
+    var phaseStarted = 0;
+    void finishPhase(String name) {
+      final now = openWatch.elapsedMicroseconds;
+      phaseMicros[name] = now - phaseStarted;
+      phaseStarted = now;
+    }
     final layout = CacheLayout(
       directory ?? defaultChapterDownloadDirectory(root),
     );
@@ -260,9 +268,11 @@ final class PersistentDownloadArtifactStore
       rethrow;
     }
     final ownerLock = metadataOwnerLock;
+    finishPhase('ownerLock');
     final index = SqliteIndex(resolvedIndexPath);
     try {
       await index.open();
+    finishPhase('index');
     final resolvedClock = clock ?? const SystemClock();
     final registry = DownloadRegistry(
       layout: layout,
@@ -291,6 +301,7 @@ final class PersistentDownloadArtifactStore
         rethrow;
       }
     }
+    finishPhase('cacheRecovery');
     // Promotion recovery can mutate artifact/replica authority. Run it only
     // after the metadata process owner above has ruled out a concurrent store
     // owner. The recovery marker is crash evidence only; it is not a live-owner
@@ -298,6 +309,7 @@ final class PersistentDownloadArtifactStore
     // ordering this after its orphan pass is safe and avoids a second opener
     // committing another owner's in-flight promotion.
     await _ArtifactPromotionRecovery._recoverPendingArtifactPromotions(index);
+    finishPhase('promotions');
     await recoveryMarker.parent.create(recursive: true);
     // This marker protects process-crash recovery, not sudden-power-loss
     // durability. Waiting for an fsync on the byte/cache root here puts
@@ -306,6 +318,7 @@ final class PersistentDownloadArtifactStore
     // later process can observe an unclean owner without taxing startup with
     // a synchronous storage flush.
     await recoveryMarker.writeAsString(_processRecoveryOwner);
+    finishPhase('recoveryMarker');
     final resolvedBytes =
         bytes ??
         (safMirror == null
@@ -340,7 +353,24 @@ final class PersistentDownloadArtifactStore
       clock: resolvedClock,
     );
     await resolved._recoverSafBodyTransactions();
+    finishPhase('safBodies');
     await resolved._recoverStructuredSafManifestTransactions();
+    finishPhase('safManifests');
+    try {
+      resolved._traceSink.record(traceEvent(
+        clock: resolved._clock,
+        sessionId: 'persistent-artifact-store',
+        kind: TraceEventKind.artifactSource,
+        payload: <String, Object?>{
+          'stage': 'artifact-store-open',
+          'durationMicros': openWatch.elapsedMicroseconds,
+          'recoveryRequired': recoveryRequired,
+          'phaseMicros': phaseMicros,
+        },
+      ));
+    } on Object {
+      // Diagnostic delivery must not change durable-service readiness.
+    }
     resolved._scheduleCleanupDebtDrain();
     resolved._scheduleRedundantPhysicalPartialSweep();
     return resolved;
@@ -2094,10 +2124,12 @@ final class PersistentDownloadArtifactStore
   CacheIndex get index => _index;
 
   Future<List<VersionChapterCanonicalProjection>>
-  loadCanonicalMediaProjections() async {
+  loadCanonicalMediaProjections({Iterable<String>? exactKeys}) async {
     final projectionIndex = _index as PhysicalMediaProjectionIndex;
     final projections = <VersionChapterCanonicalProjection>[];
-    for (final record in await projectionIndex.listPhysicalMediaProjections()) {
+    for (final record in await projectionIndex.listPhysicalMediaProjections(
+      exactKeys: exactKeys,
+    )) {
       try {
         projections.add(_decodeCanonicalMediaProjection(record));
       } on Object {
@@ -2183,9 +2215,61 @@ final class PersistentDownloadArtifactStore
     return projection;
   }
 
-  Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
-        for (final record in await _index.list()) record.key: record,
-      };
+  Future<Map<String, CacheRec>> indexedRecords({
+    Iterable<CacheBindingScope>? scopes,
+    Map<String, Set<String>> identitiesBySource = const {},
+  }) async {
+    final query = _index;
+    final records = <String, CacheRec>{};
+    if (scopes != null) {
+      for (final record in await query.listScopedBindings(scopes)) {
+        records[record.key] = record;
+      }
+      for (final source in identitiesBySource.entries) {
+        for (final record in await query.listIdentityBindings(
+          sourceId: source.key, identities: source.value,
+        )) {
+          records[record.key] = record;
+        }
+      }
+      return records;
+    }
+    return {for (final record in await _index.list()) record.key: record};
+  }
+
+  Future<Map<String, CacheRec>> indexedRecordsForEntries(
+    Iterable<ImportedLibraryEntry> entries, {
+    bool includeComicRecords = false,
+  }) {
+    final scopes = <CacheBindingScope>{};
+    final identities = <String, Set<String>>{};
+    for (final entry in entries) {
+      final chapter = entry.chapter;
+      scopes.add(CacheBindingScope(
+        sourceId: chapter.sourceId, comicId: chapter.comicId,
+        chapterId: includeComicRecords ? null : chapter.chapterId,
+        sourceRevision: includeComicRecords ? null : chapter.sourceRevision,
+      ));
+      if (!chapterHasHomeProjectionSnapshotPagePlaceholders(chapter)) {
+        for (final page in chapter.toManifest().pages) {
+          identities.putIfAbsent(chapter.sourceId, () => <String>{})
+            .addAll(verifiedPageIdentities(page));
+        }
+      }
+      for (final baseline in _downloadBaselinePredecessorMappings(entry)) {
+        final mapping = baseline.mapping;
+        if (mapping.successorSourceRevision != chapter.sourceRevision ||
+            mapping.predecessorSourceRevision == null) continue;
+        scopes.add(CacheBindingScope(
+          sourceId: chapter.sourceId,
+          comicId: baseline.relation.predecessorComicId,
+          chapterId: mapping.predecessorChapterId,
+          sourceRevision: mapping.predecessorSourceRevision,
+        ));
+      }
+    }
+    return indexedRecords(scopes: scopes, identitiesBySource: identities);
+  }
 
   Future<ChapterDeleteImpactProjection> inspectChapterDeleteImpact(
     ImportedLibraryEntry entry, {
@@ -2265,6 +2349,29 @@ final class PersistentDownloadArtifactStore
     );
   }
 
+  Future<Map<String, DownloadId>> _backfillManifestIdsForRecords(
+    ChapterManifest manifest,
+    List<CacheRec> records,
+    _DownloadProjectionWorkBudget workBudget,
+  ) async {
+    final pageIds = <String>{};
+    for (final record in records) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
+      pageIds.add(record.id.content.pageId);
+    }
+    final exactPages = <String, DownloadId>{};
+    for (final page in manifest.pages) {
+      if (workBudget.exhausted) await workBudget.yieldTurn();
+      // Persisted records have no authoritative page position. Match against
+      // the current manifest, but only construct long exact keys for resident
+      // candidates. The full key still checks carrier/revision/ownership.
+      if (!pageIds.contains(page.pageId)) continue;
+      final exactId = readerPageDownloadId(manifest, page);
+      exactPages[exactId.key] = exactId;
+    }
+    return exactPages;
+  }
+
   Future<int> backfillCanonicalReadyArtifacts(
     Iterable<CanonicalMediaChapterAuthority> authorities,
   ) async {
@@ -2279,7 +2386,13 @@ final class PersistentDownloadArtifactStore
       for (final authority in authorityList) authority.exactKey,
     };
     final readyByChapter = <String, List<CacheRec>>{};
-    for (final record in await _index.list(state: CacheState.ready)) {
+    for (final record in (await indexedRecords(scopes: [
+      for (final authority in authorityList) CacheBindingScope(
+        sourceId: authority.manifest.sourceId,
+        comicId: authority.manifest.chapter.comicId,
+        chapterId: authority.manifest.chapter.chapterId,
+        sourceRevision: authority.manifest.chapter.sourceRevision),
+    ])).values) {
       if (workBudget.exhausted) await workBudget.yieldTurn();
       final chapterKey = canonicalMediaExactChapterKeyForDownload(record.id);
       if (!chapterKeys.contains(chapterKey)) continue;
@@ -2295,13 +2408,9 @@ final class PersistentDownloadArtifactStore
       if (workBudget.exhausted) await workBudget.yieldTurn();
       final records = readyByChapter[authority.exactKey];
       if (records == null || records.isEmpty) continue;
-      final manifest = authority.manifest;
-      final exactPages = <String, DownloadId>{};
-      for (final page in manifest.pages) {
-        if (workBudget.exhausted) await workBudget.yieldTurn();
-        final exactId = readerPageDownloadId(manifest, page);
-        exactPages[exactId.key] = exactId;
-      }
+      final exactPages = await _backfillManifestIdsForRecords(
+        authority.manifest, records, workBudget,
+      );
       for (final record in records) {
         if (workBudget.exhausted) await workBudget.yieldTurn();
         final exactId = exactPages[record.id.key];
@@ -2352,8 +2461,15 @@ final class PersistentDownloadArtifactStore
       for (final authority in authorityList) authority.exactKey,
     };
     final partialByChapter = <String, List<CacheRec>>{};
-    for (final record in await _index.list(state: CacheState.partial)) {
+    for (final record in (await indexedRecords(scopes: [
+      for (final authority in authorityList) CacheBindingScope(
+        sourceId: authority.manifest.sourceId,
+        comicId: authority.manifest.chapter.comicId,
+        chapterId: authority.manifest.chapter.chapterId,
+        sourceRevision: authority.manifest.chapter.sourceRevision),
+    ])).values) {
       if (workBudget.exhausted) await workBudget.yieldTurn();
+      if (record.state != CacheState.partial) continue;
       final chapterKey = canonicalMediaExactChapterKeyForDownload(record.id);
       if (!chapterKeys.contains(chapterKey)) continue;
       if (record.bytes <= 0) continue;
@@ -2369,12 +2485,9 @@ final class PersistentDownloadArtifactStore
       if (workBudget.exhausted) await workBudget.yieldTurn();
       final records = partialByChapter[authority.exactKey];
       if (records == null || records.isEmpty) continue;
-      final exactPages = <String, DownloadId>{};
-      for (final page in authority.manifest.pages) {
-        if (workBudget.exhausted) await workBudget.yieldTurn();
-        final exactId = readerPageDownloadId(authority.manifest, page);
-        exactPages[exactId.key] = exactId;
-      }
+      final exactPages = await _backfillManifestIdsForRecords(
+        authority.manifest, records, workBudget,
+      );
       for (final record in records) {
         if (workBudget.exhausted) await workBudget.yieldTurn();
         // Rebuild from the current exact manifest rather than trusting legacy
@@ -2470,14 +2583,11 @@ final class PersistentDownloadArtifactStore
     required String chapterId,
     required String sourceRevision,
   }) async {
-    for (final record in await _index.list()) {
-      final id = record.id;
-      if (id.content.sourceId != sourceId ||
-          id.content.comicId != comicId ||
-          id.content.chapterId != chapterId ||
-          id.sourceRevision != sourceRevision) {
-        continue;
-      }
+    final records = await _index.listScopedBindings([CacheBindingScope(
+      sourceId: sourceId, comicId: comicId, chapterId: chapterId,
+      sourceRevision: sourceRevision,
+    )]);
+    for (final record in records) {
       if (_isVerifiedReadyRecord(record) ||
           (record.state == CacheState.partial && record.bytes > 0)) {
         return true;
@@ -7632,13 +7742,10 @@ final class PersistentDownloadArtifactStore
       first.storageRootId == second.storageRootId;
 
   Future<ArtifactCacheUsage> _inspectPersistentArtifactUsage() async {
-    final records = await _index.list();
+    final bindings = await _index.readBindingUsage();
     final physicalPartials = await _index.listPhysicalPartials();
     final physicalArtifacts = await _index.listPhysicalMediaArtifacts();
-    final exactReadyArtifactIds = <String>{
-      for (final record in records)
-        if (record.state == CacheState.ready) record.effectiveArtifactId,
-    };
+    final exactReadyArtifactIds = bindings.readyArtifactIds;
     final additionalArtifacts = <String, int>{};
     for (final physical in physicalArtifacts) {
       if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
@@ -7663,11 +7770,11 @@ final class PersistentDownloadArtifactStore
     );
     return ArtifactCacheUsage(
       bytes:
-          physicalCacheBytes(records) +
+          bindings.bytes +
           physicalPartialBytes +
           physicalOnlyArtifactBytes,
       entries:
-          records.length +
+          bindings.entries +
           activePhysicalPartials.length +
           physicalArtifacts.length,
     );
@@ -7799,11 +7906,7 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<int> _physicalOnlyArtifactBytes() async {
-    final records = await _index.list();
-    final exactReadyArtifactIds = <String>{
-      for (final record in records)
-        if (record.state == CacheState.ready) record.effectiveArtifactId,
-    };
+    final exactReadyArtifactIds = (await _index.readBindingUsage()).readyArtifactIds;
     final bytes = <String, int>{};
     for (final physical in await _index.listPhysicalMediaArtifacts()) {
       if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
@@ -8018,6 +8121,7 @@ final class PersistentDownloadArtifactStore
         await _index.close();
       }
     }
+    await _retireEmptySafTransactionDirectories();
     try {
       if (await _recoveryMarker.exists()) {
         await _recoveryMarker.delete();

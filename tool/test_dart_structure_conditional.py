@@ -2,7 +2,7 @@
 """Conditional expression calls are not constructor parameter declarations."""
 from pathlib import Path
 from check_dart_structure import (
-    ROOT, DartStructureError, _check_duplicate_parameters,
+    ROOT, DartStructureError, _check_delimiters, _check_duplicate_parameters,
     _strip_comments_and_strings,
 )
 
@@ -24,6 +24,15 @@ double compare(Point a, Point b, bool vertical) => vertical
         except DartStructureError:
             continue
         raise AssertionError('real duplicate parameter was not rejected')
+    # A raw backslash must not escape its closing quote or hide real braces.
+    raw_source = "const slash = r'" + "\\" + "';\nvoid valid() { print(slash); }"
+    _check_delimiters(path, _strip_comments_and_strings(raw_source))
+    try:
+        _check_delimiters(path, _strip_comments_and_strings(raw_source + '{'))
+    except DartStructureError:
+        pass
+    else:
+        raise AssertionError('raw string hid an unclosed delimiter')
     print('Dart structure conditional/constructor distinction: OK')
 
 

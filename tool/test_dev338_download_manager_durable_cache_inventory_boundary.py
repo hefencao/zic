@@ -9,7 +9,7 @@ end = body.index('  Future<List<ChapterDownloadSnapshot>> _inspectManyFromRecord
 projection = body[start:end]
 
 required = (
-    'final exactIndexed = indexed[id.key];',
+    'indexed[_downloadId(manifest, page).key]',
     'artifactStore._isVerifiedReadyRecord(exactIndexed)',
     'final physical = physicalState.pageState(',
     'physicalState.artifacts.containsKey(physicalId)',

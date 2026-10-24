@@ -21,6 +21,8 @@ void main() {
       rootProvider: () async => directory.path,
     );
     await store.open();
+    expect(await store.libraryMetadataRevision, isNull);
+    expect(await store.listReadingProgress(), isEmpty);
     expect(
       await File('${directory.path}/imported_library.sqlite3').exists(),
       isFalse,
@@ -38,6 +40,7 @@ void main() {
       ],
     );
     await store.upsertChapter(chapter);
+    expect(await store.libraryMetadataRevision, isNotNull);
     await store.close();
 
     final reopened = SqliteImportedLibraryStore(

@@ -9,6 +9,8 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'sqlite_progress_writer.dart';
 
+// Keep new databases on the mainline format; accept the withdrawn v12 summary
+// projection without rewriting its version or maintaining its obsolete table.
 const _schemaVersion = 11;
 const _libraryEntriesQuery = '''
   SELECT c.chapter_json, p.progress_json
@@ -17,18 +19,26 @@ const _libraryEntriesQuery = '''
     ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id
   ORDER BY c.imported_us DESC, c.source_id, c.chapter_id
 ''';
+const _savedComicsQuery = '''
+  SELECT comic_json FROM saved_comic
+  ORDER BY updated_us DESC, source_id, comic_id
+''';
 
 // Capture only a path, never the UI-owned store/connection. The short-lived
 // worker owns its read-only connection and transfers completed models back.
-Future<List<ImportedLibraryEntry>> _readLibraryEntriesOffIsolate(String path) =>
+Future<List<ImportedLibraryEntry>> _readLibraryEntriesOffIsolate(String path, {
+  List<ImportedLibraryChapterKey>? chapters,
+}) =>
     Isolate.run(() {
       final db = sql.sqlite3.open(path, mode: sql.OpenMode.readOnly);
       try {
         // A concurrent writer/open or final WAL checkpoint can briefly hold
         // the schema lock. Wait off-isolate, never on the foreground connection.
         db.execute('PRAGMA busy_timeout = 5000');
-        final entries = db.select(_libraryEntriesQuery)
-            .map(SqliteImportedLibraryStore._readEntry).toList(growable: false);
+        final entries = chapters != null ? _readLibraryChapterBatch(db, chapters)
+            : db.select(_libraryEntriesQuery)
+                .map(SqliteImportedLibraryStore._readEntry)
+                .toList(growable: false);
         // Transfer the record-local immutable projection too: first URI
         // parsing must not fall back onto Home's foreground authority build.
         for (final entry in entries) {
@@ -40,6 +50,49 @@ Future<List<ImportedLibraryEntry>> _readLibraryEntriesOffIsolate(String path) =>
       }
     });
 
+Future<List<SavedComicRecord>> _readSavedComicsOffIsolate(String path) =>
+    Isolate.run(() {
+      final db = sql.sqlite3.open(path, mode: sql.OpenMode.readOnly);
+      try {
+        db.execute('PRAGMA busy_timeout = 5000');
+        return db.select(_savedComicsQuery)
+            .map((row) => SqliteImportedLibraryStore._decodeSavedComic(
+              row['comic_json']! as String,
+            ))
+            .toList(growable: false);
+      } finally {
+        db.dispose();
+      }
+    });
+
+List<ImportedLibraryEntry> _readLibraryChapterBatch(
+  sql.Database db, List<ImportedLibraryChapterKey> keys,
+) {
+  final result = <ImportedLibraryEntry>[];
+  const chunkSize = 200;
+  for (var offset = 0; offset < keys.length; offset += chunkSize) {
+    final end = (offset + chunkSize).clamp(0, keys.length);
+    final chunk = keys.sublist(offset, end);
+    final where = List<String>.filled(
+      chunk.length,
+      '(c.source_id = ? AND c.chapter_id = ?)',
+    ).join(' OR ');
+    final args = <Object?>[];
+    for (final key in chunk) {
+      args
+        ..add(key.sourceId)
+        ..add(key.chapterId);
+    }
+    final statement = 'SELECT c.chapter_json, p.progress_json '
+        'FROM imported_chapter AS c '
+        'LEFT JOIN reading_progress AS p '
+        'ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id '
+        'WHERE $where';
+    result.addAll(db.select(statement, args).map(SqliteImportedLibraryStore._readEntry));
+  }
+  return List<ImportedLibraryEntry>.unmodifiable(result);
+}
+
 final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
@@ -49,6 +102,7 @@ final class SqliteImportedLibraryStore
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
         ImportedLibraryRevisionStore,
+        ImportedLibraryMetadataStore,
         SourceMigrationJournalStore {
   SqliteImportedLibraryStore(this.path);
 
@@ -181,14 +235,15 @@ final class SqliteImportedLibraryStore
           'library-schema-migration-complete from=10 to=$_schemaVersion '
           'durationMs=${migrationStartedAt.elapsedMilliseconds}',
         );
-      } else if (version != _schemaVersion) {
+      } else if (version != _schemaVersion && version != 12) {
         throw StateError(
           'unsupported imported library schema version: $version',
         );
       }
+      _ensureLibraryChapterRevision(db);
       _db = db;
       _storageLog(
-        'library-open-complete version=$_schemaVersion '
+        'library-open-complete version=${version == 12 ? version : _schemaVersion} '
         'durationMs=${startedAt.elapsedMilliseconds}',
       );
       if (dbPath != null) {
@@ -218,6 +273,28 @@ final class SqliteImportedLibraryStore
       LIMIT 1
     ''');
     return rows.isEmpty ? null : rows.first['revision']! as int;
+  }
+
+  @override
+  Future<({int revision, String chapterRevision})?> get libraryMetadataRevision async {
+    final rows = _requireDb().select('''
+      SELECT revision, chapter_revision FROM library_projection_revision
+      WHERE singleton = 1 LIMIT 1
+    ''');
+    return rows.isEmpty ? null : (
+      revision: rows.first['revision']! as int,
+      chapterRevision: rows.first['chapter_revision']! as String,
+    );
+  }
+
+  @override
+  Future<List<ReadingProgress>> listReadingProgress() async {
+    await flushProgressCheckpoints();
+    return _requireDb().select('''
+      SELECT source_id, progress_json FROM reading_progress
+      ORDER BY source_id, chapter_id
+    ''').map((row) => _decodeProgress(row['progress_json']! as String,
+      fallbackSourceId: row['source_id']! as String)).toList(growable: false);
   }
 
   @override
@@ -325,9 +402,10 @@ final class SqliteImportedLibraryStore
   }
 
   @override
-  Future<List<ImportedLibraryEntry>> list() {
-    final read = _list();
-    // Track admitted list computations, not the caller's later continuations.
+  Future<List<ImportedLibraryEntry>> list() => _trackBulkRead(_list());
+
+  Future<T> _trackBulkRead<T>(Future<T> read) {
+    // Track admitted bulk reads, not the caller's later continuations.
     // Its error belongs to the caller; close only joins resource retirement.
     late final Future<void> drain;
     drain = read.then<void>((_) {}, onError: (Object _, StackTrace __) {})
@@ -405,6 +483,10 @@ final class SqliteImportedLibraryStore
   @override
   Future<List<ImportedLibraryEntry>> getMany(
     Iterable<ImportedLibraryChapterKey> chapters,
+  ) => _trackBulkRead(_getMany(chapters));
+
+  Future<List<ImportedLibraryEntry>> _getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
   ) async {
     final unique = <String, ImportedLibraryChapterKey>{};
     for (final key in chapters) {
@@ -412,34 +494,17 @@ final class SqliteImportedLibraryStore
     }
     if (unique.isEmpty) return const <ImportedLibraryEntry>[];
     final db = _requireDb();
-    final result = <ImportedLibraryEntry>[];
     final keys = unique.values.toList(growable: false);
-    const chunkSize = 200;
-    for (var offset = 0; offset < keys.length; offset += chunkSize) {
-      final end = (offset + chunkSize).clamp(0, keys.length);
-      final chunk = keys.sublist(offset, end);
-      final where = List<String>.filled(
-        chunk.length,
-        '(c.source_id = ? AND c.chapter_id = ?)',
-      ).join(' OR ');
-      final args = <Object?>[];
-      for (final key in chunk) {
-        args
-          ..add(key.sourceId)
-          ..add(key.chapterId);
-      }
-      final statement = 'SELECT c.chapter_json, p.progress_json '
-          'FROM imported_chapter AS c '
-          'LEFT JOIN reading_progress AS p '
-          'ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id '
-          'WHERE $where';
-      result.addAll(db.select(statement, args).map(_readEntry));
+    final dbPath = path;
+    if (dbPath != null) {
+      return _readLibraryEntriesOffIsolate(dbPath, chapters: keys);
     }
-    return List<ImportedLibraryEntry>.unmodifiable(result);
+    return _readLibraryChapterBatch(db, keys);
   }
 
   @override
   Future<void> upsertChapter(ImportedChapterRecord chapter) async {
+    if (chapter.isSummary) throw ArgumentError('hydrate chapter before upsert');
     final db = _requireDb();
     db.execute('BEGIN IMMEDIATE');
     try {
@@ -629,15 +694,28 @@ final class SqliteImportedLibraryStore
   }
 
   @override
-  Future<List<SavedComicRecord>> listSavedComics() async {
-    final rows = _requireDb().select('''
-      SELECT comic_json
-      FROM saved_comic
-      ORDER BY updated_us DESC, source_id, comic_id
-    ''');
-    return rows
-        .map((row) => _decodeSavedComic(row['comic_json']! as String))
-        .toList(growable: false);
+  Future<List<SavedComicRecord>> listSavedComics() =>
+      _trackBulkRead(_listSavedComics());
+
+  Future<List<SavedComicRecord>> _listSavedComics() async {
+    final db = _requireDb();
+    final dbPath = path;
+    if (dbPath != null) return _readSavedComicsOffIsolate(dbPath);
+    final rows = db.select(_savedComicsQuery);
+    final comics = <SavedComicRecord>[];
+    final budget = Stopwatch()..start();
+    var rowsSinceYield = 0;
+    for (final row in rows) {
+      comics.add(_decodeSavedComic(row['comic_json']! as String));
+      rowsSinceYield++;
+      if (comics.length < rows.length &&
+          (rowsSinceYield >= 16 || budget.elapsedMicroseconds >= 4000)) {
+        await Future<void>.delayed(Duration.zero);
+        rowsSinceYield = 0;
+        budget.reset();
+      }
+    }
+    return List<SavedComicRecord>.of(comics, growable: false);
   }
 
   @override
@@ -1450,7 +1528,7 @@ final class SqliteImportedLibraryStore
     );
   }
 
-  SavedComicRecord _decodeSavedComic(String source) {
+  static SavedComicRecord _decodeSavedComic(String source) {
     final value = jsonDecode(source);
     if (value is! Map) {
       throw const FormatException('stored comic must be an object');
@@ -2460,6 +2538,44 @@ void _createLibraryProjectionRevision(sql.Database db) {
     'projection-revision-schema-complete '
     'durationMs=${startedAt.elapsedMilliseconds}',
   );
+}
+
+void _ensureLibraryChapterRevision(sql.Database db) {
+  final columns = db.select('PRAGMA table_info(library_projection_revision)');
+  // Partial legacy schemas can migrate their independent metadata sections
+  // without either chapter/revision table. They cannot provide this proof.
+  if (columns.isEmpty || columns.any((row) => row['name'] == 'chapter_revision') ||
+      db.select('PRAGMA table_info(imported_chapter)').isEmpty) return;
+  // A small additive migration in the existing control row. Do not decode or
+  // backfill chapter payloads, change schema 11/12 or add a summary authority.
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (db.select('PRAGMA table_info(library_projection_revision)').any(
+        (row) => row['name'] == 'chapter_revision')) {
+      db.execute('COMMIT');
+      return;
+    }
+    db.execute("ALTER TABLE library_projection_revision "
+      "ADD COLUMN chapter_revision TEXT NOT NULL DEFAULT ''");
+    // A nonce also distinguishes another/newly recreated database whose
+    // ordinary numeric revision happens to match the old chapter count.
+    db.execute('UPDATE library_projection_revision '
+      'SET chapter_revision = lower(hex(randomblob(16)))');
+    for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
+      db.execute('''
+        CREATE TRIGGER imported_chapter_content_revision_${operation.toLowerCase()}
+        AFTER $operation ON imported_chapter
+        BEGIN
+          UPDATE library_projection_revision
+          SET chapter_revision = lower(hex(randomblob(16))) WHERE singleton = 1;
+        END
+      ''');
+    }
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
 }
 
 void _storageLog(String message) {

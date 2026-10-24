@@ -372,6 +372,7 @@ final class _CoverImageState extends State<_CoverImage> {
               source: source,
               seed: widget.cacheIdentity,
               cacheWidth: cacheWidth,
+              deferDuringFastScroll: false,
               fit: BoxFit.cover,
               onFrameReady: onFrameReady,
               onDecodeFailure: _reportDecodeFailure,

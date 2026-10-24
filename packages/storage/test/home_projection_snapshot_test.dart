@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
@@ -9,6 +11,70 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('snapshot decode leaves the caller event loop free and joins reads',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('snapshot-decode-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/home_projection_snapshot.json');
+    final controlled = _ControlledSnapshotFile();
+    final ownerPort = ReceivePort();
+    addTearDown(ownerPort.close);
+    final store = HomeProjectionSnapshotStore(rootProvider: () async {
+      ownerPort.sendPort;
+      return directory.path;
+    });
+    final snapshot = _emptySnapshot(7);
+    final bytes = Uint8List.fromList(gzip.encode(utf8.encode(
+      jsonEncode(snapshot.toJson()),
+    )));
+    var eventTurns = 0;
+
+    await IOOverrides.runZoned(() async {
+      final first = store.read();
+      expect(identical(store.read(), first), isTrue);
+      await controlled.readStarted.future;
+      controlled.bytes.complete(bytes);
+      Timer.run(() => eventTurns++);
+      final restored = await first;
+
+      expect(eventTurns, greaterThan(0));
+      expect(restored?.toJson(), snapshot.toJson());
+      expect(identical(await store.read(), restored), isTrue);
+      expect(controlled.reads, 1);
+    }, createFile: (path) => path == file.path ? controlled : file);
+  });
+
+  test('a pre-write read cannot populate or join the post-write read cache',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('snapshot-race-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File(storePath(directory));
+    final temporary = File('${file.path}.tmp');
+    final controlled = _ControlledSnapshotFile();
+    final store = HomeProjectionSnapshotStore.atPath(file.path);
+    var intercepted = false;
+
+    await IOOverrides.runZoned(() async {
+      final oldRead = store.read();
+      await controlled.readStarted.future;
+      await store.write(_emptySnapshot(8));
+      final current = await store.read();
+      expect(current?.libraryRevision, 8);
+
+      controlled.bytes.complete(Uint8List.fromList(
+        utf8.encode(jsonEncode(_emptySnapshot(7).toJson())),
+      ));
+      expect((await oldRead)?.libraryRevision, 7);
+      expect(identical(await store.read(), current), isTrue);
+    }, createFile: (path) {
+      if (path == file.path && !intercepted) {
+        intercepted = true;
+        return controlled;
+      }
+      return path == file.path ? file : temporary;
+    });
+  });
+
   test('snapshot worker excludes nonpersistent projection owner state',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -40,6 +106,7 @@ void main() {
       versionRelations: const <ComicVersionRelation>[],
       orphanedDownloadEntries: <ImportedLibraryEntry>[entry],
       libraryRevision: 7,
+      chapterRevision: 'chapter-proof',
     );
     final store = HomeProjectionSnapshotStore.atPath(storePath(directory));
 
@@ -47,6 +114,7 @@ void main() {
     final restored = (await store.read())!;
 
     expect(restored.libraryRevision, 7);
+    expect(restored.chapterRevision, 'chapter-proof');
     expect(restored.entries.single.chapter.chapterId, chapter.chapterId);
     expect(restored.entries.single.chapter.pages, hasLength(1));
     expect(
@@ -438,12 +506,15 @@ void main() {
       }
     });
     final path = '${directory.path}/snapshot.json';
-    final store = HomeProjectionSnapshotStore.atPath(path);
-
-    await File(path).writeAsString('{not-json');
-    expect(await store.read(), isNull);
-    await File(path).writeAsString('{"format":"zic-home-projection","version":0}');
-    expect(await store.read(), isNull);
+    for (final bytes in <List<int>>[
+      utf8.encode('{not-json'),
+      utf8.encode('{"format":"zic-home-projection","version":0}'),
+      utf8.encode('[]'),
+      <int>[0x1f, 0x8b, 0],
+    ]) {
+      await File(path).writeAsBytes(bytes);
+      expect(await HomeProjectionSnapshotStore.atPath(path).read(), isNull);
+    }
   });
 
   test('metadata-probed missing Home snapshots remain optional', () async {
@@ -465,6 +536,36 @@ void main() {
 }
 
 String storePath(Directory directory) => '${directory.path}/snapshot.json';
+
+HomeProjectionSnapshot _emptySnapshot(int revision) => HomeProjectionSnapshot(
+      entries: const <ImportedLibraryEntry>[],
+      savedComics: const <SavedComicRecord>[],
+      categories: const <LibraryCategory>[],
+      preferences: const <ComicPreference>[],
+      readStates: const <ChapterReadState>[],
+      sourcePreferences: const <ComicSourcePreference>[],
+      versionRelations: const <ComicVersionRelation>[],
+      libraryRevision: revision,
+    );
+
+final class _ControlledSnapshotFile implements File {
+  final readStarted = Completer<void>();
+  final bytes = Completer<Uint8List>();
+  int reads = 0;
+
+  @override
+  Future<bool> exists() async => true;
+
+  @override
+  Future<Uint8List> readAsBytes() {
+    reads++;
+    readStarted.complete();
+    return bytes.future;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 final class _OwnerBoundEntries
     extends UnmodifiableListView<ImportedLibraryEntry> {

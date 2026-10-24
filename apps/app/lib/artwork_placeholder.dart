@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
@@ -67,6 +69,7 @@ final class StableArtworkImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.filterQuality = FilterQuality.medium,
     this.gaplessPlayback = true,
+    this.deferDuringFastScroll = true,
     this.cacheWidth,
     this.onFrameReady,
     this.onDecodeFailure,
@@ -78,6 +81,9 @@ final class StableArtworkImage extends StatefulWidget {
   final BoxFit fit;
   final FilterQuality filterQuality;
   final bool gaplessPlayback;
+  // Mounted cover thumbnails may decode their already-loaded source while
+  // scrolling; the normal ImageCache still owns sharing and memory limits.
+  final bool deferDuringFastScroll;
   final int? cacheWidth;
   final VoidCallback? onFrameReady;
   final VoidCallback? onDecodeFailure;
@@ -88,6 +94,7 @@ final class StableArtworkImage extends StatefulWidget {
 
 final class _StableArtworkImageState extends State<StableArtworkImage> {
   late ImageProvider<Object> _provider;
+  ImageProvider<Object>? _decodingProvider;
   bool _frameReported = false;
   bool _failureReported = false;
 
@@ -102,6 +109,23 @@ final class _StableArtworkImageState extends State<StableArtworkImage> {
       : ResizeImage.resizeIfNeeded(widget.cacheWidth, null, _provider);
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _decodeLoadedSource();
+  }
+
+  void _decodeLoadedSource() {
+    if (widget.deferDuringFastScroll) return;
+    final provider = _effectiveProvider;
+    if (_decodingProvider == provider) return;
+    _decodingProvider = provider;
+    // Image's ScrollAwareImageProvider otherwise defers even resident encoded
+    // bytes until velocity drops. Prime only this mounted, sized image stream;
+    // Image joins the same cache entry and owns error/frame presentation.
+    unawaited(precacheImage(provider, context, onError: (_, __) {}));
+  }
+
+  @override
   void didUpdateWidget(covariant StableArtworkImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.source, widget.source)) {
@@ -111,6 +135,7 @@ final class _StableArtworkImageState extends State<StableArtworkImage> {
     } else if (oldWidget.cacheWidth != widget.cacheWidth) {
       _frameReported = false;
     }
+    _decodeLoadedSource();
   }
 
   @override

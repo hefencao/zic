@@ -62,6 +62,11 @@ final class CacheScanner {
     final managedData = <String>{};
     final managedMetadata = <String>{};
 
+    final preservationQuery = index;
+    final preservationHints = preservationQuery is StorageAccessPreservationQuery
+        ? await (preservationQuery as StorageAccessPreservationQuery)
+            .readStorageAccessPreservationHints()
+        : const <String>{};
     finishPhase('prepare');
     // Sidecars are transfer/resume metadata only. They may be completed for a
     // path that already has durable authority, but they never create that
@@ -78,7 +83,7 @@ final class CacheScanner {
         );
         final absoluteData = _absolute(dataPath);
         final owned = activePaths.contains(absoluteData) ||
-            await _isDurableAuthority(dataPath);
+            await _shouldPreservePath(dataPath, preservationHints);
         if (!owned) {
           await entity.delete();
           deletedOrphans++;
@@ -112,7 +117,7 @@ final class CacheScanner {
         final dataPath = entity.path.substring(0, entity.path.length - 5);
         final absoluteData = _absolute(dataPath);
         final owned = activePaths.contains(absoluteData) ||
-            await _isDurableAuthority(dataPath);
+            await _shouldPreservePath(dataPath, preservationHints);
         if (owned) {
           managedMetadata.add(absoluteMeta);
           // This is a conservative preservation hint, not existence/type
@@ -146,7 +151,7 @@ final class CacheScanner {
         final absolute = _absolute(entity.path);
         if (managedData.contains(absolute)) continue;
         final owned = activePaths.contains(absolute) ||
-            await _isDurableAuthority(entity.path);
+            await _shouldPreservePath(entity.path, preservationHints);
         if (owned) {
           protected++;
           managedData.add(absolute);
@@ -187,7 +192,10 @@ final class CacheScanner {
     );
   }
 
-  Future<bool> _isDurableAuthority(String path) async {
+  Future<bool> _shouldPreservePath(String path, Set<String> hints) async {
+    // A positive can conservatively defer deletion; a miss must observe any
+    // authority added after the snapshot, never become a cached negative.
+    if (hints.contains(path.trim())) return true;
     if (index is! StorageAccessAuthorityQuery) return false;
     return (index as StorageAccessAuthorityQuery)
         .isStorageAccessLocatorAuthoritative(path);

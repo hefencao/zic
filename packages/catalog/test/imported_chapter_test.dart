@@ -3,6 +3,31 @@ import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('chapter summaries preserve metadata without materializing page payloads', () {
+    final full = ImportedChapterRecord.folder(
+      directoryId: '/summary', displayName: 'Summary',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(displayName: 'page.webp', sourceId: '/summary/page.webp',
+          contentKindHint: ContentKindHint.webp, animatedHint: true),
+      ],
+    );
+    final json = full.copyWith(directoryRecursive: false).toSummaryJson();
+    expect(json.containsKey('pages'), isFalse);
+    final summary = ImportedChapterRecord.fromSummaryJson(json);
+    expect(summary.isSummary, isTrue);
+    expect(summary.directoryRecursive, isFalse);
+    expect(summary.coverSourceId, full.coverSourceId);
+    expect(summary.coverAnimatedHint, isTrue);
+    expect(summary.toSummaryJson(), json);
+    expect(summary.copyWith(displayName: 'Renamed').isSummary, isTrue);
+    expect(() => summary.pages.clear(), throwsUnsupportedError);
+    final large = ImportedChapterRecord.fromSummaryJson({...json, 'pageCount': 100000000});
+    expect(large.pages.length, 100000000);
+    expect(large.pages.last.sourceId, '$importedChapterSummaryPageSourcePrefix${99999999}');
+    expect(() => ImportedChapterRecord.fromSummaryJson({...json, 'pageCount': 0}),
+      throwsFormatException);
+  });
+
   test('folder record produces deterministic Reader identities', () {
     final first = ImportedChapterRecord.folder(
       directoryId: 'content://provider/tree/chapter',

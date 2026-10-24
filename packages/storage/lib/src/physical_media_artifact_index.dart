@@ -62,7 +62,10 @@ abstract interface class PhysicalMediaArtifactIndex {
     PhysicalMediaId id,
   );
 
-  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts();
+  /// Null keeps the complete inventory; an empty selection returns no rows.
+  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts({
+    Iterable<PhysicalMediaId>? ids,
+  });
 
   /// Binds [id] to an already-existing immutable artifact object.
   ///

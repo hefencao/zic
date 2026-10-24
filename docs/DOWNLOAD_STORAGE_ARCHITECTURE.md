@@ -458,6 +458,7 @@ missing/mismatched candidates never manufacture READY.
 Final commit is one SQLite transaction that publishes artifact object/replica,
 exact READY and canonical physical routing, removes physical partial,and deletes the journal.
 `StorageAccessAuthorityQuery` protects both journal candidates from dirty orphan cleanup while the transaction is pending.
+`StorageAccessPreservationQuery` may prefetch positive locator hints for one scanner pass; misses still query live authority, and stale positives only defer cleanup. The hints never authorize body reads or version reuse, and each pass refreshes them.
 Sidecars remain irrelevant to this decision, and schema16 cleanup remains targeted cleanup-only metadata rather than promotion authority or a tree/cache scan.
 Side-by-side `physical_media_artifact` READY + same-key `physical_partial` is likewise not a legitimate steady state:
 the READY replica is the immutable body authority and the partial is redundant recovery inventory.

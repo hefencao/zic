@@ -24,6 +24,18 @@ String _versionAuthorityEntryKey(ImportedLibraryEntry entry) =>
     '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'
     '\u0000${entry.chapter.chapterId}';
 
+bool _sameCanonicalMediaActiveRanges(
+  List<CanonicalMediaActiveRange> left,
+  List<CanonicalMediaActiveRange> right,
+) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index].start != right[index].start ||
+        left[index].endExclusive != right[index].endExclusive) return false;
+  }
+  return true;
+}
+
 bool _samePersistedChapterPayload(
   ImportedChapterRecord left,
   ImportedChapterRecord right,
@@ -32,6 +44,7 @@ bool _samePersistedChapterPayload(
   // Compare all persisted values without encoding opaque request carriers or
   // constructing a fresh manifest. Mutable progress is read back separately.
   if (left.directoryId != right.directoryId ||
+      left.directoryRecursive != right.directoryRecursive ||
       left.displayName != right.displayName ||
       left.sourceId != right.sourceId ||
       left.comicId != right.comicId ||
@@ -420,6 +433,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   List<ComicVersionRelation> _versionRelations = const <ComicVersionRelation>[];
   Map<String, VersionChapterCanonicalProjection> _canonicalMediaProjections =
       const <String, VersionChapterCanonicalProjection>{};
+  Map<String, CanonicalMediaChapterAuthority> _canonicalMediaAuthorities =
+      const <String, CanonicalMediaChapterAuthority>{};
   ComicVersionCanonicalMediaLedger _canonicalMediaLedger =
       ComicVersionCanonicalMediaLedger();
   Future<void> _canonicalMediaWriteTail = Future<void>.value();
@@ -442,6 +457,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Completer<void>? _admissionsDrained;
   int _libraryProjectionRevision = 0;
   int? _snapshotLibraryRevision;
+  String? _snapshotChapterRevision;
   bool _snapshotRewriteNeeded = false;
   Future<void> _snapshotWriteTail = Future<void>.value();
   Object? _scheduledSnapshotWrite;
@@ -748,13 +764,20 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   void _refreshCanonicalMediaAuthority() {
     final provider = _downloadCompositionProvider;
-    if (provider == null) return;
+    if (provider == null) {
+      _canonicalMediaAuthorities =
+          const <String, CanonicalMediaChapterAuthority>{};
+      return;
+    }
     final refreshStartedAtMs = _homeStartupClock.elapsedMilliseconds;
     final runtime = provider.transferRuntime;
     final entriesByKey = _versionAuthorityEntriesByKey();
     final activeProjectionRanges =
         canonicalMediaActiveRangesFromRelations(_versionRelations);
     final canonicalAuthorities = <CanonicalMediaChapterAuthority>[];
+    final nextAuthorities = <String, CanonicalMediaChapterAuthority>{};
+    var rebuilt = 0;
+    var scannedPages = 0;
     for (final entry in entriesByKey.values) {
       final manifest = entry.chapter.toManifest();
       final exactKey = canonicalMediaExactChapterKey(
@@ -773,19 +796,34 @@ final class HomeLibrarySession extends ChangeNotifier {
             const <CanonicalMediaActiveRange>[])
           if (range.endExclusive <= manifest.pages.length) range,
       ];
-      canonicalAuthorities.add(
-        CanonicalMediaChapterAuthority(
+      final entryKey = _versionAuthorityEntryKey(entry);
+      final previous = _canonicalMediaAuthorities[entryKey];
+      // Stable media identities are manifest-local. Opening another chapter
+      // must not extract them again for every previously hydrated version.
+      // Revision/carrier, projection and live proof ranges remain authority
+      // inputs; a changed input replaces the immutable authority atomically.
+      if (previous != null &&
+          identical(previous.manifest, manifest) &&
+          identical(previous.projection, projection) &&
+          _sameCanonicalMediaActiveRanges(previous.activeProjectionRanges, ranges)) {
+        nextAuthorities[entryKey] = previous;
+      } else {
+        nextAuthorities[entryKey] = CanonicalMediaChapterAuthority(
           manifest: manifest,
           projection: projection,
           activeProjectionRanges: ranges,
-        ),
-      );
+        );
+        rebuilt++;
+        scannedPages += manifest.pages.length;
+      }
+      canonicalAuthorities.add(nextAuthorities[entryKey]!);
     }
     final builtAtMs = _homeStartupClock.elapsedMilliseconds;
     runtime.replaceCanonicalMediaAuthorityScope(
       'library-canonical-media',
       canonicalAuthorities,
     );
+    _canonicalMediaAuthorities = nextAuthorities;
     final publishedAtMs = _homeStartupClock.elapsedMilliseconds;
     _scheduleCanonicalPhysicalBackfill(provider, canonicalAuthorities);
     final completedAtMs = _homeStartupClock.elapsedMilliseconds;
@@ -795,7 +833,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       'buildMs=${builtAtMs - refreshStartedAtMs} '
       'publishMs=${publishedAtMs - builtAtMs} '
       'backfillScheduleMs=${completedAtMs - publishedAtMs} '
-      'entries=${entriesByKey.length} authorities=${canonicalAuthorities.length}',
+      'entries=${entriesByKey.length} authorities=${canonicalAuthorities.length} '
+      'rebuilt=$rebuilt reused=${canonicalAuthorities.length - rebuilt} '
+      'scannedPages=$scannedPages',
     );
   }
 
@@ -1000,14 +1040,17 @@ final class HomeLibrarySession extends ChangeNotifier {
           // request locators may legitimately change without a revision/count
           // change (notably Venera resource carriers), so it must replace the
           // version/media authority payload while preserving newer progress.
-          _versionAuthorityHydratedEntries[key] = latestProgress == null
-              ? entry
-              : entry.copyWith(progress: latestProgress);
-          // The same persisted chapter may be reloaded at every boundary.
-          // Compare its full payload, not just revision/count: a changed
-          // request carrier still has to replace media authority.
-          changed = changed ||
+          final payloadChanged =
               !_samePersistedChapterPayload(previous!.chapter, entry.chapter);
+          final refreshed = payloadChanged
+              ? entry : entry.copyWith(chapter: previous.chapter);
+          _versionAuthorityHydratedEntries[key] = latestProgress == null
+              ? refreshed
+              : refreshed.copyWith(progress: latestProgress);
+          // The same persisted chapter may be reloaded at every boundary.
+          // Preserve the immutable chapter when every persisted value matches;
+          // a later unrelated refresh can then reuse its media authority too.
+          changed = changed || payloadChanged;
           continue;
         }
         // Ordinary Home/snapshot projection updates may be compact. Preserve
@@ -1392,7 +1435,8 @@ final class HomeLibrarySession extends ChangeNotifier {
             _readLibraryProjectionRevision,
             summary: (revision) => 'revision=${revision ?? 'none'}',
           );
-    if (snapshotRevision != null && currentRevision == snapshotRevision) {
+    if (snapshotRevision != null && currentRevision == snapshotRevision &&
+        await _verifySnapshotChapterRevision(snapshotRevision)) {
       _activeSourceId = _activeSourceIdForCurrentSources();
       _error = null;
       _loading = false;
@@ -1418,14 +1462,17 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   void _replaceAuthoritativeLibraryEntries(
-    Iterable<ImportedLibraryEntry> entries,
-  ) {
+    Iterable<ImportedLibraryEntry> entries, {
+    bool preserveHydrated = false,
+  }) {
     final values = List<ImportedLibraryEntry>.unmodifiable(entries);
     _entries = values;
+    if (preserveHydrated) return;
     _versionAuthorityHydratedEntries
       ..clear()
       ..addEntries(
-        values.map(
+        values.where((entry) =>
+          !chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter)).map(
           (entry) => MapEntry(_versionAuthorityEntryKey(entry), entry),
         ),
       );
@@ -1475,6 +1522,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     _snapshotLibraryRevision = snapshot.libraryRevision;
+    _snapshotChapterRevision = snapshot.chapterRevision;
     _snapshotRewriteNeeded = snapshot.requiresRewrite;
     _activeSourceId = _activeSourceIdForCurrentSources();
     _error = null;
@@ -1504,7 +1552,8 @@ final class HomeLibrarySession extends ChangeNotifier {
         'current=${currentRevision ?? 'none'} '
         'match=${currentRevision == snapshotRevision}',
       );
-      if (currentRevision != null && currentRevision == snapshotRevision) {
+      if (currentRevision != null && currentRevision == snapshotRevision &&
+          await _verifySnapshotChapterRevision(snapshotRevision)) {
         final canonicalMediaProjections = await _traceStartupOperation<
             List<VersionChapterCanonicalProjection>>(
           'query-canonical-media-projections',
@@ -1536,6 +1585,12 @@ final class HomeLibrarySession extends ChangeNotifier {
       }
     }
     final projectionRevisionAtStart = _libraryProjectionRevision;
+    // Read the chapter proof before the query batch. If a chapter changes
+    // afterwards the old token stays conservative, never claiming that the
+    // earlier Home payload includes that write.
+    final metadataRevision = await _readLibraryMetadataRevision();
+    final reuseChapters = _snapshotChapterRevision != null &&
+        metadataRevision?.chapterRevision == _snapshotChapterRevision;
     final canonicalMediaProjectionsFuture = _traceStartupOperation<
         List<VersionChapterCanonicalProjection>>(
       'query-canonical-media-projections',
@@ -1544,8 +1599,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     _homeLog('primary-query-batch-start');
     final entriesFuture = _traceStartupOperation<List<ImportedLibraryEntry>>(
-      'query-entries',
-      library.list,
+      reuseChapters ? 'query-entry-progress' : 'query-entries',
+      reuseChapters ? _entriesWithCurrentProgress : library.list,
       summary: (entries) => 'count=${entries.length}',
     );
     final savedComicsFuture = _traceStartupOperation<List<SavedComicRecord>>(
@@ -1606,7 +1661,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     if (publishPrimary) {
       if (_libraryProjectionRevision == projectionRevisionAtStart) {
-        _replaceAuthoritativeLibraryEntries(entries);
+        _replaceAuthoritativeLibraryEntries(entries,
+          preserveHydrated: reuseChapters);
+        _snapshotChapterRevision = metadataRevision?.chapterRevision;
         _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
         _versionRelations = List<ComicVersionRelation>.unmodifiable(
@@ -1760,7 +1817,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     final projectionChangedAtPublish =
         _libraryProjectionRevision != projectionRevisionAtStart;
     if (!projectionChangedAtPublish) {
-      _replaceAuthoritativeLibraryEntries(entries);
+      _replaceAuthoritativeLibraryEntries(entries,
+        preserveHydrated: reuseChapters);
+      _snapshotChapterRevision = metadataRevision?.chapterRevision;
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations = List<ComicVersionRelation>.unmodifiable(
         versionRelations,
@@ -1817,6 +1876,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     unawaited(_refreshDownloadSnapshotsAfterFrame(visibleEntries));
     _snapshotRewriteNeeded = false;
     _scheduleSnapshotWrite();
+    _homeLog('reload-complete mode=${reuseChapters ? 'metadata-only' : 'full'} '
+      'entries=${_entries.length}');
   }
 
   Future<void> ensureReady() => _runAdmittedOperation(_ensureReady);
@@ -2690,6 +2751,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     final entriesChanged = next.length != _entries.length;
     final readStateChanged = nextReadStates.length != _readStates.length;
     if (entriesChanged) {
+      _snapshotChapterRevision = null;
       _entries = List<ImportedLibraryEntry>.unmodifiable(next);
     }
     _forgetVersionAuthorityChapter(sourceId, chapterId);
@@ -2821,6 +2883,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     ImportedLibraryEntry entry, {
     bool replaceVersionAuthorityChapterPayload = false,
   }) {
+    if (replaceVersionAuthorityChapterPayload) _snapshotChapterRevision = null;
     final next = _entries.toList(growable: true);
     final index = next.indexWhere(
       (current) => current.identity == entry.identity,
@@ -3310,6 +3373,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     // admitted snapshot silently self-cancel at its next ownership check.
     await flushSnapshotWrites();
     _closed = true;
+    _canonicalMediaAuthorities =
+        const <String, CanonicalMediaChapterAuthority>{};
     await _downloadSubscription.cancel();
     await _wholeComicSubscription.cancel();
     if (ownsWholeComicDownloads) {
@@ -3326,6 +3391,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   @override
   void dispose() {
     _closed = true;
+    _canonicalMediaAuthorities =
+        const <String, CanonicalMediaChapterAuthority>{};
     _downloadSubscription.cancel();
     _wholeComicSubscription.cancel();
     _downloadProjectionChanges.dispose();
@@ -3362,6 +3429,45 @@ final class HomeLibrarySession extends ChangeNotifier {
       _homeLog('projection-revision-unavailable reason=read-failed');
       return null;
     }
+  }
+
+  Future<({int revision, String chapterRevision})?> _readLibraryMetadataRevision() async {
+    final candidate = library;
+    if (candidate is! ImportedLibraryMetadataStore) return null;
+    try {
+      return await (candidate as ImportedLibraryMetadataStore).libraryMetadataRevision;
+    } on Object {
+      _homeLog('chapter-revision-unavailable reason=read-failed');
+      return null;
+    }
+  }
+
+  Future<bool> _verifySnapshotChapterRevision(int matchedRevision) async {
+    final current = await _readLibraryMetadataRevision();
+    if (current == null) return _snapshotChapterRevision == null;
+    if (current.revision != matchedRevision) return false;
+    if (_snapshotChapterRevision != null) {
+      return _snapshotChapterRevision == current.chapterRevision;
+    }
+    // Old snapshots can learn this optional proof only while the atomic store
+    // revision still proves that their entire chapter projection is current.
+    _snapshotChapterRevision = current.chapterRevision;
+    _snapshotRewriteNeeded = true;
+    return true;
+  }
+
+  Future<List<ImportedLibraryEntry>> _entriesWithCurrentProgress() async {
+    final entries = _entries;
+    final progress = <String, ReadingProgress>{
+      for (final value in await (library as ImportedLibraryMetadataStore)
+          .listReadingProgress())
+        chapterLibraryIdentity(value.sourceId, value.chapterId): value,
+    };
+    return <ImportedLibraryEntry>[
+      for (final entry in entries)
+        entry.copyWith(progress: progress[entry.identity],
+          clearProgress: !progress.containsKey(entry.identity)),
+    ];
   }
 
   String? _activeSourceIdForCurrentSources() =>
@@ -3438,6 +3544,7 @@ final class HomeLibrarySession extends ChangeNotifier {
                 .map(_downloadSummary),
           ],
           libraryRevision: libraryRevision,
+          chapterRevision: _snapshotChapterRevision,
         );
         // Mutations after this captured projection need one subsequent write.
         _scheduledSnapshotWrite = null;

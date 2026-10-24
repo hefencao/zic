@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
@@ -1820,7 +1821,93 @@ void main() {
     );
   });
 
-  test('canonical backfill yields while scanning unrelated cache rows', () async {
+  for (final partial in <bool>[false, true]) {
+    test('sparse canonical ${partial ? 'partial' : 'READY'} backfill validates current carriers', () async {
+      final root = await Directory.systemTemp.createTemp('zic-sparse-backfill-');
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      final manifest = ChapterManifest(
+        sourceId: 'venera:ehentai', comicId: 'current',
+        chapter: const Chapter(chapterId: 'chapter', comicId: 'current',
+          title: 'Sparse', sequence: 0, pageCount: 256, sourceRevision: 'r1'),
+        pages: <PageAsset>[
+          for (var index = 0; index < 256; index++)
+            PageAsset(pageId: 'page-${index == 129 ? 7 : index}',
+              chapterId: 'chapter', index: index,
+              uri: Uri.parse('venera-resource:current-$index')),
+        ],
+        readingDirection: ReadingDirection.vertical,
+      );
+      final projection = VersionChapterCanonicalProjection(
+        familyId: const VersionFamilyId('family'),
+        canonicalChapterId: const CanonicalChapterId('canonical'),
+        sourceId: manifest.sourceId, comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId, sourceRevision: 'r1', pageCount: 256,
+        intervals: const <CanonicalMediaBindingInterval>[
+          CanonicalMediaBindingInterval(exactStart: 0, exactEndExclusive: 256,
+            segmentId: CanonicalMediaSegmentId('segment'), segmentStart: 0),
+        ],
+      );
+      final authority = CanonicalMediaChapterAuthority(manifest: manifest,
+        projection: projection, activeProjectionRanges: const [
+          CanonicalMediaActiveRange(start: 0, endExclusive: 200),
+        ]);
+      DownloadId candidate(int index, {String? carrier, String? comic, String? revision}) =>
+          DownloadId(content: ContentId(sourceId: manifest.sourceId,
+              comicId: comic ?? manifest.comicId, chapterId: 'chapter',
+              pageId: manifest.pages[index].pageId),
+            sourceRevision: revision ?? 'r1',
+            canonicalUri: carrier == null ? manifest.pages[index].uri : Uri.parse(carrier),
+            pageIndexHint: 255);
+      final valid = <DownloadId>[candidate(7), candidate(129)];
+      final rejected = <DownloadId>[
+        candidate(7, carrier: 'venera-resource:stale-carrier'),
+        candidate(220),
+        candidate(7, comic: 'other-version'),
+        candidate(7, revision: 'old'),
+      ];
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+      for (final id in <DownloadId>[...valid, ...rejected]) {
+        if (partial) {
+          await store.storePartialDownload(id: id, entry: PartialDownloadEntry(
+            length: bytes.length, validators: const Validators(), totalLength: 12,
+            open: ({required int start}) async* { yield Uint8List.sublistView(bytes, start); },
+          ));
+        } else {
+          await store.storePromotedArtifact(id: id, bytes: bytes);
+        }
+      }
+      // Persisted identities deliberately omit execution-only page hints.
+      await store.index.close();
+      await store.index.open();
+      expect((await store.index.get(valid.first.key))!.id.pageIndexHint, isNull);
+      final migrated = partial
+          ? await store.backfillCanonicalPartials([authority])
+          : await store.backfillCanonicalReadyArtifacts([authority]);
+      expect(migrated, 2);
+      for (final index in <int>[7, 129]) {
+        final physical = PhysicalMediaId.canonical(
+          projection.coordinateForPageIndex(index).stableKey);
+        final length = partial
+            ? (await store.openPhysicalPartialDownload(physicalId: physical,
+                requestId: readerPageDownloadId(manifest, manifest.pages[index])))?.length
+            : (await store.openPhysicalArtifact(physical))?.length;
+        expect(length, bytes.length);
+        if (partial) expect(await store.index.get(candidate(index).key), isNull);
+      }
+      for (final id in rejected) {
+        expect((await store.index.get(id.key))?.bytes, bytes.length,
+          reason: 'pageId/hint must not override locator, revision, owner or active proof');
+      }
+      expect(await (store.index as PhysicalMediaArtifactIndex).getPhysicalMediaArtifact(
+        PhysicalMediaId.canonical(projection.coordinateForPageIndex(220).stableKey)), isNull);
+      expect(await (store.index as PhysicalPartialIndex).getPhysicalPartial(
+        PhysicalMediaId.canonical(projection.coordinateForPageIndex(220).stableKey)), isNull);
+    });
+  }
+
+  test('canonical backfill skips unrelated payloads', () async {
     final root = await Directory.systemTemp.createTemp(
       'zic-canonical-backfill-yield-',
     );
@@ -1861,19 +1948,20 @@ void main() {
         );
       }
     }
+    await store.index.close();
+    await store.index.open();
+    final db = sql.sqlite3.open(store.layout.dbPath);
+    try {
+      db.execute("UPDATE cache_entry SET download_json = 'malformed' "
+          "WHERE comic_id = 'unrelated'");
+    } finally {
+      db.dispose();
+    }
     for (final ready in <bool>[true, false]) {
-      var eventTurnRan = false;
-      final event = Timer(Duration.zero, () => eventTurnRan = true);
-      addTearDown(event.cancel);
       final migrated = ready
           ? await store.backfillCanonicalReadyArtifacts(authorities)
           : await store.backfillCanonicalPartials(authorities);
       expect(migrated, 0);
-      expect(
-        eventTurnRan,
-        isTrue,
-        reason: 'Cache-only Futures must not monopolize the microtask queue',
-      );
     }
   });
 

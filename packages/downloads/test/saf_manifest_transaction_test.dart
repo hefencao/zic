@@ -74,6 +74,95 @@ void main() {
     expect(_decode(io.storage[manifestPath]!), _matches(newerTarget));
   });
 
+  test('cold open does not probe SAF placements without durable intents',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-saf-manifest-lazy-');
+    addTearDown(() => root.delete(recursive: true));
+    final indexPath = '${root.path}/chapter_downloads.sqlite';
+    final committed = _manifest(generation: 4, chapters: const <String>['c1']);
+    await _putPlacement(indexPath, tree, committed);
+    final io = _MemorySafIo(<String, Uint8List>{
+      manifestPath: _encoded(committed),
+    });
+
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      indexPath: indexPath,
+      safMirror: io,
+      safTreeUri: tree,
+    );
+    addTearDown(store.close);
+
+    expect(io.existsCalls, isEmpty,
+        reason: 'Reader byte readiness does not need portable manifest probes');
+  });
+
+  test('concurrent selected manifest reads recover legacy backup once',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-saf-manifest-lazy-old-');
+    addTearDown(() => root.delete(recursive: true));
+    final indexPath = '${root.path}/chapter_downloads.sqlite';
+    final committed = _manifest(generation: 4, chapters: const <String>['c1']);
+    await _putPlacement(indexPath, tree, committed);
+    final corrupt = Uint8List.fromList(utf8.encode('{uncommitted'));
+    final io = _MemorySafIo(<String, Uint8List>{
+      manifestPath: corrupt,
+      backupPath: _encoded(committed),
+    });
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      indexPath: indexPath,
+      safMirror: io,
+      safTreeUri: tree,
+    );
+    addTearDown(store.close);
+    expect(io.storage[manifestPath], orderedEquals(corrupt));
+
+    await Future.wait(<Future<String>>[
+      for (var i = 0; i < 2; i++)
+        store.resolveStructuredChapterDirectory(
+          _entry(chapterId: 'c1'), comicDirectoryName: 'Comic'),
+    ]);
+
+    expect(_decode(io.storage[manifestPath]!), _matches(committed));
+    expect(io.storage.containsKey(backupPath), isFalse);
+    final placement = await store.index.getPlacement(
+      sourceId: 'source', comicId: 'comic');
+    expect(placement?.generation, committed.generation);
+    expect(placement?.fingerprint, committed.fingerprint);
+  });
+
+  test('selected legacy recovery rejects backup without matching authority',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-saf-manifest-lazy-bad-');
+    addTearDown(() => root.delete(recursive: true));
+    final indexPath = '${root.path}/chapter_downloads.sqlite';
+    final committed = _manifest(generation: 4, chapters: const <String>['c1']);
+    final uncommitted = _manifest(generation: 5, chapters: const <String>['c2']);
+    await _putPlacement(indexPath, tree, committed);
+    final io = _MemorySafIo(<String, Uint8List>{
+      backupPath: _encoded(uncommitted),
+    });
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      indexPath: indexPath,
+      safMirror: io,
+      safTreeUri: tree,
+    );
+    addTearDown(store.close);
+
+    await expectLater(store.resolveStructuredChapterDirectory(
+      _entry(chapterId: 'c1'), comicDirectoryName: 'Comic'),
+      throwsA(isA<Failure>().having(
+        (failure) => failure.code, 'code', ErrorCode.artifactCorruption)));
+    expect(io.storage.containsKey(manifestPath), isFalse);
+    expect(io.storage[backupPath], orderedEquals(_encoded(uncommitted)));
+    final placement = await store.index.getPlacement(
+      sourceId: 'source', comicId: 'comic');
+    expect(placement?.generation, committed.generation);
+    expect(placement?.fingerprint, committed.fingerprint);
+  });
+
   test('first SAF manifest crash rolls back target only with durable intent',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-saf-manifest-first-');
@@ -390,6 +479,11 @@ void main() {
       comicId: 'comic',
     );
     expect(committed.chapters, containsAll(<String>['c1', 'c2']));
+    // Recovery's old-generation read is reused; retain the independent read
+    // of the installed generation before publishing placement authority.
+    expect(io.manifestGenerationsRead.where((value) => value == 2), hasLength(4));
+    expect(io.manifestGenerationsRead.where((value) => value == committed.generation),
+      hasLength(1));
     expect(placement?.generation, committed.generation);
     expect(placement?.fingerprint, committed.fingerprint);
     expect(io.storage.containsKey(backupPath), isFalse);
@@ -556,6 +650,8 @@ final class _MemorySafIo implements SafTreeIo {
   _MemorySafIo(this.storage);
 
   final Map<String, Uint8List> storage;
+  final List<String> existsCalls = <String>[];
+  final List<int> manifestGenerationsRead = <int>[];
   final Map<int, ({String path, int position})> _handles =
       <int, ({String path, int position})>{};
   int _nextHandle = 1;
@@ -567,6 +663,10 @@ final class _MemorySafIo implements SafTreeIo {
   }) async {
     if (mode == SafWriteMode.read && !storage.containsKey(relativePath)) {
       return null;
+    }
+    if (mode == SafWriteMode.read && relativePath.endsWith('/$comicManifestFileName')) {
+      final manifest = ComicFolderManifest.decode(utf8.decode(storage[relativePath]!));
+      if (manifest != null) manifestGenerationsRead.add(manifest.generation);
     }
     if (mode == SafWriteMode.writeTruncate) {
       storage[relativePath] = Uint8List(0);
@@ -636,8 +736,10 @@ final class _MemorySafIo implements SafTreeIo {
   }
 
   @override
-  Future<bool> exists(String relativePath) async =>
-      storage.containsKey(relativePath);
+  Future<bool> exists(String relativePath) async {
+    existsCalls.add(relativePath);
+    return storage.containsKey(relativePath);
+  }
 
   @override
   Future<List<SafTreeFile>> list(String relativePath) async {

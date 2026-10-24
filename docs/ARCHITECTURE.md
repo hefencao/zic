@@ -87,13 +87,20 @@ generic open watchdog真正超时时，DownloadJob必须只abort当前controlled
 真正scheduler cancellation仍沿原CancelToken下沉。
 
 ### `storage`
-持久化 imported-library 的 bulk SQL/JSON 解码由 storage-owned 短生命周期只读 worker 执行，SQLite handle 不跨 isolate；
-同一worker在返回前初始化每个不可变record的manifest投影，页面URI解析不延迟到Home首次authority构建；连接和发布authority仍由原owner持有。
+持久化 imported-library 的 bulk list/getMany 的SQL、JSON/model解码和不可变manifest准备由一个 storage-owned 短生命周期只读 worker 执行；SQLite handle 不跨 isolate，关闭拒绝新读取并等待已接纳worker退出。
+完整收藏目录`listSavedComics`的SQL与JSON/model解码也按次在只捕获路径的只读worker内执行，返回完整有序记录并复用同一bulk-read退出等待；不新增目录缓存或以章节令牌替代收藏读取。内存库先取得脱离SQLite的行，再按行数/时间预算解码让步。精确`getSavedComic`和原子备份仍在原连接执行，备份事务不跨让步。
+Home revision与已存章节令牌匹配时复用计数式紧凑快照。SQLite在既有revision控制行保存独立章节令牌，chapter insert/update/delete在原事务内换代；进度、偏好、已读状态及关系变化只校准元数据和原有canonical proof，不补读章节清单或撤销已hydrate authority。章节令牌变化、缺失或不可验证时仍完整读取library，不维护第二份数据库摘要表。
+正文入口只hydrate当前章，通过durable canonical projection与当前revision/pageCount/proof范围解析共享物理正文，不遍历关联版本清单。旧exact缓存的兼容校验仍要求真实页身份；完整reload保留同revision/count的locator更新。
 内存 store 以有限 event-turn 预算让步。
 `SqliteImportedLibraryStore`在当前连接内惰性复用版本关系upsert的compiled statement，避免批量发现逐条编译SQL；写入仍同步完成并沿原session persistence顺序提交。
 statement由store在关闭foreground连接前显式释放并清空；重开重新编译，不跨library adoption传递，失败后的参数重绑与原SQL错误传播保持。
-schema 20 的 `artifact_replica(access_locator)` 索引和 `CacheScanner.phaseMicros` 服务于恢复扫描诊断，
-sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
+cache schema 22 在同一 binding 事务内维护 source/comic/chapter 列与 `cache_entry_identity` 候选索引。候选以 `cache_entry.binding_id` 的唯一整型引用关联完整 binding，删除通过外键级联撤销候选；编号只供内部关联，不替代完整 key、版本或正文证明。编号在 SQLite 写事务内按既存编号上界分配，upsert 保留原值，持久值不依赖后续 rowid/VACUUM 排布。21→22 在原迁移事务中转换已有 token 引用，保留原 key/JSON、token、正文与 replica authority；失败整体回滚。更早版本一次性回填，当前版本重开不扫描旧行，启动不追加 VACUUM；释放的索引页由 SQLite 复用。
+持久库的20/21→22升级由短生命周期worker在自身连接执行：20回填候选索引，21仅转换已有引用，handle不跨isolate；`SqliteIndex.open`单飞等待该worker真实退出，未完成前不开放读取，close等待打开/迁移退出后再关闭owner连接。失败释放连接并保留迁移错误供调用者处理。当前schema直接重开不启动迁移worker，不形成常驻第二writer。
+`CacheRecordQuery` 按漫画/章节/revision 或同源内容标识查询，不依赖全库内存快照；标识 token 与下载复用使用同一投影，候选本身不授予等价或正文权威。URI内容hash以单次线性扫描提取首个32–64位ASCII十六进制串，保留路径解码、token顺序和已有索引语义，不增加缓存或迁移索引。
+SQLite scope/identity冷、热查询均用SQLite索引选择命中行，不复制或过滤全库CacheRec。index owner已完整加载时只复用与该次选中行快照一致的已解码对象；让步期间发生mutation则按选中行解码，不返回新旧字段混合的候选。冷持久化大结果的SQL和解码由短生命周期只读worker执行；单scope/token预查≤16行且JSON≤64KiB时保留原连接读取。命中行复用/解码按行预算让步，close等待已接纳读取。canonical回填只查询已发布authority的exact章节，全局管理清单保持完整。
+缓存总量通过`SqliteIndex.readBindingUsage()`读取标量字段，不加载READY的完整DownloadId JSON，也不预热全库记录缓存；partial仍解码真实身份以归并历史键。已有热记录只取本次不可变快照，计算按时间预算让步且close等待读取退出。downloads沿用完整physical artifact/partial inventory补足物理独有占用和READY支配关系；这些计数不提供正文、复用或删除authority。
+保留 `artifact_replica(access_locator)` 索引与 `CacheScanner.phaseMicros` 恢复诊断；sidecar 仅是 DB/live owner 的保留提示，不替代正文/partial 存在性与 authority。
+`CacheScanner` 每次扫描通过可选 `StorageAccessPreservationQuery` 批量预取 replica、partial、promotion 与有效 migration locator；SQLite 单条查询仅读 locator 列，转换按时间预算让步，close 等待已接纳读取。结果仅供本次清理保守保留，未命中仍实时查询 durable authority；过期命中至多延后一次清理，不授予正文读取或复用能力。无该能力的 index 沿用实时查询，partial 存在性检查与扫描阶段顺序保持。
 
 partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。
 对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；
@@ -112,6 +119,7 @@ composition-owned `ArtifactCacheManager`、artifact transport/read scheduler、
 verified-equivalence proof、章节/整本持久下载与来源 transport 组合。页面 session 状态本身由 `sessions` 拥有。
 本地漫画导入的只读 tree、普通目录/外部格式扫描、数据库快照和逐章私有 staging 归 `downloads`；无 App 清单的普通目录按图片所在目录独立成书，不猜测相邻目录的章节归属。
 EHViewer legacy `.ehviewer`/ComicInfo、Mihon 图片目录/CBZ、Venera `local.db` 分别投影成现有图片的章节模型。
+ZIC `.zic.json` v1/v2/v3 由同一只读扫描器恢复漫画/章节；v2/v3 按显式 logical index 选取文件并在 staging 独立核对长度/checksum，未列入的图片不自动纳入，损坏/未知清单不降级成普通目录。ZIC 复制导入仍建立本地身份，不凭清单中的远程 ID 恢复网络等价或已有 pin。
 外部 SQLite 只在复制 DB 与 WAL 且复核输入稳定后，于私有快照上只读查询；它不替代 ZIC 的库或下载 index。
 解压、图片校验及 DB worker 仅接收文件路径/值与顶层函数，不传递 UI、取消回调或命令生命周期对象；调用者等待实际退出后再清理文件。
 `ChapterDownloadLocalImportSink` 把已校验 staging 映射成同一命令的受控 staged transport，沿原 consumer、NetLane、CRC promotion、pin 与 structured placement 写入；临时文件不能成为 source-resident replay authority。
@@ -311,6 +319,7 @@ source projection 只复用底层 producer、response cache 与创建时 transpo
 Mihon 以对齐 offset/limit 映射 native page，完整保留原生页；空页的 hasMore 和下一坐标仍归来源，不新增分页缓存或调度 owner。
 durable handoff先构造候选source projection并完成`HomeLibrarySession.adoptServices`；
 library、chapter download、download composition 与 whole-comic queue 的唯一当前authority由`HomeLibrarySession`持有。
+`HomeLibrarySession`按exact章节保留当前不可变`CanonicalMediaChapterAuthority`投影；manifest对象、canonical projection与规范化active proof范围均未变化时复用，局部章节更新不重新提取其他已hydrate章节的逐页媒体标识。复用只保留已加载的控制元数据，不补读关联清单；删除、revision/provider变化与proof撤销仍原子替换scope，无provider或session关闭时释放本地引用。
 `HomeServiceAdoptionCoordinator`只负责把`HomeServiceHandoff`发布的一代服务按 single-flight 顺序交给 session，
 并在 session 已确认 adoption 后原子切换同代 `HomeServiceCacheBinding`、source-resource binding 与 source projection；
 它不持有 Flutter presentation/navigation 状态，也不成为第二个 service authority。
@@ -448,10 +457,11 @@ Reader route/version-reuse consumer 只读该 composition capability，
 不再从 `ChapterDownloadService` 向下探测 `PartialDownloadStore`/transfer provider。
 `apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。入口直接挂载 memory-backed Home；
 首个Flutter surface可见后异步打开durable/native/plugin capability。
-`HomeProjectionSnapshot`同时保存Home primary、SQLite projection revision和需要持久展示的manual/auto-cache chapter-download summary。
+`HomeProjectionSnapshot`同时保存Home primary、SQLite projection revision、可选章节令牌和需要持久展示的manual/auto-cache chapter-download summary。章节令牌来自实际章节读取前的storage快照，不得用写快照时较新的全局revision替它背书；session自身章节写入撤销旧令牌，只有全局revision仍匹配的旧快照才可补证。
 存储 owner 在 worker handoff 前只投影快照的持久字段；既有 isolate 执行 JSON 编码与压缩，普通章节的完整 pages/prepared manifest 不进入 worker 输入图。
 durable catalog/preference/read-state DTO 的 JSON 字段转换也留在该 worker；caller 只准备 compact entry metadata 与不携带 prepared manifest 的 orphan 页字段。
 orphan download entries 仍保存完整页元数据；写入串行、完成屏障及临时文件替换由原 snapshot store 拥有。
+snapshot store合并在途读取并缓存结果；文件异步读取后，仅把编码字节交给短生命周期isolate完成解压、UTF-8/JSON和模型转换，不传递store或path-provider owner。写入成功撤销旧读取的缓存资格，后续读取不得加入写入前的任务；原调用者仍可接收自己的旧投影。缺失、损坏或不兼容时继续回退SQLite，不改变快照格式和事实源。
 HomeLibrarySession合并尚未捕获projection的snapshot请求；捕获后到达的mutation再排一次，flush/close仍等待latest tail。无变化版本发现保留持久化/adoption及revision快照，但不重建全库authority或广播Home。
 revision匹配的durable handoff只切换authority并targeted revalidate这些已持久download identities，
 禁止为了Home启动扫描全部library entries或执行orphan discovery；后者属于Download Manager/用户显式刷新。
@@ -509,7 +519,7 @@ App 根路由的返回确认由 `_RootBackExitGuard` 拥有：
 新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home 不打开 SQLite 或创建 WAL/schema；
 `LazyImportedLibraryStore` 先提供内存投影，首次 chapter、收藏、已读、偏好或进度写入时迁移到持久库。已有 durable state 的服务仍在 Home 可见窗口之后打开；
 Reader checkpoint writer 的第二个 WAL 连接也只在首次真正写入 `ReadingProgress` 后懒启动。
-SQLite schema 11 在 schema 10 的独立 `chapter_read_state` 基础上新增 `source_migration_journal` 控制表；
+SQLite新库保留schema11的独立 `chapter_read_state` 与 `source_migration_journal`；直接兼容已有schema12库，不改写版本标记，不读取、回填或维护旧 `imported_chapter_summary` 表，原完整章节仍是唯一记录来源。
 `chapter_read_state` 继续作为独立的来源章节身份状态，不再用指向 `imported_chapter` 的外键阻止未 hydrate 章节先写入已读状态；显式删除章节负责清理章节、进度和已读状态。
 
 已有 durable state 时，`HomeProjectionSnapshotStore`先读取上一次成功reconcile的Home投影；
@@ -1944,9 +1954,9 @@ resolver 区分 `latestKnownHead`（来源确认的最新候选）、`shelfHead`
 `downloadHead` 绝不能限制 immutable artifact cache：
 cache/artifact owner 独立消费完整 source-verified version relations 与已登记 page equivalence。
 自动缓存 Tab 是 physical management projection：
-active verified shared media 归并为 family/chapter Canonical 行，未验证/gap/revoked 状态保留 Exact。
+active verified shared media 归并为 family/chapter Canonical 行，未验证/gap/revoked 状态保留 Exact。完整章节统计按当前 exact chapter/revision/count 一次核对并绑定本次读取的 canonical projection，页面循环复用该结果，不能跨章节或形状复用。exact 记录的 pageId 只筛选候选，候选仍以当前完整 DownloadId/key 核对 carrier/owner/revision；无 exact 候选的页面继续检查 durable canonical/stable inventory。完整 inventory 的 orphan/旧物理缓存仍须展示，不补读版本族 manifest。
 Home relation publication 后的 cache-residency backfill 只扫描已经存在的 READY/partial index；
-无可解析 physical media 的 authority 不参与扫描；只归组当前 authority 的章节。记录扫描、manifest 匹配和 physical 候选处理共用 downloads-owned 4ms/64 work-unit event-turn 预算，已完成的 SQLite Future 不能替代事件让步；让步不持有事务或新增调度门禁。
+无可解析 physical media 的 authority 不参与扫描；只归组当前 authority 的章节。manifest 匹配先用既存记录的 pageId 筛候选，仅为候选构造完整 DownloadId/key；执行 hint 与 pageId 本身不证明位置，完整 key 必须仍匹配当前 carrier/revision/owner，physical 解析继续验证实际 manifest 槽位与 active proof。记录扫描、manifest 匹配和 physical 候选处理共用 downloads-owned 4ms/64 work-unit event-turn 预算，已完成的 SQLite Future 不能替代事件让步；让步不持有事务或新增调度门禁。
 READY 通过 physical binding 零正文复制收口，historical exact partial 仅在 live authority 能解析 canonical physical coordinate 时先提交 physical prefix 再删除未变化 exact row，
 busy/race/gap 全部 fail-closed。几十个未打开/临时版本因此只增加 compact history，不产生下载管理逐页状态或 UI 热路径图搜索。
 ## 8. Animated WebP 生产与播放
@@ -2131,7 +2141,10 @@ presentation identity 只表示页面位置/输出。
   external artwork 使用 source-confirmed canonical comic identity + role，
   raw runtime locator 不参与 durable artwork 分区；
 - `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
-  底层 `SqliteIndex` 与 `PersistentDownloadArtifactStore` 维护内存快照并对 `readyPageIndices` 与 `indexedRecords` 提供 O(1) 探查；
+  `PersistentDownloadArtifactStore` 的章节查询合并当前 exact scope、同源强内容标识的跨 comicId 候选及经验证的前驱 chapter/revision；Reader 自动缓存复用仍由 `ArtifactCacheManager` 独立接收完整版本关系。
+  下载启动/结束、单章/批量状态及 ready-page 查询保留局部 CacheRec 候选。完整章节状态按当前 exact chapter 读取 canonical projection，再按 projected-first/stable-fallback 规则收集物理 ID，分批读取 artifact/partial；包含紧凑Home条目的状态批次一次读取已有物理inventory，不为缩小SQL范围展开全部占位页。批量快照的exact记录已按章分组；缺组传空集合，避免逐章重扫完整inventory，跨版本候选仍由共享ready index裁决。不会把物理缓存限定到当前 comicId、pin 或 exact binding，也不改变 proof/revision 规则。批间让步不持有事务/游标；index close 拒绝新的物理批量读取并等待已接纳读取退出，再关闭连接。全局管理、孤立记录发现和删除影响分析继续读取完整 inventory。每个候选继续经过既有 READY、版本、歧义与物理 locator 校验。
+  下载统计在单次物理库存快照内按canonical坐标建立派生查询，逐页不重建长物理键；只有可往返为原始stable key的canonical记录参与，READY覆盖同ID的partial，未命中仍沿原stable identity回退。摘要占位URI若未被该章库存身份索引覆盖且当前无live session，可跳过必为空的exact/session查询；索引包含partial，按URI页码而非临时槽位判断，每次让步后重新核对live session。上述查询不跨刷新复用，不拥有正文或新增持久化authority。
+  计数式Home摘要的下载状态只构造exact READY、已物化canonical坐标、已验证前驱binding和既存占位session涉及的页面；其余槽位只保留总数与未知总字节，不展开完整manifest。exact/pin/reuse、session优先级与canonical缺口保留；旧式混合占位数据走同一稀疏路径。exact记录与有位置的canonical/proof/session槽位合并时，composition注入library.get仅读当前章，核对source/comic/chapter/revision/count及pageId+URI后按真实index去重；不得用排序位置、执行hint或相同正文猜页码。空/纯exact摘要不补读，关联版本不hydrate；未配置查询能力时拒绝混合统计，当前章缺失或形状变化时仅保留exact计数并等待刷新。`DownloadRegistry.knownIds`只返回既存session/alias/direct binding的只读身份快照，不创建session或改变physical owner；管理缓存摘要同样不为计数式记录构造manifest。
   正常 sealed Reader 热读只做存在性/长度等 O(1) 元数据校验并直接流式消费，完整 CRC-32 属于 seal/materialize/显式 repair-audit 边界，不得在每次读取时全量重算。
   SQLite schema 8 已把 immutable object proof 与 physical copy 分开：
   `artifact_object` 保留 bytes/checksum 与兼容 locator mirror，`artifact_replica` 才是 sealed 物理副本权威；
@@ -2202,6 +2215,8 @@ durable sealed 读取始终由索引中的 artifact/replica locator 裁决，因
 正常关闭删除 recovery marker 并释放 metadata owner；下一次仅在发现遗留 marker 时运行`StartupRecovery`的authority-aware local cleanup scan，普通冷启动不得支付全量扫描成本。
 该 scan 对 sealed READY 只保护 DB-authoritative locator并清理无authority orphan，不执行 READY registry restore；
 mutable partial 的 demand-time adoption/resume仍由其独立 physical/index owner负责。
+SAF store open只按App-private事务intent恢复正文/清单，完成后才发布durable服务；无intent的旧清单backup不参与Reader字节就绪。
+旧backup由同一downloads owner在该清单实际读写时、既有per-manifest serializer内按placement token恢复；同一serializer内的读取直接复用当前执行域，不重复排队。
 非权威exact locator的crash清理由download-cache schema16 `storage_cleanup_debt`独立拥有且永不取得正文authority：
 `temporary`在Direct/SAF随机temp create前持久记录locator并在confirmed-absent后清债；
 `obsoleteSealedSource`只允许在已有immutable length+checksum proof的旧sealed source失去authority前登记；
@@ -2244,8 +2259,9 @@ SQLite schema 6 的稀疏 `export_page_binding` 只为实际进入导出的 `(so
 当前支持 JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF，ISO-BMFF 必须命中明确 AVIF/HEIF brand，generic `ftyp` 不得猜作 AVIF。
 已进入结构化图片导出的正文若无任一支持签名 MUST 作为 `artifactCorruption` 拒绝，`ContentKindHint` 不得覆盖实际非图片 bytes。
 每个目录的 `.zic.json` 描述当前 owner、稳定章节目录映射、单调 generation 与内容 fingerprint，placement 镜像最近提交 token；
+同一目录锁内，清单写入复用ownership校验已读出的有效清单，不重复读取；SAF提交复用恢复返回的旧清单，但安装后仍独立读取新清单验证再提交placement；generation、CRC和原子提交校验保留。清单批量解析、指纹与序列化由 storage-owned 短生命周期纯值 worker 执行，提交/恢复/目录锁留在原 owner，调用者等待 worker 真实退出。新写v3将有序章节的ID、目录、标题、sequence与文件列表合并为单条entry，ID只保存一次；checksum算法按章继承，混合算法的页面显式覆盖。逐章revision、预期页数及logical index/pageId/相对文件名/长度/checksum保留；v1/v2编码与指纹兼容。删除保留pageOrder，仍以整本清单为原子提交单位。准备worker复用一次JSON投影进行判等、指纹与编码，不重复展开draft页面。外部目录导入在读取/扫描边界执行64MiB UTF-8/20000项目预算；正常下载清单写入与通用格式解码不套用该扫描预算，大漫画可持续checkpoint并回读。新写入用紧凑JSON。若正文、布局及placement token均未变，保留generation/时间并跳过写盘。下载初始、完成及每32页或8秒的页面完成边界保存READY-only清单；取消/失败等待已接纳页面continuation退出后再尝试最终checkpoint。清单是可移植描述，SQLite仍是artifact/replica authority。
 POSIX 继续通过目录锁串行提交。SAF manifest 由 structured placement owner 在任何 SAF mutation 前先 flush App-private transaction intent，再以 deterministic `.zic.json.zic-old` + `DownloadPlacement` commit point 做 recoverable replace/delete；恢复只接受 intent 或 legacy backup 的 exact token 证据，禁止按“target generation 更高”猜测 forward。该协议位于唯一 metadata process owner 内并按 exact manifest path 串行，见 ADR 0342。
-page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。重存相同 partial 时旧 index 已可匹配预期 authority，因此 target 缺失但 backup 的完整 length+CRC 匹配该 authority 时恢复 backup，不增加 commit token。stale/crash intent 恢复独立读取完整 CRC，未知 target 或不匹配 backup 保留证据并拒绝恢复；正常 live staging/index commit 的清理复用本次累计的 copy proof，不额外扫描 partial 正文。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。
+page/partial SAF body 不再调用 provider-level overwrite。ADR 0343 规定先完整 staging，再 flush App-private body intent，以 deterministic `target.zic-old` 保留旧正文，并以现有 `CacheRec` / `PhysicalPartialRecord` 的精确新记录作为唯一 commit point；启动恢复只枚举本地 intent 并 probe 其中的 exact SAF path。重存相同 partial 时旧 index 已可匹配预期 authority，因此 target 缺失但 backup 的完整 length+CRC 匹配该 authority 时恢复 backup，不增加 commit token。stale/crash intent 恢复独立读取完整 CRC，未知 target 或不匹配 backup 保留证据并拒绝恢复；正常 live staging/index commit 的清理复用本次累计的 copy proof，不额外扫描 partial 正文。manifest/placement 仍由 ADR 0342 独立治理，两种事务不得共享 commit token。空事务目录由存储关闭排空后清理，活跃事务只退休自己的intent，避免并发writer的父目录被删除。枚举后已被其它完成事务退休的intent允许跳过；格式、权限及其它读取错误仍传播。
 整本队列把执行期 `ErrorCode.policy` 提升为持久化 `requiresUserAction` 阶段，保存冲突目录、existing/request owner 和触发章节，停止后续调度；
 详情页再次发起整本下载时必须重新弹出冲突对比并以新 placement 重建任务，管理页不得把该阶段当普通失败直接重试。
 长期数据模型仍需进一步把物理 artifact、逻辑版本 binding 与 export binding 彻底解耦。
@@ -2357,6 +2373,11 @@ namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL
 封面内容版本变化由 content revision/精确 artwork refresh处理，不能通过 presentation State、provider eviction
 或新的 raw alias 隐式换 key。catalog details/chapter刷新只能失效 metadata；不得因共享 comic namespace
 顺带删除 retained artwork。整漫画资源删除是独立的显式生命周期操作。
+
+`ComicCoverCard`只对已按需挂载、已取得encoded source的缩略图启动解码：
+`StableArtworkImage`按provider及64–512设备像素宽度调用一次标准`precacheImage`，避免高速滚动把首次解码一直延后到减速。
+实际`Image`加入同一个pending/ready `ImageCache`条目，sharing、预算、淘汰与短期listener退休仍归Flutter；
+不枚举整库封面、不新增source请求或失败重试。其它artwork默认保留高速defer。
 
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；
 Flutter decode 错误只影响 presentation。

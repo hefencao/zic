@@ -1,8 +1,142 @@
+import 'dart:convert';
+
 import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('ComicFolderManifest & Directory Naming Tests', () {
+    test('legacy v1 and v2 fingerprints remain readable unchanged', () {
+      final json = jsonDecode('{"format":"zic-comic-v2","sourceId":"source",'
+        '"comicId":"comic","comicTitle":"Title","chapters":["chapter"],'
+        '"chapterTitles":{"chapter":"Chapter"},"chapterSequences":{"chapter":1},'
+        '"chapterFiles":{"chapter":{"sourceRevision":"r1","pageCount":1,'
+        '"pages":[{"index":0,"pageId":"page","file":"001.png","bytes":3,'
+        '"checksum":"12345678","checksumAlgorithm":"crc32"}]}},'
+        '"generation":0,"fingerprint":"92d609f5","updatedAt":"2026-01-01T00:00:00.000Z"}')
+        as Map<String, dynamic>;
+      for (final version in ['v2', 'v1']) {
+        if (version == 'v1') {
+          json['format'] = 'zic-comic-v1';
+          json['fingerprint'] = '1b4366b4';
+          json.remove('chapterFiles');
+        }
+        final decoded = ComicFolderManifest.decode(jsonEncode(json))!;
+        expect(decoded.fingerprintValid, isTrue);
+        expect(decoded.computedFingerprint, json['fingerprint']);
+        expect(decoded.toJson(), json);
+      }
+    });
+
+    test('compact chapters preserve order, mixed algorithms and no-op commits', () async {
+      final id = 'chapter-'.padRight(254, 'x');
+      final draft = ComicFolderManifest(format: 'zic-comic-v3',
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapters: [id, 'another'], chapterDirectories: {id: 'First'},
+        chapterTitles: {id: 'Title'}, chapterSequences: {id: 7},
+        updatedAt: DateTime.utc(2026), chapterFiles: {
+          id: const ComicChapterFileList(sourceRevision: 'r1', pageCount: 3,
+            pages: [ComicPageFile(logicalIndex: 0, pageId: 'first',
+              fileName: '002.png', bytes: 3, checksum: '12345678', checksumAlgorithm: 'crc32'),
+              ComicPageFile(logicalIndex: 2, pageId: 'last', fileName: '001.png',
+                bytes: 4, checksum: 'abcdef', checksumAlgorithm: 'sha256')]),
+        });
+      final prepared = await prepareComicFolderManifestAsync(draft);
+      final raw = jsonDecode(prepared.encoded) as Map;
+      expect(raw['chapters'], isA<Map>());
+      expect(prepared.encoded.split(id), hasLength(2));
+      expect(raw.keys, isNot(contains('chapterDirectories')));
+      final entries = (raw['chapters'] as Map)['entries'] as List;
+      final files = (entries.first as Map)['files'] as Map;
+      expect(files['checksumAlgorithm'], 'crc32');
+      expect((files['pages'] as List).first, isNot(contains('checksumAlgorithm')));
+      expect(((files['pages'] as List).last as Map)['checksumAlgorithm'], 'sha256');
+      final decoded = ComicFolderManifest.decode(prepared.encoded)!;
+      expect(decoded.fingerprintValid, isTrue);
+      expect(decoded.chapters, [id, 'another']);
+      expect(decoded.chapterDirectories, {id: 'First'});
+      expect(decoded.chapterTitles, {id: 'Title'});
+      expect(decoded.chapterSequences, {id: 7});
+      expect(decoded.chapterFiles[id]!.pageCount, 3);
+      expect(decoded.chapterFiles[id]!.pages.map((p) => p.logicalIndex), [0, 2]);
+      expect(decoded.toJson(), raw);
+      expect(await prepareComicFolderManifestUpdateAsync(draft.copyWith(
+        generation: 4, updatedAt: DateTime.utc(2027)), decoded), isNull);
+      entries.removeLast();
+      final tampered = ComicFolderManifest.decode(jsonEncode(raw))!;
+      expect(tampered.fingerprintValid, isFalse);
+    });
+
+    test('compact chapters reject duplicate identity and ambiguous algorithms', () async {
+      final draft = ComicFolderManifest(format: 'zic-comic-v3',
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapters: ['chapter'], updatedAt: DateTime.utc(2026),
+        chapterFiles: {'chapter': const ComicChapterFileList(
+          sourceRevision: 'r1', pageCount: 1, pages: [ComicPageFile(
+            logicalIndex: 0, pageId: 'page', fileName: '001.png', bytes: 3,
+            checksum: '12345678', checksumAlgorithm: 'crc32')])});
+      final prepared = await prepareComicFolderManifestAsync(draft);
+      Map firstFiles(Map raw) => (((raw['chapters'] as Map)['entries'] as List)
+        .first as Map)['files'] as Map;
+      for (final mutation in <void Function(Map)>[
+        (duplicate) {
+          final entries = (duplicate['chapters'] as Map)['entries'] as List;
+          entries.add(entries.first);
+        },
+        (conflicting) => conflicting['chapterTitles'] = {'chapter': 'Conflicting metadata'},
+        (missingAlgorithm) => firstFiles(missingAlgorithm)['checksumAlgorithm'] = null,
+        (emptyAlgorithm) => ((firstFiles(emptyAlgorithm)['pages'] as List).first as Map)
+          ['checksumAlgorithm'] = '',
+      ]) {
+        final raw = jsonDecode(prepared.encoded) as Map;
+        mutation(raw);
+        expect(ComicFolderManifest.decode(jsonEncode(raw)), isNull);
+      }
+    });
+
+    test('unchanged portable content skips a generation and page changes do not', () async {
+      final draft = ComicFolderManifest(format: comicManifestFormatV2,
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapters: ['chapter'], updatedAt: DateTime.utc(2026),
+        chapterFiles: {'chapter': const ComicChapterFileList(
+          sourceRevision: 'r1', pageCount: 1, pages: [ComicPageFile(
+            logicalIndex: 0, pageId: 'page', fileName: '001.png', bytes: 3,
+            checksum: '12345678', checksumAlgorithm: 'crc32')])});
+      final original = (await prepareComicFolderManifestAsync(draft)).manifest;
+      final next = draft.copyWith(generation: 2, updatedAt: DateTime.utc(2027));
+      expect(await prepareComicFolderManifestUpdateAsync(next, original), isNull);
+      final changed = await prepareComicFolderManifestUpdateAsync(next.copyWith(
+        chapterFiles: {'chapter': const ComicChapterFileList(
+          sourceRevision: 'r1', pageCount: 1, pages: [ComicPageFile(
+            logicalIndex: 0, pageId: 'changed', fileName: '001.png', bytes: 3,
+            checksum: '12345678', checksumAlgorithm: 'crc32')])}), original);
+      expect(changed!.manifest.generation, 2);
+      expect(changed.manifest.fingerprintValid, isTrue);
+      expect(ComicFolderManifest.decode(changed.encoded)!.chapterFiles['chapter']!
+          .pages.single.pageId, 'changed');
+    });
+
+    test('owned manifests round-trip beyond external scan entry budgets', () async {
+      for (final chapterCount in [1, comicManifestMaxEntries + 1]) {
+        final ids = [for (var i = 0; i < chapterCount; i++) 'chapter-$i'];
+        final prepared = await prepareComicFolderManifestAsync(ComicFolderManifest(
+          format: comicManifestFormatV3, sourceId: 'source', comicId: 'comic',
+          comicTitle: 'Comic', chapters: ids, updatedAt: DateTime.utc(2026),
+          chapterFiles: {ids.first: ComicChapterFileList(
+            sourceRevision: 'r1', pageCount: comicManifestMaxEntries + 1, pages: [
+              if (chapterCount == 1)
+                for (var i = 0; i <= comicManifestMaxEntries; i++) ComicPageFile(
+                  logicalIndex: i, pageId: 'page-$i', fileName: '$i.png', bytes: 3,
+                  checksum: '12345678', checksumAlgorithm: 'crc32'),
+            ])}));
+        final decoded = ComicFolderManifest.decode(prepared.encoded)!;
+        expect(decoded.fingerprintValid, isTrue);
+        expect(decoded.chapters, ids);
+        expect(decoded.chapterFiles[ids.first]!.pageCount, comicManifestMaxEntries + 1);
+        expect(decoded.chapterFiles[ids.first]!.pages,
+          hasLength(chapterCount == 1 ? comicManifestMaxEntries + 1 : 0));
+      }
+    });
+
     test('sanitizePathSegment cleans illegal characters and trims', () {
       expect(sanitizePathSegment('航海王: 剧场版/特别篇 * ? " < > |'), '航海王_ 剧场版_特别篇 _ _ _ _ _ _');
       expect(sanitizePathSegment('...test...'), 'test');
