@@ -1,12 +1,12 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- `main`已合并存储优化：摘要仅读当前章，空/纯exact不补读；SQL热行/schema22短引用/20/21后台升级/URI线性/canonical复用/坐标索引。摘要跳过已证空项，逐页核对live session。令牌区分元数据/章节校验；回填/统计仅候选建ID。Home/收藏解码离UI；总量字段/partial身份；恢复预取命中。身份/proof、导入/SAF、v1-v3/原子保持。beta `0.31.0-beta.1+332`不含本地修改。
+- `main`存储优化已合并。回收只读worker/close排空，分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本仅映射。缓存按下载头/manifest接管，旧pin只保留；清单后台导出、首帧后预热、前后各一屏。canonical/当前章及导入/SAF/v1-v3保持。源码0.31.0-beta.2+350；GitHub发布准备中；见JSON。
 - zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 后台任务：显式下载/整章预翻译由App只读聚合，Android dataSync通知与有界CPU锁；通知停止/超时转发原owner，Reader后台策略不变。整章仅在服务确认后允许后台推理；设置→下载可管理通知/电池。验证与剩余验收只见状态JSON，不扩大NetLane/Reader职责。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
-- 功耗审计基准：`docs/archive/audits/static-vertical-active-probe-2026-09-22.md` 已关闭常驻 platform cadence probe；2026-09-24 复核其他AI报告后，进一步把 Dart `verticalSceneMotion` RenderBox矩阵probe并入同一显式诊断开关。
+- WebDAV/备份：六类选择，未选不删/不改时钟/不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日7日/4周/12月备份、每周GC。仓库逐项同步；缺失插件/进度待恢复，目录授权留本机。+334 N97/A318本地首帧116/149ms、零失败，一邻页续传；丢库按需恢复、多章布局保持，启动不扫描/同步。数据页按操作转圈，结束后合并刷新；仓库/设备进度分开。未推送，见JSON。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；工程入口`docs/DEVELOPMENT.md`，README面向用户。图标源图`assets/branding/zic.png`为用户透明插画，宿主资源同步；首页恢复zic文字，Debug操作保留；
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；
@@ -38,8 +38,8 @@
 ## 4. 下一步命令
 - `python3 tool/check_repo.py`；`python3 tool/check_documentation.py`；`tool/check.sh`。Android入口pub get后准备锁定rhttp SDK补丁；App host压缩APK原生库、系统安装时解压，ELF不变，安装总占用增加。最新包体、冷启动及OCR实测见状态JSON。
 ## 5. 不可改变的稳定边界
-- 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint，
-  以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，
+- 弹窗复用`AppDialogActions`：左X弱色底、右操作，局部圆角12dp/最小视觉40dp/触摸48dp；右侧使用剩余宽度换行，保留语义色和禁用态。插件更新/信任/错误、仓库编辑、备份导入、Trace筛选、版本选择及详情版本操作同源；验收只见状态JSON。
+- 自适应阅读由 `reader_runtime` 单一分类器生成共享 profile，消费元数据/页面几何/实测动画、typed source adaptive hint， 以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，
   0/0.5/1 分别表示强页漫/中性/强条漫。Venera `comic.adaptiveType` 经 typed descriptor 投影，Mihon 无声明时保持 unknown。
   model v8 的页面几何最多采样 3 张并包含第一页；达到目标样本数后只判一次，后续页面不得重算 profile。`0.65 < h/w < 1.20` 的异常/transport-slice 比例不得形成页漫票，因此 720×700、720×500 不能仅凭尺寸被判成页漫。
   真机肉漫屋《要成為男子漢》已验证：50% 来源置信 + `韓國` + 异常切片得到 vertical 70.83%、samples=3、modelVersion=8，持续停留后 samples 不增长。
@@ -47,13 +47,13 @@
   全局/漫画级 adaptive 开关独立于手动 override master；Reader 不得复制来源设置 authority，也不得借 adaptive 接管 Pipeline 调度。
 - 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。 旧 plugin-scoped trust 的 source 迁移只有在 installed record 能证明 source 集完整时才退休 plugin fallback；runtime discovery 不完整时必须继续保留。
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
-  每漫画“使用自适应设置”独立于手动 override master，清除手动覆盖不清 adaptive policy/profile。全局分页方向默认 LTR；`ReaderModeSettings` 分 paged/continuous，双击两级 slider 与独立长按倍率按 mode 保存。
-  点击区域按当前 mode 保存；Reader 内用当前页面沉浸覆层编辑，可拖两横两竖线；grid 与真实 hit-test 共用 authority，覆层 cell 覆盖完整 viewport 截获编辑输入且不改变 ReaderView ancestry，drag 只更新 overlay-local State。PageHost 仍唯一负责手势消歧；顶部强制重载、本漫画底栏设置及杂项 Web 入口不变。
+  每漫画“使用自适应设置”独立于手动 override master，清除手动覆盖不清 adaptive policy/profile。阅读首页保留共用项，分页/连续各有子页。全局分页方向默认 LTR；`ReaderModeSettings` 分 paged/continuous，双击两级 slider 与独立长按倍率按 mode 保存。
+  点击区域按当前 mode 保存；Reader 当前页面沉浸覆层可拖两横两竖线；grid 与 hit-test 共用 authority，cell 覆盖完整 viewport 截获编辑输入，不改变 ReaderView ancestry，drag 只更新 overlay-local State。全局在中性背景复用同一覆层，保存提交，取消/返回丢弃。PageHost 唯一负责手势消歧；顶部强制重载、本漫画底栏设置及杂项 Web 入口不变。
   2026-09-27 native-release Profile 重测：连续纵滑 cadence 约 8.4ms，常见 max 14.8–15.8ms；分页 8 次快速横滑 92 frames/0 janky/p95 6ms/p99 9ms。上一轮设备残留 Debug；后续性能验证保持 Profile/Release，不以 physics/刷新率/Pipeline 水位掩盖。
   canonical Venera source gate 仍单 context，仅 isolated-qualified `modifyImage` 有界为 2 个独立 WebView/Bitmap worker；历史 uncached origin completion 的 105–226ms burst 与 100–224ms transform 时长重叠，但当前实机 fresh-reload 未形成 overlap，不宣称 2×。
   ADR 0330–0334：scrub保留7/3、50ms latest-wins、center anchor与next/previous对称deadline；ADR 0334仅允许同Reader/revision三个真实viewport-visible、localOnly work使用唯一第三operation handoff，普通cap仍为2。
   最终Profile 14-33-10：visibility已收口为`ReaderObs -> DownloadDemand -> TransferDemand`；`next-current` forward n=17/reverse n=10中位均约+0.01ms，37次handoff median/max=166/1684us、active从未>3、taskFailed=0。
-- 迁移当前信息后更新提示页内展开版本；两页底部搜索/筛选复用漫画源横栏，含“全部”。精确/空结果单击切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选及ID/IME，无输入弹窗；空结果保留失败/余页，独立来源/性能验收见状态JSON。
+- 详情隐藏空/占位简介，标签默认折叠无标题，透明小箭头整行居中、不独占行；长按书架展开环状药丸与局部磨砂圆盘，盘内模糊/渐变/高光细边/阴影，无全屏遮罩，每组六项；圆形保存分类同时入架，未改/未选也入架，盘外/返回取消不写。迁移/标题页保留版本展开、底部搜索/筛选与全部、精确/空结果、单源ID；19回归/2371门禁及Release70ac8752布局/IME已验，验收见JSON。
   Download治理：下载审计JSON13/13已闭合。DL-DIR-019/017证据见`docs/archive/audits/saf-body-kill-reopen-2026-09-30.json`：真机9组kill/reopen+1组physical幂等及required-toolchain gate通过。保持唯一index和2-wide共享NetLane；禁止equal-length恢复或给普通checkpoint新增正文扫描。后续只在fresh行为证据下重新打开问题。
   native worker补位失败若仍有live worker只降级capacity并保留pending；decode单live worker仍只服务current。decode numeric rank在selection时直接读DecodeLane TaskControl，不再镜像priority/subscription。
   点击区域save绑定edit-session token，continuous真实min/max extent映射首/末页；dev.114/dev.117 refill guard已转stable stage + behavior regression；Reader Kotlin compile stub已补齐当前system-bar API，平台guard保留。

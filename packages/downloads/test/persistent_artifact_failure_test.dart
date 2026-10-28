@@ -377,45 +377,53 @@ void main() {
     await checked.close();
   });
 
-  test('obsolete sealed source debt never deletes changed replacement bytes',
-      () async {
-    final root = await Directory.systemTemp.createTemp('zic-obsolete-replaced-');
-    addTearDown(() async {
-      if (await root.exists()) await root.delete(recursive: true);
+  for (final cacheFile in <bool>[true, false]) {
+    test('obsolete source cleanup ${cacheFile ? 'deletes cache replacements' : 'preserves export replacements'}',
+        () async {
+      final root = await Directory.systemTemp.createTemp('zic-obsolete-replaced-');
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+      final directory = cacheFile
+          ? layout.finalDir
+          : '${layout.root}${Platform.pathSeparator}export';
+      await Directory(directory).create(recursive: true);
+      final oldBytes = Uint8List.fromList(<int>[2, 4, 6, 8]);
+      final replacement = Uint8List.fromList(<int>[8, 6, 4, 2]);
+      final obsolete = File(
+        '$directory${Platform.pathSeparator}reused.bin',
+      );
+      await obsolete.writeAsBytes(replacement, flush: true);
+      final checksum = (Crc32()..add(oldBytes)).hex;
+      await _seedCleanupDebt(
+        layout.dbPath,
+        StorageCleanupDebtRecord(
+          accessLocator: obsolete.path,
+          storageRootId: layout.root,
+          kind: StorageCleanupDebtKind.obsoleteSealedSource,
+          createdUs: 1,
+          touchedUs: 1,
+          expectedBytes: oldBytes.lengthInBytes,
+          expectedChecksum: checksum,
+          expectedChecksumAlgorithm: 'crc32',
+        ),
+      );
+
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      await store.close();
+
+      if (cacheFile) {
+        expect(await obsolete.exists(), isFalse);
+      } else {
+        expect(await obsolete.readAsBytes(), replacement);
+      }
+      final index = SqliteIndex(layout.dbPath);
+      await index.open();
+      expect(await index.listStorageCleanupDebts(), isEmpty);
+      await index.close();
     });
-    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
-    await Directory(layout.finalDir).create(recursive: true);
-    final oldBytes = Uint8List.fromList(<int>[2, 4, 6, 8]);
-    final replacement = Uint8List.fromList(<int>[8, 6, 4, 2]);
-    final obsolete = File(
-      '${layout.finalDir}${Platform.pathSeparator}reused.bin',
-    );
-    await obsolete.writeAsBytes(replacement, flush: true);
-    final checksum = (Crc32()..add(oldBytes)).hex;
-    await _seedCleanupDebt(
-      layout.dbPath,
-      StorageCleanupDebtRecord(
-        accessLocator: obsolete.path,
-        storageRootId: layout.root,
-        kind: StorageCleanupDebtKind.obsoleteSealedSource,
-        createdUs: 1,
-        touchedUs: 1,
-        expectedBytes: oldBytes.lengthInBytes,
-        expectedChecksum: checksum,
-        expectedChecksumAlgorithm: 'crc32',
-      ),
-    );
-
-    final store = await PersistentDownloadArtifactStore.open(root.path);
-    await store.close();
-
-    expect(await obsolete.readAsBytes(), replacement);
-    final index = SqliteIndex(layout.dbPath);
-    await index.open();
-    expect(await index.listStorageCleanupDebts(), isEmpty,
-        reason: 'proof mismatch retires stale cleanup intent without deleting');
-    await index.close();
-  });
+  }
 
   test('obsolete sealed source debt yields to a surviving durable replica authority',
       () async {

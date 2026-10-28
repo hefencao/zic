@@ -815,6 +815,7 @@ final class ExternalPluginController {
   /// from the others. Device-imported Mihon extensions remain skipped.
   Future<Map<String, ExternalComicPluginCatalogEntry>> checkUpdates({
     required ExternalComicPluginFormat format,
+    Set<String>? enabledRepositoryIndexes,
   }) async {
     _requireOpen();
     final repositories = <String, List<InstalledExternalPlugin>>{};
@@ -822,6 +823,7 @@ final class ExternalPluginController {
       if (record.plugin.format != format) continue;
       final index = externalPluginUpdateRepositoryIndex(record);
       if (index == null) continue;
+      if (enabledRepositoryIndexes != null && !enabledRepositoryIndexes.contains(index.toString())) continue;
       repositories.putIfAbsent(index.toString(), () => []).add(record);
     }
     final updates = <String, ExternalComicPluginCatalogEntry>{};

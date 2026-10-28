@@ -239,7 +239,7 @@ void main() {
     ));
     await tester.tap(find.text('打开版本'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('关闭'));
+    await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
     expect(selectionCompleted, isTrue);
     expect(refresh.isCompleted, isFalse);

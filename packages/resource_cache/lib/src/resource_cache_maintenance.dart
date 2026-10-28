@@ -1,12 +1,19 @@
 import 'resource_cache.dart';
 
 final class ArtifactCacheUsage {
-  const ArtifactCacheUsage({required this.bytes, required this.entries})
+  const ArtifactCacheUsage({required this.bytes, required this.entries,
+    this.retainedBytes = 0, this.pendingCleanupBytes = 0,
+    this.automaticPendingCleanupBytes = 0})
     : assert(bytes >= 0),
         assert(entries >= 0);
 
   final int bytes;
   final int entries;
+  final int retainedBytes;
+  final int pendingCleanupBytes;
+  final int automaticPendingCleanupBytes;
+
+  int get automaticBytes => (bytes - retainedBytes).clamp(0, bytes);
 }
 
 final class ArtifactCacheReport {
@@ -37,6 +44,12 @@ abstract interface class ArtifactCacheMaintenance {
   });
 
   Future<ArtifactCacheReport> clearArtifacts();
+}
+
+/// The durable artifact owner coalesces growth/release events and owns its
+/// maintenance lifetime. Configuring limits never waits for reclamation.
+abstract interface class AutomaticArtifactCacheMaintenance {
+  void configureAutomaticCacheMaintenance({required int maxBytes, required int targetBytes});
 }
 
 final class PresentationRasterCacheUsage {
@@ -83,7 +96,7 @@ final class ResourceCacheMaintenancePolicy {
     this.responseTargetWeight = 24 * 1024 * 1024,
     this.transientPersistentResponseTargetWeight = 24 * 1024 * 1024,
     this.artifactMaxWeight = 512 * 1024 * 1024,
-    this.artifactTargetWeight = 384 * 1024 * 1024,
+    this.artifactTargetWeight = 512 * 1024 * 1024 - (512 * 1024 * 1024 ~/ 20),
   })  : assert(responseTargetWeight >= 0),
         assert(transientPersistentResponseTargetWeight >= 0),
         assert(artifactMaxWeight >= 0),
@@ -92,17 +105,19 @@ final class ResourceCacheMaintenancePolicy {
 
   /// Builds a policy from one user-facing cache capacity in bytes.
   ///
-  /// The persistent artifact tier receives the full capacity and trims down
-  /// to 75% of it, mirroring the default 512 MiB / 384 MiB ratio. Response
-  /// targets stay at their small fixed defaults: the user limit governs the
-  /// dominant page-artifact tier, not reusable source responses.
+  /// Automatic page bodies receive the capacity. A 5% reserve, capped at
+  /// 64 MiB, avoids repeated threshold crossings without deleting a quarter
+  /// of a large cache. Offline retention and responses use separate budgets.
   factory ResourceCacheMaintenancePolicy.forArtifactLimitBytes(int maxBytes) {
     if (maxBytes <= 0) {
       throw ArgumentError.value(maxBytes, 'maxBytes', 'must be positive');
     }
+    final proportionalReserve = maxBytes ~/ 20;
+    final reserve = proportionalReserve < 64 * 1024 * 1024
+        ? proportionalReserve : 64 * 1024 * 1024;
     return ResourceCacheMaintenancePolicy(
       artifactMaxWeight: maxBytes,
-      artifactTargetWeight: maxBytes * 3 ~/ 4,
+      artifactTargetWeight: maxBytes - reserve,
     );
   }
 
@@ -128,8 +143,8 @@ final class ResourceCacheUsage {
   final ArtifactCacheUsage? artifacts;
 
   /// Volatile presentation memory is reported separately from [totalBytes].
-  /// The existing total is the user-facing reusable/durable cache capacity and
-  /// must not silently become a process-memory figure.
+  /// The existing total aggregates reusable/durable bytes; page limits use
+  /// [automaticPageBytes], excluding retained downloads and response caches.
   final PresentationRasterCacheUsage? presentationRasters;
 
   int get totalBytes =>
@@ -142,6 +157,10 @@ final class ResourceCacheUsage {
       (artifacts?.entries ?? 0);
   int get volatilePresentationBytes => presentationRasters?.bytes ?? 0;
   int get volatilePresentationEntries => presentationRasters?.entries ?? 0;
+  int get automaticPageBytes => artifacts?.automaticBytes ?? 0;
+  int get retainedDownloadBytes => artifacts?.retainedBytes ?? 0;
+  int get pendingCleanupBytes => artifacts?.pendingCleanupBytes ?? 0;
+  int get automaticPendingCleanupBytes => artifacts?.automaticPendingCleanupBytes ?? 0;
 }
 
 final class ResourceCacheMaintenanceReport {
@@ -175,7 +194,7 @@ final class ResourceCacheMaintenanceReport {
 /// The coordinator owns response-cache and maintenance policy. It does not
 /// become a second owner of page files: [artifacts] remains an adapter to
 /// Pipeline/DownloadSession-owned records and delegates physical trim/clear to
-/// their existing registry and CacheOps implementation.
+/// their durable owner with live transfer/read protections.
 final class ResourceCacheCoordinator {
   ResourceCacheCoordinator({
     ResourceCacheManager? responses,
@@ -184,21 +203,27 @@ final class ResourceCacheCoordinator {
     ResourceCacheMaintenancePolicy? maintenancePolicy,
   })  : responses = responses ?? ResourceCacheManager(),
         _maintenancePolicy =
-            maintenancePolicy ?? ResourceCacheMaintenancePolicy();
+            maintenancePolicy ?? ResourceCacheMaintenancePolicy() {
+    updateMaintenancePolicy(_maintenancePolicy);
+  }
 
   final ResourceCacheManager responses;
   final ArtifactCacheMaintenance? artifacts;
   final PresentationRasterCacheMaintenance? presentationRasters;
   ResourceCacheMaintenancePolicy _maintenancePolicy;
 
-  /// Current trim policy. Updates take effect on the next [trim] run; they do
-  /// not evict eagerly.
+  /// Current limits. The artifact owner enforces them asynchronously.
   ResourceCacheMaintenancePolicy get maintenancePolicy => _maintenancePolicy;
 
-  /// Replaces the trim policy, for example when the user changes the cache
-  /// capacity setting. The next [trim] enforces the new limits.
+  /// Replaces the policy without joining the artifact owner's maintenance.
   void updateMaintenancePolicy(ResourceCacheMaintenancePolicy policy) {
     _maintenancePolicy = policy;
+    final owner = artifacts;
+    if (owner is AutomaticArtifactCacheMaintenance) {
+      (owner as AutomaticArtifactCacheMaintenance).configureAutomaticCacheMaintenance(
+        maxBytes: policy.artifactMaxWeight, targetBytes: policy.artifactTargetWeight,
+      );
+    }
   }
 
   Future<ResourceCacheUsage> inspect() async {

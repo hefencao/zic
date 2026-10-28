@@ -411,9 +411,19 @@ class PreviewSource extends ComicSource {
   }
 }
 ''');
+      var disabledRequests = 0;
+      final disabled = await HttpOverrides.runZoned(
+        () => controller.checkUpdates(format: ExternalComicPluginFormat.mihonExtension,
+          enabledRepositoryIndexes: const {}),
+        createHttpClient: (_) { disabledRequests++; return _StaticHttpClient(repository); },
+      );
+      expect(disabled, isEmpty);
+      expect(disabledRequests, 0, reason: 'a disabled repository must never be queried for updates');
+      expect(controller.installed, hasLength(1), reason: 'repository enablement does not remove a plugin');
       final updates = await HttpOverrides.runZoned(
         () => controller.checkUpdates(
           format: ExternalComicPluginFormat.mihonExtension,
+          enabledRepositoryIndexes: {externalPluginUpdateRepositoryIndex(controller.installed.single).toString()},
         ),
         createHttpClient: (_) => _StaticHttpClient(repository),
       );

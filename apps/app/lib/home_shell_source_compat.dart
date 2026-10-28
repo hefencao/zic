@@ -327,6 +327,9 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
       source: source,
       networkBridge: widget.networkBridge,
       onExternalSourcesChanged: _externalSources.refreshCurrentProjection,
+      beforeLoadSettings: () => _portableSettingsOwner.restorePluginSettings(source),
+      onSettingChanged: (setting, value) =>
+        _portableSettingsOwner.rememberPluginChange(source.sourceId, setting, value),
     );
     if (mounted) {
       await _reloadLibrary();
@@ -941,6 +944,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
             retryChapter: _downloadCommands.retryChapter,
             stopChapter: _downloadCommands.stopChapter,
             deleteChapterFiles: _downloadCommands.deleteChapterFiles,
+            clearChapterCache: _downloadCommands.clearChapterCache,
             inspectDeleteImpact: _downloadCommands.inspectDeleteImpact,
             auditChapterFiles: _downloadCommands.auditChapterFiles,
             cancelChapterFileAudit: _downloadCommands.cancelChapterFileAudit,

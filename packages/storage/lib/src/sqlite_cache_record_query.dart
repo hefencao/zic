@@ -93,9 +93,10 @@ Future<void> _migrateCacheRecordQueryIndexesOffIsolate(String path) => Isolate.r
           _createCacheRecordQueryIndexes(db);
         } else if (version == 21) {
           _migrateCacheRecordReferenceIds(db);
-        } else {
+        } else if (version != 22) {
           throw StateError('unexpected cache schema version: $version');
         }
+        _createCacheMaintenanceTables(db);
         db.execute('PRAGMA user_version = ${SqliteIndex._schemaVersion}');
       }
       db.execute('COMMIT');

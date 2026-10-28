@@ -498,6 +498,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     try {
       if (safTarget) {
         target = directory;
+        final grant = await safTreeGrantStatus(chapterDownloadSafTreeUri(target)!);
+        if (grant != null && (!grant.read || !grant.write)) {
+          return '下载目录缺少持久读写授权，请重新选择目录';
+        }
       } else {
         target = directory == null
             ? defaultChapterDownloadDirectory(root)
@@ -528,6 +532,12 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       return 'SAF 与其他目录之间暂不支持自动迁移已下载文件；请保留旧下载并只切换新下载目录';
     }
     if (pendingSourceBefore == null && _isSamePath(target, current)) {
+      services.downloadComposition?.artifactStore.refreshLocalDownloadAccess();
+      final tree = chapterDownloadSafTreeUri(target);
+      if (tree != null) {
+        final proof = await _probeStorageRootAccessAlias(tree);
+        if (proof != null) await services.downloadComposition?.artifactStore.registerStorageRootAccessAliasProof(proof);
+      }
       _preferences.setChapterDownloadDirectoryOverride(
         directory == null ? null : target,
       );

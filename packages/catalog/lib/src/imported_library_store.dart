@@ -159,6 +159,19 @@ abstract interface class ImportedLibraryBackupSnapshotStore {
   Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot();
 }
 
+enum LibrarySyncMetadataKind { progress, preference, readState }
+
+/// A synchronized deletion changes metadata only and must not retire files.
+/// The original owner keeps newer local writes, including queued checkpoints.
+abstract interface class ImportedLibrarySyncDeletionStore {
+  Future<void> removeSyncedMetadata(
+    LibrarySyncMetadataKind kind,
+    String sourceId,
+    String entityId, {
+    required DateTime notAfter,
+  });
+}
+
 final class ImportedLibraryChapterKey {
   const ImportedLibraryChapterKey({
     required this.sourceId,
@@ -256,6 +269,7 @@ final class MemoryImportedLibraryStore
         ImportedLibraryBatchLookup,
         ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
+        ImportedLibrarySyncDeletionStore,
         ComicVersionRelationStore,
         SourceMigrationJournalStore {
   MemoryImportedLibraryStore({
@@ -403,6 +417,31 @@ final class MemoryImportedLibraryStore
     final current = _progress[identity];
     if (current == null || !progress.updatedAt.isBefore(current.updatedAt)) {
       _progress[identity] = progress;
+    }
+  }
+
+  @override
+  Future<void> removeSyncedMetadata(
+    LibrarySyncMetadataKind kind,
+    String sourceId,
+    String entityId, {
+    required DateTime notAfter,
+  }) async {
+    _requireOpen();
+    final identity = sourceId + '\u0000' + entityId;
+    switch (kind) {
+      case LibrarySyncMetadataKind.progress:
+        if (_progress[identity]?.updatedAt.isAfter(notAfter) == false) {
+          _progress.remove(identity);
+        }
+      case LibrarySyncMetadataKind.preference:
+        if (_preferences[identity]?.updatedAt.isAfter(notAfter) == false) {
+          _preferences.remove(identity);
+        }
+      case LibrarySyncMetadataKind.readState:
+        if (_readStates[identity]?.updatedAt.isAfter(notAfter) == false) {
+          _readStates.remove(identity);
+        }
     }
   }
 

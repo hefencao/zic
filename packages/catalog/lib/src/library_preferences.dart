@@ -74,22 +74,29 @@ final class LibraryCategory {
     required this.name,
     required this.sortOrder,
     required this.createdAt,
-  });
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? createdAt;
 
   final String categoryId;
   final String name;
   final int sortOrder;
   final DateTime createdAt;
+  final DateTime updatedAt;
 
   LibraryCategory copyWith({
     String? name,
     int? sortOrder,
+    DateTime? updatedAt,
   }) {
     return LibraryCategory(
       categoryId: categoryId,
       name: name ?? this.name,
       sortOrder: sortOrder ?? this.sortOrder,
       createdAt: createdAt,
+      updatedAt: updatedAt ??
+          ((name != null && name != this.name) ||
+           (sortOrder != null && sortOrder != this.sortOrder)
+              ? DateTime.now().toUtc() : this.updatedAt),
     );
   }
 
@@ -98,6 +105,8 @@ final class LibraryCategory {
         'name': name,
         'sortOrder': sortOrder,
         'createdAt': createdAt.toUtc().toIso8601String(),
+        if (updatedAt != createdAt)
+          'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
   factory LibraryCategory.fromJson(Map<String, Object?> json) {
@@ -106,6 +115,7 @@ final class LibraryCategory {
       name: _requiredString(json, 'name'),
       sortOrder: _requiredInt(json, 'sortOrder'),
       createdAt: DateTime.parse(_requiredString(json, 'createdAt')),
+      updatedAt: _optionalDateTime(json['updatedAt']),
     );
   }
 }

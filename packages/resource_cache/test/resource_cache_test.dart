@@ -5,6 +5,22 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('automatic cache pending usage excludes retained cleanup debt', () {
+    final manager = ResourceCacheManager();
+    final usage = ResourceCacheUsage(
+      responses: manager.stats,
+      artifacts: const ArtifactCacheUsage(bytes: 100, entries: 3,
+          retainedBytes: 60, pendingCleanupBytes: 30,
+          automaticPendingCleanupBytes: 10),
+    );
+    expect(usage.totalBytes, 100);
+    expect(usage.automaticPageBytes, 40);
+    expect(usage.retainedDownloadBytes, 60);
+    expect(usage.pendingCleanupBytes, 30);
+    expect(usage.automaticPendingCleanupBytes, 10);
+    addTearDown(manager.close);
+  });
+
   test('encoded sources keep owned memory and stable local-file lifetimes', () {
     final bytes = Uint8List.fromList(<int>[1, 2, 3]);
     final memory = MemoryEncodedResourceSource(bytes);
@@ -602,17 +618,21 @@ void main() {
       128 * 1024 * 1024,
     );
     expect(policy.artifactMaxWeight, 128 * 1024 * 1024);
-    expect(policy.artifactTargetWeight, 96 * 1024 * 1024);
+    expect(policy.artifactTargetWeight, 128 * 1024 * 1024 - (128 * 1024 * 1024 ~/ 20));
 
     coordinator.updateMaintenancePolicy(policy);
     expect(identical(coordinator.maintenancePolicy, policy), isTrue);
-    // Updating the policy only records it; the next trim enforces the limit.
+    expect(artifacts.lastAutomaticLimits,
+        (maxBytes: policy.artifactMaxWeight, targetBytes: policy.artifactTargetWeight));
+    expect(ResourceCacheMaintenancePolicy.forArtifactLimitBytes(8192 * 1024 * 1024)
+        .artifactTargetWeight, (8192 - 64) * 1024 * 1024);
+    // Configuration delegates asynchronous work without eagerly running trim.
     expect(artifacts.trimCalls, 0);
 
     await coordinator.trim();
     expect(artifacts.trimCalls, 1);
       expect(artifacts.lastTrim?.maxBytes, 128 * 1024 * 1024);
-    expect(artifacts.lastTrim?.targetBytes, 96 * 1024 * 1024);
+    expect(artifacts.lastTrim?.targetBytes, 128 * 1024 * 1024 - (128 * 1024 * 1024 ~/ 20));
     },
   );
 
@@ -1025,10 +1045,17 @@ final class _FakePresentationRasterMaintenance
   }
 }
 
-final class _FakeArtifactMaintenance implements ArtifactCacheMaintenance {
+final class _FakeArtifactMaintenance
+    implements ArtifactCacheMaintenance, AutomaticArtifactCacheMaintenance {
   int clearCalls = 0;
   int trimCalls = 0;
   ({int maxBytes, int targetBytes})? lastTrim;
+  ({int maxBytes, int targetBytes})? lastAutomaticLimits;
+
+  @override
+  void configureAutomaticCacheMaintenance({required int maxBytes, required int targetBytes}) {
+    lastAutomaticLimits = (maxBytes: maxBytes, targetBytes: targetBytes);
+  }
 
   @override
   Future<ArtifactCacheUsage> inspectArtifacts() async =>

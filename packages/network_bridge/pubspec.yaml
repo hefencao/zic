@@ -9,6 +9,12 @@ environment:
   flutter: '>=3.44.0'
 
 dependencies:
+  domain:
+    path: ../domain
+  sessions:
+    path: ../sessions
+  transport:
+    path: ../transport
   flutter:
     sdk: flutter
 

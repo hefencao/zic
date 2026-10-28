@@ -15,7 +15,7 @@ def require(body: str, marker: str, label: str) -> None:
         )
 
 
-home = text("apps/app/lib/home_shell.dart")
+home = text("apps/app/lib/home_shell.dart") + text("apps/app/lib/home_shell_sync.dart")
 home_views = text("apps/app/lib/home_shell_views.dart")
 handoff = text("apps/app/lib/home_shell_service_handoff.dart")
 source_migration = text("apps/app/lib/home_shell_source_migration.dart")

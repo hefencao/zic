@@ -6,6 +6,9 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 import 'dialog_actions.dart';
+import 'app_preferences.dart';
+import 'extension_repositories.dart';
+import 'extension_repository_management_screen.dart';
 import 'external_plugin_repository_model.dart';
 import 'diagnostic_error_ui.dart';
 import 'venera_plugin_editor_screen.dart';
@@ -24,12 +27,14 @@ final class ExternalPluginRepositoryScreen extends StatefulWidget {
     required this.format,
     required this.controller,
     required this.onSourcesChanged,
+    required this.preferences,
     super.key,
   });
 
   final ExternalComicPluginFormat format;
   final ExternalPluginController controller;
   final Future<void> Function() onSourcesChanged;
+  final AppPreferencesController preferences;
 
   @override
   State<ExternalPluginRepositoryScreen> createState() =>
@@ -38,19 +43,15 @@ final class ExternalPluginRepositoryScreen extends StatefulWidget {
 
 final class _ExternalPluginRepositoryScreenState
     extends State<ExternalPluginRepositoryScreen> {
-  late final TextEditingController _url = TextEditingController(
-    text: switch (widget.format) {
-      ExternalComicPluginFormat.mihonExtension =>
-        defaultMihonExtensionRepository,
-      ExternalComicPluginFormat.veneraJavaScript => defaultVeneraSourceRepository,
-    },
-  );
   List<ExternalComicPluginCatalogEntry> _entries =
       const <ExternalComicPluginCatalogEntry>[];
+  final Map<ExternalComicPluginCatalogEntry, Uri> _entryRepositories = {};
+  int _repositoryGeneration = 0;
   Map<String, ExternalComicPluginCatalogEntry> _updates =
       const <String, ExternalComicPluginCatalogEntry>{};
   bool _remindedUpdates = false;
   bool _checkingUpdates = false;
+  bool _checkUpdatesAgain = false;
   final Set<String> _working = <String>{};
   StreamSubscription<void>? _controllerChanges;
   _ExternalPluginPage _page = _ExternalPluginPage.installed;
@@ -58,6 +59,7 @@ final class _ExternalPluginRepositoryScreenState
   Object? _deviceError;
   bool _loadingRepository = false;
   bool _loadingDevice = false;
+  bool _deviceRefreshPending = false;
   String _installedLanguage = 'all';
   String _repositoryLanguage = 'all';
 
@@ -65,6 +67,12 @@ final class _ExternalPluginRepositoryScreenState
         ExternalComicPluginFormat.mihonExtension => 'Mihon 扩展',
         ExternalComicPluginFormat.veneraJavaScript => 'Venera 漫画源',
       };
+
+  List<ExtensionRepository> get _repositories => widget.preferences.extensionRepositories
+      .where((repository) => repository.format == widget.format).toList(growable: false);
+
+  bool _repositoryEnabled(Uri index) => _repositories.any((repository) =>
+      repository.enabled && repository.index == index);
 
   List<InstalledExternalPlugin> get _installed => widget.controller.installed
       .where((item) => item.plugin.format == widget.format)
@@ -93,11 +101,26 @@ final class _ExternalPluginRepositoryScreenState
       if (mounted) setState(() {});
     });
     _deviceError = widget.controller.deviceMihonDiscoveryError;
-    scheduleMicrotask(_checkUpdates);
-    if (widget.format == ExternalComicPluginFormat.mihonExtension &&
-        _url.text.trim().isNotEmpty) {
-      scheduleMicrotask(_loadRepository);
+    scheduleMicrotask(_initializeRepositories);
+  }
+
+  Future<void> _initializeRepositories() async {
+    // Recover only exact user-supplied indexes, never a product default or a
+    // trust origin. A remembered deletion must not be resurrected on reopen.
+    for (final installed in _installed) {
+      final index = externalPluginUpdateRepositoryIndex(installed);
+      if (index == null) continue;
+      final repository = ExtensionRepository(format: widget.format, index: index);
+      if (widget.preferences.extensionRepositoryRecords.containsKey(repository.identity)) continue;
+      try {
+        widget.preferences.applyExtensionRepository(repository.identity, {'enabled': true}, modifiedAt: 0);
+      } on FormatException { continue; }
     }
+    await widget.preferences.flush();
+    if (!mounted) return;
+    setState(() {});
+    unawaited(_checkUpdates());
+    await _loadRepository();
   }
 
   @override
@@ -107,47 +130,76 @@ final class _ExternalPluginRepositoryScreenState
     if (controllerChanges != null) {
       unawaited(controllerChanges.cancel());
     }
-    _url.dispose();
     super.dispose();
   }
 
+  Future<void> _manageRepositories() async {
+    final before = _repositories.where((item) => item.enabled).map((item) => item.identity).toSet();
+    var changed = false;
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => ExtensionRepositoryManagementScreen(
+        format: widget.format, preferences: widget.preferences,
+        initialIndex: switch (widget.format) {
+          ExternalComicPluginFormat.mihonExtension => defaultMihonExtensionRepository,
+          ExternalComicPluginFormat.veneraJavaScript => defaultVeneraSourceRepository,
+        },
+        onSelectionChanged: () {
+          changed = true;
+          _repositoryGeneration++;
+          if (mounted) setState(() {
+            _entries = const [];
+            _entryRepositories.clear();
+            _updates = {};
+            _loadingRepository = false;
+          });
+        },
+      ),
+    ));
+    if (!mounted) return;
+    final after = _repositories.where((item) => item.enabled).map((item) => item.identity).toSet();
+    if (!changed && before.length == after.length && before.containsAll(after)) return;
+    await _loadRepository();
+    await _checkUpdates();
+  }
+
   Future<void> _loadRepository() async {
-    final uri = Uri.tryParse(_url.text.trim());
-    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      setState(
-        () => _repositoryError = const FormatException('仓库地址无效'),
-      );
-      return;
-    }
+    final generation = ++_repositoryGeneration;
+    final repositories = _repositories.where((repository) => repository.enabled).toList();
     setState(() {
       _loadingRepository = true;
       _repositoryError = null;
     });
     try {
-      final entries = await widget.controller.loadRepository(
-        format: widget.format,
-        index: uri,
-      );
-      if (!mounted) return;
-      setState(() => _entries = entries);
-      if (widget.format == ExternalComicPluginFormat.mihonExtension) {
+      final entries = <String, ExternalComicPluginCatalogEntry>{};
+      final origins = <ExternalComicPluginCatalogEntry, Uri>{};
+      var failures = 0;
+      for (final repository in repositories) {
+        if (!mounted || generation != _repositoryGeneration) return;
         try {
-          await widget.controller.refreshDeviceMihonExtensions(
-            knownPackageNames: _knownMihonPackageNames,
-          );
-          if (mounted) {
-            setState(
-              () => _deviceError = widget.controller.deviceMihonDiscoveryError,
-            );
+          final loaded = await widget.controller.loadRepository(format: widget.format, index: repository.index);
+          if (!mounted || generation != _repositoryGeneration) return;
+          for (final entry in loaded) {
+            final previous = entries[entry.pluginId];
+            if (previous != null && !externalPluginCatalogEntryIsNewer(entry, installed: previous)) continue;
+            entries[entry.pluginId] = entry;
+            origins[entry] = repository.index;
           }
-        } on Object catch (error) {
-          if (mounted) setState(() => _deviceError = error);
-        }
+        } on Object { failures++; }
       }
+      if (!mounted || generation != _repositoryGeneration) return;
+      setState(() {
+        _entries = entries.values.toList(growable: false);
+        _entryRepositories..clear()..addAll(origins);
+        if (failures > 0) _repositoryError = FormatException('$failures 个仓库加载失败，可刷新重试');
+      });
     } on Object catch (error) {
-      if (mounted) setState(() => _repositoryError = error);
+      if (mounted && generation == _repositoryGeneration) setState(() => _repositoryError = error);
     } finally {
-      if (mounted) setState(() => _loadingRepository = false);
+      if (mounted && generation == _repositoryGeneration) setState(() => _loadingRepository = false);
+    }
+    if (mounted && generation == _repositoryGeneration &&
+        widget.format == ExternalComicPluginFormat.mihonExtension) {
+      await _refreshDeviceMihon();
     }
   }
 
@@ -161,13 +213,19 @@ final class _ExternalPluginRepositoryScreenState
   /// repository origin they were installed from. One reminder dialog per
   /// screen visit; badges stay visible afterwards.
   Future<void> _checkUpdates() async {
-    if (_checkingUpdates) return;
+    if (_checkingUpdates) {
+      _checkUpdatesAgain = true;
+      return;
+    }
+    final generation = _repositoryGeneration;
     setState(() => _checkingUpdates = true);
     try {
       final updates = await widget.controller.checkUpdates(
         format: widget.format,
+        enabledRepositoryIndexes: _repositories.where((repository) => repository.enabled)
+            .map((repository) => repository.index.toString()).toSet(),
       );
-      if (!mounted) return;
+      if (!mounted || generation != _repositoryGeneration) return;
       setState(() => _updates = updates);
       if (updates.isEmpty || _remindedUpdates) return;
       _remindedUpdates = true;
@@ -179,6 +237,7 @@ final class _ExternalPluginRepositoryScreenState
             width: 420,
             child: ListView(
               shrinkWrap: true,
+              padding: EdgeInsets.zero,
               children: <Widget>[
                 for (final entry in updates.values)
                   ListTile(
@@ -212,6 +271,10 @@ final class _ExternalPluginRepositoryScreenState
       debugPrint('plugin update check failed: $error');
     } finally {
       if (mounted) setState(() => _checkingUpdates = false);
+      if (mounted && (_checkUpdatesAgain || generation != _repositoryGeneration)) {
+        _checkUpdatesAgain = false;
+        unawaited(_checkUpdates());
+      }
     }
   }
 
@@ -223,7 +286,10 @@ final class _ExternalPluginRepositoryScreenState
     setState(() {});
     try {
       final effectiveRepository =
-          repository ?? Uri.parse(_url.text.trim());
+          repository ?? _entryRepositories[plugin];
+      if (effectiveRepository == null || !_repositoryEnabled(effectiveRepository)) {
+        throw const FormatException('仓库已关闭，请刷新后重试');
+      }
       final preview = await widget.controller.inspect(
         plugin: plugin,
         repository: effectiveRepository,
@@ -237,7 +303,7 @@ final class _ExternalPluginRepositoryScreenState
             builder: (context) => _TrustDialog(preview: preview),
           ) ??
           false;
-      if (!approved) {
+      if (!approved || !_repositoryEnabled(effectiveRepository)) {
         await widget.controller.discardPreview(preview);
         return;
       }
@@ -260,8 +326,7 @@ final class _ExternalPluginRepositoryScreenState
   Future<void> _updateFromInstalled(InstalledExternalPlugin installed) async {
     final entry = _updates[installed.plugin.pluginId];
     if (entry == null) return;
-    final repository = externalPluginUpdateRepositoryIndex(installed) ??
-        Uri.tryParse(installed.repositoryOrigin);
+    final repository = externalPluginUpdateRepositoryIndex(installed);
     if (repository == null) return;
     await _install(entry, repository: repository);
   }
@@ -354,20 +419,28 @@ final class _ExternalPluginRepositoryScreenState
   }
 
   Future<void> _refreshDeviceMihon() async {
-    if (_loadingDevice) return;
+    if (_loadingDevice) {
+      _deviceRefreshPending = true;
+      return;
+    }
     setState(() {
       _loadingDevice = true;
       _deviceError = null;
     });
     try {
-      await widget.controller.refreshDeviceMihonExtensions(
-        knownPackageNames: _knownMihonPackageNames,
-      );
-      if (mounted) {
-        setState(() => _deviceError = widget.controller.deviceMihonDiscoveryError);
-      }
-    } on Object catch (error) {
-      if (mounted) setState(() => _deviceError = error);
+      do {
+        _deviceRefreshPending = false;
+        try {
+          await widget.controller.refreshDeviceMihonExtensions(
+            knownPackageNames: _knownMihonPackageNames,
+          );
+          if (mounted) {
+            setState(() => _deviceError = widget.controller.deviceMihonDiscoveryError);
+          }
+        } on Object catch (error) {
+          if (mounted) setState(() => _deviceError = error);
+        }
+      } while (mounted && _deviceRefreshPending);
     } finally {
       if (mounted) setState(() => _loadingDevice = false);
     }
@@ -391,7 +464,15 @@ final class _ExternalPluginRepositoryScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_ecosystem)),
+      appBar: AppBar(title: Text(_ecosystem), actions: <Widget>[
+        if (_page == _ExternalPluginPage.repository) ...<Widget>[
+          IconButton(tooltip: '刷新已启用仓库',
+            onPressed: _loadingRepository ? null : () => unawaited(_loadRepository()),
+            icon: const Icon(Icons.refresh)),
+          IconButton(tooltip: '仓库管理', onPressed: () => unawaited(_manageRepositories()),
+            icon: const Icon(Icons.dns_outlined)),
+        ],
+      ]),
       body: Column(
         children: <Widget>[
           Padding(
@@ -460,7 +541,6 @@ final class _ExternalPluginRepositoryScreenState
                 ),
               _ExternalPluginPage.repository => _RepositoryPane(
                   format: widget.format,
-                  url: _url,
                   entries: _entries,
                   installedEntries: _installedEntries,
                   working: _working,
@@ -470,7 +550,6 @@ final class _ExternalPluginRepositoryScreenState
                   onLanguageSelected: (language) {
                     setState(() => _repositoryLanguage = language);
                   },
-                  onLoad: () => unawaited(_loadRepository()),
                   onInstall: (plugin) => unawaited(_install(plugin)),
                 ),
             },
@@ -734,7 +813,6 @@ final class _InstalledPluginTile extends StatelessWidget {
 final class _RepositoryPane extends StatelessWidget {
   const _RepositoryPane({
     required this.format,
-    required this.url,
     required this.entries,
     required this.installedEntries,
     required this.working,
@@ -742,12 +820,10 @@ final class _RepositoryPane extends StatelessWidget {
     required this.error,
     required this.selectedLanguage,
     required this.onLanguageSelected,
-    required this.onLoad,
     required this.onInstall,
   });
 
   final ExternalComicPluginFormat format;
-  final TextEditingController url;
   final List<ExternalComicPluginCatalogEntry> entries;
   final Map<String, ExternalComicPluginCatalogEntry> installedEntries;
   final Set<String> working;
@@ -755,7 +831,6 @@ final class _RepositoryPane extends StatelessWidget {
   final Object? error;
   final String selectedLanguage;
   final ValueChanged<String> onLanguageSelected;
-  final VoidCallback onLoad;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
 
   Widget _repositoryTile(
@@ -801,35 +876,7 @@ final class _RepositoryPane extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 12, 10, 24),
       children: <Widget>[
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: url,
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'HTTPS 仓库索引',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                onSubmitted: (_) => onLoad(),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              onPressed: loading ? null : onLoad,
-              icon: loading
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh),
-              label: const Text('加载'),
-            ),
-          ],
-        ),
+        if (loading) const LinearProgressIndicator(),
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),

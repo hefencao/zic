@@ -632,7 +632,11 @@ void main() {
       'zic-physical-artifact-maintenance-',
     );
     addTearDown(() => root.delete(recursive: true));
-    final store = await PersistentDownloadArtifactStore.open(root.path);
+    final recordingBytes = _RecordingArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: recordingBytes,
+    );
     addTearDown(store.close);
     final cache = ArtifactCacheManager(backend: store);
     final chapter = _chapter(
@@ -661,7 +665,9 @@ void main() {
     final usage = await store.inspectArtifacts();
     expect(usage.bytes, bytes.lengthInBytes);
     expect(usage.entries, 1);
+    recordingBytes.resetReadCounters();
     final report = await store.clearArtifacts();
+    expect(recordingBytes.readChunkCalls, 0);
     expect(report.releasedBytes, bytes.lengthInBytes);
     expect(report.remainingBytes, 0);
     expect(report.evictedEntries, 1);
@@ -708,10 +714,19 @@ void main() {
     );
     await store.index.remove(exact.key);
     failingBytes.failDeletePath = oldBody.path;
+    var notifications = 0;
+    final subscription = store.managementProjectionChanges.listen((_) { notifications++; });
+    addTearDown(subscription.cancel);
 
     final report = await store.clearArtifacts();
-    expect(report.releasedBytes, bytes.lengthInBytes);
-    expect(report.remainingBytes, 0);
+    expect(notifications, 1,
+        reason: 'retired authority must invalidate management even if unlink fails');
+    expect(report.releasedBytes, 0);
+    expect(report.remainingBytes, bytes.lengthInBytes);
+    final usage = await store.inspectArtifacts();
+    expect(usage.pendingCleanupBytes, bytes.lengthInBytes);
+    expect(usage.automaticPendingCleanupBytes, bytes.lengthInBytes);
+    expect(usage.automaticBytes, bytes.lengthInBytes);
     expect(await cache.openPhysicalArtifact(physical), isNull);
     expect(await oldBody.exists(), isTrue,
         reason: 'failed post-retirement unlink must be durable cleanup debt');
@@ -725,6 +740,14 @@ void main() {
     await store.close();
 
     final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    final cleanupChanged = Completer<void>();
+    final cleanupSubscription = reopened.managementProjectionChanges.listen((_) {
+      if (!cleanupChanged.isCompleted) cleanupChanged.complete();
+    });
+    await cleanupChanged.future.timeout(const Duration(seconds: 5));
+    expect((await reopened.inspectArtifacts()).pendingCleanupBytes, 0,
+        reason: 'background debt retirement must refresh management usage');
+    await cleanupSubscription.cancel();
     await reopened.close();
     expect(await oldBody.exists(), isFalse);
     final checked = SqliteIndex(store.layout.dbPath);
@@ -776,7 +799,11 @@ void main() {
       'zic-pinned-canonical-maintenance-',
     );
     addTearDown(() => root.delete(recursive: true));
-    final store = await PersistentDownloadArtifactStore.open(root.path);
+    final recordingBytes = _RecordingArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: recordingBytes,
+    );
     addTearDown(store.close);
     final cache = ArtifactCacheManager(backend: store);
     final chapter = _chapter(
@@ -805,12 +832,252 @@ void main() {
     expect(usage.bytes, bytes.lengthInBytes,
         reason: 'canonical binding must not double-count one immutable body');
     expect(usage.entries, 2);
+    recordingBytes.resetReadCounters();
     final report = await store.clearArtifacts();
+    expect(recordingBytes.readChunkCalls, 0);
     expect(report.releasedBytes, 0);
     expect(report.remainingBytes, bytes.lengthInBytes);
     expect(report.evictedEntries, 0);
     expect(await store.index.get(exact.key), isNotNull);
     expect(await cache.openPhysicalArtifact(physical), isNotNull);
+  });
+
+  for (final referenceCount in <int>[1, 10]) {
+    test('capacity trim reads no body for $referenceCount shared exact references',
+        () async {
+      final root = await Directory.systemTemp.createTemp('zic-cache-trim-reads-');
+      addTearDown(() => root.delete(recursive: true));
+      final recordingBytes = _RecordingArtifactBytes();
+      final store = await PersistentDownloadArtifactStore.open(
+        root.path,
+        bytes: recordingBytes,
+      );
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      DownloadId idFor(int version) {
+        final chapter = _chapter(
+          comicId: 'trim-version-$version',
+          revision: 'r$version',
+          urls: const <String>['https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1'],
+        );
+        return readerPageDownloadId(chapter, chapter.pages.single);
+      }
+      final source = idFor(0);
+      final body = Uint8List.fromList(List<int>.generate(64, (index) => index));
+      await cache.storePromotedArtifact(id: source, bytes: body);
+      final record = (await store.index.get(source.key))!;
+      final physical = PhysicalMediaId.canonical('shared-trim');
+      expect(await cache.bindPhysicalArtifact(
+        physicalId: physical, sourceId: source), isTrue);
+      for (var version = 1; version < referenceCount; version++) {
+        expect(await store.bindExistingArtifact(
+          sourceId: source, targetId: idFor(version)), isTrue);
+      }
+      recordingBytes.resetReadCounters();
+
+      final report = await store.trimArtifacts(maxBytes: 32, targetBytes: 0);
+
+      expect(recordingBytes.readChunkCalls, 0);
+      expect(recordingBytes.readBytes, 0);
+      expect(report.releasedBytes, body.lengthInBytes);
+      expect(report.remainingBytes, 0);
+      expect(await File(record.path).exists(), isFalse);
+      expect(await store.index.list(), isEmpty);
+      expect(await cache.openPhysicalArtifact(physical), isNull);
+    });
+  }
+
+  test('ordinary exact and physical partial retirement reads no body CRC', () async {
+    final root = await Directory.systemTemp.createTemp('zic-partial-gc-');
+    addTearDown(() => root.delete(recursive: true));
+    final recording = _RecordingArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(root.path, bytes: recording);
+    addTearDown(store.close);
+    final chapter = _chapter(comicId: 'legacy-partial', revision: 'a',
+        urls: ['https://example.test/partial']);
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    final path = store.layout.artifactFor(id).partialPath;
+    final bytes = Uint8List.fromList(List<int>.filled(32, 1));
+    await File(path).parent.create(recursive: true);
+    await File(path).writeAsBytes(bytes);
+    await store.index.put(CacheRec(id: id, state: CacheState.partial,
+        path: path, bytes: 32, checksum: '', createdUs: 1, touchedUs: 2,
+        storageRootId: store.layout.root));
+    final physical = PhysicalMediaId.canonical('ordinary-partial');
+    await store.storePhysicalPartialDownload(physicalId: physical, providerHint: id,
+      preferDirectStaging: true, entry: PartialDownloadEntry(length: 32,
+        totalLength: 64, validators: const Validators(),
+        open: ({required int start}) => Stream<List<int>>.value(bytes.sublist(start))));
+    recording.resetReadCounters();
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, 64);
+    expect(report.remainingBytes, 0);
+    expect(recording.readBytes, 0);
+    expect(recording.readChunkCalls, 0);
+  });
+
+  test('physical LRU uses the latest exact or canonical use of a shared body', () async {
+    final root = await Directory.systemTemp.createTemp('zic-physical-lru-');
+    addTearDown(() => root.delete(recursive: true));
+    var store = await PersistentDownloadArtifactStore.open(root.path);
+    final ids = <DownloadId>[
+      for (final comic in ['recent-canonical', 'older-canonical'])
+        readerPageDownloadId(_chapter(comicId: comic, revision: 'a',
+            urls: ['https://example.test/$comic']),
+          _chapter(comicId: comic, revision: 'a',
+            urls: ['https://example.test/$comic']).pages.single),
+    ];
+    final physical = <PhysicalMediaId>[
+      PhysicalMediaId.canonical('recent'), PhysicalMediaId.canonical('older'),
+    ];
+    final cache = ArtifactCacheManager(backend: store);
+    for (var i = 0; i < ids.length; i++) {
+      await cache.storePromotedArtifact(id: ids[i],
+          bytes: Uint8List.fromList(List<int>.filled(64, i + 1)));
+      expect(await cache.bindPhysicalArtifact(physicalId: physical[i], sourceId: ids[i]), isTrue);
+    }
+    final dbPath = store.layout.dbPath;
+    await store.close();
+    final db = sql.sqlite3.open(dbPath);
+    db.execute('UPDATE artifact_object SET touched_us = 1');
+    for (var i = 0; i < ids.length; i++) {
+      db.execute('UPDATE cache_entry SET touched_us = ? WHERE key = ?', [10 + 10 * i, ids[i].key]);
+      db.execute('UPDATE physical_media_artifact SET touched_us = ? WHERE physical_key = ?',
+          [200 - 100 * i, physical[i].key]);
+    }
+    db.dispose();
+    store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+
+    final report = await store.trimArtifacts(maxBytes: 100, targetBytes: 64);
+    expect(report.releasedBytes, 64);
+    expect(report.evictedEntries, 1);
+    expect(await store.index.get(ids.first.key), isNotNull);
+    expect(await store.index.get(ids.last.key), isNull);
+    expect(await store.openPhysicalArtifact(physical.first), isNotNull);
+    expect(await store.openPhysicalArtifact(physical.last), isNull);
+  });
+
+  test('bound file readers protect a shared physical body until close', () async {
+    final root = await Directory.systemTemp.createTemp('zic-cache-reader-lease-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final chapter = _chapter(comicId: 'reader-lease', revision: 'a',
+        urls: ['https://example.test/page']);
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    final cache = ArtifactCacheManager(backend: store);
+    final bytes = Uint8List.fromList(List<int>.generate(64, (i) => i));
+    await cache.storePromotedArtifact(id: id, bytes: bytes);
+    final entry = (await store.openArtifactStream(id))!;
+    final reader = (await entry.openBoundRangeReader!())!;
+    addTearDown(reader.close);
+
+    final protected = await store.clearArtifacts();
+    expect(protected.releasedBytes, 0);
+    expect(protected.skippedBusy, 1);
+    expect(await reader.readRange(0, 64), bytes);
+    await reader.close();
+    final released = await store.clearArtifacts();
+    expect(released.releasedBytes, 64);
+    expect(released.remainingBytes, 0);
+  });
+
+  test('full verified reads retain the physical body until the read exits', () async {
+    final root = await Directory.systemTemp.createTemp('zic-cache-full-read-');
+    addTearDown(() => root.delete(recursive: true));
+    final recording = _RecordingArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(root.path, bytes: recording);
+    addTearDown(store.close);
+    final chapter = _chapter(comicId: 'full-read', revision: 'a',
+        urls: ['https://example.test/full-read']);
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    final bytes = Uint8List.fromList(List<int>.filled(64, 2));
+    await ArtifactCacheManager(backend: store).storePromotedArtifact(id: id, bytes: bytes);
+    final entry = (await store.openArtifactStream(id))!;
+    recording.readStarted = Completer<void>();
+    recording.allowRead = Completer<void>();
+    final read = entry.readAll!();
+    addTearDown(() async {
+      if (!recording.allowRead!.isCompleted) recording.allowRead!.complete();
+      await read;
+    });
+    await recording.readStarted!.future;
+    expect((await store.clearArtifacts()).releasedBytes, 0);
+    recording.allowRead!.complete();
+    expect(await read, bytes);
+    expect((await store.clearArtifacts()).releasedBytes, 64);
+  });
+
+  test('download intent retains completed pages and paused physical prefixes across reopen', () async {
+    final root = await Directory.systemTemp.createTemp('zic-cache-retention-');
+    addTearDown(() => root.delete(recursive: true));
+    var store = await PersistentDownloadArtifactStore.open(root.path);
+    final chapter = _chapter(comicId: 'paused-download', revision: 'a',
+        urls: ['https://example.test/download']);
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    final other = _chapter(comicId: 'ordinary-reader', revision: 'b',
+        urls: ['https://example.test/cache']);
+    final ordinary = readerPageDownloadId(other, other.pages.single);
+    final physical = PhysicalMediaId.canonical('paused-physical');
+    final index = store.index as SqliteIndex;
+    await index.retainDownloadCache(sourceId: id.content.sourceId,
+        comicId: chapter.chapter.comicId, chapterId: chapter.chapter.chapterId,
+        sourceRevision: id.sourceRevision);
+    await index.retainDownloadCache(sourceId: id.content.sourceId,
+        comicId: chapter.chapter.comicId, chapterId: chapter.chapter.chapterId,
+        sourceRevision: id.sourceRevision, physicalKey: physical.key);
+    final cache = ArtifactCacheManager(backend: store);
+    final bytes = Uint8List.fromList(List<int>.filled(64, 7));
+    await cache.storePromotedArtifact(id: id, bytes: bytes);
+    await cache.storePromotedArtifact(id: ordinary, bytes: bytes);
+    await store.storePhysicalPartialDownload(physicalId: physical, providerHint: id,
+      preferDirectStaging: true, entry: PartialDownloadEntry(length: 32,
+        totalLength: 64, validators: const Validators(),
+        open: ({required int start}) => Stream<List<int>>.value(bytes.sublist(start, 32))));
+    await store.close();
+    store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final before = await store.inspectArtifacts();
+    expect(before.retainedBytes, 96);
+    expect(before.automaticBytes, 64);
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, 64);
+    expect(report.remainingBytes, 96);
+    expect(await store.index.get(id.key), isNotNull);
+    expect(await store.index.get(ordinary.key), isNull);
+    expect(await (store.index as PhysicalPartialIndex).getPhysicalPartial(physical), isNotNull);
+    await (store.index as SqliteIndex).releaseDownloadCache(
+      sourceId: id.content.sourceId, comicId: chapter.chapter.comicId,
+      chapterId: chapter.chapter.chapterId, sourceRevision: id.sourceRevision);
+    expect((await store.clearArtifacts()).remainingBytes, 0);
+  });
+
+  test('automatic maintenance reacts to growth and stops after its owner closes', () async {
+    final root = await Directory.systemTemp.createTemp('zic-cache-automatic-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    store.configureAutomaticCacheMaintenance(maxBytes: 32, targetBytes: 16);
+    final chapter = _chapter(comicId: 'automatic-growth', revision: 'a',
+        urls: ['https://example.test/cache']);
+    final id = readerPageDownloadId(chapter, chapter.pages.single);
+    await ArtifactCacheManager(backend: store).storePromotedArtifact(id: id,
+        bytes: Uint8List.fromList(List<int>.filled(64, 1)));
+    final record = (await store.index.get(id.key))!;
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while ((await store.inspectArtifacts()).automaticBytes != 0 &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(await File(record.path).exists(), isFalse);
+    expect((await store.inspectArtifacts()).automaticBytes, 0);
+    // Closing with a pending configuration timer must cancel it before SQLite
+    // is disposed; reopening the same directory has one maintenance owner.
+    store.configureAutomaticCacheMaintenance(maxBytes: 32, targetBytes: 16);
+    await store.close();
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    await reopened.close();
   });
 
   test('checksum reuse includes algorithm and normalizes digest case', () {
@@ -1707,6 +1974,65 @@ void main() {
     );
   });
 
+  test('unopened versions stay mapping-only through canonical backfill and prewarm',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-unopened-cache-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final cache = ArtifactCacheManager(backend: store);
+    final chapters = <ChapterManifest>[
+      for (var version = 0; version < 3; version++)
+        _chapter(
+          comicId: 'unopened-$version',
+          revision: 'r$version',
+          urls: const <String>['https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1'],
+        ),
+    ];
+    final authorities = <CanonicalMediaChapterAuthority>[
+      for (final chapter in chapters)
+        CanonicalMediaChapterAuthority(
+          manifest: chapter,
+          projection: VersionChapterCanonicalProjection(
+            familyId: const VersionFamilyId('family'),
+            canonicalChapterId: const CanonicalChapterId('chapter'),
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            chapterId: chapter.chapter.chapterId,
+            sourceRevision: chapter.chapter.sourceRevision,
+            pageCount: 1,
+            intervals: const <CanonicalMediaBindingInterval>[
+              CanonicalMediaBindingInterval(
+                exactStart: 0,
+                exactEndExclusive: 1,
+                segmentId: CanonicalMediaSegmentId('segment'),
+                segmentStart: 0,
+              ),
+            ],
+          ),
+          activeProjectionRanges: const <CanonicalMediaActiveRange>[
+            CanonicalMediaActiveRange(start: 0, endExclusive: 1),
+          ],
+        ),
+    ];
+    await store.persistCanonicalMediaProjections(
+      authorities.map((authority) => authority.projection!),
+    );
+    expect(await store.index.list(), isEmpty);
+    final original = readerPageDownloadId(chapters.first, chapters.first.pages.single);
+    await cache.storePromotedArtifact(
+      id: original, bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+    expect(await store.backfillCanonicalReadyArtifacts(authorities), 1);
+    final target = readerPageDownloadId(chapters.last, chapters.last.pages.single);
+    final physical = authorities.last.resolve(target)!;
+    expect(await cache.openPhysicalArtifact(physical), isNotNull);
+    expect((await store.index.list()).map((record) => record.id), <DownloadId>[original]);
+    expect(await store.index.get(target.key), isNull);
+    expect(await store.index.get(readerPageDownloadId(
+      chapters[1], chapters[1].pages.single).key), isNull);
+  });
+
   test('canonical backfill migrates only active exact cache state', () async {
     final root = await Directory.systemTemp.createTemp(
       'zic-canonical-backfill-',
@@ -2029,6 +2355,8 @@ final class _RecordingArtifactBytes implements ArtifactBytes {
   int lengthCalls = 0;
   int readChunkCalls = 0;
   int readBytes = 0;
+  Completer<void>? readStarted;
+  Completer<void>? allowRead;
 
   void resetReadCounters() {
     existsCalls = 0;
@@ -2056,6 +2384,8 @@ final class _RecordingArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     readChunkCalls++;
+    if (readStarted?.isCompleted == false) readStarted!.complete();
+    if (allowRead != null) await allowRead!.future;
     await for (final chunk in _delegate.readChunks(
       path,
       start: start,

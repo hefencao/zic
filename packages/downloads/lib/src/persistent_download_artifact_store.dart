@@ -67,11 +67,14 @@ final class _PersistentBoundRangeReader
   _PersistentBoundRangeReader({
     required ArtifactByteRangeReader primary,
     required Future<Uint8List> Function(int start, int endExclusive) fallback,
-  }) : _primary = primary,
+    required void Function() onClose,
+  }) : _onClose = onClose,
+       _primary = primary,
        _fallback = fallback;
 
   ArtifactByteRangeReader? _primary;
   final Future<Uint8List> Function(int start, int endExclusive) _fallback;
+  final void Function() _onClose;
   Future<void> _tail = Future<void>.value();
   bool _closed = false;
 
@@ -124,7 +127,11 @@ final class _PersistentBoundRangeReader
     await _tail;
     final primary = _primary;
     _primary = null;
-    if (primary != null) await primary.close();
+    try {
+      if (primary != null) await primary.close();
+    } finally {
+      _onClose();
+    }
   }
 }
 
@@ -157,11 +164,44 @@ final class PersistentDownloadArtifactStore
         PartialDownloadStore,
         TransferStagingPartialDownloadStore,
         PartialDownloadMetadataStore,
-        ArtifactCacheMaintenance {
+        ArtifactCacheMaintenance,
+        AutomaticArtifactCacheMaintenance {
+  late final _downloadedChapterRecovery = _DownloadedChapterRecovery(this);
+
+  /// Registers immutable metadata only; file I/O happens after an exact miss.
+  void rememberLocalRecoveryChapter(ImportedLibraryEntry entry) => _downloadedChapterRecovery.remember(entry);
+
+  /// A renewed directory grant must also retire cached failed inventory probes.
+  void refreshLocalDownloadAccess() => _downloadedChapterRecovery._folders.clear();
+
+  /// Explicit downloads recover their scoped inventory before rewriting it.
+  Future<void> recoverLocalDownloadRecords(ImportedLibraryEntry entry, {
+    required Map<String, CacheRec> knownRecords,
+    required TaskControl control,
+  }) async {
+    _requireOpen();
+    rememberLocalRecoveryChapter(entry);
+    final manifest = entry.chapter.toManifest();
+    var recoveryPrepared = false;
+    for (final page in manifest.pages) {
+      control.throwIfCancelled();
+      final id = readerPageDownloadId(manifest, page);
+      if (knownRecords.containsKey(id.key)) continue;
+      if (!recoveryPrepared) {
+        // An ordinary new chapter has no portable inventory. Stop after the
+        // bounded metadata probe rather than issuing a query for every page.
+        if (!await _downloadedChapterRecovery.prepare(entry)) return;
+        recoveryPrepared = true;
+      }
+      final record = await _serializeArtifactMutation(id, () async =>
+          await _index.get(id.key) ?? await _downloadedChapterRecovery.recover(id, control: control));
+      if (record != null) knownRecords[record.key] = record;
+    }
+  }
+
   PersistentDownloadArtifactStore._({
     required DownloadRegistry registry,
     required SqliteIndex index,
-    required CacheOps cacheOps,
     required ArtifactBytes bytes,
     required File recoveryMarker,
     required RandomAccessFile metadataOwnerLock,
@@ -174,7 +214,6 @@ final class PersistentDownloadArtifactStore
     MonoClock? clock,
   })  : _registry = registry,
         _index = index,
-        _cacheOps = cacheOps,
         _bytes = bytes,
         _recoveryMarker = recoveryMarker,
         _metadataOwnerLock = metadataOwnerLock,
@@ -190,11 +229,16 @@ final class PersistentDownloadArtifactStore
   Stream<void> get managementProjectionChanges =>
       _managementProjectionChanges.stream;
 
-  void _notifyManagementProjectionChanged() {
+  void _notifyManagementProjectionChanged({bool scheduleMaintenance = true}) {
     if (!_managementProjectionChanges.isClosed) {
       _managementProjectionChanges.add(null);
     }
+    if (scheduleMaintenance) _scheduleAutomaticCacheMaintenance();
   }
+
+  @override
+  void configureAutomaticCacheMaintenance({required int maxBytes, required int targetBytes}) =>
+      _configureAutomaticCacheMaintenance(maxBytes: maxBytes, targetBytes: targetBytes);
 
   Future<T> _notifyManagementAfter<T>(
     Future<T> operation, {
@@ -334,13 +378,6 @@ final class PersistentDownloadArtifactStore
     resolved = PersistentDownloadArtifactStore._(
       registry: registry,
       index: index,
-      cacheOps: CacheOps(
-        index: index,
-        registry: registry,
-        clock: resolvedClock,
-        evictRecordWithSnapshot: (id, expected) =>
-            resolved._evictCacheRecord(id, expected: expected),
-      ),
       bytes: resolvedBytes,
       recoveryMarker: recoveryMarker,
       metadataOwnerLock: ownerLock,
@@ -1359,6 +1396,21 @@ final class PersistentDownloadArtifactStore
     if (expectedBytes <= 0 || checksum.isEmpty || algorithm != 'crc32') {
       return (safeToRetire: false, debt: null);
     }
+    if (_isAutomaticCacheFinalLocator(
+      replica.accessLocator,
+      replica.storageRootId,
+    )) {
+      // Cache eviction retires the indexed locator, including damaged or
+      // unindexed replacement bytes. It does not need another content proof.
+      final debt = await _registerObsoleteSealedSourceCleanupDebt(
+        replica.accessLocator,
+        storageRootId: replica.storageRootId,
+        expectedBytes: expectedBytes,
+        expectedChecksum: checksum,
+        expectedChecksumAlgorithm: algorithm,
+      );
+      return (safeToRetire: true, debt: debt);
+    }
     final base = _ArtifactAccessRecord(
       artifactId: replica.artifactId,
       replicaId: replica.replicaId,
@@ -1510,11 +1562,12 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<bool> _cleanupObsoleteSourceNow(
-    StorageCleanupDebtRecord debt,
-  ) async {
+    StorageCleanupDebtRecord debt, {
+    void Function(int bytes)? onDeleted,
+  }) async {
     if (debt.kind == StorageCleanupDebtKind.temporary) return false;
     if (debt.kind == StorageCleanupDebtKind.obsoleteSealedSource) {
-      return _cleanupObsoleteSealedSourceAcrossAliases(debt);
+      return _cleanupObsoleteSealedSourceAcrossAliases(debt, onDeleted: onDeleted);
     }
     try {
       if (await _index.isStorageAccessLocatorAuthoritative(
@@ -1540,12 +1593,15 @@ final class PersistentDownloadArtifactStore
         return true;
       }
       final absent = await _withStorageWriteQuantum(() async {
-        if (await _bytes.exists(debt.accessLocator)) {
+        final existed = await _bytes.exists(debt.accessLocator);
+        if (existed) {
           await _bytes.delete(debt.accessLocator);
         }
         await _deleteArtifactSidecar(debt.accessLocator);
-        return !await _bytes.exists(debt.accessLocator) &&
+        final absent = !await _bytes.exists(debt.accessLocator) &&
             !await _artifactSidecarExists(debt.accessLocator);
+        if (absent && existed) onDeleted?.call(debt.expectedBytes ?? 0);
+        return absent;
       });
       if (absent) {
         await _index.removeStorageCleanupDebt(debt.accessLocator);
@@ -1563,16 +1619,22 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<bool> _cleanupObsoleteSealedSourceAcrossAliases(
-    StorageCleanupDebtRecord debt,
-  ) async {
+    StorageCleanupDebtRecord debt, {
+    void Function(int bytes)? onDeleted,
+  }) async {
+    final cacheLocator = _isAutomaticCacheFinalLocator(
+      debt.accessLocator,
+      debt.storageRootId,
+    );
     final expectedBytes = debt.expectedBytes;
     final expectedChecksum = debt.expectedChecksum?.trim().toLowerCase();
     final algorithm = debt.expectedChecksumAlgorithm?.trim().toLowerCase();
-    if (expectedBytes == null ||
-        expectedBytes <= 0 ||
-        expectedChecksum == null ||
-        expectedChecksum.isEmpty ||
-        algorithm != 'crc32') {
+    if (!cacheLocator &&
+        (expectedBytes == null ||
+            expectedBytes <= 0 ||
+            expectedChecksum == null ||
+            expectedChecksum.isEmpty ||
+            algorithm != 'crc32')) {
       return false;
     }
     try {
@@ -1599,24 +1661,26 @@ final class PersistentDownloadArtifactStore
           await _index.removeStorageCleanupDebt(debt.accessLocator);
           return true;
         }
-        final length = await _withStorageWriteQuantum(
-          () => _bytes.length(candidate.accessLocator),
-        );
-        if (length != expectedBytes) {
-          await _index.removeStorageCleanupDebt(debt.accessLocator);
-          return true;
-        }
-        final checksum = await _migrationRangeChecksum(
-          _bytes.readChunks(
-            candidate.accessLocator,
-            start: 0,
-            endExclusive: expectedBytes,
-          ),
-          expectedBytes: expectedBytes,
-        );
-        if (checksum != expectedChecksum) {
-          await _index.removeStorageCleanupDebt(debt.accessLocator);
-          return true;
+        if (!cacheLocator) {
+          final length = await _withStorageWriteQuantum(
+            () => _bytes.length(candidate.accessLocator),
+          );
+          if (length != expectedBytes) {
+            await _index.removeStorageCleanupDebt(debt.accessLocator);
+            return true;
+          }
+          final checksum = await _migrationRangeChecksum(
+            _bytes.readChunks(
+              candidate.accessLocator,
+              start: 0,
+              endExclusive: expectedBytes,
+            ),
+            expectedBytes: expectedBytes!,
+          );
+          if (checksum != expectedChecksum) {
+            await _index.removeStorageCleanupDebt(debt.accessLocator);
+            return true;
+          }
         }
         if (await _index.isStorageAccessLocatorAuthoritative(
           candidate.accessLocator,
@@ -1632,6 +1696,7 @@ final class PersistentDownloadArtifactStore
         });
         if (absent) {
           await _index.removeStorageCleanupDebt(debt.accessLocator);
+          onDeleted?.call(expectedBytes ?? 0);
         }
         return absent;
       }
@@ -1817,8 +1882,9 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<void> _drainCleanupDebt() async {
+    var changed = false;
     for (final debt in await _index.listStorageCleanupDebts()) {
-      await _drainStorageCleanupDebtRecord(debt);
+      changed = await _drainStorageCleanupDebtRecord(debt) || changed;
     }
     final migrations = await _index.listArtifactReplicaMigrations(
       phase: ArtifactReplicaMigrationPhase.cleanupPending,
@@ -1836,18 +1902,19 @@ final class PersistentDownloadArtifactStore
         );
       }
     }
+    if (changed) _notifyManagementProjectionChanged(scheduleMaintenance: false);
   }
 
-  Future<void> _drainStorageCleanupDebtRecord(
+  Future<bool> _drainStorageCleanupDebtRecord(
     StorageCleanupDebtRecord debt,
   ) async {
     try {
       if (debt.kind == StorageCleanupDebtKind.temporary) {
-        if (!_isGeneratedTemporaryLocator(debt.accessLocator)) return;
+        if (!_isGeneratedTemporaryLocator(debt.accessLocator)) return false;
         await _cleanupTemporaryDebtAcrossAliases(debt);
-        return;
+        return false;
       }
-      await _cleanupObsoleteSourceNow(debt);
+      return await _cleanupObsoleteSourceNow(debt);
     } on Object catch (error, stackTrace) {
       _recordCleanupDebtFailure(
         stage: switch (debt.kind) {
@@ -1861,6 +1928,7 @@ final class PersistentDownloadArtifactStore
         error: error,
         stackTrace: stackTrace,
       );
+      return false;
     }
   }
 
@@ -2014,7 +2082,13 @@ final class PersistentDownloadArtifactStore
 
   final DownloadRegistry _registry;
   final SqliteIndex _index;
-  final CacheOps _cacheOps;
+  Timer? _automaticCacheTimer;
+  ({int maxBytes, int targetBytes})? _automaticCacheLimits;
+  Future<ArtifactCacheReport>? _cacheMaintenanceRun;
+  bool _cacheMaintenanceRequested = false;
+  bool _cacheMaintenanceBlocked = false;
+  ({Set<String> exact, Set<String> physical}) Function()? _externalCacheActivity;
+  final Map<String, int> _cacheReadLeases = <String, int>{};
   final ArtifactBytes _bytes;
   final File _recoveryMarker;
   final RandomAccessFile _metadataOwnerLock;
@@ -2087,12 +2161,18 @@ final class PersistentDownloadArtifactStore
   CacheLayout layoutFor(DownloadId id) => _registry.layoutFor(id);
 
   bool _isAutomaticCacheFinalRecord(CacheRec record) {
-    if (parseSafRecordPath(record.path) != null) return false;
     final root = record.storageRootId.trim();
-    final recordLayout = root.isEmpty || root == 'default'
-        ? layoutFor(record.id)
-        : CacheLayout(root);
-    return recordLayout.containsFinalArtifactPath(record.path);
+    return _isAutomaticCacheFinalLocator(
+      record.path,
+      root.isEmpty || root == 'default' ? layoutFor(record.id).root : root,
+    );
+  }
+
+  bool _isAutomaticCacheFinalLocator(String locator, String storageRootId) {
+    if (parseSafRecordPath(locator) != null) return false;
+    final root = storageRootId.trim();
+    final cacheRoot = root.isEmpty || root == 'default' ? layout.root : root;
+    return CacheLayout(cacheRoot).containsFinalArtifactPath(locator);
   }
 
   CacheLayout layoutForSource(String sourceId) =>
@@ -3303,7 +3383,7 @@ final class PersistentDownloadArtifactStore
       return ArtifactCacheStreamEntry(
         length: selected.length,
         open: ({required int start, int? endExclusive}) =>
-            _readArtifactCandidates(
+            _readLeasedArtifactCandidates(
               selectedCandidates,
               start: start,
               endExclusive: endExclusive,
@@ -3332,8 +3412,8 @@ final class PersistentDownloadArtifactStore
         ),
         openPresentationFile: presentationFileLeaseFactory == null
             ? null
-            : () => presentationFileLeaseFactory!.open(
-                selectedAccess.accessLocator,
+            : () => _openLeasedPresentationFile(
+                selectedAccess,
                 expectedLength: selected.length,
               ),
         accessMode: parseSafRecordPath(selectedAccess.accessLocator) == null
@@ -3673,51 +3753,54 @@ final class PersistentDownloadArtifactStore
       final existingTarget = await _index.get(targetId.key);
       final initialPhysical = await _index.getPhysicalMediaArtifact(physicalId);
       if (initialPhysical == null) return false;
-      if (existingTarget != null) {
-        return existingTarget.id == targetId &&
-            _isVerifiedReadyRecord(existingTarget) &&
-            existingTarget.effectiveArtifactId == initialPhysical.artifactId;
-      }
-
-      ArtifactCacheStreamEntry? preflight;
+      final release = _retainCacheRead(initialPhysical.artifactId);
       try {
-        preflight = await openPhysicalArtifact(physicalId);
-      } on ArtifactReadFailure {
-        return false;
-      }
-      if (preflight == null || preflight.length != initialPhysical.bytes) {
-        return false;
-      }
+        if (existingTarget != null) {
+          return existingTarget.id == targetId &&
+              _isVerifiedReadyRecord(existingTarget) &&
+              existingTarget.effectiveArtifactId == initialPhysical.artifactId;
+        }
 
-      final currentPhysical = await _index.getPhysicalMediaArtifact(physicalId);
-      if (currentPhysical == null ||
-          currentPhysical.artifactId != initialPhysical.artifactId ||
-          currentPhysical.bytes != initialPhysical.bytes ||
-          currentPhysical.checksum.trim().toLowerCase() !=
-              initialPhysical.checksum.trim().toLowerCase() ||
-          currentPhysical.checksumAlgorithm.trim().toLowerCase() !=
-              initialPhysical.checksumAlgorithm.trim().toLowerCase()) {
-        return false;
-      }
-      if (await _index.get(targetId.key) != null) return false;
+        ArtifactCacheStreamEntry? preflight;
+        try {
+          preflight = await openPhysicalArtifact(physicalId);
+        } on ArtifactReadFailure {
+          return false;
+        }
+        if (preflight == null || preflight.length != initialPhysical.bytes) {
+          return false;
+        }
 
-      final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
-      await _index.putExistingArtifactBinding(
-        CacheRec(
-          id: targetId,
-          state: CacheState.ready,
-          path: currentPhysical.accessLocator,
-          bytes: currentPhysical.bytes,
-          checksum: currentPhysical.checksum,
-          createdUs: nowUs,
-          touchedUs: nowUs,
-          pinned: false,
-          checksumAlgorithm: currentPhysical.checksumAlgorithm,
-          artifactId: currentPhysical.artifactId,
-          storageRootId: currentPhysical.storageRootId,
-        ),
-      );
-      return true;
+        final currentPhysical = await _index.getPhysicalMediaArtifact(physicalId);
+        if (currentPhysical == null ||
+            currentPhysical.artifactId != initialPhysical.artifactId ||
+            currentPhysical.bytes != initialPhysical.bytes ||
+            currentPhysical.checksum.trim().toLowerCase() !=
+                initialPhysical.checksum.trim().toLowerCase() ||
+            currentPhysical.checksumAlgorithm.trim().toLowerCase() !=
+                initialPhysical.checksumAlgorithm.trim().toLowerCase()) {
+          return false;
+        }
+        if (await _index.get(targetId.key) != null) return false;
+
+        final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+        await _index.putExistingArtifactBinding(
+          CacheRec(
+            id: targetId,
+            state: CacheState.ready,
+            path: currentPhysical.accessLocator,
+            bytes: currentPhysical.bytes,
+            checksum: currentPhysical.checksum,
+            createdUs: nowUs,
+            touchedUs: nowUs,
+            pinned: false,
+            checksumAlgorithm: currentPhysical.checksumAlgorithm,
+            artifactId: currentPhysical.artifactId,
+            storageRootId: currentPhysical.storageRootId,
+          ),
+        );
+        return true;
+      } finally { release(); }
     }),
     when: (changed) => changed,
   );
@@ -4023,7 +4106,7 @@ final class PersistentDownloadArtifactStore
     if (_artifactWrites.containsKey(id)) return null;
     final active = _registry.find(id);
     if (active != null && (active.activeRun || active.hasWriter)) return null;
-    return _openArtifactStreamExact(id);
+    return _openArtifactStreamExact(id, recoverDownloaded: true);
   }
 
   Future<List<_ArtifactAccessRecord>> _resolveArtifactReplicas(
@@ -4659,6 +4742,8 @@ final class PersistentDownloadArtifactStore
       final candidate = candidates[index];
       final access = candidate.access;
       ArtifactByteRangeReader? reader;
+      final release = _retainCacheRead(access.artifactId);
+      var retainedLease = false;
       try {
         reader = await openArtifactByteRangeReader(
           _bytes,
@@ -4715,7 +4800,9 @@ final class PersistentDownloadArtifactStore
         ];
         final retained = reader;
         reader = null;
+        retainedLease = true;
         return _PersistentBoundRangeReader(
+          onClose: release,
           primary: retained,
           fallback: (start, endExclusive) async {
             final builder = BytesBuilder(copy: false);
@@ -4764,6 +4851,7 @@ final class PersistentDownloadArtifactStore
           cause: error,
         );
       } finally {
+        if (!retainedLease) release();
         if (reader != null) {
           try {
             await reader.close();
@@ -4952,8 +5040,10 @@ final class PersistentDownloadArtifactStore
   Future<ArtifactCacheStreamEntry?> _openArtifactStreamExact(
     DownloadId id, {
     bool skipExistsProbe = false,
+    bool recoverDownloaded = false,
   }) async {
-    final record = await _index.get(id.key);
+    final record = await _index.get(id.key) ??
+        (recoverDownloaded ? await _downloadedChapterRecovery.recover(id) : null);
     if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
       return null;
     }
@@ -5019,7 +5109,7 @@ final class PersistentDownloadArtifactStore
       return ArtifactCacheStreamEntry(
         length: selected.length,
         open: ({required int start, int? endExclusive}) =>
-            _readArtifactCandidates(
+            _readLeasedArtifactCandidates(
           selectedCandidates,
           start: start,
           endExclusive: endExclusive,
@@ -5048,8 +5138,8 @@ final class PersistentDownloadArtifactStore
         ),
         openPresentationFile: presentationFileLeaseFactory == null
             ? null
-            : () => presentationFileLeaseFactory!.open(
-                  selectedAccess.accessLocator,
+            : () => _openLeasedPresentationFile(
+                  selectedAccess,
                   expectedLength: selected.length,
                 ),
         accessMode: parseSafRecordPath(selectedAccess.accessLocator) == null
@@ -5081,46 +5171,49 @@ final class PersistentDownloadArtifactStore
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
-    final replicas = await _index.listArtifactReplicas(artifactId);
-    final currentReplicaIds = <String>{
-      for (final replica in replicas) replica.replicaId,
-    };
-    final candidates = <_ArtifactAccessCandidate>[];
-    final seen = <String>{};
+    final release = _retainCacheRead(artifactId);
+    try {
+      final replicas = await _index.listArtifactReplicas(artifactId);
+      final currentReplicaIds = <String>{
+        for (final replica in replicas) replica.replicaId,
+      };
+      final candidates = <_ArtifactAccessCandidate>[];
+      final seen = <String>{};
 
-    void addCandidate(_ArtifactAccessCandidate candidate) {
-      if (!currentReplicaIds.contains(candidate.access.replicaId)) return;
-      final key =
-          '${candidate.access.replicaId}\u0000${candidate.access.accessLocator}';
-      if (seen.add(key)) candidates.add(candidate);
-    }
+      void addCandidate(_ArtifactAccessCandidate candidate) {
+        if (!currentReplicaIds.contains(candidate.access.replicaId)) return;
+        final key =
+            '${candidate.access.replicaId}\u0000${candidate.access.accessLocator}';
+        if (seen.add(key)) candidates.add(candidate);
+      }
 
-    for (final candidate in preferredCandidates) {
-      addCandidate(candidate);
-    }
-    for (final replica in replicas) {
-      control?.throwIfCancelled();
-      if (replica.accessLocator.isEmpty) continue;
-      final access = _ArtifactAccessRecord(
-        artifactId: artifactId,
-        replicaId: replica.replicaId,
-        accessLocator: replica.accessLocator,
-        bytes: length,
-        checksum: expectedChecksum,
-        checksumAlgorithm: checksumAlgorithm,
-        storageRootId: replica.storageRootId,
-      );
-      if (!await _artifactReplicaIsAccessible(access)) continue;
-      for (final candidate in await _artifactAccessCandidates(access)) {
+      for (final candidate in preferredCandidates) {
         addCandidate(candidate);
       }
-    }
-    return _readArtifactAllVerified(
-      candidates,
-      length,
-      expectedChecksum,
-      control: control,
-    );
+      for (final replica in replicas) {
+        control?.throwIfCancelled();
+        if (replica.accessLocator.isEmpty) continue;
+        final access = _ArtifactAccessRecord(
+          artifactId: artifactId,
+          replicaId: replica.replicaId,
+          accessLocator: replica.accessLocator,
+          bytes: length,
+          checksum: expectedChecksum,
+          checksumAlgorithm: checksumAlgorithm,
+          storageRootId: replica.storageRootId,
+        );
+        if (!await _artifactReplicaIsAccessible(access)) continue;
+        for (final candidate in await _artifactAccessCandidates(access)) {
+          addCandidate(candidate);
+        }
+      }
+      return await _readArtifactAllVerified(
+        candidates,
+        length,
+        expectedChecksum,
+        control: control,
+      );
+    } finally { release(); }
   }
 
   Future<Uint8List> _readArtifactAllVerified(
@@ -7435,32 +7528,31 @@ final class PersistentDownloadArtifactStore
     ),
   );
 
-  Future<int> _evictCacheRecord(DownloadId id, {CacheRec? expected}) =>
-      _serializeArtifactMutation(id, () async {
-          if (_borrowedPartialIds.contains(id)) {
-            throw const Failure(
-              code: ErrorCode.sessionBusy,
-            message:
-                'durable artifact is borrowed by the active transfer owner',
-            );
-          }
-          final record = await _index.get(id.key);
-          if (record == null ||
-              (expected != null && !_sameIndexedRecord(expected, record))) {
-            return 0;
-          }
-          final deletedPhysical = await _invalidateIndexedArtifact(
-            id,
-            record: record,
-          );
-          if (deletedPhysical && _registry.find(id) != null) {
-            // The physical reference check has already completed successfully;
-            // now clear the session's Artifact state as well. Never do this
-            // for a shared path because registry.evict deletes blindly.
-            await _registry.evict(id);
-          }
-          return deletedPhysical ? record.bytes : 0;
-      });
+  Future<int> _evictCacheRecord(DownloadId id, {required CacheRec expected}) =>
+      _withStorageWriteQuantum(() async {
+    if (_artifactMutationTails.containsKey(id)) return 0;
+    return _serializeArtifactMutation(id, () async {
+      if (_closed || _borrowedPartialIds.contains(id) ||
+          _registry.find(id)?.canEvict == false ||
+          (_externalCacheActivity?.call().exact.contains(id.key) ?? false) ||
+          await _index.isExactCacheRetained(id.key)) return 0;
+      final current = await _index.get(id.key);
+      if (current == null || current.state != CacheState.partial ||
+          !_sameIndexedRecord(expected, current) ||
+          !await _cleanupLocatorIsAvailable(current.path, current.storageRootId) ||
+          await _index.isPathOrArtifactReferenced(path: current.path,
+              artifactId: current.effectiveArtifactId, excludingKey: id.key)) return 0;
+      // Mutable cache retirement retains its row until unlink succeeds. There
+      // is no authority switch requiring a frozen whole-prefix CRC proof.
+      final existed = await _bytes.exists(current.path);
+      await _bytes.delete(current.path);
+      await _deleteArtifactSidecar(current.path);
+      if (await _bytes.exists(current.path) || await _artifactSidecarExists(current.path)) return 0;
+      await _index.remove(id.key);
+      if (_registry.find(id) != null) await _registry.evict(id);
+      return existed ? current.bytes : 0;
+    });
+  });
 
   Future<bool> _invalidateIndexedArtifact(
     DownloadId id, {
@@ -7741,44 +7833,8 @@ final class PersistentDownloadArtifactStore
       first.effectiveArtifactId == second.effectiveArtifactId &&
       first.storageRootId == second.storageRootId;
 
-  Future<ArtifactCacheUsage> _inspectPersistentArtifactUsage() async {
-    final bindings = await _index.readBindingUsage();
-    final physicalPartials = await _index.listPhysicalPartials();
-    final physicalArtifacts = await _index.listPhysicalMediaArtifacts();
-    final exactReadyArtifactIds = bindings.readyArtifactIds;
-    final additionalArtifacts = <String, int>{};
-    for (final physical in physicalArtifacts) {
-      if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
-      final previous = additionalArtifacts[physical.artifactId] ?? 0;
-      if (physical.bytes > previous) {
-        additionalArtifacts[physical.artifactId] = physical.bytes;
-      }
-    }
-    final physicalArtifactIds = <PhysicalMediaId>{
-      for (final physical in physicalArtifacts) physical.id,
-    };
-    final activePhysicalPartials = physicalPartials.where(
-      (record) => !physicalArtifactIds.contains(record.id),
-    );
-    final physicalPartialBytes = activePhysicalPartials.fold<int>(
-      0,
-      (sum, record) => sum + record.bytes,
-    );
-    final physicalOnlyArtifactBytes = additionalArtifacts.values.fold<int>(
-      0,
-      (sum, bytes) => sum + bytes,
-    );
-    return ArtifactCacheUsage(
-      bytes:
-          bindings.bytes +
-          physicalPartialBytes +
-          physicalOnlyArtifactBytes,
-      entries:
-          bindings.entries +
-          activePhysicalPartials.length +
-          physicalArtifacts.length,
-    );
-  }
+  Future<ArtifactCacheUsage> _inspectPersistentArtifactUsage() async =>
+      (await _readCacheMaintenanceSnapshot()).usage;
 
   @override
   Future<ArtifactCacheUsage> inspectArtifacts() async {
@@ -7790,11 +7846,18 @@ final class PersistentDownloadArtifactStore
       _evictPhysicalPartialForMaintenance(
     PhysicalPartialRecord expected, {
     bool removeIfDominated = false,
-  }) => _serializePhysicalArtifactMutation(
+  }) => _withStorageWriteQuantum(() async {
+    if (_closed || _physicalArtifactMutationTails.containsKey(expected.id) ||
+        _physicalPartialMutationTails.containsKey(expected.id)) {
+      return (removed: false, dominated: false);
+    }
+    return _serializePhysicalArtifactMutation(
         expected.id,
         () => _serializePhysicalPartialMutation(expected.id, () async {
           _requireOpen();
-          if (_borrowedPhysicalPartialIds.contains(expected.id)) {
+          if (_borrowedPhysicalPartialIds.contains(expected.id) ||
+              (_externalCacheActivity?.call().physical.contains(expected.id.key) ?? false) ||
+              await _index.isPhysicalCacheRetained(expected.id.key)) {
             throw const Failure(
               code: ErrorCode.sessionBusy,
               message: 'physical durable partial is borrowed by the transfer owner',
@@ -7812,255 +7875,17 @@ final class PersistentDownloadArtifactStore
           return (removed: true, dominated: ready != null);
         }),
       );
-
-  Future<({bool changed, bool released})>
-      _evictPhysicalArtifactForMaintenance(
-    PhysicalMediaArtifactRecord expected,
-  ) => _serializePhysicalArtifactMutation(expected.id, () async {
-        _requireOpen();
-        final current = await _index.getPhysicalMediaArtifact(expected.id);
-        if (current == null || current != expected) {
-          return (changed: false, released: false);
-        }
-        // A surviving exact READY binding (pinned, busy, or created after the
-        // maintenance snapshot) must retain canonical routing metadata. The
-        // SQLite owner rechecks both exact references and the physical LRU
-        // generation in one IMMEDIATE transaction, closing the final
-        // check/delete race without rescanning the whole cache index.
-        final replicas = await _index.listArtifactReplicas(current.artifactId);
-        final debts = <StorageCleanupDebtRecord>[];
-        for (final replica in replicas) {
-          final prepared = await _prepareObsoleteSealedReplicaCleanupDebt(
-            replica: replica,
-            expectedBytes: current.bytes,
-            expectedChecksum: current.checksum,
-            expectedChecksumAlgorithm: current.checksumAlgorithm,
-          );
-          if (!prepared.safeToRetire) {
-            await _forgetStorageCleanupDebts(debts);
-            return (changed: false, released: false);
-          }
-          final debt = prepared.debt;
-          if (debt != null) debts.add(debt);
-        }
-        late final bool removed;
-        try {
-          removed = await _index.removePhysicalMediaArtifactBindingForMaintenance(
-            id: current.id,
-            expectedArtifactId: current.artifactId,
-            expectedTouchedUs: current.touchedUs,
-          );
-        } on Object {
-          await _forgetStorageCleanupDebts(debts);
-          rethrow;
-        }
-        if (!removed) {
-          await _forgetStorageCleanupDebts(debts);
-          return (changed: false, released: false);
-        }
-        for (final debt in debts) {
-          await _cleanupObsoleteSourceNow(debt);
-        }
-        if (await _index.getArtifactObject(current.artifactId) != null) {
-          return (changed: true, released: false);
-        }
-        return (changed: true, released: true);
-      });
-
-  Future<({int evicted, int skippedBusy, int remainingBytes})>
-      _trimPhysicalPartialsTo(
-    int targetBytes, {
-    required int initialBytes,
-  }) async {
-    final values = await _index.listPhysicalPartials()
-      ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
-    var evicted = 0;
-    var skippedBusy = 0;
-    var remainingBytes = initialBytes;
-    for (final record in values) {
-      if (remainingBytes <= targetBytes) break;
-      if (_borrowedPhysicalPartialIds.contains(record.id)) {
-        skippedBusy++;
-        continue;
-      }
-      try {
-        final result = await _evictPhysicalPartialForMaintenance(record);
-        if (!result.removed || result.dominated) continue;
-        evicted++;
-        remainingBytes = (remainingBytes - record.bytes).clamp(0, 1 << 62);
-      } on Failure catch (error) {
-        if (error.code == ErrorCode.sessionBusy ||
-            error.code == ErrorCode.writerBusy) {
-          skippedBusy++;
-          continue;
-        }
-        rethrow;
-      }
-    }
-    if (evicted > 0) _notifyManagementProjectionChanged();
-    return (
-      evicted: evicted,
-      skippedBusy: skippedBusy,
-      remainingBytes: remainingBytes,
-    );
-  }
-
-  Future<int> _physicalOnlyArtifactBytes() async {
-    final exactReadyArtifactIds = (await _index.readBindingUsage()).readyArtifactIds;
-    final bytes = <String, int>{};
-    for (final physical in await _index.listPhysicalMediaArtifacts()) {
-      if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
-      final previous = bytes[physical.artifactId] ?? 0;
-      if (physical.bytes > previous) {
-        bytes[physical.artifactId] = physical.bytes;
-      }
-    }
-    return bytes.values.fold<int>(0, (sum, value) => sum + value);
-  }
-
-  Future<int> _physicalPartialBytes() async {
-    final partials = await _index.listPhysicalPartials();
-    final readyIds = <PhysicalMediaId>{
-      for (final artifact in await _index.listPhysicalMediaArtifacts()) artifact.id,
-    };
-    return partials.fold<int>(
-      0,
-      (sum, record) =>
-          readyIds.contains(record.id) ? sum : sum + record.bytes,
-    );
-  }
-
-  Future<({int evicted, int remainingBytes})> _trimPhysicalArtifactsTo(
-    int targetBytes, {
-    required int initialBytes,
-  }) async {
-    final values = await _index.listPhysicalMediaArtifacts()
-      ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
-    var evicted = 0;
-    var remainingBytes = initialBytes;
-    var changed = false;
-    for (final record in values) {
-      if (remainingBytes <= targetBytes) break;
-      final result = await _evictPhysicalArtifactForMaintenance(record);
-      changed = changed || result.changed;
-      if (!result.released) continue;
-      evicted++;
-      remainingBytes = (remainingBytes - record.bytes).clamp(0, 1 << 62);
-    }
-    if (changed) _notifyManagementProjectionChanged();
-    return (evicted: evicted, remainingBytes: remainingBytes);
-  }
+  });
 
   @override
   Future<ArtifactCacheReport> trimArtifacts({
     required int maxBytes,
     required int targetBytes,
-  }) async {
-    _requireOpen();
-    if (maxBytes < 0 || targetBytes < 0 || targetBytes > maxBytes) {
-      throw ArgumentError('invalid artifact cache limits');
-    }
-    final before = await _inspectPersistentArtifactUsage();
-    if (before.bytes <= maxBytes) {
-      return ArtifactCacheReport(
-        beforeBytes: before.bytes,
-        releasedBytes: 0,
-        remainingBytes: before.bytes,
-        evictedEntries: 0,
-        skippedBusy: 0,
-      );
-    }
-
-    final partial = await _trimPhysicalPartialsTo(
-      targetBytes,
-      initialBytes: before.bytes,
-    );
-    var exactReport = const CacheReport(
-      requestedBytes: 0,
-      releasedBytes: 0,
-      evicted: 0,
-      skippedBusy: 0,
-      skippedProtected: 0,
-      remainingBytes: 0,
-    );
-    if (partial.remainingBytes > targetBytes) {
-      final reserved =
-          await _physicalOnlyArtifactBytes() + await _physicalPartialBytes();
-      final exactMax = maxBytes > reserved ? maxBytes - reserved : 0;
-      final exactTarget = targetBytes > reserved ? targetBytes - reserved : 0;
-      exactReport = await _cacheOps.trim(
-        CacheLimits(maxBytes: exactMax, targetBytes: exactTarget),
-        busy: _borrowedPartialIds,
-      );
-    }
-    // CacheOps reports only exact-index bytes. Reconcile once between phases,
-    // then keep a running physical-byte total instead of rescanning all three
-    // persistent indexes once for every physical artifact candidate.
-    final afterExact = await _inspectPersistentArtifactUsage();
-    final physicalArtifacts = await _trimPhysicalArtifactsTo(
-      targetBytes,
-      initialBytes: afterExact.bytes,
-    );
-    final after = await _inspectPersistentArtifactUsage();
-    return ArtifactCacheReport(
-      beforeBytes: before.bytes,
-      releasedBytes: before.bytes - after.bytes,
-      remainingBytes: after.bytes,
-      evictedEntries:
-          partial.evicted + exactReport.evicted + physicalArtifacts.evicted,
-      skippedBusy: partial.skippedBusy + exactReport.skippedBusy,
-    );
-  }
+  }) => _runCacheMaintenance(maxBytes: maxBytes, targetBytes: targetBytes);
 
   @override
-  Future<ArtifactCacheReport> clearArtifacts() async {
-    _requireOpen();
-    final before = await _inspectPersistentArtifactUsage();
-    final exactReport = await _cacheOps.clear(busy: _borrowedPartialIds);
-    var physicalPartialEvicted = 0;
-    var skippedPhysicalBusy = 0;
-    var changed = false;
-    for (final record in await _index.listPhysicalPartials()) {
-      if (_borrowedPhysicalPartialIds.contains(record.id)) {
-        skippedPhysicalBusy++;
-        continue;
-      }
-      try {
-        final result = await _evictPhysicalPartialForMaintenance(
-          record,
-          removeIfDominated: true,
-        );
-        if (!result.removed) continue;
-        if (!result.dominated) physicalPartialEvicted++;
-        changed = true;
-      } on Failure catch (error) {
-        if (error.code == ErrorCode.sessionBusy ||
-            error.code == ErrorCode.writerBusy) {
-          skippedPhysicalBusy++;
-          continue;
-        }
-        rethrow;
-      }
-    }
-    var physicalArtifactEvicted = 0;
-    for (final record in await _index.listPhysicalMediaArtifacts()) {
-      final result = await _evictPhysicalArtifactForMaintenance(record);
-      changed = changed || result.changed;
-      if (result.released) physicalArtifactEvicted++;
-    }
-    if (changed) _notifyManagementProjectionChanged();
-    final after = await _inspectPersistentArtifactUsage();
-    return ArtifactCacheReport(
-      beforeBytes: before.bytes,
-      releasedBytes: before.bytes - after.bytes,
-      remainingBytes: after.bytes,
-      evictedEntries:
-          exactReport.evicted +
-          physicalPartialEvicted +
-          physicalArtifactEvicted,
-      skippedBusy: exactReport.skippedBusy + skippedPhysicalBusy,
-    );
-  }
+  Future<ArtifactCacheReport> clearArtifacts() =>
+      _runCacheMaintenance(maxBytes: 0, targetBytes: 0);
 
   Future<void> close() async {
     if (_closed) return;
@@ -8071,8 +7896,14 @@ final class PersistentDownloadArtifactStore
       );
     }
     _deferredRecencyTouchControl.cancel();
+    _automaticCacheTimer?.cancel();
+    _automaticCacheTimer = null;
     _closed = true;
     try {
+    final maintenance = _cacheMaintenanceRun;
+    if (maintenance != null) {
+      try { await maintenance; } on Object { /* The initiating caller owns failure. */ }
+    }
     // Public methods reject new work after _closed, but operations that were
     // already admitted can still enqueue a per-id/path tail while their
     // current callback is awaiting I/O. Drain every tail before disposing the
@@ -8084,6 +7915,7 @@ final class PersistentDownloadArtifactStore
         if (redundantSweep != null) redundantSweep,
         ..._artifactWrites.values,
         ..._artifactMutationTails.values,
+        ..._artifactReplicaMutationTails.values,
         ..._physicalPartialMutationTails.values,
         ..._physicalArtifactMutationTails.values,
         ..._exactArtifactTouchDrains.values,

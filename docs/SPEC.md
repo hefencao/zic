@@ -103,8 +103,34 @@
   Settings/UI MUST NOT 自行逐 section 拼接可跨 revision 的备份；
   Lazy store 的显式 backup MUST 先 single-flight materialize/merge durable library，再从该 owner 读取 snapshot；
   它属于用户主动的 library durability action，不得因 bootstrap memory projection 遮蔽已存在的磁盘数据。
-  Android备份 MUST使用平台支持的文档创建/写入路径并保持JSON MIME及文件名，MUST NOT调用file_selector未支持的save-location API；取消 MUST返回空结果且允许后续再次导出。
+  Android备份 MUST使用平台支持的文档创建/写入路径并保持JSON/gzip MIME及对应文件名，MUST NOT调用file_selector未支持的save-location API；取消 MUST返回空结果且允许后续再次导出。
   备份导出失败 MUST归备份操作诊断，不得伪装成缓存统计读取失败；OS文档操作不得复制library authority或改变snapshot/flush合同。
+  数据页导出、缓存统计、清理与上限整理 MUST各自显示实际执行进度；选择/确认弹窗期间 MUST NOT显示执行转圈。互斥状态 MUST NOT触发无关项目进度；runtime变化 MUST在当前操作结束后合并刷新统计。
+  导出、导入与WebDAV MUST共用书架/分类、阅读记录、阅读设置、应用设置、翻译、扩展/插件六类选择，默认全选；导出 MUST在确认范围后读取，导入 MUST先校验完整文件再预览选择。阅读记录 MUST携带恢复进度所需的章节逻辑元数据。
+  未选类别 MUST NOT产生新tombstone、修改其版本时钟或应用到本机；云端未选记录 MUST保留在完整快照中。WebDAV选择 MUST只存本机连接配置；未选翻译/插件 MUST NOT初始化相应设置owner，重新启用 MUST按原逐项时钟合并。
+  WebDAV MUST 由设置→数据→WebDAV 同步手动触发；打开普通首页/Reader MUST NOT 初始化同步 IO 或自动上传。
+  同步 MUST 复用当前 library owner 的一致 snapshot 和 generation/admission；范围为书架、远程章节元数据、历史/进度、分类、漫画偏好、已读、漫画源偏好及允许迁移的应用、阅读、翻译、扩展仓库和插件设置（阅读含两种布局的点击区域）。
+  同步 MUST NOT 上传本地章节 locator、图片正文、缓存、下载任务、源登录或 API key。连接配置 MUST 独立保存于 App-private 存储；本地进度 MUST 等待对应本机章节导入，不得以云端元数据授权文件读取。
+  远程章节 MUST 只传逻辑页顺序/ID 指纹与类型提示，页名 MUST 使用序号；原始页 ID/文件名/正文证明 MUST 留在本机，资源 locator MUST 替换为既有 Home placeholder，opaque 封面 MUST NOT 上传。指纹 MUST 跨同步幂等，已有同 revision/数量/指纹的真实页/封面 MUST 保持本机，新设备 MUST 经原 source-refresh owner 后才进入 Reader/下载，MUST NOT 回放云端 Cookie/请求头/请求体。
+  云端format MUST仍为v3；新仓库 MUST使用固定 `zic/latest.json`、`repository.json`、`objects/<generation>/<SHA256>.json.gz`、`backups/YYYY-MM-DD.json`，MUST NOT按App或协议版本创建新目录。generation MUST仅由仓库维护切换，MUST NOT随启动/升级改变。所有同步设备 MUST支持当前布局。
+  既有 `repository-v3.json` MUST复用为唯一协调入口，其 `latest-v2.json` MUST保留为唯一发布点；仅有旧head时 MUST在协调文件记住入口，MUST NOT复制可变寄存器形成分叉。读取 MUST兼容v1/v2及两种v3目录；旧v1文件、v2平铺对象/嵌套快照及未知文件 MUST原样保留，不参加回收。索引 MUST携带受限相对object路径；索引≤64KiB，压缩/解压合计≤32MiB/100000项。
+  书库/章节/偏好 MUST使用四个稳定桶，进度/已读和分类/漫画源/可迁移设置分别成片；正文 MUST直接gzip，MUST NOT套Base64或依赖HTTP Content-Encoding。分片 MUST校验哈希、长度、数量与分区，解压 MUST逐块有界；损坏/缺失 MUST停止，不得回退旧备份或空数据。文件请求总deadline为2分钟，索引/目录/测试为30秒。
+  同步 MUST先通过仓库唯一协调文件强ETag/CAS登记共享会话，使用服务器Date协调15分钟有效期，操作 MUST在10分钟后停止接纳请求；会话上限64，不支持服务器Date/强ETag MUST停止而非绕开协调。退出 MUST仅移除自身pin，失败/取消 MAY等待其自然过期；取消 MUST立即停止重试并排空原NetLane任务。
+  最新索引 MUST只读取其未缓存分片，MUST NOT扫描或合并历史；无变化 MUST NOT创建latest/分片，仓库共享会话登记/退出仍需条件PUT。当前generation中相同hash的已校验分片（含旧目录路径）MUST复用，进度变化 MUST NOT重传同generation书库分片。维护切换generation后首次编辑 MAY重新上传完整分片。
+  发布 MUST先上传分片，最后强ETag条件提交latest；成功后 MAY以If-None-Match:*创建 `backups/YYYY-MM-DD.json`，MUST先兼容检查旧目录同日备份，全仓库共享每日一份，不因设备数增加。当日备份已确认 MAY内存复用检查，跨日无变化 MAY备份此前已提交状态。备份失败 MUST单独提示，不回滚成功同步。latest缺失且已迁移 MUST报错，不得回退旧库。
+  自动维护 MUST在成功同步后最多每周一次，仅其他有效会话均退出时CAS升级独占执行；失败后至少一小时再试。维护 MUST先切换generation并条件更新latest的maintenanceEpoch，过期发布者的旧ETag MUST失效，新发布 MUST使用新generation，MUST NOT复用被清理目录的对象路径。
+  保留策略 MUST为最近7日/4周/12月各周期一份并去重，整理后正常日期最多23份历史索引；未来日期 MUST保守保留。回收 MUST跨两种v3布局按真实日期排序、同日优先无版本目录，完整校验全部目录与索引后，以latest及全部保留备份为根，先条件删除过期备份，再条件删除无引用老分片。当前/上一generation和七日内generation MUST保护；目录/索引/候选超限、异常或缺少强ETag MUST停止而非推定无引用。412或中途错误 MUST停止当前整理，不能按年龄直接删除数据。未知文件、旧格式文件及删除标记 MUST NOT被此回收移除；对象数可因保护期暂时超过保留快照的分片数。维护失败 MUST保留同步成功结果并延后重试。
+  首次同步 MUST 合并双方数据；每项采用修改时间、writer/内容确定性裁决，精确同时间删除优先。较新进度向前翻页 MUST 有效，不得取历史最大页码；删除 MUST 作为 tombstone 持久化并跨失败重试。
+  latest MUST 提供强 ETag 并用 If-Match 发布；首次创建及不可变文件 MUST 使用 If-None-Match:*。latest 412 MUST 重新读取合并，最多三次；不可变对象已存在 MUST 校验实际 bytes 后才复用。失败 MUST NOT 用空数据覆盖云端或本机。
+  云端写回后 MUST 重验各项当前本机值，保留 HTTP 等待期间的新编辑；单项失败可重放，未具备本机文件的进度应显示待合并。分类删除 MUST 同步清理成员关系，不得覆盖同期的新偏好。
+  允许迁移的设置 MUST 覆盖应用/书架/外观、漫画源启用/排序和来源偏好、下载策略、全局与每漫画阅读/翻译设置及插件声明的非敏感选项。API密钥、登录、文件目录/迁移状态、调试开关、缓存上限/Reader内存预算与自动识别语言 MUST 保持本机所有权。读取翻译设置 MUST NOT 触发OCR/模型/缓存初始化。已有密钥 MUST 仅用于本机已绑定的profile/backend/endpoint；导入/同步及普通漫画设置保存 MUST NOT 授权新服务地址使用原密钥，重新绑定 MUST 通过显式服务表单输入密钥。
+  插件设置 MUST 按source/key独立版本化，MUST NOT 导出敏感字段或执行action；恢复 MUST 重验插件当前声明的类型与可选值，使用原updateSetting。缺失或不可用插件 MUST 保留待恢复配置，插件安装/激活后 MUST 在来源发布前尝试恢复，初始已激活来源和服务handoff遵守同一顺序，MUST NOT 等待未激活插件；并发发布 MUST 共用一次恢复。后续同步或打开对应设置可重试；读取失败 MUST NOT 推断删除。无修改时间的首次观察 MUST 采用已有云端选项；漫画源页与源管理页的显式修改 MUST 共用恢复/记录回调并持久化修改时钟。
+  本地备份 MUST 自包含并使用gzip，手动导入 MUST 兼容旧v1 JSON元数据、现有同步JSON及gzip；Android MUST 按暂存文件实际大小和流读取，MUST NOT 信任provider上报大小预分配的内存内容；压缩/解压32MiB、100000项、全批字段验证 MUST 在确认前完成。选文件、预览及取消 MUST NOT 修改library或同步版本。显式确认 MUST 只合并备份中所选类别的记录，以新本机编辑覆盖相同记录并保留其他记录，MUST NOT 自动发起网络同步。缺少本地正文的进度 MUST 持久化等待匹配文件并在后续导出/同步恢复，较新本机阅读优先；备份章节 MUST NOT 获得原始请求或物理文件权威。
+  漫画阅读设置的本机容量淘汰 MUST NOT 推断为跨设备删除；只有显式清除产生阅读设置 tombstone，应用超容量云端设置时 MUST 优先保留较新修改。
+  网络 MUST 经共享 NetLane；同步 owner MAY 缓存最多两个完整响应后的空闲 HttpClient 以复用 TCP/TLS，MUST NOT 加入独立队列或准入。请求 MUST 独占借出的 client；失败/取消/超时 MUST 只关闭该 lease 并等实际退出再释放容量，不影响其他请求；close MUST 排空任务后关闭空闲连接。Home close MUST 先停止并排空同步。移除本机连接配置 MUST NOT 删除云端文件。
+  同步错误 MUST 区分本机/云端/合并/阅读设置的数据校验与网络错误，超限 MUST 明确提示；网络错误 MUST 保留方法/阶段/状态与安全类型，TLS MUST 仅在证实 CERTIFICATE_VERIFY_FAILED 时提示证书校验失败，MUST NOT 回显原始错误消息、地址、凭据或云端内容。
+  短暂连接/握手中断、读取断流及 HTTP 408/429/500/502/503/504 MAY 最多尝试五次，退避0.5/1/2/4秒；MUST 共用原 NetLane task/control/总超时且先排空前一连接，单次连接上限10秒。Retry-After MUST 保留，长于剩余预算时 MUST 停止而非提前重试。认证、证书、数据校验或响应头错误 MUST NOT 重试；仅 GET/HEAD/PROPFIND/MKCOL 或尚未发出的请求可直接重试。
+  已发送 PUT 的短暂故障或临时 HTTP 状态 MUST NOT 直接重放旧写入；同步 controller MAY 最多两次退避后重取本机/云端并重新合并，等待上限30秒且 MUST 尊重 Retry-After。读回已包含全部合并版本 MUST 直接确认，否则 MUST 使用新 ETag 条件写入。网络退避与核对等待 MUST 显示状态且可立即取消，MUST NOT 留下延迟重试。
   长生命周期 Library Diagnostics route MUST NOT 持有 route-open 时的 concrete `ImportedLibraryStore`；
   它 MUST 通过 current-store resolver + library-generation signal 跟随 `HomeLibrarySession` 当前 owner。
   migration issue refresh/copy/ack MUST 在完成时确认同一 generation/store identity；
@@ -1050,7 +1076,10 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   进入章节本身 MUST NOT 自动标记已读。显式右划“标记已读/恢复未读” MAY 覆盖自动完成态，但该 provenance MUST 与历史自动 read state 可区分。
   章节来源提供原始 `updatedAt` 时 MUST 优先显示来源更新时间；缺失时 MUST 显示当前持久投影可证明的本地导入/同步时间，不得用发布时间冒充更新时间。章节副标题 SHOULD 固定为单行紧凑状态：
   来源/同步图标 + `MM-DD HH:mm`、`待加载`/`N页`、以及存在进度时的历史图标 + `第N页`，各段以中点分隔；窄屏 MUST scale-down/省略而不得换成第二行。
-  无标题的普通标签组 SHOULD 直接显示 chips，不得为了“标签”二字额外建立标题/展开父层。
+  简介为空白、空 HTML、仅标点或明确的“暂无简介”等占位文本时 MUST 隐藏整块简介；有效文字 MUST 保留，显示判断 MUST NOT 修改来源/持久化元数据。
+  漫画标签与来源分类 MUST 默认折叠为单行预览，并提供展开/收起；标签搜索、长按多选复制 MUST 保留。漫画标签 MUST 不显示标题文字，小箭头 MUST 透明、按整行可用宽度居中并叠在标签底边，MUST NOT 建立独占按钮行或遮住标签文字；来源分类保留标题与顶部箭头。
+  详情正文 MUST NOT 常驻书架分类药丸栏；长按加入/移出书架 MUST 从按钮位置动态展开环状浮动分类药丸，MUST NOT 使用复选框、全屏遮罩或底部面板。局部磨砂圆盘 MUST 使用盘内裁剪模糊、轻渐变、细高光边与柔和阴影，承托药丸及中央圆形保存图标并随展开缩放；允许多选，点击盘外/系统返回 MUST 丢弃 draft。分类多于六个 MUST 分组且跨组保留选择，圆盘及药丸 MUST 保持在安全区域内。
+  显式保存 MUST 同时提交分类与入架状态；未入架漫画即使分类未变或未选分类也 MUST 加入书架，已入架漫画 MUST 保持入架。取消 MUST NOT 写入分类或改变入架状态；喜欢/收藏 MUST 保持原值。短按书架按钮 MUST 保持原入架切换，收藏按钮 MUST 保持原收藏切换且不承担分类入口。无分类时 MUST 提示先在书架创建分类。
 - 详情章节行 MUST 按当前滚动视口及有界缓存范围构建；长目录或 Reader 返回后的进度更新 MUST NOT 要求一次构建、布局全部章节行。完整目录、排序、source/chapter identity、章节操作与最新进度语义 MUST 保持。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，
   不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
@@ -1097,6 +1126,8 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   `lookupAuthoritative`、exact write/invalidate与显式migration materialization始终绕过equivalence，
   exact durable binding仍按 `DownloadId` 裁决；canonical physical artifact由持久physical owner独立管理，MUST NOT重写provider URI/validator或硬迁移版本正文。
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于右侧，不得以“取消”文字按钮替代关闭 X。
+  操作行 MUST 复用 `AppDialogActions`：局部圆角12dp、最小视觉高度40dp、触摸目标至少48dp；关闭为弱色底，正向操作保留语义色，不沿用页内胶囊形状。
+  右侧操作 MUST 使用关闭按钮外的剩余宽度并允许窄屏/大字体换行，关闭保持底部对齐；忙碌状态 MAY 禁用关闭按钮，不改变调用方的取消/确认返回值。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。
   原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。底部来源栏 MUST 与书架共用透明紧凑悬浮面板，搜索控件 MUST 位于其上方，滚动末项 MUST 可完整移到面板上方。
   固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
@@ -1336,6 +1367,7 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
   每次打开编辑器 MUST拥有独立 edit-session identity；异步 save completion 只有在仍属于当前同一会话时 MAY关闭/清空 overlay。cancel + reopen 后，旧保存Future MUST NOT关闭新会话或丢弃其draft。
   编辑覆层 MUST 截获输入，底层 ReaderView 不得收到拖线/点格操作；高频 divider drag draft SHOULD 保持在覆层本地状态，
   不得因每个 pointer move 重建 Reader/Pipeline，只有保存时才提交 mode settings。
+  全局点击区域设置 MUST 在中性背景上复用同一 `ReaderTapRegionOverlay`，提供相同的拖线、动作、切页动画与连续模式翻屏保留控制，不得为编辑而启动 Reader/Pipeline。显式保存才提交当前 mode；取消或系统返回 MUST 丢弃 draft。
   双击与长按 MUST 继续由既有缩放手势 owner 解释，不得因为增加单击九宫格而经过同一 action map；
   后续若开放双击/长按九宫格，必须作为 `gestureActions` 下独立 sibling profile 增加，不能复用或覆盖 `singleTap`。
   PageHost MUST 先完成单击/双击/长按消歧，只把最终确认的 single-tap 屏幕坐标交给 Runtime。
@@ -1352,7 +1384,7 @@ Debug 首页的一键 Trace 导出 MUST 位于顶栏 zic 名称之后，沿用�
 - "最大可视"边界约束（默认开启、可设置关闭）MUST 按实际显示图片矩形计算，而非页面控件矩形：contain 留边时以图片边缘为准——缩放后图片能覆盖视口的轴，一侧越界则对侧不得越界；不能覆盖的轴保持图片居中。
   关闭后允许自由拖出视口。
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
-- 阅读设置 UI MUST 至少先区分“布局 / 界面 / 分页模式 / 连续模式”；两个 mode 内再保持双击与长按设置成组排列，双击倍率/锚点不得与长按倍率/释放/移动方式交错。相同项的 paged / continuous 控件不得绑定同一可变 preference。
+- 阅读设置首页 MUST 保留默认模式、自适应与界面等共用项，并提供独立的“分页模式设置”和“连续模式设置”子页；分页方向与纵向拼接 MUST 仅出现在各自模式页。进入模式页 MUST NOT 改变默认阅读模式。两个 mode 内双击与长按设置 MUST 分组，不得交错；相同项的 paged / continuous 控件不得绑定同一可变 preference。
 - “连续阅读” MUST 在 paged 与 continuous 两个 mode 中分别设置。开启时 Reader 只在当前章首/尾的明确边界 pull 后请求上一/下一章；关闭时 MUST 只禁用该 UI traversal。逻辑previous/next MUST消费source的oldest-first顺序投影，不受详情展示顺序影响；底部下一章、顶部上一章。manifest/session MUST继续一章一个。
 - 每次逻辑章节排序 MUST为每章只投影一次来源序号，比较器 MUST只比较本次投影值；同序号 MUST保持来源顺序，后续调用 MUST重新消费当前来源序号，不得复用过期目录状态。
 - 同次同步Reader构建 MAY共用previous/next查询结果；后续切章与预加载 MUST重新查询当前目录，不得把presentation查询结果变为跨调用目录缓存。
@@ -1714,16 +1746,18 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - 下载管理 Presentation MUST 由 `HomeLibrarySession` 持有的 download-management projection 构造首帧并订阅后续更新。
   Home 在首个可见 frame 后或 durable service adoption 后 MAY 后台重建该投影；
   `PersistentChapterDownloadService` 的 orphan discovery 与 chapter snapshot inspection MUST 共用同一个 artifact-index snapshot，
-  同一 service 的并发 refresh MUST 合并。打开、重复进入或退出下载管理 route MUST NOT 自行调用 `library.list()`、
-  `discoverOrphanedEntries()`、`inspectMany()` 或 cache usage inspection；
-  用户显式刷新 MAY 请求 Home 做一次 authoritative projection refresh。
+  同一 service 的并发 refresh MUST 合并。下载管理 route 首帧 MUST 消费已有投影，MUST NOT 自行调用 `library.list()`、
+  `discoverOrphanedEntries()`、`inspectMany()` 或等待 cache usage inspection；
+  首帧后 reconciliation 与用户显式刷新 MAY 请求 Home 做一次 authoritative projection refresh。
   由于 Home startup snapshot 不持久化 physical cache projection，
-  用户首次进入自动缓存/Canonical tab且当前 projection 缺失时，route MAY 在首帧之后通过 Home projection owner lazy 请求一次 authoritative cache-management refresh。
+  生产手动下载刷新 MUST 使用 `includeCache:false`；下载管理首帧后 MUST后台读取缓存清单与占用，route存续期间的缓存失效 MUST合并刷新，不等待用户切换标签。
   该首次展示读取 MUST 只投影 physical Canonical/Exact inventory，不得顺带为全部 library entries 重建 `ChapterDownloadSnapshot`；
-  真实 durable management invalidation、用户显式完整刷新或需要 chapter lifecycle 收敛时仍走完整 management projection。
+  durable cache invalidation MUST 合并为 cache-only refresh，不得顺带重算整库下载进度；完整下载刷新仍负责 orphan 与 chapter lifecycle。
+  旧读取若被清理/回收、服务替换或完整下载刷新失效，MUST 丢弃并重新读取；并发请求 MUST 合并，关闭前 MUST 排空已接纳 I/O。
+  列表行 MUST惰性创建并额外预建前后约一屏，MUST NOT一次创建整库行；已有清单刷新期间 MAY保持显示，首次返回前显示pending。
   该 authority 返回前 MUST显示 pending state，MUST NOT把 snapshot 中的 exact download summaries 当作 physical cache rows。
-  cache usage 只在进入自动缓存页或显式缓存操作时按需检查；
-  首次 physical projection 缺失时不得在 cache-management refresh 前后各启动一次重复 usage inspection。
+  cache usage MUST 随首帧后的缓存清单后台预热，并在缓存失效或显式操作后刷新；标签切换 SHOULD 复用有效结果，
+  首次 physical projection 缺失时 MUST NOT 在 cache-management refresh 前后各启动一次重复 usage inspection。
   compact Home entry 参与 Download Manager authoritative refresh 时，
   placeholder pages MUST NOT 被构造成 exact `DownloadId` 或用于猜 canonical index；
   service MUST 以 source/comic/chapter/revision 分组的 durable READY/partial inventory 投影 Exact cache，
@@ -1733,7 +1767,12 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   Presentation MUST NOT把 opaque plugin comic/chapter identity、raw source id、`Exact`/`Canonical` 内部术语显示成普通用户字段；
   手动孤立下载、冷Home摘要与删除确认 MUST遵守同一显示合同：复用可证明的当前metadata，缺失时显示通用标题；MUST NOT解析plugin payload或改写exact identity、READY/pin及命令目标。
   historical exact cache MAY按其原 identity 清理，但 MUST NOT转为当前 revision 的手动下载任务。
-  cache-management projection MUST仅消费 durable exact index 与 durable physical artifact/partial inventory；hot `DownloadSession`（包括 promoted source-resident local `file/content/asset` body）MUST NOT单独建立自动缓存行。完整章节统计 SHOULD只为既存 exact pageId 候选构造完整 DownloadId/key，且 MUST继续核对当前 carrier/owner/revision；pageId 本身 MUST NOT证明命中。每次读取 MAY在章边界核对 exact chapter/revision/count 后复用该章 canonical projection，MUST NOT跨 entry/形状混用；无 exact 候选页 MUST仍能发现 canonical/stable physical-only 缓存，orphan 与旧物理缓存 MUST保持可见。Reader 对可重开本地来源的正常读取 MUST NOT为了 cache-management 可见性物化 app-owned duplicate body。
+  自动缓存 inventory MUST 与回收使用同一持久化保留规则：任何版本 pin、显式下载意图和非缓存正文的 exact/canonical/stable 别名 MUST排除；READY MUST继续支配同 ID partial。
+  已有显式下载章节中的有效缓存 MUST由下载service自动接管，准入 MUST沿用 resolver 的 direct predecessor→downloadHead 章节映射及legacy同章回退，已取代旧章节的pin/意图 MUST仅保留原数据，MUST NOT作为自动重新执行旧章节的依据；未映射旧章节 MUST独立。lookup/登记后 MUST重验当前头，换头 MUST取消旧本地接管且 MUST NOT吞掉显式重试。经同source/comic/chapter/revision的当前完整manifest核对后复用原结构化导出、pin及清单流程；缺页 MUST NOT发起网络请求。缓存预热 MAY只为有真实pin/意图且命中resident canonical/partial的章节hydrate，接管 MUST核对当前有效页面映射；未打开版本 MUST NOT生成引用，placement或陈旧carrier MUST NOT独立证明保留。未完成接管 MUST保留chapter/实际physical意图；手动任务的READY页在导出/pin之前也 MUST按下载显示，MUST NOT短暂标为自动缓存。清单 MUST只等待归属登记，MUST NOT等待字节导出；后台本地接管 MUST逐章执行，失败/暂停 MUST停止自动重试，已有exact READY页的冗余partial MUST NOT触发接管。接管 MUST与显式命令复用原取消、删除与close排空边界，并在异步lookup后重验下载归属。
+  自动缓存页 MUST只展示自动缓存及其待删除占用；下载保留与总待删除统计属于数据设置。后台debt完成 MUST发布占用失效。行内 MUST NOT重复节标题，旧 revision 仍须区分。
+  缓存转下载 MUST依当前library entry与版本resolver选目标，优先已有downloadHead，否则依shelfHead/latestKnown；不得要求已有进度snapshot。共享行版本数 MUST仅表示关联的章节版本映射，MUST NOT表示逐页共享或保留引用；当前下载版本不覆盖的未保护正文/partial MUST继续列为自动缓存；旧revision/孤立缓存 MUST NOT猜测下载目标，提交失败 MUST保持原页。
+  Canonical/Exact逐项清理 MUST独立于离线章节删除，不hydrate或回退到其他revision。owner生成的selection仅选择候选；执行 MUST重验服务代际、正文generation、下载保护与live busy，只退休所选未保护正文/partial及其缓存别名，保留版本映射。
+  cache-management projection MUST仅消费 durable exact index 与 durable physical artifact/partial inventory；hot `DownloadSession`（包括 promoted source-resident local `file/content/asset` body）MUST NOT单独建立自动缓存行。完整章节统计 SHOULD只为既存 exact pageId 候选构造完整 DownloadId/key，且 MUST继续核对当前 carrier/owner/revision；pageId 本身 MUST NOT证明命中。每次读取 MAY在章边界核对 exact chapter/revision/count 后复用该章 canonical projection，MUST NOT跨 entry/形状混用；无 exact 候选页 MUST仍能发现 canonical/stable physical-only 缓存，符合自动缓存保留规则的 orphan 与旧物理缓存 MUST保持可见。Reader 对可重开本地来源的正常读取 MUST NOT为了 cache-management 可见性物化 app-owned duplicate body。
   下载统计 MAY在单次物理库存内按canonical坐标索引；解析后的坐标 MUST精确往返原stable key，MUST NOT让不同序列化或identity kind取得等价authority。READY优先于同ID partial，projected-first/stable-fallback与原proof/章节形状校验 MUST保持；派生查询 MUST NOT跨刷新复用。摘要占位URI未被该章身份索引覆盖且当前无live session时 MAY省略必为空的exact/session查询；索引 MUST覆盖partial，MUST按URI页码判断，MUST NOT用临时槽位替代URI，且每次让步后 MUST重新检查live session。
   Home 路径的 mutating chapter/whole-comic actions MUST 通过注入的 command capability 进入 `HomeDownloadCommands`，
   并在动作执行时读取已采用的 durable service generation；
@@ -1993,6 +2032,8 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 - retention 不得成为 Reader 私有正文缓存或 used texture cache。
 
 ## 9. Identity 与缓存
+- 下载访问方式（app/saf/direct）MUST 独立备份/同步，路径/授权 MUST 留本机；导入 MUST 只保存偏好并提示配置本机目录，不直接改变目录。SAF picker MUST 使用实际返回flags取得并确认持久读授权，失败 MUST NOT 保存成功；下载目录 MUST 检查持久读写授权。Home MAY 在首帧后查询授权，Reader MUST NOT 承担该任务；同根重新授权 MUST 废弃失败的清单探测。Direct 指引 MUST 取得所有文件访问和同目录能力证明，不能假设 URI 对应任意文件路径。
+- 丢失的精确数据库记录 MAY 由当前完整章节对应的下载v2/v3清单恢复；MUST 匹配来源/漫画/章节/版本、页数、页ID与逻辑索引并独立验证文件长度/CRC，MUST NOT 以文件名排序授予逻辑身份或跨版本引用。Reader MUST 只按需验证所需页面，已命中索引 MUST NOT 新增清单读取；显式下载 MUST 在首个checkpoint前恢复该章缺失的可证明记录，并保持取消/删除/close边界。后台缓存接管 MUST NOT 触发整章恢复校验，checkpoint MUST 保留仍匹配的未入库文件描述而不授予字节权威；缺少兄弟章节索引 MUST NOT 把清单已有的多章布局改成平铺。清单或placement变更 MUST 废弃恢复快照；无清单散图、损坏元数据及丢失的自定义目录/SAF授权 MUST NOT 通过启动全盘扫描或推定拥有者解决。
 - 持久化 imported-library 的 bulk list/getMany查询与JSON/model解码 MUST 由单个 storage-owned 短生命周期只读 worker 执行；
   UI-owned SQLite connection/handle 不得跨 isolate，关闭 MUST 等待已接纳的 bulk read。
   完整收藏目录`listSavedComics`的SQL/JSON/model解码 MUST同样由只捕获路径的只读worker按次执行，沿既有bulk-read边界关闭；结果 MUST保留完整字段与`updated_us DESC, source_id, comic_id`排序，不新增目录缓存。
@@ -2004,9 +2045,9 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   Home章节upsert MUST保留持久化回读及最新progress；仅在完整持久化payload一致时 MAY复用传入不可变记录的已准备manifest。实际metadata、页序或locator变化 MUST采用回读结果；不得新增scope级缓存或延迟authority提交。
   详情的来源章节准备在source fallback前 MUST先通过session hydrate已有exact source/comic/chapter的持久完整记录，再检查revision、已知pageCount与locator有效性；有效记录 MUST保留importedAt及最新进度，MUST NOT仅因紧凑Home占位投影重载来源。缺失、版本/页数变化或旧locator MUST继续来源加载。
   内存 store 仍按有限工作量让出 event turn，且不得跨让步持有 SQLite 事务；精确章节读取和显式原子备份保持原有窄路径与事务语义；
-  cache schema 22 MUST 保留 `artifact_replica(access_locator)` 索引，并为 source/comic/chapter/revision 与同源内容标识提供候选查询索引。
+  cache schema 23 MUST 保留 `artifact_replica(access_locator)` 索引，并为 source/comic/chapter/revision 与同源内容标识提供候选查询索引。
   候选关联 MAY使用持久整型引用以避免重复完整key，但 MUST返回原 binding 完整身份，MUST NOT据编号授予等价/正文权威；编号 MUST在SQLite绑定写事务内分配，upsert MUST保留原值，MUST NOT依赖后续rowid/VACUUM排布。21→22 MUST在同一迁移事务内保留原key/JSON、token与正文/replica事实并转换引用，失败 MUST整体回滚，MUST NOT重新解析旧locator、重放正文迁移或在启动追加VACUUM。
-  持久库20/21→22迁移 MUST离开UI isolate；20 MUST回填候选索引，21 MUST仅转换已有引用，短生命周期worker MUST拥有并关闭自身连接；同一index的open MUST单飞，完成前 MUST NOT开放读取，close MUST等待迁移真实退出。失败 MUST释放打开的连接并传播错误；当前schema重开 MUST NOT启动迁移worker，不得新增常驻writer或复制authority。
+  持久库20/21→23迁移 MUST离开UI isolate；20 MUST回填候选索引，21 MUST仅转换已有引用，短生命周期worker MUST拥有并关闭自身连接；同一index的open MUST单飞，完成前 MUST NOT开放读取，close MUST等待迁移真实退出。失败 MUST释放打开的连接并传播错误；22→23 MUST仅增加artifact引用索引与显式下载保留表；当前schema重开 MUST NOT启动迁移worker，不得新增常驻writer或复制authority。
   候选投影 MUST 与 binding 在同一事务维护，删除 MUST 撤销对应 token；升级 MAY 一次性回填，当前版本重开 MUST NOT 重放回填或改变 artifact/replica authority。URI候选token优化 MUST保留百分号路径解码、首个32–64位ASCII十六进制串、大小写归一及token顺序，MUST与已有持久索引兼容，不得据候选更改正文证明。
   SQLite scope/identity冷、热查询 MUST均按SQLite索引选择命中行，MUST NOT复制/过滤全库已解码CacheRec；index owner MAY复用与选中行快照一致的对象，让步期间mutation后 MUST仍保持该批次行内容一致。局部查询 MUST NOT为此加载全库，命中行复用/解码 MUST按行预算让步。冷持久化scope/identity大结果的SQL与解码 MUST由storage-owned只读worker执行；单scope/token的小结果 MAY在原连接读取，但 MUST同时限制行数与JSON字节。内存解码 MUST按行预算让步，不能只按scope/参数数量让步。canonical回填 MUST只查询已发布authority的exact章节，不得扫描无关清单；全局管理清单 MUST保持完整。
   缓存总量 SHOULD只读accounting字段，不解析READY完整DownloadId或预热全库；partial MUST按真实DownloadId归并历史键，旧空artifactId MUST沿用path归一化。热记录 MUST固定本次快照，计算 SHOULD按时间预算让步，close MUST等待已接纳读取。downloads MUST保留物理独有artifact去重、READY支配partial及既有entries语义；计数 MUST NOT授予正文/复用/删除authority或缩减全局管理清单。
@@ -2015,8 +2056,11 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   计数式及旧式混合Home摘要的下载/缓存投影 MUST NOT仅为计数构造完整manifest或空槽页面；SHOULD仅处理exact READY、已物化canonical坐标、已验证前驱binding和既存占位session涉及的页面。其余页只计总数，总字节未知 MUST保持null；exact/pin/reuse、session优先级、revision/count及canonical缺口 MUST保持。既存身份枚举 MUST为不创建session、不改变physical owner的只读快照。exact记录与有位置的canonical/proof/session槽位合并时 MUST由composition注入的library lookup读取当前章，核对source/comic/chapter/revision/count及pageId+URI并按真实index去重；MUST NOT把排序槽位、执行hint或同正文当页位置。空/纯exact摘要 MUST NOT补读，MUST NOT hydrate关联版本。缺少lookup能力 MUST拒绝混合统计；当前记录缺失或形状变化 MUST只保留exact计数直到刷新。
   `CacheScanner` 的 trace MUST 分开记录 `cacheScan.scanMicros` 和 `phaseMicros`；
   DB/live owner 已保护的 sidecar MAY 作为扫描提示免除冗余正文类型探测，但不得代替正文存在性、缺失 partial 校验或持久归属证明。
-- 设置 MUST 提供缓存上限（MB，默认 512，范围 64–8192）。该上限是用户对页面 artifact 容量策略的单一输入：持久 artifact 层按上限整理、回落到其 75% 目标；
-  response 目标保持固定小默认值。更新策略 MUST 只在下次维护/trim 生效，设置页 SHOULD 在应用后立即触发一次 trim 并刷新用量统计。
+- 设置 MUST 提供缓存上限（MB，默认 512，范围 64–8192）。该上限是用户对页面 artifact 容量策略的单一输入：仅自动页面正文受该上限约束，回收目标 MUST为上限减5%（最多64MiB）；下载保留、封面/响应 MUST分别显示，待删除占用 MUST在实际删除前仍计入页面占用。
+  response目标保持固定小默认值。持久owner MUST在策略初次配置2秒后异步检查、按750ms合并增长事件；维护 MUST单飞、MUST NOT加入Reader打开等待，close MUST取消timer并等待已接纳维护退出。
+  回收 MUST统一按物理正文/partial的LRU选择，共享正文 MUST取object/exact/canonical最新使用时间，并在事务中重验generation、保留状态与live busy后连同cleanup debt原子退休全部引用；版本映射 MUST保留。候选扫描 MUST分段读取标量，不得加载READY全库JSON或关联版本清单。文件数据库的全库候选查询 MUST在短生命周期只读isolate执行，timer/零延迟批次 MUST NOT替代该边界；关闭 MUST排空已接纳读取，退休权威 MUST保留在原owner事务。owner侧候选分类 MUST按4ms/64项预算让出事件轮次；未超限且未回收 MUST复用当前快照。
+  下载意图、实际阅读lease、writer/borrow及迁移owner MUST受到保护；每16项、64MiB或8ms MUST让步16ms，无可回收项 MUST等待增长或受阻占用释放，不得轮询空扫描。
+  schema23下载保留 MUST仅来自显式chapter意图和实际在途/暂停physical key；每页完成 MUST立即pin，完成后 MUST撤销chapter意图与physical key且仅保留真实页pin；暂停/失败 MUST保留，显式删除或成功覆盖旧owner MUST撤销。placement、普通版本映射和未打开版本 MUST NOT生成保留引用。
   上限 MUST NOT 改变 retained artwork 的显式失效规则或 response cache 身份。
 - 同一 request plan、DownloadSession、artifact 和 decode task MUST 按稳定 identity 合并；旧 epoch/revision 结果不得提交。
   ContentId、DownloadId 与 DecodeId 的新字符串 key MUST 使用长度 framing；
@@ -2116,9 +2160,10 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   已验证sealed source在metadata authority切换/退休前 MAY以`obsoleteSealedSource`记录旧locator+immutable length/checksum proof；
   mutable partial不得冒充sealed source，但跨locator replacement或cold retirement MAY以`obsoletePartialSource`冻结该次旧prefix generation的实际length+CRC32。
   partial cleanup proof MUST仅在退役边界计算，MUST NOT进入正常append/pause/checkpoint、resume validity或scheduler policy；
-  普通physical partial删除失败 MUST保留`PhysicalPartialRecord`直到body+sidecar清除。
-  任一obsolete debt跨进程删除前 MUST确认locator已不再被replica/partial/migration authority引用并重新证明当前bytes仍匹配记录proof；
-  路径被复用、内容改变或hot session重新接管旧path时 MUST保留新/活跃内容并撤销旧cleanup intent。
+  普通physical/legacy exact缓存partial退休 MUST保留原row直到body+sidecar清除，MUST NOT为删除计算CRC；跨locator replacement仍保留既有proof。
+  任一obsolete debt跨进程删除前 MUST确认locator已不再被replica/partial/migration authority引用。
+  普通自动缓存的Direct final locator MUST按缓存目录范围回收，登记与删除阶段 MUST NOT读取正文重验length/CRC；无authority的替换或损坏缓存 MAY删除。
+  其余sealed/partial locator MUST重新证明当前bytes仍匹配记录proof；路径被复用、内容改变或hot session接管时 MUST撤销旧cleanup intent。
   跨locator physical partial copy MUST NOT以较短失败staging覆盖较长旧prefix，
   legacy exact Direct→SAF若旧root不可安全检查 MUST fail closed。
   同一 App-private download metadata DB MUST先取得 absolute index path 的进程内 owner 与 OS exclusive file lock，再允许 SQLite open、dirty recovery、promotion recovery 或 SAF manifest recovery；live second owner MUST fail closed。
@@ -2127,6 +2172,7 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
   schema9 migration `copying` temp MUST保留用于resume，只有当前可访问的`cleanupPending` MAY由同一异步drainer复用既有cleanup。
   用户下载目录（无论是外部 POSIX 还是 SAF 树）中的漫画文件 MUST 采用结构化目录和 1-based 页文件名。
   Android SAF路径解析 MAY缓存exact provider document id及按父document-id划分的children listing，但这些缓存只作加速：
+  exact hint存在时，存在性检查 SHOULD先查询该document，成功后 MUST NOT重复枚举兄弟目录；hint无结果 MUST先失效目标父目录并回退解析，权限错误 MUST保留为failure。
   App自身create/delete/rename/replace成功后 MUST只失效受影响父目录listing，失败且未发生mutation不得整tree打冷；
   stale exact read MUST先做父目录级恢复，仅当scoped recovery仍失败或provider无法提供必要document id时 MAY整tree fallback。结构化页默认优先使用：
   默认优先使用 `[cleanComicTitle]/[cleanChapterTitle]/[001.ext]`，且漫画根目录 MUST 绑定 exact `(sourceId, comicId)` owner；
@@ -2270,6 +2316,10 @@ GIF codec `getNextFrame()` MUST由单一串行fetch拥有；pause/resume MUST NO
 
 ## 10. 插件与来源
 
+- 扩展仓库 MUST 支持多个HTTPS索引、可选名称和独立启用状态，按格式+精确索引保存、备份和同步；旧记录缺名称 MUST 继续可读，名称 MUST NOT 改变身份。编辑地址 MUST 在预验重复/容量后一次提交旧地址删除标记与保留开关的新记录；删除 MUST 保留独立版本的标记。批次 MUST 在任何owner修改前检查容量。
+- 仓库页 MUST 从右上角进入仓库管理，支持添加、编辑名称/完整索引、启用和移除。列表地址 SHOULD 缩为域名；GitHub等共享托管域名 MUST 展示owner/repo，未命名时以归属或域名作标题，同仓库多索引 MUST 补短路径。名称可留空、最长120字，保存前校验HTTPS索引；取消 MUST 不修改配置。改名 MUST NOT 触发目录查询；启用索引变化 MUST 拒绝旧目录结果并在返回后重载，MUST NOT 按域名合并仓库。
+- 仓库目录进度 MUST在索引查询完成后结束；设备扫描 MUST复用设备刷新进度，并在扫描期间合并后续请求，单插件执行进度 MUST按插件身份显示。
+- MUST 只读取已启用仓库，关闭仓库 MUST NOT 改变已安装插件启用状态。跨仓库同名插件 MAY 选较新版本，但 MUST 保留实际条目的索引来源；更新 MUST 仍绑定安装索引且仅在其启用时提供，配置恢复 MUST NOT 自动安装或信任插件；旧精确索引的首次迁移观察 MUST NOT 作为新编辑覆盖已有云端开关/删除。Release默认地址保持为空。
 - 插件 MUST 在隔离、信任和权限门禁内执行，只返回 catalog 数据、request plan 或显式有界 transform 结果。
 - runtime adapter MUST独立校验实际响应的 `maxResponseBytes`，不得仅信任backend声明。字符串键和值的预算按UTF-8计数，合法surrogate pair为4字节、孤立surrogate按U+FFFD为3字节；计数 MUST NOT物化完整encoded bytes，depth/type与binary/scalar合同保持。
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；
@@ -2411,6 +2461,7 @@ Android来源正文阶段系统采集 MUST仅观测原client、stream与claim，
 
 ## 12. 测试与发布
 
+- GitHub beta 构建 MUST 从 main 显式触发，并等待同次 Flutter、Rust、Android 原生构建门禁成功；发布资产 MUST 来自该次源码构建，不得以本地 APK 冒充。签名 MUST 保持既有安装升级身份，私钥 MUST 仅通过仓库 secret 提供并在 runner 结束清理。资产 MUST 核对 package/version、非调试模式、单 ABI 和证书，附 SHA-256；草稿资产独立验收后才公开。
 - owner test MUST 位于实现所属 package；App 测试不得导入低层 `src/` 或重复低层算法。
 - 异步测试 MUST 使用可控 Future、状态对象或稳定 key，不得固定 pump 猜测完成。
 - quarantine MUST 有稳定 ID、原因、仍运行的 owner 覆盖和解除条件。

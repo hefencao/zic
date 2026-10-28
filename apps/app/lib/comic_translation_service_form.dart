@@ -39,7 +39,8 @@ final class ComicTranslationServiceDraft {
 
   bool get remote => backend == 'openaiCompatible' || backend == 'deepl';
   bool get hasSavedKey => _pendingKeys[profileId] != '' &&
-      ComicTranslationSecrets.instance.hasApiKey(profileId);
+      ComicTranslationSecrets.instance.hasApiKey(profileId) &&
+      ComicTranslationSettings.instance.permitsCredentialService(profileId, backend, endpoint.text);
 
   ComicTranslationRemoteProfile _profile() => ComicTranslationRemoteProfile(
     id: profileId, backend: backend, name: name.text.trim(), endpoint: endpoint.text.trim(),
@@ -134,6 +135,11 @@ final class ComicTranslationServiceDraft {
     }
     for (final entry in _pendingKeys.entries) {
       await ComicTranslationSecrets.instance.setApiKey(entry.key, entry.value);
+      final profile = profiles.where((profile) => profile.id == entry.key).firstOrNull;
+      if (entry.value.trim().isNotEmpty && profile != null) {
+        ComicTranslationSettings.instance.approveCredentialService(
+          profile.id, profile.backend, profile.endpoint);
+      }
     }
     ComicTranslationSettings.instance.values.addAll({
       'comicTranslationBackend': backend,

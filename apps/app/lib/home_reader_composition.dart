@@ -369,7 +369,9 @@ final class HomeReaderChapterComposition {
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
     const byteProbeMs = 0;
     final readerManifest = current.chapter.toManifest();
-    final localAuthorityPrewarm = _downloadComposition()?.transferRuntime;
+    final downloadComposition = _downloadComposition();
+    downloadComposition?.artifactStore.rememberLocalRecoveryChapter(current);
+    final localAuthorityPrewarm = downloadComposition?.transferRuntime;
     var localAuthorityPrewarmStarted = false;
     if (localAuthorityPrewarm != null && readerManifest.pages.isNotEmpty) {
       final rawInitialPageIndex = (resolvedInitialPageIndex ??

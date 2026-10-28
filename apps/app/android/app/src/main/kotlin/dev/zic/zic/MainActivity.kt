@@ -1049,6 +1049,25 @@ class MainActivity : FlutterActivity() {
         val relativePath = call.argument<String>("relativePath") ?: ""
         if (!isSafeRelativePath(relativePath, allowRoot = true)) return false
         if (relativePath.isEmpty()) return safTreeRoot(treeUri) != null
+        val cachedDocumentId = cachedSafExactDocumentId(treeUri, relativePath)
+        if (cachedDocumentId != null) {
+            val uri = DocumentsContract.buildDocumentUriUsingTree(
+                Uri.parse(treeUri),
+                cachedDocumentId,
+            )
+            // The locator is only a hint. Confirm this document with the
+            // provider instead of enumerating every sibling of an open file.
+            val exists = try {
+                contentResolver.query(uri,
+                    arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                    null, null, null)?.use { it.moveToFirst() } == true
+            } catch (_: java.io.FileNotFoundException) {
+                false
+            }
+            if (exists) return true
+            forgetSafExactLocator(treeUri, relativePath)
+            invalidateSafReadParentListing(treeUri, relativePath)
+        }
         return resolveReadUri(treeUri, relativePath) != null
     }
 
@@ -1276,6 +1295,15 @@ class MainActivity : FlutterActivity() {
             result.success(
                 if (treeUri.isNullOrEmpty()) null else directPathForSafTree(treeUri),
             )
+            return
+        }
+        if (method == "safTreeGrantStatus") {
+            val treeUri = Uri.parse(requireNotNull(call.argument<String>("treeUri")))
+            val grants = contentResolver.persistedUriPermissions.filter { it.uri == treeUri }
+            result.success(mapOf(
+                "read" to grants.any { it.isReadPermission },
+                "write" to grants.any { it.isWritePermission },
+            ))
             return
         }
         if (method == "createDirectProbeFileExclusive") {
@@ -1576,6 +1604,18 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun persistDirectoryReadGrant(uri: Uri, resultFlags: Int) {
+        val takeFlags = resultFlags and
+            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        if (takeFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION == 0) {
+            throw SecurityException("directory picker did not grant read access")
+        }
+        contentResolver.takePersistableUriPermission(uri, takeFlags)
+        if (contentResolver.persistedUriPermissions.none { it.uri == uri && it.isReadPermission }) {
+            throw SecurityException("directory read grant was not persisted")
+        }
+    }
+
     @Deprecated("Deprecated in Android")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == DOWNLOAD_PICK_REQUEST) {
@@ -1588,13 +1628,11 @@ class MainActivity : FlutterActivity() {
                 return
             }
             try {
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
+                persistDirectoryReadGrant(uri, data?.flags ?: 0)
             } catch (error: Throwable) {
                 Log.w(TAG, "persistable uri permission failed", error)
+                pending.error("download-pick-permission-failed", "无法保存目录访问授权，请重新选择目录", null)
+                return
             }
             pending.success(uri.toString())
             return

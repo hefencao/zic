@@ -8,6 +8,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:network_bridge/network_bridge.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
@@ -281,12 +282,21 @@ void main() {
     final semantics = tester.ensureSemantics();
     try {
       final changes = <ComicSourcePreference>[];
+      final openedSettings = <String>[];
       await tester.pumpWidget(
         MaterialApp(
           home: SourceManagementScreen(
             sources: <BrowsableComicSource>[source],
             preferences: const <String, ComicSourcePreference>{},
             onPreferenceChanged: (value) async { changes.add(value); },
+            onOpenSourceSettings: (value) async {
+              openedSettings.add(value.sourceId);
+              await openComicSourceSettings(
+                tester.element(find.byType(SourceManagementScreen)),
+                source: value,
+                networkBridge: const AndroidNetworkBridge(),
+              );
+            },
             appPreferences: preferences,
           ),
         ),
@@ -303,6 +313,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('操作来源 属性'), findsOneWidget);
       expect(source.settingsLoads, 1);
+      expect(openedSettings, [source.sourceId]);
       expect(changes, isEmpty);
       await tester.pageBack();
       await tester.pumpAndSettle();
@@ -2029,6 +2040,8 @@ void main() {
 
   testWidgets('detail separates source categories tags and shelf categories',
       (tester) async {
+    await tester.binding.setSurfaceSize(const Size(500, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final source = _FixtureSource(
       'mihon:metadata',
       '元数据源',
@@ -2038,6 +2051,10 @@ void main() {
         'genre:Romance',
         'author:重复作者',
         'language:Korean',
+        'genre:Adventure',
+        'genre:Slice of life',
+        'genre:Fantasy',
+        'genre:Historical',
       ],
     );
     final category = LibraryCategory(
@@ -2055,9 +2072,11 @@ void main() {
       preference: ComicPreference.defaults(
         sourceId: source.sourceId,
         comicId: source._comicId,
-      ),
+      ).copyWith(inShelf: false, liked: true,
+          categoryIds: const <String>{'retained-unlisted'}),
     );
     var webViewOpens = 0;
+    final preferenceWrites = <ComicPreference>[];
 
     await tester.pumpWidget(
       MaterialApp(
@@ -2072,7 +2091,12 @@ void main() {
             coverUri: source._comic.coverUri,
           ),
           initialLibrary: library,
-          categories: <LibraryCategory>[category],
+          categories: <LibraryCategory>[
+            category,
+            for (var index = 1; index <= 6; index++)
+              LibraryCategory(categoryId: 'extra-$index', name: '分类$index',
+                sortOrder: index, createdAt: DateTime.utc(2026, 10, 27)),
+          ],
           loadCover: ({
             required String sourceId,
             required String comicId,
@@ -2093,7 +2117,7 @@ void main() {
           ensureSourceChapter: (_, __, ___) async =>
               throw StateError('chapter should not open'),
           persistComic: (_, __) async {},
-          onPreferenceChanged: (_) async {},
+          onPreferenceChanged: (value) async => preferenceWrites.add(value),
           onReadChanged: (_, __) async {},
           onOpenChapter: (
             _, {
@@ -2114,14 +2138,79 @@ void main() {
     );
 
     await _pumpUntilFound(tester, find.text('来源分类'));
+    await tester.pumpAndSettle();
     expect(find.text('Webtoon'), findsOneWidget);
-    expect(find.text('标签'), findsNothing);
+    expect(find.text('漫画标签'), findsNothing);
+    expect(find.byTooltip('展开漫画标签'), findsOneWidget);
+    expect(tester.getCenter(find.byTooltip('展开漫画标签')).dx, closeTo(250, 0.5));
     expect(find.text('Romance'), findsOneWidget);
     expect(find.text('language：Korean'), findsOneWidget);
-    expect(find.text('书架分类'), findsOneWidget);
-    expect(find.text('收藏分类'), findsOneWidget);
+    expect(find.text('书架分类'), findsNothing);
+    expect(find.text('收藏分类'), findsNothing);
+    expect(find.text('简介'), findsNothing);
     expect(find.textContaining('重复作者'), findsNothing);
     expect(find.byKey(details.comicDetailsRetryBodyKey), findsNothing);
+
+    final chapterCount = find.byKey(details.comicDetailsChapterCountKey);
+    final foldedY = tester.getTopLeft(chapterCount).dy;
+    await tester.tap(find.byTooltip('展开漫画标签'));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(chapterCount).dy, greaterThan(foldedY));
+    expect(tester.getCenter(find.byTooltip('收起漫画标签')).dx, closeTo(250, 0.5));
+    await tester.tap(find.byTooltip('收起漫画标签'));
+    await tester.pumpAndSettle();
+
+    final collect = find.byKey(details.comicDetailsCollectedKey);
+    await tester.longPress(collect);
+    await tester.pumpAndSettle();
+    expect(find.byType(FilterChip), findsNothing);
+    expect(preferenceWrites, isEmpty);
+    final shelf = find.byKey(details.comicDetailsShelfKey);
+    await tester.longPress(shelf);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收藏分类'));
+    expect(preferenceWrites, isEmpty);
+    await tester.tap(find.byTooltip('下一组分类'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('分类6'));
+    await tester.tap(find.byTooltip('上一组分类'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilterChip>(find.widgetWithText(FilterChip, '收藏分类')).selected, isTrue);
+    await tester.tapAt(const Offset(8, 980));
+    await tester.pumpAndSettle();
+    expect(preferenceWrites, isEmpty);
+    await tester.longPress(shelf);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilterChip>(find.widgetWithText(FilterChip, '收藏分类')).selected, isFalse);
+    await tester.tap(find.byTooltip('保存分类'));
+    await tester.pumpAndSettle();
+    expect(preferenceWrites, hasLength(1));
+    expect(preferenceWrites.single.categoryIds, <String>{'retained-unlisted'});
+    expect(preferenceWrites.single.inShelf, isTrue);
+    expect(preferenceWrites.single.liked, isTrue);
+    expect(preferenceWrites.single.collected, isFalse);
+    await tester.longPress(shelf);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('收藏分类'));
+    await tester.tap(find.byTooltip('保存分类'));
+    await tester.pumpAndSettle();
+    expect(preferenceWrites, hasLength(2));
+    expect(preferenceWrites.last.categoryIds, <String>{'favorites', 'retained-unlisted'});
+    expect(preferenceWrites.last.inShelf, isTrue);
+    expect(preferenceWrites.last.liked, isTrue);
+    expect(preferenceWrites.last.collected, isFalse);
+    await tester.longPress(shelf);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('保存分类'));
+    await tester.pumpAndSettle();
+    expect(preferenceWrites, hasLength(2));
+    await tester.longPress(shelf);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilterChip>(find.widgetWithText(FilterChip, '收藏分类')).selected, isTrue);
+    await tester.tap(find.text('收藏分类'));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(preferenceWrites, hasLength(2));
 
     final chapterRow = find.byKey(
       details.comicDetailsChapterKey(source.sourceId, source._chapterId),
@@ -2344,8 +2433,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewKey));
-    expect(find.byKey(details.comicDetailsCommentsKey), findsOneWidget);
     expect(find.text('预览'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(details.comicDetailsCommentsKey),
+      -240,
+      scrollable: find.descendant(
+        of: find.byKey(details.remoteComicDetailsScreenKey),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
     expect(find.text('评论'), findsOneWidget);
 
     await _tapVisible(tester, find.text('查看全部'));

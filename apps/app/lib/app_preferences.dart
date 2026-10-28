@@ -8,6 +8,7 @@ import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 
 import 'debug_trace_export_destination.dart';
+import 'extension_repositories.dart';
 
 enum ShelfSourceFilter { all, local, remote }
 
@@ -170,6 +171,64 @@ String comicVersionNoticeIdentity(
 final class AppPreferencesController extends ChangeNotifier {
   AppPreferencesController();
 
+  final Map<String, ({Map<String, Object?>? data, int time})> _extensionRepositories = {};
+  Map<String, Map<String, Object?>?> get extensionRepositoryRecords => {
+    for (final entry in _extensionRepositories.entries)
+      entry.key: entry.value.data == null ? null : Map<String, Object?>.of(entry.value.data!),
+  };
+  Map<String, int> get extensionRepositoryTimes => {
+    for (final entry in _extensionRepositories.entries) entry.key: entry.value.time,
+  };
+  List<ExtensionRepository> get extensionRepositories => [
+    for (final entry in _extensionRepositories.entries)
+      if (entry.value.data != null) ExtensionRepository.parse(entry.key, entry.value.data),
+  ];
+
+  void setExtensionRepository(ExtensionRepository repository) => applyExtensionRepository(
+    repository.identity, repository.data,
+    modifiedAt: DateTime.now().toUtc().microsecondsSinceEpoch);
+
+  void replaceExtensionRepository(ExtensionRepository previous, ExtensionRepository updated) {
+    ExtensionRepository.parse(updated.identity, updated.data);
+    if (_disposed) return;
+    if (previous.format != updated.format) throw const FormatException('仓库类型不能修改');
+    if (_extensionRepositories[previous.identity]?.data == null) {
+      throw const FormatException('仓库已被移除，请重新添加');
+    }
+    if (previous.identity != updated.identity &&
+        _extensionRepositories[updated.identity]?.data != null) {
+      throw const FormatException('该仓库地址已存在');
+    }
+    validateExtensionRepositoryCapacity([updated.identity]);
+    var time = DateTime.now().toUtc().microsecondsSinceEpoch;
+    for (final identity in {previous.identity, updated.identity}) {
+      final existing = _extensionRepositories[identity]?.time ?? 0;
+      if (existing >= time) time = existing + 1;
+    }
+    if (previous.identity != updated.identity) {
+      _extensionRepositories[previous.identity] = (data: null, time: time);
+    }
+    _extensionRepositories[updated.identity] = (data: updated.data, time: time);
+    _changed();
+  }
+
+  void removeExtensionRepository(ExtensionRepository repository) => applyExtensionRepository(
+    repository.identity, null, modifiedAt: DateTime.now().toUtc().microsecondsSinceEpoch);
+
+  void applyExtensionRepository(String identity, Map<String, Object?>? data, {required int modifiedAt}) {
+    ExtensionRepository.parse(identity, data);
+    if (_disposed) return;
+    validateExtensionRepositoryCapacity([identity]);
+    _extensionRepositories[identity] = (data: data == null ? null : Map.of(data), time: modifiedAt);
+    _changed();
+  }
+
+  void validateExtensionRepositoryCapacity(Iterable<String> identities) {
+    if ({..._extensionRepositories.keys, ...identities}.length > 256) {
+      throw const FormatException('最多保存 256 个仓库记录');
+    }
+  }
+
   final ChangeNotifier _themeChanges = ChangeNotifier();
   ThemeMode _themeMode = ThemeMode.dark;
   bool _amoledDarkTheme = false;
@@ -202,6 +261,8 @@ final class AppPreferencesController extends ChangeNotifier {
   String _networkUserAgent = defaultNetworkUserAgent;
   String _debugTraceExportDirectory = defaultDebugTraceExportDirectory;
   String? _chapterDownloadDirectoryOverride;
+  String? _downloadAccessPreference;
+  bool _downloadDirectorySetupRequired = false;
   String? _chapterDownloadDirectoryPendingMoveFrom;
   String? _chapterDownloadDirectoryPendingMoveProtocol;
   int _cacheLimitMb = defaultCacheLimitMb;
@@ -220,6 +281,7 @@ final class AppPreferencesController extends ChangeNotifier {
   Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
       <String, ComicReaderSettings>{};
+  Map<String, int> _syncReadingTimes = <String, int>{};
   Future<void> Function(Map<String, Object?> values)? _write;
   Future<void> _writeTail = Future<void>.value();
   int _revision = 0;
@@ -280,6 +342,34 @@ final class AppPreferencesController extends ChangeNotifier {
   /// moves files by itself.
   String? get chapterDownloadDirectoryOverride =>
       _chapterDownloadDirectoryOverride;
+
+  /// Access choice is portable; paths and Android grants belong to this device.
+  String get downloadAccessPreference => _downloadAccessPreference ??
+      (_chapterDownloadDirectoryOverride == null ? 'app' :
+        _chapterDownloadDirectoryOverride!.startsWith('saf://') ? 'saf' : 'direct');
+  bool get downloadDirectorySetupRequired => _downloadDirectorySetupRequired;
+
+  void requireDownloadDirectorySetup() {
+    if (_disposed || _downloadDirectorySetupRequired) return;
+    _downloadDirectorySetupRequired = true;
+    _changed();
+  }
+
+  void restoreDownloadAccessPreference(String value) {
+    if (!{'app', 'saf', 'direct'}.contains(value)) throw const FormatException('无效的下载访问方式');
+    if (_disposed || downloadAccessPreference == value) return;
+    _downloadAccessPreference = value;
+    _downloadDirectorySetupRequired = true;
+    _changed();
+  }
+
+  void confirmDownloadDirectorySetup({String? access}) {
+    if (_disposed) return;
+    _downloadAccessPreference = access ?? (_chapterDownloadDirectoryOverride == null ? 'app' :
+        _chapterDownloadDirectoryOverride!.startsWith('saf://') ? 'saf' : 'direct');
+    _downloadDirectorySetupRequired = false;
+    _changed();
+  }
 
   /// Source directory of a chapter-download move that has not been confirmed
   /// complete yet. [chapterDownloadDirectoryPendingMoveProtocol] determines
@@ -385,6 +475,19 @@ final class AppPreferencesController extends ChangeNotifier {
       _attached = true;
       notifyListeners();
       return;
+    }
+    final repositories = values['extensionRepositories'];
+    if (repositories is Map && repositories.length <= 256) {
+      for (final entry in repositories.entries) {
+        try {
+          final identity = entry.key as String;
+          final raw = entry.value as Map;
+          final data = raw['data'] == null ? null : Map<String, Object?>.from(raw['data'] as Map);
+          final time = raw['time'] as int;
+          ExtensionRepository.parse(identity, data);
+          if (time >= 0) _extensionRepositories[identity] = (data: data, time: time);
+        } on Object { /* Ignore only the malformed local entry. */ }
+      }
     }
     final priorThemeMode = _themeMode;
     final priorAmoledDarkTheme = _amoledDarkTheme;
@@ -531,6 +634,9 @@ final class AppPreferencesController extends ChangeNotifier {
     _chapterDownloadDirectoryOverride = _nullableTrimmedString(
       values['chapterDownloadDirectoryOverride'],
     );
+    final downloadAccess = values['downloadAccessPreference'];
+    _downloadAccessPreference = {'app', 'saf', 'direct'}.contains(downloadAccess) ? downloadAccess as String : null;
+    _downloadDirectorySetupRequired = values['downloadDirectorySetupRequired'] == true;
     _chapterDownloadDirectoryPendingMoveFrom = _nullableTrimmedString(
       values['chapterDownloadDirectoryPendingMoveFrom'],
     );
@@ -582,6 +688,16 @@ final class AppPreferencesController extends ChangeNotifier {
     _comicReaderSettings = _decodeComicReaderSettings(
       values['comicReaderSettings'],
     );
+    final syncTimes = values['syncReadingTimes'];
+    if (syncTimes is Map) {
+      _syncReadingTimes = <String, int>{
+        for (final entry in syncTimes.entries)
+          if (entry.key is String && entry.value is int &&
+              (entry.value as int) >= 0)
+            entry.key as String: entry.value as int,
+      };
+      _trimReadingTimes();
+    }
     if (!_disposed) {
       _attached = true;
       if (_themeMode != priorThemeMode ||
@@ -714,13 +830,13 @@ final class AppPreferencesController extends ChangeNotifier {
   void setDefaultReaderMode(ReaderMode value) {
     if (_disposed || _defaultReaderMode == value) return;
     _defaultReaderMode = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setReaderStartsImmersive(bool value) {
     if (_disposed || _readerStartsImmersive == value) return;
     _readerStartsImmersive = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setReaderPagedDirectionPreference(
@@ -728,25 +844,25 @@ final class AppPreferencesController extends ChangeNotifier {
   ) {
     if (_disposed || _readerPagedDirectionPreference == value) return;
     _readerPagedDirectionPreference = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setSystemStatusBarMode(ReaderSystemStatusBarMode value) {
     if (_disposed || _systemStatusBarMode == value) return;
     _systemStatusBarMode = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setAdaptiveReaderEnabled(bool value) {
     if (_disposed || _adaptiveReaderEnabled == value) return;
     _adaptiveReaderEnabled = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setDefaultVerticalStitch(bool value) {
     if (_disposed || _defaultVerticalStitch == value) return;
     _defaultVerticalStitch = value;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setReaderModeSettings(ReaderMode mode, ReaderModeSettings value) {
@@ -758,14 +874,14 @@ final class AppPreferencesController extends ChangeNotifier {
       if (_pagedReaderSettings == value) return;
       _pagedReaderSettings = value;
     }
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setDetailsPreviewMaxItemsPerRow(int value) {
     final normalized = value.clamp(1, 8).toInt();
     if (_disposed || _detailsPreviewMaxItemsPerRow == normalized) return;
     _detailsPreviewMaxItemsPerRow = normalized;
-    _changed();
+    _readingChanged('reader:global');
   }
 
   void setNetworkUserAgent(String value) {
@@ -1060,10 +1176,12 @@ final class AppPreferencesController extends ChangeNotifier {
       identity: settings,
     };
     while (next.length > 512) {
-      next.remove(next.keys.first);
+      final evicted = next.keys.first;
+      next.remove(evicted);
+      _syncReadingTimes.remove('reader:' + evicted);
     }
     _comicReaderSettings = next;
-    _changed();
+    _readingChanged('reader:' + identity);
   }
 
   void clearComicReaderSettings(String sourceId, String comicId) {
@@ -1073,10 +1191,199 @@ final class AppPreferencesController extends ChangeNotifier {
     _comicReaderSettings = <String, ComicReaderSettings>{
       ..._comicReaderSettings,
     }..remove(identity);
-    _changed();
+    _readingChanged('reader:' + identity);
   }
 
   Future<void> flush() => _writeTail;
+
+  /// User choices that are meaningful on another device. Storage paths,
+  /// diagnostics, resource budgets and learned/search state remain local.
+  Map<String, Object?> readPortableSettings() => <String, Object?>{
+    'themeMode': _themeMode.name,
+    'amoledDarkTheme': _amoledDarkTheme,
+    'shelfSaveFilters': _shelfSaveFilters,
+    'shelfSourceFilter': (_shelfSaveFilters ? _shelfSourceFilter : ShelfSourceFilter.all).name,
+    'shelfCategoryId': _shelfSaveFilters ? _shelfCategoryId : null,
+    'shelfPluginSourceIds': _shelfSaveFilters ? (_shelfPluginSourceIds.toList()..sort()) : <String>[],
+    'shelfSortMode': _shelfSortMode.name,
+    'shelfView': _shelfView.name,
+    'shelfShowAllCategory': _shelfShowAllCategory,
+    'shelfPluginFilterExpanded': _shelfPluginFilterExpanded,
+    'homeHistoryLayout': _homeHistoryLayout.name,
+    'homeHistoryColumns': _homeHistoryColumns,
+    'homeHistoryRows': _homeHistoryRows,
+    'networkUserAgent': _networkUserAgent,
+    'cachedCarrierTrustMode': _cachedCarrierTrustMode.name,
+    'trustConflictingHistoricalCarriersByDefault': _trustConflictingHistoricalCarriersByDefault,
+    'pluginTrustConflictingHistoricalCarriers': Map<String, bool>.of(_pluginTrustConflictingHistoricalCarriers),
+    'sourceTrustConflictingHistoricalCarriers': Map<String, bool>.of(_sourceTrustConflictingHistoricalCarriers),
+    'sourceAdaptiveWebtoonConfidences': Map<String, double>.of(_sourceAdaptiveWebtoonConfidences),
+  };
+
+  static void validatePortableSettings(Map<String, Object?> data) {
+    final candidate = AppPreferencesController();
+    try {
+      if (!setEquals(data.keys.toSet(), candidate.readPortableSettings().keys.toSet())) {
+        throw const FormatException('无效的应用设置');
+      }
+      candidate._applyPortableSettings(data);
+      if (!_sameSyncSetting(candidate.readPortableSettings(), data)) {
+        throw const FormatException('无效的应用设置');
+      }
+    } finally {
+      candidate.dispose();
+    }
+  }
+
+  void applyPortableSettings(Map<String, Object?> data) {
+    validatePortableSettings(data);
+    _applyPortableSettings(data);
+  }
+
+  void _applyPortableSettings(Map<String, Object?> data) {
+    setThemeMode(ThemeMode.values.byName(data['themeMode']! as String));
+    setAmoledDarkTheme(data['amoledDarkTheme']! as bool);
+    setShelfSaveFilters(data['shelfSaveFilters']! as bool);
+    setShelfSourceFilter(ShelfSourceFilter.values.byName(data['shelfSourceFilter']! as String));
+    setShelfCategoryId(data['shelfCategoryId'] as String?);
+    setShelfPluginSourceIds((data['shelfPluginSourceIds']! as List).cast<String>());
+    setShelfSortMode(LibrarySortMode.values.byName(data['shelfSortMode']! as String));
+    setShelfView(ShelfViewPreference.values.byName(data['shelfView']! as String));
+    setShelfShowAllCategory(data['shelfShowAllCategory']! as bool);
+    setShelfPluginFilterExpanded(data['shelfPluginFilterExpanded']! as bool);
+    setHomeHistoryLayout(HomeHistoryLayout.values.byName(data['homeHistoryLayout']! as String));
+    setHomeHistoryColumns(data['homeHistoryColumns']! as int);
+    setHomeHistoryRows(data['homeHistoryRows']! as int);
+    setNetworkUserAgent(data['networkUserAgent']! as String);
+    setCachedCarrierTrustMode(CachedCarrierTrustMode.values.byName(data['cachedCarrierTrustMode']! as String));
+    setTrustConflictingHistoricalCarriersByDefault(data['trustConflictingHistoricalCarriersByDefault']! as bool);
+    final plugins = Map<String, bool>.from(data['pluginTrustConflictingHistoricalCarriers']! as Map);
+    final sources = Map<String, bool>.from(data['sourceTrustConflictingHistoricalCarriers']! as Map);
+    final confidences = Map<String, double>.from(data['sourceAdaptiveWebtoonConfidences']! as Map);
+    if (plugins.keys.any((key) => key.trim().isEmpty) ||
+        sources.keys.any((key) => key.trim().isEmpty) ||
+        confidences.entries.any((entry) => entry.key.trim().isEmpty ||
+          !entry.value.isFinite || entry.value < 0 || entry.value > 1) ||
+        plugins.length > 5000 || sources.length > 5000 || confidences.length > 5000) {
+      throw const FormatException('无效的漫画源设置');
+    }
+    _pluginTrustConflictingHistoricalCarriers = plugins;
+    _sourceTrustConflictingHistoricalCarriers = sources;
+    _sourceAdaptiveWebtoonConfidences = confidences;
+    _changed();
+  }
+
+  /// Portable reading choices; paths, network/source state and credentials stay
+  /// with their original device owners.
+  Map<String, Object?> readSyncReadingSettings() => <String, Object?>{
+    'reader:global': <String, Object?>{
+      'defaultReaderMode': _defaultReaderMode.name,
+      'readerStartsImmersive': _readerStartsImmersive,
+      'readerPagedDirectionPreference': _readerPagedDirectionPreference.name,
+      'systemStatusBarMode': _systemStatusBarMode.name,
+      'adaptiveReaderEnabled': _adaptiveReaderEnabled,
+      'defaultVerticalStitch': _defaultVerticalStitch,
+      'readerModeSettings': <String, Object?>{
+        'paged': _encodeReaderModeSettings(_pagedReaderSettings),
+        'continuous': _encodeReaderModeSettings(_continuousReaderSettings),
+      },
+      'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
+    },
+    for (final entry in _comicReaderSettings.entries)
+      'reader:' + entry.key: entry.value.toJson(),
+  };
+
+  static void validateSyncReadingSettings(String identity, Map<String, Object?> data) {
+    if (identity != 'global') {
+      if (!_sameSyncSetting(data, ComicReaderSettings.fromJson(data).toJson())) {
+        throw const FormatException('无效的漫画阅读设置');
+      }
+      return;
+    }
+    if (!setEquals(data.keys.toSet(), <String>{
+      'defaultReaderMode', 'readerStartsImmersive', 'readerPagedDirectionPreference',
+      'systemStatusBarMode', 'adaptiveReaderEnabled', 'defaultVerticalStitch',
+      'readerModeSettings', 'detailsPreviewMaxItemsPerRow',
+    })) throw const FormatException('无效的同步阅读设置');
+    ReaderMode.values.byName(data['defaultReaderMode']! as String);
+    ReaderPagedDirectionPreference.values.byName(
+      data['readerPagedDirectionPreference']! as String);
+    ReaderSystemStatusBarMode.values.byName(data['systemStatusBarMode']! as String);
+    for (final key in <String>[
+      'readerStartsImmersive', 'adaptiveReaderEnabled', 'defaultVerticalStitch',
+    ]) {
+      if (data[key] is! bool) throw const FormatException('无效的同步阅读设置');
+    }
+    final count = data['detailsPreviewMaxItemsPerRow'];
+    final modes = data['readerModeSettings'];
+    if (count is! int || count < 1 || count > 8 ||
+        modes is! Map || modes['paged'] is! Map || modes['continuous'] is! Map) {
+      throw const FormatException('无效的同步阅读设置');
+    }
+    if (!_sameSyncSetting(modes, <String, Object?>{
+      'paged': _encodeReaderModeSettings(_decodeReaderModeSettings(
+        modes['paged'], const ReaderModeSettings())),
+      'continuous': _encodeReaderModeSettings(_decodeReaderModeSettings(
+        modes['continuous'], const ReaderModeSettings.continuousDefaults())),
+    })) throw const FormatException('无效的同步点击或阅读设置');
+  }
+
+  Map<String, int> get syncReadingTimes => Map<String, int>.unmodifiable(_syncReadingTimes);
+
+  Map<String, Object?>? readSyncReadingSetting(String key) => key == 'reader:global'
+      ? readSyncReadingSettings()[key]! as Map<String, Object?>
+      : _comicReaderSettings[key.substring('reader:'.length)]?.toJson();
+
+  void _readingChanged(String key) {
+    _syncReadingTimes.remove(key);
+    _syncReadingTimes[key] = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _trimReadingTimes();
+    _changed();
+  }
+
+  void _trimReadingTimes() {
+    while (_syncReadingTimes.length > 1024) {
+      _syncReadingTimes.remove(_syncReadingTimes.keys.firstWhere(
+        (key) => key != 'reader:global'));
+    }
+  }
+
+  void applySyncReadingSettings(
+    String identity, Map<String, Object?>? data, {required int modifiedAt}
+  ) {
+    if (_disposed) return;
+    if (identity != 'global') {
+      final parts = identity.split('\u0000');
+      if (parts.length != 2) throw const FormatException('无效的漫画阅读设置标识');
+      if (data == null) {
+        clearComicReaderSettings(parts[0], parts[1]);
+      } else {
+        validateSyncReadingSettings(identity, data);
+        setComicReaderSettings(parts[0], parts[1], ComicReaderSettings.fromJson(data));
+      }
+      _syncReadingTimes['reader:' + identity] = modifiedAt;
+      _trimReadingTimes();
+      return;
+    }
+    if (data == null) return;
+    validateSyncReadingSettings(identity, data);
+    _defaultReaderMode = ReaderMode.values.byName(data['defaultReaderMode']! as String);
+    _readerStartsImmersive = data['readerStartsImmersive']! as bool;
+    _readerPagedDirectionPreference = ReaderPagedDirectionPreference.values.byName(
+      data['readerPagedDirectionPreference']! as String);
+    _systemStatusBarMode = ReaderSystemStatusBarMode.values.byName(
+      data['systemStatusBarMode']! as String);
+    _adaptiveReaderEnabled = data['adaptiveReaderEnabled']! as bool;
+    _defaultVerticalStitch = data['defaultVerticalStitch']! as bool;
+    final modes = data['readerModeSettings']! as Map;
+    _pagedReaderSettings = _decodeReaderModeSettings(
+      modes['paged'], const ReaderModeSettings());
+    _continuousReaderSettings = _decodeReaderModeSettings(
+      modes['continuous'], const ReaderModeSettings.continuousDefaults());
+    _detailsPreviewMaxItemsPerRow = data['detailsPreviewMaxItemsPerRow']! as int;
+    _syncReadingTimes['reader:global'] = modifiedAt;
+    _changed();
+  }
 
   void _changed() {
     if (_disposed) return;
@@ -1134,6 +1441,8 @@ final class AppPreferencesController extends ChangeNotifier {
       'networkUserAgent': _networkUserAgent,
       'debugTraceExportDirectory': _debugTraceExportDirectory,
       'chapterDownloadDirectoryOverride': _chapterDownloadDirectoryOverride,
+      'downloadAccessPreference': _downloadAccessPreference,
+      'downloadDirectorySetupRequired': _downloadDirectorySetupRequired,
       'chapterDownloadDirectoryPendingMoveFrom':
           _chapterDownloadDirectoryPendingMoveFrom,
       'chapterDownloadDirectoryPendingMoveProtocol':
@@ -1156,6 +1465,9 @@ final class AppPreferencesController extends ChangeNotifier {
         for (final entry in _comicReaderSettings.entries)
           entry.key: entry.value.toJson(),
       },
+      'syncReadingTimes': _syncReadingTimes,
+      'extensionRepositories': {for (final entry in _extensionRepositories.entries)
+        entry.key: {'data': entry.value.data, 'time': entry.value.time}},
     });
   }
 
@@ -1207,6 +1519,18 @@ Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
+
+bool _sameSyncSetting(Object? left, Object? right) {
+  if (left is Map && right is Map) {
+    return left.length == right.length && left.keys.every((key) =>
+      right.containsKey(key) && _sameSyncSetting(left[key], right[key]));
+  }
+  if (left is List && right is List) {
+    return left.length == right.length && List.generate(left.length, (i) => i)
+        .every((i) => _sameSyncSetting(left[i], right[i]));
+  }
+  return left == right;
+}
 
 ReaderModeSettings _decodeReaderModeSettings(
   Object? raw,

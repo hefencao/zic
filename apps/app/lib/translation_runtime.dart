@@ -8,6 +8,17 @@ import 'local_media_composition.dart';
 
 Future<void>? _translationInitialization;
 
+/// Backup/sync reads preferences without loading OCR, models or translation
+/// caches. The settings owner shares initialization with the runtime.
+Future<ComicTranslationSettings> loadComicTranslationSettings() async {
+  final root = await getDefaultZicStorageRoot(
+    applicationSupportPath: getStartupApplicationSupportPath,
+  );
+  final settings = ComicTranslationSettings.instance;
+  await settings.init('$root/translation');
+  return settings;
+}
+
 Future<void> initializeComicTranslation() =>
     _translationInitialization ??= _initializeComicTranslation();
 

@@ -41,7 +41,7 @@ EXPECTED_DEPENDENCIES = {
     'catalog': {'domain', 'resource_cache', 'transport'},
     'plugin_host': {'catalog', 'domain'},
     'plugin_host_bridge': {'network_bridge', 'plugin_host'},
-    'network_bridge': set(),
+    'network_bridge': {'domain', 'sessions', 'transport'},
     'resource_cache': set(),
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
@@ -2403,10 +2403,12 @@ def check_compile_regressions() -> None:
     chapter_downloads = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(encoding='utf-8')
     persistent_chapter_service = (ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart').read_text(encoding='utf-8')
     persistent_download_store = (ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart').read_text(encoding='utf-8')
-    download_storage_sources = chapter_downloads + persistent_chapter_service + persistent_download_store
+    persistent_cache_maintenance = (ROOT / 'packages/downloads/lib/src/persistent_cache_maintenance.dart').read_text(encoding='utf-8')
+    download_storage_sources = chapter_downloads + persistent_chapter_service + persistent_download_store + persistent_cache_maintenance
     for required in (
         'ArtifactCacheMaintenance',
-        'CacheOps(',
+        'AutomaticArtifactCacheMaintenance',
+        '_runCacheMaintenance(',
         'inspectArtifacts()',
         'Map<String, List<Uint8List?>> _chapters',
         'pages[index] = bytes',

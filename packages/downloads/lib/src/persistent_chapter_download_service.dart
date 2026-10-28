@@ -18,6 +18,7 @@ final class PersistentChapterDownloadService
         ChapterDownloadLocalImportSink,
         ChapterDownloadManagementProjectionReader,
         ChapterCacheManagementProjectionReader,
+        ChapterCacheManagementCommands,
         ChapterDeleteImpactProjectionReader,
         ChapterDownloadManagementChangeSource,
         ArtifactCacheMaintenance,
@@ -64,6 +65,7 @@ final class PersistentChapterDownloadService
         artifactStore.managementProjectionChanges.listen(
       (_) => _handleArtifactManagementProjectionChanged(),
     );
+    _scheduleDownloadCacheAdoption(delay: const Duration(seconds: 2));
   }
 
   static Future<PersistentChapterDownloadService> open(
@@ -116,8 +118,8 @@ final class PersistentChapterDownloadService
   @override
   final CompositionDownloadTransferRuntime transferRuntime;
 
-  // Resolve only a compact chapter whose exact rows must be unioned with
-  // indexed canonical/proof/session slots. Execution hints are not page proof.
+  // Resolve only the current exact chapter needed for positional statistics
+  // or local adoption into an existing download. Never hydrate its siblings.
   final Future<ImportedLibraryEntry?> Function(String, String)? _summaryChapterLookup;
 
   @override
@@ -136,6 +138,11 @@ final class PersistentChapterDownloadService
   final StreamController<void> _managementProjectionChanges =
       StreamController<void>.broadcast(sync: true);
   StreamSubscription<void>? _artifactManagementProjectionSubscription;
+  Timer? _downloadCacheAdoptionTimer;
+  Future<bool>? _downloadCacheAdoption;
+  bool _downloadCacheAdoptionDirty = false;
+  final Set<String> _cacheOnlyRuns = {};
+  final Set<String> _cacheAdoptionRetryRequired = {};
 
   @override
   Stream<void> get managementProjectionChanges =>
@@ -143,6 +150,7 @@ final class PersistentChapterDownloadService
 
   void _handleArtifactManagementProjectionChanged() {
     if (_closed) return;
+    _scheduleDownloadCacheAdoption();
     // Invalidation is cheap; projection consumers coalesce their reads. A
     // long-running manual task must not hide independent Reader/cache writes.
     if (!_managementProjectionChanges.isClosed) {
@@ -263,6 +271,15 @@ final class PersistentChapterDownloadService
   @override
   void updateVersionBaselines(List<ComicVersionRelation> relations) {
     artifactStore.updateVersionBaselines(relations);
+    for (final identity in _cacheOnlyRuns) {
+      final entry = _activeDownloadEntries[identity];
+      if (entry != null && !_isCurrentDownloadCacheChapter(CacheBindingScope(
+          sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+          chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision))) {
+        _tokens[identity]?.cancel();
+      }
+    }
+    _scheduleDownloadCacheAdoption();
   }
 
   @override
@@ -303,9 +320,14 @@ final class PersistentChapterDownloadService
             _tokens[identity]?.cancel();
           }
         }
+        for (final run in Map.of(_runs).entries) {
+          if (run.key.startsWith(displacedComicPrefix)) {
+            try { await run.value; } on Object { /* The download caller owns failure. */ }
+          }
+        }
       }
     }
-    return artifactStore.claimStructuredComicDirectory(
+    await artifactStore.claimStructuredComicDirectory(
       sourceId: sourceId,
       comicId: comicId,
       comicTitle: comicTitle,
@@ -314,6 +336,13 @@ final class PersistentChapterDownloadService
       observedOwnerKey: observedOwnerKey,
       pageOrder: pageOrder,
     );
+    if (mode == DownloadPlacementMode.overwrite && observedOwnerKey != null) {
+      final parts = observedOwnerKey.split('\u0000');
+      if (parts.length == 2) {
+        await artifactStore._index.releaseDownloadCache(sourceId: parts[0], comicId: parts[1]);
+        artifactStore._scheduleAutomaticCacheMaintenance();
+      }
+    }
   }
 
   @override
@@ -435,21 +464,50 @@ final class PersistentChapterDownloadService
 
   Future<void> _startDownload(ImportedLibraryEntry entry, {
     Transport? importTransport,
+    bool cacheOnly = false,
   }) {
     _requireOpen();
     final identity = _identity(entry);
+    if (!cacheOnly) _cacheAdoptionRetryRequired.remove(identity);
     final active = _runs[identity];
     if (active != null) {
+      if (cacheOnly) return Future<void>.value();
+      if (_cacheOnlyRuns.contains(identity)) {
+        return active.then<void>((_) async {
+          // A manual stop fences the queued command. A head change only
+          // retires background adoption and must not swallow an explicit retry.
+          if (_closed || _cacheAdoptionRetryRequired.contains(identity) ||
+              _deletedIdentities.contains(identity)) return;
+          await _startDownload(entry, importTransport: importTransport);
+        });
+      }
       return active;
     }
+    if (cacheOnly) _cacheOnlyRuns.add(identity);
     _activeDownloadEntries[identity] = entry;
-    final run = _runDownload(entry, importTransport: importTransport).whenComplete(() {
+    final run = _runDownload(entry, importTransport: importTransport,
+        cacheOnly: cacheOnly).onError<Object>((error, stack) async {
+      // Cancellation can arrive during the pre-network index/directory work,
+      // before the transfer consumer's try/finally has been established.
+      final cancelled = error is Failure && error.code == ErrorCode.cancelled;
+      if (!cancelled && !cacheOnly) Error.throwWithStackTrace(error, stack);
+      if (!_closed && !_deletedIdentities.contains(identity) &&
+          (cancelled || _terminalPhases[identity] != ChapterDownloadPhase.failed)) {
+        if (cancelled) _cancelled.add(identity);
+        final phase = cancelled ? ChapterDownloadPhase.cancelled : ChapterDownloadPhase.failed;
+        _terminalPhases[identity] = phase;
+        await _emitInspection(entry, phase: phase, failure: cancelled ? null : error.toString());
+      }
+      if (!cancelled) Error.throwWithStackTrace(error, stack);
+    }).whenComplete(() {
+      _cacheOnlyRuns.remove(identity);
       _runs.remove(identity);
       _activeDownloadEntries.remove(identity);
       _tokens.remove(identity);
       _startedRuns.remove(identity);
       _deletedIdentities.remove(identity);
       _downloadExecutionChanges.add(null);
+      _scheduleDownloadCacheAdoption();
     });
     _runs[identity] = run;
     _downloadExecutionChanges.add(null);
@@ -561,8 +619,12 @@ final class PersistentChapterDownloadService
 
   Future<void> _runDownload(ImportedLibraryEntry entry, {
     Transport? importTransport,
+    bool cacheOnly = false,
   }) async {
     final identity = _identity(entry);
+    final previousPhase = _terminalPhases[identity] ??
+        (_cancelled.contains(identity) ? ChapterDownloadPhase.cancelled : ChapterDownloadPhase.idle);
+    var missingPages = false;
     _deletedIdentities.remove(identity);
     final token = CancelToken();
     _tokens[identity] = token;
@@ -574,9 +636,15 @@ final class PersistentChapterDownloadService
       'comicId': entry.chapter.comicId,
       'chapterId': entry.chapter.chapterId,
     });
+    await artifactStore._index.retainDownloadCache(
+      sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+    );
     final indexedRecords = await artifactStore.indexedRecordsForEntries(
       [entry], includeComicRecords: true,
     );
+    if (!cacheOnly) await artifactStore.recoverLocalDownloadRecords(entry,
+      knownRecords: indexedRecords, control: token);
     await _emitInspection(
       entry,
       phase: ChapterDownloadPhase.downloading,
@@ -604,7 +672,7 @@ final class PersistentChapterDownloadService
       'structuredComicDirectory': structuredComicDirectory,
       },
     );
-    await artifactStore.verifyStructuredDestinationOwner(
+    final existingFolder = await artifactStore._verifiedStructuredDestinationManifest(
       entry,
       comicDirectoryName: structuredComicDirectory,
     );
@@ -658,7 +726,9 @@ final class PersistentChapterDownloadService
       final isHighConfidenceMultiChapter =
           entry.chapter.sequence > 1 ||
           hasOtherDownloadedChapters ||
-          existingChapters.length > 1;
+          existingChapters.length > 1 ||
+          (existingFolder?.sourceId == manifest.sourceId &&
+            existingFolder?.comicId == entry.chapter.comicId && existingFolder!.chapters.length > 1);
       final isSingleChapter = !isHighConfidenceMultiChapter;
 
       if (hasOtherDownloadedChapters) {
@@ -740,6 +810,10 @@ final class PersistentChapterDownloadService
       manifestEstablished = true;
       manifestClock.reset();
       final pendingDemands = <DownloadId, TransferDemand>{};
+      final cachedPhysical = cacheOnly ? await _loadTargetedPhysicalState([entry]) : null;
+      final cachedProof = cachedPhysical == null ? null :
+          _downloadCacheAuthority(entry, cachedPhysical.projectionFor(entry));
+      final cacheWorkBudget = cacheOnly ? _DownloadProjectionWorkBudget() : null;
 
       Future<({DownloadId id, Object? failure, StackTrace? failureStack})>
           observePendingPage(DownloadId id, Future<void> run) async {
@@ -784,6 +858,7 @@ final class PersistentChapterDownloadService
       }
 
       for (var pageIndex = 0; pageIndex < manifest.pages.length; pageIndex++) {
+        if (cacheWorkBudget?.exhausted ?? false) await cacheWorkBudget!.yieldTurn();
         final page = manifest.pages[pageIndex];
         final logicalPageId = entry.chapter.pages[pageIndex].stablePageId;
         final targetPageNumber = exportOrdinals[logicalPageId];
@@ -808,10 +883,36 @@ final class PersistentChapterDownloadService
         var recordReady =
             record != null && artifactStore._isVerifiedReadyRecord(record);
 
-        if (recordReady) {
+        if (cachedPhysical != null && !recordReady) {
+          final physical = _downloadCachePhysicalPage(cachedPhysical, cachedProof!, id);
+          final physicalId = physical?.artifact?.id ?? physical?.partial?.id;
+          if (physicalId != null) {
+            // Retain only resident bytes proved for this requested chapter.
+            // This does not register slots for unopened sibling versions.
+            await artifactStore._index.retainDownloadCache(
+              sourceId: manifest.sourceId, comicId: entry.chapter.comicId,
+              chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+              physicalKey: physicalId.key,
+            );
+            if (!recordReady && physical?.artifact != null && record == null &&
+                _downloadCachePhysicalPage(cachedPhysical, cachedProof, id)?.artifact?.id == physicalId &&
+                await artifactCacheManager.materializeExactFromPhysical(
+                  physicalId: physicalId, targetId: id)) {
+              record = await artifactStore._index.get(id.key);
+              if (record != null) indexedRecords[id.key] = record;
+              recordReady = record != null && artifactStore._isVerifiedReadyRecord(record);
+            }
+          }
+        }
+
+        if (recordReady && record != null) {
           final active = transferRuntime.findSession(id);
           final isBusy =
               active != null && (active.activeRun || active.hasWriter);
+          if (cacheOnly && isBusy) {
+            missingPages = true;
+            continue;
+          }
           final isAlreadyStructured =
               record.pinned && !artifactStore._isAutomaticCacheFinalRecord(record);
           if (!isBusy) {
@@ -848,6 +949,7 @@ final class PersistentChapterDownloadService
               if (rec != null) {
                 indexedRecords[id.key] = rec;
               }
+              await artifactStore.pinExactRecords([id]);
               progress.schedule();
               await checkpointManifest();
               continue;
@@ -888,6 +990,7 @@ final class PersistentChapterDownloadService
                 : null,
             storageRootId: artifactStore.storageRootIdFor(entry),
           );
+          await artifactStore.pinExactRecords([id]);
           indexedRecords[id.key] = adopted;
           _recordCommandTrace(identity, 'page-adopt-sibling', <String, Object?>{
             'page': pageIndex,
@@ -899,6 +1002,10 @@ final class PersistentChapterDownloadService
           });
           progress.schedule();
           await checkpointManifest();
+          continue;
+        }
+        if (cacheOnly) {
+          missingPages = true;
           continue;
         }
         _startedRuns.add(identity);
@@ -922,6 +1029,11 @@ final class PersistentChapterDownloadService
         // the composition resolver. Creating an exact session first would
         // permanently defeat verified transfer-key aliasing for this command.
         final session = transferRuntime.sessionFor(id);
+        await artifactStore._index.retainDownloadCache(
+          sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+          chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+          physicalKey: session.physicalId.key,
+        );
         if (session.state == DownloadState.failed) {
           await session.reset();
         }
@@ -955,9 +1067,17 @@ final class PersistentChapterDownloadService
       progress.close();
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;
-      await artifactStore.pinExactRecords(
-        manifest.pages.map((page) => _downloadId(manifest, page)),
-      );
+      if (!cacheOnly) {
+        await artifactStore.pinExactRecords(
+          manifest.pages.map((page) => _downloadId(manifest, page)),
+        );
+      }
+      if (!cacheOnly || !missingPages) {
+        await artifactStore._index.releaseDownloadCache(
+          sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+          chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+        );
+      }
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;
       final finalIndexedRecords = await artifactStore.indexedRecordsForEntries(
@@ -976,16 +1096,20 @@ final class PersistentChapterDownloadService
       );
       manifestCompleted = true;
       if (_deletedIdentities.contains(identity)) return;
-      _terminalPhases[identity] = ChapterDownloadPhase.complete;
-      _startedRuns.add(identity);
+      final completedPhase = cacheOnly && missingPages
+          ? (previousPhase == ChapterDownloadPhase.complete
+              ? ChapterDownloadPhase.idle : previousPhase)
+          : ChapterDownloadPhase.complete;
+      _terminalPhases[identity] = completedPhase;
+      if (!cacheOnly) _startedRuns.add(identity);
       _recordCommandTrace(
         identity,
-        'chapter-run-complete',
+        cacheOnly ? 'chapter-cache-adopted' : 'chapter-run-complete',
         const <String, Object?>{},
       );
       await _emitInspection(
         entry,
-        phase: ChapterDownloadPhase.complete,
+        phase: completedPhase,
         indexedRecords: finalIndexedRecords,
       );
     } on Failure catch (error) {
@@ -1124,6 +1248,12 @@ final class PersistentChapterDownloadService
         '${id.key}',
       );
     }
+    await artifactStore.pinExactRecords([id]);
+    await artifactStore._index.releaseDownloadCache(
+      sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+      physicalKey: session.physicalId.key,
+    );
     return artifactStore._index.get(id.key);
   }
 
@@ -1362,6 +1492,7 @@ final class PersistentChapterDownloadService
     for (final identity in List.of(_tokens.keys)) {
       if (!identity.startsWith(chapterPrefix)) continue;
       matchedTokens.add(identity);
+      if (_cacheOnlyRuns.contains(identity)) _cacheAdoptionRetryRequired.add(identity);
       _cancelled.add(identity);
       _tokens[identity]?.cancel();
     }
@@ -1417,6 +1548,7 @@ final class PersistentChapterDownloadService
   @override
   Future<void> delete(ImportedLibraryEntry entry) async {
     _requireOpen();
+    artifactStore._downloadedChapterRecovery.forget(entry);
     final wasSingleChapter = await _isSingleChapterFor(entry);
     final chapterPrefix = _chapterDownloadPrefix(entry);
     _deletedIdentities.addAll(
@@ -1514,6 +1646,11 @@ final class PersistentChapterDownloadService
     _failedSourceResourceLocators.removeWhere(
       (k, _) => k.startsWith(chapterPrefix) || k == identity,
     );
+    await artifactStore._index.releaseDownloadCache(
+      sourceId: entry.chapter.sourceId, comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId, sourceRevision: entry.chapter.sourceRevision,
+    );
+    artifactStore._scheduleAutomaticCacheMaintenance();
     _emit(ChapterDownloadSnapshot.idle(entry));
   }
 
@@ -1853,11 +1990,16 @@ final class PersistentChapterDownloadService
     final startedUs = _traceClock.nowMicros();
     final known = knownEntries.toList(growable: false);
     final indexedStartedUs = _traceClock.nowMicros();
-    final indexed = await artifactStore.indexedRecords();
+    var indexed = await artifactStore.indexedRecords();
     final indexedUs = _traceClock.nowMicros() - indexedStartedUs;
     final physicalStartedUs = _traceClock.nowMicros();
-    final physicalState = await _loadManagementPhysicalState();
+    var physicalState = await _loadManagementPhysicalState();
     final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
+    if (await _adoptDownloadCache(known, physicalState: physicalState, indexedRecords: indexed)) {
+      indexed = await artifactStore.indexedRecords();
+      physicalState = await _loadManagementPhysicalState();
+    }
+    _requireOpen();
     final orphanStartedUs = _traceClock.nowMicros();
     final orphaned = _discoverOrphanedEntriesFromRecords(
       known,
@@ -1867,7 +2009,7 @@ final class PersistentChapterDownloadService
     final orphanUs = _traceClock.nowMicros() - orphanStartedUs;
     final visibleEntries = <ImportedLibraryEntry>[...known, ...orphaned];
     final cacheStartedUs = _traceClock.nowMicros();
-    final cache = _buildCacheManagementProjection(
+    final cache = await _buildAutomaticCacheManagementProjection(
       visibleEntries,
       indexed,
       physicalState,
@@ -1900,18 +2042,37 @@ final class PersistentChapterDownloadService
   }
 
   @override
+  Future<ArtifactCacheReport> clearChapterCache(ChapterCacheDeleteTarget target) {
+    _requireOpen();
+    if (target is! _PersistentChapterCacheDeleteTarget ||
+        !identical(target.owner, artifactStore)) {
+      throw StateError('缓存服务已更新，请刷新后重试');
+    }
+    return artifactStore._runCacheMaintenance(
+      maxBytes: 0, targetBytes: 0, selection: target.selection,
+    );
+  }
+
+  @override
   Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
-    Iterable<ImportedLibraryEntry> knownEntries,
-  ) async {
+    Iterable<ImportedLibraryEntry> knownEntries, {
+    bool includeCache = true,
+  }) async {
     _requireOpen();
     final startedUs = _traceClock.nowMicros();
     final known = knownEntries.toList(growable: false);
     final indexedStartedUs = _traceClock.nowMicros();
-    final indexed = await artifactStore.indexedRecords();
+    var indexed = await artifactStore.indexedRecords();
     final indexedUs = _traceClock.nowMicros() - indexedStartedUs;
     final physicalStartedUs = _traceClock.nowMicros();
-    final physicalState = await _loadManagementPhysicalState();
+    var physicalState = await _loadManagementPhysicalState();
     final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
+    if (includeCache && await _adoptDownloadCache(known,
+        physicalState: physicalState, indexedRecords: indexed)) {
+      indexed = await artifactStore.indexedRecords();
+      physicalState = await _loadManagementPhysicalState();
+    }
+    _requireOpen();
     final projectStartedUs = _traceClock.nowMicros();
     final orphanStartedUs = _traceClock.nowMicros();
     final orphaned = _discoverOrphanedEntriesFromRecords(
@@ -1931,11 +2092,10 @@ final class PersistentChapterDownloadService
     );
     final snapshotUs = _traceClock.nowMicros() - snapshotStartedUs;
     final cacheStartedUs = _traceClock.nowMicros();
-    final cache = _buildCacheManagementProjection(
-      visibleEntries,
-      indexed,
-      physicalState,
-    );
+    final cache = includeCache
+        ? await _buildAutomaticCacheManagementProjection(
+            visibleEntries, indexed, physicalState)
+        : null;
     final cacheProjectionUs = _traceClock.nowMicros() - cacheStartedUs;
     final projectUs = _traceClock.nowMicros() - projectStartedUs;
     _recordCommandTrace(
@@ -1948,8 +2108,8 @@ final class PersistentChapterDownloadService
         'physicalArtifacts': physicalState.artifacts.length,
         'physicalPartials': physicalState.partials.length,
         'canonicalProjections': physicalState.projections.length,
-        'canonicalRows': cache.canonical.length,
-        'exactRows': cache.exact.length,
+        'canonicalRows': cache?.canonical.length ?? 0,
+        'exactRows': cache?.exact.length ?? 0,
         'visiblePages': visibleEntries.fold<int>(
           0,
           (total, entry) => total + entry.chapter.pages.length,
@@ -2055,6 +2215,45 @@ final class PersistentChapterDownloadService
     return metadata;
   }
 
+  Future<ChapterCacheManagementProjection> _buildAutomaticCacheManagementProjection(
+    Iterable<ImportedLibraryEntry> entries,
+    Map<String, CacheRec> indexed,
+    _DownloadManagementPhysicalState physicalState,
+  ) async {
+    // The automatic-cache page uses the same durable retention policy as GC.
+    // A pin on any version protects the whole body, including canonical aliases.
+    final index = artifactStore._index;
+    final automaticArtifacts = <String>{
+      for (final artifact in await index.readCacheMaintenanceArtifacts())
+        if (!artifact.retained && artifactStore._isAutomaticCacheFinalLocator(
+            artifact.object.accessLocator, artifact.object.storageRootId))
+          artifact.object.artifactId,
+    };
+    final automaticPartials = <String>{
+      for (final partial in await index.readCacheMaintenancePartials())
+        if (!partial.retained) partial.record.key,
+    };
+    final retainedPhysical = await index.readRetainedPhysicalCacheKeys();
+    final automaticIndexed = <String, CacheRec>{
+      for (final record in indexed.values)
+        if (record.state == CacheState.partial
+            ? automaticPartials.contains(record.key)
+            : artifactStore._isVerifiedReadyRecord(record) &&
+                automaticArtifacts.contains(record.artifactId))
+          record.key: record,
+    };
+    final automaticPhysical = _DownloadManagementPhysicalState(
+      artifacts: physicalState.artifacts.values.where(
+        (record) => automaticArtifacts.contains(record.artifactId)),
+      partials: physicalState.partials.values.where((record) =>
+          !physicalState.artifacts.containsKey(record.id) &&
+          !retainedPhysical.contains(record.id.key)),
+      projections: physicalState.projections.values,
+      activeProjectionRanges: physicalState.activeProjectionRanges,
+    );
+    return _buildCacheManagementProjection(entries, automaticIndexed, automaticPhysical);
+  }
+
   ChapterCacheManagementProjection _buildCacheManagementProjection(
     Iterable<ImportedLibraryEntry> entries,
     Map<String, CacheRec> indexed,
@@ -2122,6 +2321,7 @@ final class PersistentChapterDownloadService
             displayMetadata: displayMetadata,
           );
           exactBuilder.addPage(ready: ready, bytes: record.bytes);
+          exactBuilder.deleteSelection.addExact(record);
         }
         if (exactBuilder != null && exactBuilder.cachedPages > 0) {
           exactBuilders[exactBuilder.identity] = exactBuilder;
@@ -2173,6 +2373,8 @@ final class PersistentChapterDownloadService
             pageIndex: index,
           );
           if (hasCanonicalPhysical || (active && exactReady)) {
+            canonicalBuilder.deleteSelection.addExact(exactIndexed);
+            canonicalBuilder.deleteSelection.addPhysical(physical);
             canonicalBuilder.addPage(
               physicalId: physicalId,
               ready: ready,
@@ -2192,6 +2394,8 @@ final class PersistentChapterDownloadService
           displayMetadata: displayMetadata,
         );
         exactBuilder.addPage(ready: ready, bytes: bytes);
+        exactBuilder.deleteSelection.addExact(exactIndexed);
+        exactBuilder.deleteSelection.addPhysical(physical);
       }
       if (exactBuilder != null && exactBuilder.cachedPages > 0) {
         exactBuilders[exactBuilder.identity] = exactBuilder;
@@ -2200,10 +2404,10 @@ final class PersistentChapterDownloadService
 
     final canonical = <CanonicalChapterCacheSnapshot>[
       for (final builder in canonicalBuilders.values)
-        if (builder.cachedPages > 0) builder.build(),
+        if (builder.cachedPages > 0) builder.build(artifactStore),
     ]..sort((left, right) => left.identity.compareTo(right.identity));
     final exact = <ExactChapterCacheSnapshot>[
-      for (final builder in exactBuilders.values) builder.build(),
+      for (final builder in exactBuilders.values) builder.build(artifactStore),
     ]..sort((left, right) => left.identity.compareTo(right.identity));
     return ChapterCacheManagementProjection(canonical: canonical, exact: exact);
   }
@@ -2656,6 +2860,7 @@ final class PersistentChapterDownloadService
   @override
   Future<bool> hasReadyPage(ImportedLibraryEntry entry, int pageIndex) async {
     _requireOpen();
+    artifactStore.rememberLocalRecoveryChapter(entry);
     final manifest = entry.chapter.toManifest();
     if (pageIndex < 0 || pageIndex >= manifest.pages.length) return false;
     final page = manifest.pages[pageIndex];
@@ -2667,6 +2872,7 @@ final class PersistentChapterDownloadService
   @override
   Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex) async {
     _requireOpen();
+    artifactStore.rememberLocalRecoveryChapter(entry);
     final manifest = entry.chapter.toManifest();
     if (pageIndex < 0 || pageIndex >= manifest.pages.length) {
       throw RangeError.index(pageIndex, manifest.pages, 'pageIndex');
@@ -2778,6 +2984,8 @@ final class PersistentChapterDownloadService
   Future<void> close() async {
     if (!_closed) {
       _closed = true;
+      _downloadCacheAdoptionTimer?.cancel();
+      _downloadCacheAdoptionTimer = null;
       _resourceAccess = null;
       await _artifactManagementProjectionSubscription?.cancel();
       _artifactManagementProjectionSubscription = null;
@@ -2786,6 +2994,11 @@ final class PersistentChapterDownloadService
       }
       for (final token in _auditTokens.values) {
         token.cancel();
+      }
+      try {
+        await _downloadCacheAdoption;
+      } on Object {
+        // Closing still drains admitted local cache adoption before storage.
       }
       for (final run in _runs.values.toList(growable: false)) {
         try {

@@ -4104,7 +4104,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
     required this.description,
     required this.cover,
     required this.preference,
-    required this.categories,
+    required this.onEditCategories,
     required this.onPreferenceChanged,
     this.onSearchMetadata,
     this.onSearchTitle,
@@ -4122,7 +4122,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final String? description;
   final Widget cover;
   final ComicPreference preference;
-  final List<LibraryCategory> categories;
+  final ValueChanged<Rect> onEditCategories;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMetadataSearch? onSearchTitle;
@@ -4135,6 +4135,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sourceMetadata = _groupSourceMetadata(tags);
+    final visibleDescription = _meaningfulComicDescription(description);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -4186,15 +4187,22 @@ final class _ComicDetailsHeader extends StatelessWidget {
                           ),
                         ),
                       ),
-                      _PreferenceButton(
+                      Builder(builder: (buttonContext) => _PreferenceButton(
                         key: comicDetailsShelfKey,
                         icon: Icon(
                             preference.inShelf
                                 ? Icons.library_add_check
                                 : Icons.library_add_outlined,
                           ),
-                        label: preference.inShelf ? '移出书架' : '加入书架',
+                        label: preference.inShelf
+                            ? '移出书架（长按设置书架分类）'
+                            : '加入书架（长按设置书架分类）',
                         selected: preference.inShelf,
+                        onLongPress: () {
+                          final box = buttonContext.findRenderObject() as RenderBox?;
+                          if (box == null || !box.hasSize) return;
+                          onEditCategories(box.localToGlobal(Offset.zero) & box.size);
+                        },
                         onPressed: () => unawaited(
                           onPreferenceChanged(
                             preference.copyWith(
@@ -4202,7 +4210,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
                             ),
                           ),
                         ),
-                      ),
+                      )),
                       _PreferenceButton(
                         key: comicDetailsCollectedKey,
                         icon: Icon(
@@ -4271,25 +4279,23 @@ final class _ComicDetailsHeader extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text('简介', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(height: 6),
-                Text(
-                  description?.trim().isNotEmpty == true
-                      ? description!.trim()
-                      : '暂无简介',
-                ),
-              ],
+        if (visibleDescription != null) ...<Widget>[
+          const SizedBox(height: 12),
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text('简介', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  Text(visibleDescription),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
         if (sourceMetadata.categories.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           _ExpandableTagRow(
@@ -4301,38 +4307,10 @@ final class _ComicDetailsHeader extends StatelessWidget {
         if (sourceMetadata.tags.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           _ExpandableTagRow(
+            label: '漫画标签',
+            showHeading: false,
             tags: sourceMetadata.tags,
             onSearch: onSearchMetadata,
-          ),
-        ],
-        if (categories.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 12),
-          Text('书架分类', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              for (final category in categories)
-                FilterChip(
-                  label: Text(category.name),
-                  showCheckmark: false,
-                  selected: preference.categoryIds.contains(category.categoryId),
-                  onSelected: (selected) {
-                    final ids = preference.categoryIds.toSet();
-                    if (selected) {
-                      ids.add(category.categoryId);
-                    } else {
-                      ids.remove(category.categoryId);
-                    }
-                    unawaited(
-                      onPreferenceChanged(
-                        preference.copyWith(categoryIds: ids),
-                      ),
-                    );
-                  },
-                ),
-            ],
           ),
         ],
       ],
@@ -4957,6 +4935,7 @@ final class _PreferenceButton extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onPressed,
+    this.onLongPress,
     super.key,
   });
 
@@ -4964,17 +4943,25 @@ final class _PreferenceButton extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
+    final button = IconButton.filledTonal(
+      tooltip: onLongPress == null ? label : null,
+      isSelected: selected,
+      onPressed: onPressed,
+      icon: icon,
+    );
     return SizedBox.square(
       dimension: 48,
-      child: IconButton.filledTonal(
-        tooltip: label,
-        isSelected: selected,
-        onPressed: onPressed,
-        icon: icon,
-      ),
+      child: onLongPress == null
+          ? button
+          : Tooltip(
+              message: label,
+              triggerMode: TooltipTriggerMode.manual,
+              child: GestureDetector(onLongPress: onLongPress, child: button),
+            ),
     );
   }
 }

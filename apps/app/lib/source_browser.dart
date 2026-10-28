@@ -297,6 +297,8 @@ Future<void> openComicSourceSettings(
   required BrowsableComicSource source,
   required AndroidNetworkBridge networkBridge,
   Future<void> Function()? onExternalSourcesChanged,
+  Future<void> Function()? beforeLoadSettings,
+  Future<void> Function(ComicSourceSetting setting, Object value)? onSettingChanged,
 }) async {
   if (!sourceSupportsSettings(source)) {
     return;
@@ -307,6 +309,8 @@ Future<void> openComicSourceSettings(
     MaterialPageRoute<void>(
       builder: (_) => ExternalSourceSettingsScreen(
         source: source,
+        beforeLoad: beforeLoadSettings,
+        onSettingChanged: onSettingChanged,
         onApply: () async {
           // updateSetting() already mutated the active runtime. Restarting the
           // whole plugin here creates a second session and can drop otherwise
@@ -3181,6 +3185,7 @@ final class SourceManagementScreen extends StatefulWidget {
     this.externalSourceChanges,
     this.networkBridge = const AndroidNetworkBridge(),
     this.onExternalSourcesChanged,
+    this.onOpenSourceSettings,
     this.appPreferences,
     super.key,
   });
@@ -3196,6 +3201,7 @@ final class SourceManagementScreen extends StatefulWidget {
   final Stream<void>? externalSourceChanges;
   final AndroidNetworkBridge networkBridge;
   final Future<void> Function()? onExternalSourcesChanged;
+  final Future<void> Function(BrowsableComicSource source)? onOpenSourceSettings;
 
   /// Application-level preferences owning per-source user choices such as
   /// download roots and adaptive-layout priors.
@@ -3657,13 +3663,15 @@ final class _SourceManagementScreenState
   ) async {
     final controller = _externalPlugins;
     final changed = widget.onExternalSourcesChanged;
-    if (controller == null || changed == null) return;
+    final preferences = widget.appPreferences;
+    if (controller == null || changed == null || preferences == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ExternalPluginRepositoryScreen(
           format: format,
           controller: controller,
           onSourcesChanged: changed,
+          preferences: preferences,
         ),
       ),
     );
@@ -3757,12 +3765,17 @@ final class _SourceManagementScreenState
   }
 
   Future<void> _openSourceProperties(BrowsableComicSource source) async {
-    await openComicSourceSettings(
-      context,
-      source: source,
-      networkBridge: widget.networkBridge,
-      onExternalSourcesChanged: widget.onExternalSourcesChanged,
-    );
+    final open = widget.onOpenSourceSettings;
+    if (open != null) {
+      await open(source);
+    } else {
+      await openComicSourceSettings(
+        context,
+        source: source,
+        networkBridge: widget.networkBridge,
+        onExternalSourcesChanged: widget.onExternalSourcesChanged,
+      );
+    }
     if (mounted) {
       _refreshExternalSources(_readExternalSources());
     }

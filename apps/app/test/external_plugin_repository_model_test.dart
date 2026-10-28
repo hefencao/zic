@@ -4,6 +4,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/external_plugin_repository_model.dart';
+import 'package:zic/extension_repositories.dart';
 
 final class _Source implements BrowsableComicSource {
   _Source({
@@ -70,6 +71,45 @@ ExternalComicPluginCatalogEntry _plugin({
     );
 
 void main() {
+  test('repository names are optional and do not change exact index identity', () {
+    final repository = ExtensionRepository(format: ExternalComicPluginFormat.veneraJavaScript,
+      index: Uri.https('example.test', '/private/index.json', {'version': '2'}), name: '  我的仓库  ');
+    final legacy = ExtensionRepository.parse(repository.identity, {'enabled': false});
+    expect(legacy.name, isEmpty);
+    expect(legacy.data, {'enabled': false});
+    final named = ExtensionRepository.parse(repository.identity, repository.data);
+    expect(named.name, '我的仓库');
+    expect(named.identity, legacy.identity);
+    expect(named.copyWith(enabled: false).data, {'enabled': false, 'name': '我的仓库'});
+    for (final data in <Map<String, Object?>>[
+      {'enabled': true, 'name': 7},
+      {'enabled': true, 'name': List.filled(121, 'a').join()},
+      {'enabled': true, 'unknown': 'value'},
+    ]) {
+      expect(() => ExtensionRepository.parse(repository.identity, data),
+        throwsA(isA<FormatException>()));
+    }
+  });
+
+  test('shared hosting domains expose repository namespaces without full index URLs', () {
+    final cases = <String, String?>{
+      'https://github.com/alice/catalog/raw/main/index.json': 'alice/catalog',
+      'https://raw.githubusercontent.com/bob/sources/main/index.min.json': 'bob/sources',
+      'https://api.github.com/repos/alice/catalog/contents/index.json': 'alice/catalog',
+      'https://cdn.jsdelivr.net/gh/alice/catalog@main/index.json': 'alice/catalog',
+      'https://gitlab.com/group/subgroup/catalog/-/raw/main/index.json': 'group/subgroup/catalog',
+      'https://codeberg.org/alice/catalog/raw/branch/main/index.json': 'alice/catalog',
+      'https://example.test/catalog/index.json': null,
+    };
+    for (final entry in cases.entries) {
+      final repository = ExtensionRepository(format: ExternalComicPluginFormat.veneraJavaScript,
+        index: Uri.parse(entry.key));
+      expect(repository.hostedRepository, entry.value);
+      expect(repository.displayName, entry.value ?? repository.index.host);
+      expect(repository.copyWith(name: '自定义').displayName, '自定义');
+    }
+  });
+
   test('preferred Mihon source language stays visible in source management', () {
     final owners = <String, String>{
       'mihon:zh': 'mihon:eu.kanade.tachiyomi.extension.zh.ehentai',

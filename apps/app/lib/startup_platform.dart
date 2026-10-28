@@ -186,10 +186,23 @@ Future<bool> allFilesAccessGranted() async {
   }
 }
 
-/// Returns a Direct-access candidate only for a system primary-storage SAF
-/// tree while All-files-access is currently granted. The path is still only a
-/// candidate; callers must prove SAF↔Direct physical identity before treating
-/// both locators as aliases.
+/// Reads persisted grant metadata without querying or opening any document.
+Future<({bool read, bool write})?> safTreeGrantStatus(String treeUri) async {
+  if (kIsWeb || !Platform.isAndroid) return null;
+  try {
+    final result = await startupPlatformChannel.invokeMapMethod<String, Object?>(
+      'safTreeGrantStatus', <String, Object?>{'treeUri': treeUri});
+    if (result == null) return null;
+    return (read: result['read'] == true, write: result['write'] == true);
+  } on MissingPluginException {
+    return null;
+  } on PlatformException {
+    return null;
+  }
+}
+
+/// Returns a candidate only while All-files access is granted. Callers must
+/// prove SAF/Direct physical identity before treating the locators as aliases.
 Future<String?> directPathForSafTree(String treeUri) async {
   if (kIsWeb || !Platform.isAndroid || treeUri.trim().isEmpty) return null;
   try {

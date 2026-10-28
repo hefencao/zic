@@ -99,6 +99,7 @@ final class SqliteImportedLibraryStore
         ImportedLibraryBatchLookup,
         ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
+        ImportedLibrarySyncDeletionStore,
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
         ImportedLibraryRevisionStore,
@@ -566,6 +567,28 @@ final class SqliteImportedLibraryStore
     final db = _requireDb();
     _saveProgressSynchronously(db, progress);
     _startProgressWriter(db);
+  }
+
+  @override
+  Future<void> removeSyncedMetadata(
+    LibrarySyncMetadataKind kind,
+    String sourceId,
+    String entityId, {
+    required DateTime notAfter,
+  }) async {
+    if (kind == LibrarySyncMetadataKind.progress) {
+      await flushProgressCheckpoints();
+    }
+    final (table, idColumn) = switch (kind) {
+      LibrarySyncMetadataKind.progress => ('reading_progress', 'chapter_id'),
+      LibrarySyncMetadataKind.preference => ('comic_preference', 'comic_id'),
+      LibrarySyncMetadataKind.readState => ('chapter_read_state', 'chapter_id'),
+    };
+    _requireDb().execute(
+      'DELETE FROM ' + table + ' WHERE source_id = ? AND ' + idColumn +
+          ' = ? AND updated_us <= ?',
+      <Object?>[sourceId, entityId, notAfter.toUtc().microsecondsSinceEpoch],
+    );
   }
 
   @override

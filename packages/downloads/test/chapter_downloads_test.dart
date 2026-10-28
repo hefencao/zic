@@ -15,6 +15,241 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('renewing SAF access retries an inventory probe without restarting or fetching bytes', () async {
+    final root = await Directory.systemTemp.createTemp('zic-renewed-saf-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final saf = _MemorySafIo({});
+    final service = await PersistentChapterDownloadService.open(root.path,
+      safTreeIo: saf, safTreeUri: 'content://fixture/tree/downloads');
+    addTearDown(service.close);
+    final entry = ImportedLibraryEntry(chapter: ImportedChapterRecord(
+      directoryId: 'renewed', sourceId: 'venera:renewed', comicId: 'comic',
+      comicTitle: 'Renewed', displayName: 'Chapter', chapterId: 'chapter', sourceRevision: 'r1',
+      pages: [ImportedPageRecord(displayName: '1.png', sourceId: 'https://fixture.test/1.png',
+        pageId: 'page', contentKindHint: ContentKindHint.png, byteLength: body.length)]));
+    var requests = 0;
+    service.setChapterResourceAccess(ChapterResourceAccess(loadBytes: (_, __) async { requests++; return body; }));
+    await service.download(entry);
+    final manifest = entry.chapter.toManifest();
+    final id = readerPageDownloadId(manifest, manifest.pages.single);
+    saf.denyReads = true;
+    await expectLater(service.readPage(entry, 0), throwsA(isA<ArtifactReadFailure>()));
+    expect((await service.artifactStore.indexedRecords()).containsKey(id.key), isTrue);
+    saf.denyReads = false;
+    service.artifactStore.refreshLocalDownloadAccess();
+    expect(await service.readPage(entry, 0), body);
+    await service.artifactStore.index.remove(id.key);
+    saf.denyReads = true;
+    await expectLater(service.readPage(entry, 0), throwsA(isA<SafTreeAccessFailure>()));
+    saf.denyReads = false;
+    service.artifactStore.refreshLocalDownloadAccess();
+    expect(await service.readPage(entry, 0), body);
+    expect(requests, 1);
+  });
+
+  for (final useSaf in [false, true]) {
+  for (final lostDatabase in [false, true]) {
+  test('file inventory restores demanded pages and prevents duplicate download (SAF=$useSaf, lost=$lostDatabase)', () async {
+    final root = await Directory.systemTemp.createTemp('zic-inventory-recovery-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final saf = useSaf ? _MemorySafIo(<String, Uint8List>{}) : null;
+    Future<PersistentChapterDownloadService> open() => PersistentChapterDownloadService.open(root.path,
+      safTreeIo: saf, safTreeUri: useSaf ? 'content://fixture/tree/downloads' : null);
+    var service = await open();
+    addTearDown(() => service.close());
+    final entry = ImportedLibraryEntry(chapter: ImportedChapterRecord(
+      directoryId: 'recovery', sourceId: 'venera:recovery', comicId: 'comic',
+      comicTitle: 'Recovery', displayName: 'Chapter', chapterId: 'chapter', sourceRevision: 'r1',
+      pages: [for (var i = 0; i < 3; i++) ImportedPageRecord(displayName: '$i.png',
+        sourceId: 'https://fixture.test/$i.png', pageId: 'page-$i',
+        contentKindHint: ContentKindHint.png, byteLength: body.length)]));
+    var calls = 0;
+    final access = ChapterResourceAccess(loadBytes: (_, __) async { calls++; return body; });
+    service.setChapterResourceAccess(access);
+    if (!lostDatabase) await service.claimComicDirectory(sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId, comicTitle: entry.chapter.comicTitle,
+      directoryName: 'User chosen folder', mode: DownloadPlacementMode.createNew);
+    await service.download(entry);
+    expect(calls, 3);
+    final ids = [for (final page in entry.chapter.toManifest().pages)
+      readerPageDownloadId(entry.chapter.toManifest(), page)];
+    final dbPath = service.artifactStore.layout.dbPath;
+    final original = await service.artifactStore.indexedRecords();
+    await service.close();
+    if (lostDatabase) {
+      await File(dbPath).delete();
+    } else {
+      final index = SqliteIndex(dbPath);
+      await index.open();
+      await index.remove(ids[0].key);
+      await index.remove(ids[2].key);
+      await index.close();
+    }
+    service = await open();
+    service.setChapterResourceAccess(access);
+    expect((await service.artifactStore.indexedRecords()).length, lostDatabase ? 0 : 1);
+    expect(await service.readPage(entry, 0), body);
+    final demanded = await service.artifactStore.indexedRecords();
+    expect(demanded.length, lostDatabase ? 1 : 2,
+      reason: 'Reader recovery must not checksum or reference every page/version');
+    expect(demanded[ids[0].key]!.path, original[ids[0].key]!.path);
+    expect(demanded[ids[0].key]!.pinned, isTrue);
+    expect(demanded.containsKey(ids[2].key), isFalse);
+    await service.artifactStore.writeComicFolderManifest(entry);
+    expect(await service.readPage(entry, 2), body,
+      reason: 'a checkpoint must preserve unindexed descriptive files for later demanded proof');
+    await service.download(entry);
+    expect(calls, 3, reason: 'the old inventory is read before the first checkpoint overwrites it');
+    expect((await service.inspect(entry)).exactCompletedPages, 3);
+    expect((await service.artifactStore.inspectArtifacts()).automaticBytes, 0);
+    expect(await service.readPage(entry, 2), body);
+    if (saf != null) expect(saf.listCalls, 0, reason: 'recovery uses only exact manifest/file reads');
+    await service.delete(entry);
+    expect(await service.hasReadyPage(entry, 0), isFalse, reason: 'a remembered inventory cannot resurrect a delete');
+  });
+  }
+  }
+
+  for (final useSaf in [false, true]) {
+  test('lost index keeps multi-chapter placement and downloads only an actually missing file (SAF=$useSaf)', () async {
+    final root = await Directory.systemTemp.createTemp('zic-multi-inventory-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final saf = useSaf ? _MemorySafIo(<String, Uint8List>{}) : null;
+    Future<PersistentChapterDownloadService> open() => PersistentChapterDownloadService.open(root.path,
+      safTreeIo: saf, safTreeUri: useSaf ? 'content://fixture/tree/downloads' : null);
+    var service = await open();
+    addTearDown(() => service.close());
+    final chapters = [for (var chapter = 1; chapter <= 2; chapter++) ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(directoryId: 'multi', sourceId: 'venera:multi-recovery',
+        comicId: 'comic', comicTitle: 'Multi recovery', displayName: 'Chapter $chapter',
+        chapterId: 'chapter-$chapter', sequence: chapter, sourceRevision: 'r1',
+        pages: [for (var i = 0; i < 2; i++) ImportedPageRecord(displayName: '$i.png',
+          sourceId: 'https://fixture.test/$chapter/$i.png', pageId: 'page-$chapter-$i',
+          contentKindHint: ContentKindHint.png, byteLength: body.length)]))];
+    var calls = 0;
+    final access = ChapterResourceAccess(loadBytes: (_, __) async { calls++; return body; });
+    service.setChapterResourceAccess(access);
+    for (final entry in chapters) await service.download(entry);
+    final first = chapters.first.chapter.toManifest();
+    final missingId = readerPageDownloadId(first, first.pages.last);
+    final original = (await service.artifactStore.indexedRecords())[missingId.key]!;
+    final dbPath = service.artifactStore.layout.dbPath;
+    await service.close();
+    await File(dbPath).delete();
+    if (saf == null) {
+      await File(original.path).delete();
+    } else {
+      await saf.delete(parseSafRecordPath(original.path)!.relativePath);
+    }
+    service = await open();
+    service.setChapterResourceAccess(access);
+    expect(await service.readPage(chapters.first, 0), body);
+    await service.download(chapters.first);
+    expect(calls, 5, reason: 'three intact files remain reusable; only the removed one needs transport');
+    final recovered = await service.artifactStore.indexedRecords();
+    expect(recovered[missingId.key]!.path, original.path,
+      reason: 'a lost sibling binding cannot flatten an existing multi-chapter layout');
+    expect(recovered.values.every((record) => record.id.content.chapterId == 'chapter-1'), isTrue,
+      reason: 'unopened chapters get no references');
+    await service.download(chapters.last);
+    expect(calls, 5);
+    expect((await service.inspect(chapters.last)).exactCompletedPages, 2);
+  });
+  }
+
+  for (final mismatch in ['owner', 'revision', 'page-id', 'page-order', 'page-count', 'bytes']) {
+  test('file inventory refuses $mismatch mismatch after database loss', () async {
+    final root = await Directory.systemTemp.createTemp('zic-inventory-proof-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    var service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(() => service.close());
+    final chapter = ImportedChapterRecord(directoryId: 'proof', sourceId: 'venera:proof', comicId: 'comic',
+      comicTitle: 'Proof', displayName: 'Chapter', chapterId: 'chapter', sourceRevision: 'r1',
+      pages: [for (var i = 0; i < 2; i++) ImportedPageRecord(displayName: '$i.png',
+        sourceId: 'https://fixture.test/$i.png', pageId: 'page-$i',
+        contentKindHint: ContentKindHint.png, byteLength: body.length)]);
+    service.setChapterResourceAccess(ChapterResourceAccess(loadBytes: (_, __) async => body));
+    await service.download(ImportedLibraryEntry(chapter: chapter));
+    final records = await service.artifactStore.indexedRecords();
+    final dbPath = service.artifactStore.layout.dbPath;
+    await service.close();
+    await File(dbPath).delete();
+    if (mismatch == 'bytes') {
+      final manifest = chapter.toManifest();
+      final id = readerPageDownloadId(manifest, manifest.pages.first);
+      await File(records[id.key]!.path).writeAsBytes(List.filled(body.length, 0));
+    }
+    service = await PersistentChapterDownloadService.open(root.path);
+    final requested = chapter.copyWith(
+      comicId: mismatch == 'owner' ? 'another-comic' : null,
+      sourceRevision: mismatch == 'revision' ? 'r2' : null,
+      pages: switch (mismatch) {
+        'page-id' => [ImportedPageRecord(displayName: '0.png', sourceId: chapter.pages.first.sourceId,
+          pageId: 'another-page', contentKindHint: ContentKindHint.png), chapter.pages.last],
+        'page-order' => chapter.pages.reversed.toList(),
+        'page-count' => [chapter.pages.first],
+        _ => null,
+      });
+    final entry = ImportedLibraryEntry(chapter: requested);
+    expect(await service.hasReadyPage(entry, 0), isFalse);
+    expect(await service.artifactStore.indexedRecords(), isEmpty);
+  });
+  }
+
+  for (final cancel in [false, true]) {
+  test('inventory recovery drains metadata I/O before ${cancel ? 'cancel' : 'close'} completes', () async {
+    final root = await Directory.systemTemp.createTemp('zic-inventory-drain-');
+    addTearDown(() => root.delete(recursive: true));
+    final body = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6jXcAAAAASUVORK5CYII=');
+    final storage = <String, Uint8List>{};
+    var saf = _MemorySafIo(storage);
+    Future<PersistentChapterDownloadService> open() => PersistentChapterDownloadService.open(root.path,
+      safTreeIo: saf, safTreeUri: 'content://fixture/tree/downloads');
+    var service = await open();
+    addTearDown(() => service.close());
+    final entry = ImportedLibraryEntry(chapter: ImportedChapterRecord(directoryId: 'drain',
+      sourceId: 'venera:drain', comicId: 'comic', comicTitle: 'Drain', displayName: 'Chapter',
+      chapterId: 'chapter', sourceRevision: 'r1', pages: [ImportedPageRecord(displayName: '0.png',
+        sourceId: 'https://fixture.test/0.png', pageId: 'page',
+        contentKindHint: ContentKindHint.png, byteLength: body.length)]));
+    var calls = 0;
+    final access = ChapterResourceAccess(loadBytes: (_, __) async { calls++; return body; });
+    service.setChapterResourceAccess(access);
+    await service.download(entry);
+    final dbPath = service.artifactStore.layout.dbPath;
+    await service.close();
+    await File(dbPath).delete();
+    final release = Completer<void>();
+    saf = _MemorySafIo(storage, readStarted: Completer<void>(), readGate: release.future);
+    service = await open();
+    service.setChapterResourceAccess(access);
+    Future<void>? run;
+    Future<ArtifactCacheStreamEntry?>? lookup;
+    if (cancel) {
+      run = service.download(entry);
+    } else {
+      final manifest = entry.chapter.toManifest();
+      service.artifactStore.rememberLocalRecoveryChapter(entry);
+      lookup = service.artifactStore.openArtifactStream(readerPageDownloadId(manifest, manifest.pages.first));
+    }
+    await saf.readStarted!.future;
+    var stopped = false;
+    final stop = (cancel ? service.cancel(entry) : service.close()).then((_) => stopped = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(stopped, isFalse, reason: 'the owner must retain its resources until the real read exits');
+    release.complete();
+    await stop;
+    if (run != null) await run;
+    if (lookup != null) expect(await lookup, isNull);
+    expect(calls, 1, reason: 'a retired recovery cannot fall through to a new network request');
+    if (cancel) expect(await service.artifactStore.indexedRecords(), isEmpty);
+  });
+  }
+
   for (final useSaf in [false, true]) {
   for (final fail in [false, true]) {
   test('portable checkpoint keeps verified pages after interruption (SAF=$useSaf, failure=$fail)',
@@ -74,6 +309,10 @@ void main() {
     expect(partial.chapterFiles['chapter']!.pageCount, 34);
     expect(partial.chapterFiles['chapter']!.pages, hasLength(32));
     expect((await service.inspect(entry)).exactCompletedPages, 32);
+    final retained = await service.artifactStore.inspectArtifacts();
+    expect(retained.retainedBytes, 32 * body.length);
+    expect((await service.clearArtifacts()).releasedBytes, 0,
+      reason: 'interrupted explicit downloads retain their completed pages');
     interrupt = false;
     await service.retry(entry);
     final complete = ComicFolderManifest.decode(await manifestText())!;
@@ -7044,6 +7283,21 @@ void main() {
     snapshot = await service.inspect(entry);
     expect(snapshot.pinnedPages, 1);
     expect(snapshot.isComplete, isTrue);
+    final later = DownloadId(content: ContentId(sourceId: id.content.sourceId,
+        comicId: id.content.comicId, chapterId: id.content.chapterId, pageId: 'later-reader'),
+      sourceRevision: id.sourceRevision, canonicalUri: Uri.parse('https://example.test/later.webp'));
+    await service.storePromotedArtifact(id: later, bytes: webpBytes);
+    expect((await service.clearArtifacts()).releasedBytes, webpBytes.lengthInBytes,
+      reason: 'completed command intent must not retain later Reader-only pages');
+    expect(await service.artifactStore.index.get(id.key), isNotNull);
+    await service.delete(entry);
+    final index = service.artifactStore.index as SqliteIndex;
+    // A later ordinary Reader visit is not a new explicit download command.
+    await service.storePromotedArtifact(id: id, bytes: webpBytes);
+    expect(await index.isExactCacheRetained(id.key), isFalse);
+    expect((await service.inspectArtifacts()).retainedBytes, 0);
+    expect((await service.clearArtifacts()).releasedBytes, webpBytes.lengthInBytes);
+    expect(await index.get(id.key), isNull);
   });
 
   test('explicit download pins only the current exact revision', () async {
@@ -7782,6 +8036,10 @@ void main() {
       revision: 'new-r1',
       pageIds: <String>['new-shared', 'new-gap'],
     );
+    final unrelated = entry(comicId: 'independent', revision: 'r1',
+      pageIds: <String>['independent-gap']);
+    final unrelatedManifest = unrelated.chapter.toManifest();
+    final unrelatedGap = readerPageDownloadId(unrelatedManifest, unrelatedManifest.pages.single);
     final oldManifest = old.chapter.toManifest();
     final currentManifest = current.chapter.toManifest();
     final oldShared = readerPageDownloadId(
@@ -7867,10 +8125,11 @@ void main() {
     await service.storePromotedArtifact(id: oldShared, bytes: sharedBytes);
     await service.storePromotedArtifact(id: currentShared, bytes: sharedBytes);
     await service.storePromotedArtifact(id: currentGap, bytes: gapBytes);
+    await service.storePromotedArtifact(id: unrelatedGap, bytes: gapBytes);
     await service.artifactStore.pinExactRecords(<DownloadId>[currentShared]);
 
     final projection = await service.inspectDownloadManagement(
-      <ImportedLibraryEntry>[old, current],
+      <ImportedLibraryEntry>[old, current, unrelated],
     );
     final cache = projection.cache;
     expect(cache, isNotNull);
@@ -7881,7 +8140,8 @@ void main() {
     expect(canonical.readyPages, 1);
     expect(canonical.partialPages, 0);
     expect(canonical.receivedBytes, sharedBytes.length);
-    expect(canonical.manualReferencedPages, 1);
+    expect(canonical.manualReferencedPages, 0,
+        reason: 'download-retained bodies are outside automatic cache inventory');
     expect(canonical.memberVersionCount, 2);
     expect(
       canonical.memberChapterIdentities,
@@ -7903,17 +8163,22 @@ void main() {
     expect(cache.exact, hasLength(1));
     final exact = cache.exact.single;
     expect(exact.identity, chapterDownloadIdentity(
-      current.chapter.sourceId,
-      current.chapter.comicId,
-      current.chapter.chapterId,
-      current.chapter.sourceRevision,
+      unrelated.chapter.sourceId,
+      unrelated.chapter.comicId,
+      unrelated.chapter.chapterId,
+      unrelated.chapter.sourceRevision,
     ));
+    while (service.activeDownloadEntries.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect((await service.artifactStore.index.get(currentGap.key))!.pinned, isTrue,
+        reason: 'the existing download automatically adopts its cached gap');
     expect(exact.readyPages, 1);
     expect(exact.partialPages, 0);
     expect(exact.receivedBytes, gapBytes.length);
 
     final cacheOnly = await service.inspectCacheManagement(
-      <ImportedLibraryEntry>[old, current],
+      <ImportedLibraryEntry>[old, current, unrelated],
     );
     expect(cacheOnly.canonical, hasLength(1));
     expect(cacheOnly.exact, hasLength(1));
@@ -7976,13 +8241,32 @@ void main() {
     );
 
     final overlappedProjection = await service.inspectDownloadManagement(
-      <ImportedLibraryEntry>[old, current],
+      <ImportedLibraryEntry>[old, current, unrelated],
     );
     final overlappedCache = overlappedProjection.cache!;
     expect(overlappedCache.canonical, hasLength(1));
     expect(overlappedCache.canonical.single.readyPages, 1);
     expect(overlappedCache.canonical.single.partialPages, 0);
     expect(overlappedCache.canonical.single.receivedBytes, sharedBytes.length);
+
+    final downloadsOnly = await service.inspectDownloadManagement(
+      [old, current, unrelated], includeCache: false,
+    );
+    expect(downloadsOnly.cache, isNull);
+    expect(downloadsOnly.snapshots.length, overlappedProjection.snapshots.length);
+    await service.clearChapterCache(cacheOnly.canonical.single.deleteTarget!);
+    final afterSharedClear = await service.inspectCacheManagement([old, current, unrelated]);
+    expect(afterSharedClear.canonical, isEmpty);
+    expect(afterSharedClear.exact.single.identity, exact.identity,
+        reason: 'clearing a shared row must leave an unrelated exact gap');
+    await service.clearChapterCache(afterSharedClear.exact.single.deleteTarget!);
+    final afterClear = await service.inspectCacheManagement([old, current, unrelated]);
+    expect(afterClear.canonical, isEmpty);
+    expect(afterClear.exact, isEmpty);
+    expect(await service.artifactStore.index.get(currentShared.key), isNotNull);
+    expect((await service.inspect(current)).pinnedPages, 2,
+        reason: 'shared pinned content must survive clearing automatic cache');
+
   });
 
   test(
@@ -8761,6 +9045,7 @@ final class _MemorySafIo implements SafTreeIo {
   int writeCalls = 0;
   final List<String> readPaths = <String>[];
   bool failNextClose = false;
+  bool denyReads = false;
   final Set<String> failDeletePaths = <String>{};
 
   @override
@@ -8852,6 +9137,7 @@ final class _MemorySafIo implements SafTreeIo {
 
   @override
   Future<bool> exists(String relativePath) async {
+    if (denyReads) throw const SafTreeAccessFailure(kind: ArtifactReadFailureKind.accessDenied, operation: 'exists');
     existsCalls++;
     return storage.containsKey(relativePath);
   }

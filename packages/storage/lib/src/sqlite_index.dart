@@ -15,6 +15,7 @@ import 'physical_partial_index.dart';
 import 'storage_root_access.dart';
 
 part 'sqlite_artifact_touch_worker.dart';
+part 'sqlite_cache_maintenance.dart';
 part 'sqlite_cache_record_query.dart';
 part 'sqlite_physical_record_query.dart';
 
@@ -49,7 +50,7 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 22;
+  static const int _schemaVersion = 23;
   static const _replicaLocatorIndexSql =
       'CREATE INDEX IF NOT EXISTS artifact_replica_access_locator '
       'ON artifact_replica(access_locator)';
@@ -131,9 +132,10 @@ final class SqliteIndex
         db.execute(_replicaLocatorIndexSql);
         if (version < 21) {
           _createCacheRecordQueryIndexes(db);
-        } else {
+        } else if (version == 21) {
           _migrateCacheRecordReferenceIds(db);
         }
+        _createCacheMaintenanceTables(db);
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -339,6 +341,7 @@ final class SqliteIndex
         _migrateLegacyPinnedRetention(db);
       }
       _createCacheRecordQueryIndexes(db);
+      _createCacheMaintenanceTables(db);
       db.execute('PRAGMA user_version = $_schemaVersion');
       db.execute('COMMIT');
     } on Object {

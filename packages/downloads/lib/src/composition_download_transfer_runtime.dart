@@ -153,6 +153,12 @@ final class CompositionDownloadTransferRuntime {
       onSessionCreated: (session) {
         artifactCacheHandoff?.observe(session);
         _physicalTransferRetention?.observe(session);
+        var wasBusy = !session.canEvict;
+        session.addSnapshotListener((_) {
+          final busy = !session.canEvict;
+          if (wasBusy && !busy) onCacheMaintenanceActivityReleased?.call();
+          wasBusy = busy;
+        }, fireImmediately: false);
       },
     );
     owner = DownloadTransferOwner(
@@ -189,6 +195,10 @@ final class CompositionDownloadTransferRuntime {
   static int _sequence = 0;
   static const _versionPageAuthorityResolverKey =
       'composition-version-page-authority';
+
+  /// Notifies the durable cache owner after a physical session becomes idle.
+  /// This is maintenance observation, never transfer admission authority.
+  void Function()? onCacheMaintenanceActivityReleased;
 
   final ArtifactCacheManager? artifactCacheManager;
   final VersionPageAuthority versionPageAuthority;
@@ -1545,6 +1555,7 @@ final class CompositionDownloadTransferRuntime {
       throw StateError('cannot dispose composition transfer with active consumers');
     }
     _disposed = true;
+    onCacheMaintenanceActivityReleased = null;
     _canonicalMediaAuthorityScopes.clear();
     _lastTracedPhysicalMediaOwner.clear();
     _lastTracedCanonicalMediaConflict.clear();

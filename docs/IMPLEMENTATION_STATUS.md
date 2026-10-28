@@ -1,5 +1,5 @@
 # Implementation Status
-源码版本：0.31.0-beta.1，App build：0.31.0-beta.1+332
+源码版本：0.31.0-beta.2，App build：0.31.0-beta.2+350
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
@@ -11,7 +11,7 @@
 - dev.269 区分 demanded=true 与闲置流；TaskControl 支持有界 paced drain 与单 invocation 串行保障。
 - 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。rhttp前缀/正文异常统一typed network/cancelled failure，正文错误不附资源URL；已接纳的注入正文断流由provider retry保留原plan/Range/validators，不额外消耗source恢复次数。semantic admission失败在generation退休前记录既有恢复计数与丢弃字节。
 ### 存储与恢复 (Storage & Ingress)
-- Implemented／Partial：摘要仅读当前章，空/纯exact不补读；SQL热行/schema22短引用/20/21后台升级/URI线性/canonical复用，身份/proof保持。章节令牌区分元数据/章节校验；回填/统计仅候选建页ID、按章核对projection；库存坐标索引，摘要跳过已证空查询并逐页核对live session。Home/收藏解码移出UI；总量字段/partial身份；恢复预取仅保留命中。导入预算/SAF、v1-v3及原子提交；合入main，见状态JSON。
+- Implemented／Partial：回收SQL用只读worker，close排空；分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本只映射。接管按下载头/manifest，旧pin只保留，换头排空，不补缺页。清单后台导出、首帧后预热、前后各一屏；清理重验。canonical/当前章、短引用及导入/SAF/v1-v3保持。见JSON，未推送。
 - Verified-device：统一“导入本地漫画”，自动识别普通目录、EHViewer、Mihon/CBZ、Venera DB/WAL，预览漫画/章节。普通散图默认复制，可逐本显式直接读取；App/CBZ只复制。新链接持久化直属扫描，旧记录递归保持；SAF用实际子目录URI。多章迁移后定点刷新复用locator。验证见状态JSON。
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝cold partial由SQLite/文件裁决，不随意materialize durable-store。borrowed staging强刷修正空记录幂等失效及canonical READY仅删索引；复用原store副本清理。三回归/170测试通过；普通Release273实际借用1,112,520B后单次强刷，同physical epoch0→1、静置新帧及17,528,576B完整缓存提交通过，taskFailed0。
@@ -24,6 +24,7 @@
 - 只有携带 exact `storageId + ArtifactCache mutation generation` authority 的 presentation rejection 才允许 `DownloadTransferOwner` 失效 durable body；
   无 authority 的错误不再自动制造新的 presentation/source generation。widget/page-output 的本地异步 fence 已分别命名为 `loadEpoch` / `bindingEpoch`。
 ### Home 组合与服务代际
+- `AppDialogActions`统一弹窗操作：弱色底左X、右操作；圆角12dp/视觉最小40dp/触摸至少48dp。右区使用剩余宽度并换行，保留语义色/禁用态。插件更新/信任/错误、仓库编辑、备份导入、Trace筛选、版本选择与详情版本操作共用；验收见状态JSON。
 - `HomeShell`/`home_shell_*`为入口，旧`DemoHome`仅历史。Trace紧跟zic；历史网格2–6列/横向1–3行/列表，默认三列、持久化、窄屏/sliver。书架来源循环；与漫画源共用全透明紧凑悬浮面板，行高40/行距6，无背景/阴影/提示杠；所有/本地优先，长按复选。展开独立保存，来源/分类/插件由默认关闭的保存过滤控制跨重启恢复。首次遮罩复用`showOperationHint`，确认持久化；元数据只读/canonical续读保留。
 - `HomeShell` 只持Navigator/presentation wiring，authority归各自owner。封面局部订阅source signal，source-failed只在unavailable→available重试；canonical artwork与raw点击key同级。32 UI回归及冷启动8/组合3真机通过，063/066/082收口。
 - Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。 ADR0404：单源页首次挂载先接收已有query，再发原source请求；后续queryRevision与标签路由不变，冷真机queryLength2/offset0已验。
@@ -31,10 +32,11 @@
 - ADR0384 Accepted：完整组合键脱敏保持原始hash/长度，修正507→511假象；不改缓存身份/URI/信任。2219/Rust22/三ABI与普通Release9214事件通过，127长scope/11exact key独立核对。设备上的Mihon扩展行v1.6.0/ABI1.6、下载、五静置slider/四首尾已验收；性能与原加载开放。
 - ADR0389 Provisional：旧版缺边先失败，9 owner与2235/Rust22/三ABI通过。普通Release3e65ae94/PID23850匹配51文件，正确Mihon/下载、5静置slider/4首尾跨章含历史覆盖通过；119完整章不变。真实predecessor/提醒输入、原加载与性能开放。
 - 自动缓存 projection 进一步收口为 durable inventory only：Reader hot/source-resident session 不再被误计为缓存；本地 `content://` 图册普通读取保持 source-backed、零 artifact write，不会因 Reader session retention 再生成自动缓存项或正文副本。
-- 书架管理/批量选择的 managing、batch 与 source-aware identity selection 已收口到纯 Dart `HomeShelfManagement`；删除/移动/归档等真实 mutation 和 dialog 仍留在 UI/既有 owner。
+- 书架 selection 归 `HomeShelfManagement`，mutation 留原 owner。详情隐藏无意义简介；标签默认折叠无标题，透明小箭头整行居中、不独占行。长按书架展开环状药丸与局部磨砂圆盘，盘内模糊/渐变/细边/阴影，无全屏遮罩；每组六项，保存分类同时入架，未改/未选分类也入架，盘外/返回取消不写；短按切换入架，收藏/喜欢独立。
 - 版本查看context归HomeVersionReuseLifecycle；099冷/推广/跨provider及实际EH收口。compact focus经library hydrate，取消/仍占位停止proof，真实carrier/epoch保持。371→424/Reader80静置、13,394,740B/无网络准入/0失败保持；023肉漫屋真实搜索卡片左上书架/变暗与独立右上更新已验，唯一head动作仍独立。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
-
+- Implemented：备份/导入/WebDAV共用六类选择，未选不删、不改时钟、不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日备份、每周GC，7日/4周/12月保留。仓库逐项合并、缺失插件/文件进度待恢复、目录/授权/秘密留本机；快照/NetLane/取消/重试保持，默认全选且启动不读。数据页进度按操作显示，弹窗/执行结束合并刷新；仓库/设备扫描分开。验收见JSON，未推送。
+- Verified-device／Partial：下载访问方式独立备份，路径/授权留本机并提示配置；SAF picker确认持久授权，首帧后查询，同根重授权清除失败探测。+334实机恢复原目录授权后Namaniku97/Ani318首帧116/149ms，确认本地读取、Reader零失败；仅一邻页缺完整清单记录而续传。2847/5跳过；丢库按需校验/多章布局保持，自定义定位/损坏清单、Direct指引实机及插件重装开放。
 ### 外部插件运行时 (Mihon & Venera)
 - Release 不携带 Mihon/Venera 默认仓库索引，输入框初始为空且不自动加载；手动 HTTPS 索引和已有精确索引更新保留。开发构建保留快捷地址。当前 beta 验证与发布状态见 `docs/IMPLEMENTATION_STATE.json`。
 - Dart MethodChannel adapter 共用原有 process/session recovery single-flight；重新激活和单次 replay 不再进入原始恢复 handler；取消等待物理退出并保留 typed cancellation，恢复自身失败不触发第二轮激活。
@@ -60,8 +62,7 @@
 - 迁移当前信息后以更新提示页内展开确认版本；两页搜索/筛选固定底部，复用漫画源横栏并含“全部”。精确/空结果直接切换，单源ID共用输入框。19相关回归/2371完整检查通过；Release70ac8752真机确认布局、展开、全部/筛选切换及ID/IME，无输入弹窗；独立来源/性能验收见状态JSON。
 ### 渲染与几何 (Pipeline & Reader View)
 - Reader进退：沿用MaterialPageRoute原动画；同帧别名共享、backfill既有4ms/64预算，首页发布等反向动画/overlay退役。210原动画Profile：Namaniku UI11.211/raster12.978ms，Cos UI11.543/raster27.070ms；绘制/120Hz仍开放。2596项/Rust25通过；Release a8d306c9已装210并验进退。SQL/解析/warm及独立开放项见JSON。
-- 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页；
-  `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
+- 自适应阅读：`reader_runtime` model v8 将页面几何改为一次性小样本判定：最多 3 张且包含第一页； `0.65 < h/w < 1.20` 的异常切片比例不形成页漫票，达到样本目标后停止重算，避免 profile 随预加载页数漂移。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
   经 `ReaderSessionSettings` 只读投影给分类器，非中性值参与 profile fingerprint；旧单向 weight 按 `0.5 + weight/2` 兼容迁移。
   Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影。
@@ -70,8 +71,8 @@
   configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
   阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
   全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接等只属于单一布局的选项仍保持单 owner。
-  阅读设置现由独立 `ReaderModeSettings` 分别保存 paged / continuous：连续阅读、双击倍率/锚点、长按启用/倍率/移动/拖动边界、zoom decode boost 可在两种布局中分别取值；旧扁平偏好会迁移进 mode profiles。
-  点击设置也已按当前实际 mode 独立：当前只消费 single tap，3×3 每格可选默认/上一页/下一页/上一章/下一章，单击切页动画可独立关闭。
+  阅读设置首页保留共用项，分页/连续各有子页，分页方向/纵向拼接留在对应页。`ReaderModeSettings` 分别保存连续阅读、双击/长按/zoom decode boost；旧扁平偏好迁移不变，进入子页不切默认模式。
+  全局点击设置复用 Reader 拖线覆层，在中性背景编辑同一 mode profile；显式保存提交，取消/返回丢弃。single tap 每格仍可选默认/上一页/下一页/上一章/下一章，动画与连续翻屏保留可调。
   Reader 内入口现改为当前页面上的沉浸式覆层：两条横线/两条竖线可直接拖动，归一化 layout 与真实 hit-test 共用同一 authority；
   编辑层 9 个 cell 覆盖完整 viewport 并截获 pointer，底层 ReaderView ancestry 始终保持不变；divider draft 只重建覆层自身，保存后才一次提交当前 mode。
   preference 使用 `gestureActions.singleTap` 分层；PageHost 仍负责单击/双击/长按消歧，双击与长按没有被九宫格接管，为后续各自独立九宫格保留边界。
@@ -197,7 +198,6 @@
 - 漫画翻译：底栏第三项点击面板，左下开关；面板管漫画语言/OCR/内容/指示器，右上全局。指示器缺省自动，保留已存偏好。首次独立三步引导，已配置跳过、退出不保存，可重开；全局模型/服务/高级/测试/默认/档位排列，仅右上保存，高级/导入/多API管理折叠。静态WebP优先Pipeline同代事实，未决查完整文件；整章/归档同理。当前输入优先，缓存不等推理；通知重放。worker摘要/JSON、1.5ms排版、LRU8页/128块；压力清除。OpenCV保留SIMD/TBB/HAL及推理内核。
   App整章任务复用下载、逐页处理、有限上下文，离开Reader继续，取消等真实退出；相同在途推理共享。下载companion保存/恢复最多8份译文/64MiB，先译后下载补存；摘要/配置校验在worker，同一变体集合稳定序列化。Direct/SAF替换/迁移/删除归下载所有者，来源目录只读。默认缓存沿用、阈值不重载模型。共用MT/detector、单识别器、保温30秒/无受保护整章任务时后台回收、NetLane至真实退出；验收见状态JSON。
   远程连接/握手及临时HTTP错误统一追加至多5次重试，间隔2/5/15/30/60秒；Retry-After可延长至5分钟。只重发失败批次，等待不占NetLane；全消费者退出/离页/对应后台暂停唤醒等待，快速返回重放新需求，单方退出保留共享请求。页/章节显示重试与失败进度，Trace脱敏；鉴权/证书/格式/发送接收超时不重试，缓存身份保持。
-
 ## 2. 当前开放问题
 - RMR-038：ADR0367/0368 Accepted；2184/Rust22及三ABI/JNI通过，冷启动/刷新/Reader后28行/1184页及首尾复验。展示不改变预览/正文裁决，memo缺失历史保留；备份保存/取消/重试与共用Trace通过，全来源metadata开放。
 - 静态竖排功耗报告已于 2026-09-24 重新按当前 owner 链复核：idle 恢复 3/7 static warm 是既定资源平滑策略，不作为功耗缺陷移除。

@@ -52,6 +52,75 @@ void _schema20References(sql.Database db) {
 }
 
 void main() {
+  test('file maintenance inventory preserves shared retention and drains on close', () async {
+    final root = await Directory.systemTemp.createTemp('cache-inventory-reader-');
+    addTearDown(() => root.delete(recursive: true));
+    final index = SqliteIndex('${root.path}/cache.sqlite');
+    await index.open();
+    final shared = _record('shared').copyWith(artifactId: 'shared', pinned: true);
+    await index.put(shared);
+    await index.put(_record('alias').copyWith(artifactId: 'shared',
+        path: shared.path, touchedUs: 9));
+    await index.put(_record('intent'));
+    await index.put(_record('loose'));
+    await index.retainDownloadCache(sourceId: 'source', comicId: 'intent',
+        chapterId: 'chapter', sourceRevision: 'r1');
+
+    final reading = index.readCacheMaintenanceArtifacts();
+    final closing = index.close();
+    final rows = await reading;
+    await closing;
+    expect(rows, hasLength(3));
+    final sharedRow = rows.singleWhere((row) => row.object.artifactId == 'shared');
+    expect(sharedRow.exactBindings, 2);
+    expect(sharedRow.touchedUs, 9);
+    expect(sharedRow.retained, isTrue);
+    expect(rows.singleWhere((row) => row.object.accessLocator.contains('/intent/')).retained,
+        isTrue);
+    expect(rows.singleWhere((row) => row.object.accessLocator.contains('/loose/')).retained,
+        isFalse);
+    await expectLater(index.readCacheMaintenanceArtifacts(), throwsStateError);
+  });
+
+  test('schema22 maintenance upgrade preserves old authority without parsing READY JSON', () async {
+    final root = await Directory.systemTemp.createTemp('cache-maintenance-upgrade-');
+    addTearDown(() => root.delete(recursive: true));
+    final path = '${root.path}/cache.sqlite';
+    final initial = SqliteIndex(path);
+    await initial.open();
+    await initial.put(_record('valid'));
+    final invalid = _record('legacy-invalid');
+    await initial.put(invalid);
+    await initial.close();
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('DROP TABLE cache_download_retention');
+    legacy.execute('DROP INDEX cache_entry_artifact');
+    legacy.execute('PRAGMA user_version = 22');
+    legacy.execute('UPDATE cache_entry SET download_json = ? WHERE key = ?',
+        ['legacy malformed JSON must not be decoded', invalid.key]);
+    final before = <String, List<Map<String, Object?>>>{
+      for (final table in ['cache_entry', 'cache_entry_identity', 'artifact_object', 'artifact_replica'])
+        table: legacy.select('SELECT * FROM $table ORDER BY 1')
+            .map((row) => Map<String, Object?>.from(row)).toList(),
+    };
+    legacy.dispose();
+    final upgraded = SqliteIndex(path);
+    await upgraded.open();
+    try {
+      expect((await upgraded.readCacheMaintenanceArtifacts()).length, 2);
+      expect(await upgraded.readRetainedPhysicalCacheKeys(), isEmpty);
+      final checked = sql.sqlite3.open(path);
+      try {
+        expect(checked.select('PRAGMA user_version').single.values.single, 23);
+        for (final table in before.keys) {
+          expect(checked.select('SELECT * FROM $table ORDER BY 1')
+              .map((row) => Map<String, Object?>.from(row)).toList(), before[table]);
+        }
+        expect(checked.select("SELECT 1 FROM sqlite_master WHERE name = 'cache_entry_artifact'"), hasLength(1));
+      } finally { checked.dispose(); }
+    } finally { await upgraded.close(); }
+  });
+
   test('URI candidate tokens preserve the persisted hex and path vocabulary', () {
     final previousHash = RegExp(r'[a-fA-F0-9]{32,64}');
     List<String> previous(Uri uri) {
@@ -223,7 +292,7 @@ void main() {
         expect((await index.get(old.key))?.path, old.path);
         final db = sql.sqlite3.open(path);
         try {
-          expect(db.select('PRAGMA user_version').single.values.single, 22);
+          expect(db.select('PRAGMA user_version').single.values.single, 23);
           for (final statement in [
             "SELECT * FROM cache_entry WHERE source_id = 'source' AND comic_id = 'old' AND chapter_id = 'chapter' AND source_revision = 'r1'",
             "SELECT c.* FROM cache_entry_identity i JOIN cache_entry c ON c.binding_id = i.binding_id WHERE i.source_id = 'source' AND i.identity IN ('checksum:crc32:abcd')",
@@ -341,7 +410,7 @@ void main() {
             identities: ['checksum:crc32:abcd'])).single.key, ready.key);
           final db = sql.sqlite3.open(path);
           try {
-            expect(db.select('PRAGMA user_version').single.values.single, 22);
+            expect(db.select('PRAGMA user_version').single.values.single, 23);
             for (final table in before.keys) {
               expect(rows(db, table, table == 'cache_entry' ? columns : '*'), before[table]);
             }

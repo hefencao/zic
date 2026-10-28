@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/reader.dart';
@@ -19,6 +20,10 @@ import 'comic_translation_settings_entry.dart';
 import 'chapter_download_directory.dart';
 import 'directory_picker.dart';
 import 'diagnostic_error_ui.dart';
+import 'library_backup_import_screen.dart';
+import 'library_data_scope.dart';
+import 'library_data_selector.dart';
+import 'storage_root_access.dart';
 
 const settingsScreenKey = ValueKey<String>('settings-screen');
 const settingsDataEntryKey = ValueKey<String>('settings-data-entry');
@@ -41,11 +46,16 @@ const networkCachedCarrierConflictTrustKey =
 const bookshelfSettingsScreenKey =
     ValueKey<String>('bookshelf-settings-screen');
 const readingSettingsScreenKey = ValueKey<String>('reading-settings-screen');
+const readingPagedSettingsEntryKey =
+    ValueKey<String>('reading-paged-settings-entry');
+const readingContinuousSettingsEntryKey =
+    ValueKey<String>('reading-continuous-settings-entry');
 const downloadSettingsScreenKey = ValueKey<String>('download-settings-screen');
 const appearanceSettingsScreenKey =
     ValueKey<String>('appearance-settings-screen');
 const appearanceAmoledKey = ValueKey<String>('appearance-amoled');
 const dataBackupExportKey = ValueKey<String>('data-backup-export');
+const dataWebDavSyncKey = ValueKey<String>('data-webdav-sync');
 const dataCacheClearKey = ValueKey<String>('data-cache-clear');
 const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
 const dataDownloadDirectoryKey = ValueKey<String>('data-download-directory');
@@ -156,13 +166,17 @@ final class SettingsScreen extends StatelessWidget {
     required this.downloadPolicy,
     required this.dataRuntime,
     required this.exportBackup,
+    this.webDavBuilder,
+    this.backupImportBuilder,
     super.key,
   });
 
   final AppPreferencesController preferences;
   final WholeComicPolicySettingsBinding downloadPolicy;
   final DataSettingsRuntimeBinding dataRuntime;
-  final Future<String?> Function() exportBackup;
+  final Future<String?> Function(Set<LibraryDataSection> sections) exportBackup;
+  final WidgetBuilder? webDavBuilder;
+  final WidgetBuilder? backupImportBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -183,6 +197,8 @@ final class SettingsScreen extends StatelessWidget {
                 preferences: preferences,
                 runtime: dataRuntime,
                 exportBackup: exportBackup,
+                webDavBuilder: webDavBuilder,
+                backupImportBuilder: backupImportBuilder,
               ),
             ),
           ),
@@ -277,24 +293,44 @@ final class DataSettingsScreen extends StatefulWidget {
     required this.preferences,
     required this.runtime,
     required this.exportBackup,
+    this.webDavBuilder,
+    this.backupImportBuilder,
     super.key,
   });
 
   final AppPreferencesController preferences;
   final DataSettingsRuntimeBinding runtime;
-  final Future<String?> Function() exportBackup;
+  final Future<String?> Function(Set<LibraryDataSection> sections) exportBackup;
+  final WidgetBuilder? webDavBuilder;
+  final WidgetBuilder? backupImportBuilder;
 
   @override
   State<DataSettingsScreen> createState() => _DataSettingsScreenState();
+}
+
+enum _DataSettingsOperation {
+  inspectCache,
+  confirmCacheClear,
+  clearCache,
+  chooseBackup,
+  exportBackup,
+  editCacheLimit,
+  trimCache,
 }
 
 final class _DataSettingsScreenState extends State<DataSettingsScreen>
     with WidgetsBindingObserver {
   ResourceCacheUsage? _usage;
   Object? _failure;
-  bool _busy = false;
+  _DataSettingsOperation? _operation;
+  bool get _busy => _operation != null;
+  static const _progressIndicator = SizedBox.square(
+    dimension: 20,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
   bool _changingDownloadDirectory = false;
   bool? _allFilesAccessGranted;
+  ({bool read, bool write})? _safGrant;
   bool _openingFileAccessSettings = false;
   bool _runtimeRefreshPending = false;
 
@@ -334,7 +370,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
 
   void _finishBusy() {
     if (!mounted) return;
-    setState(() => _busy = false);
+    setState(() => _operation = null);
     if (_runtimeRefreshPending) {
       unawaited(_refreshUsage());
     }
@@ -348,9 +384,30 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _refreshFileAccessStatus() async {
-    final granted = await allFilesAccessGranted();
-    if (!mounted || _allFilesAccessGranted == granted) return;
-    setState(() => _allFilesAccessGranted = granted);
+    final directory = _effectiveDownloadDirectory;
+    final tree = directory == null ? null : chapterDownloadSafTreeUri(directory);
+    final statuses = await Future.wait<Object?>([
+      allFilesAccessGranted(),
+      tree == null ? Future<Object?>.value() : safTreeGrantStatus(tree),
+    ]);
+    if (!mounted || directory != _effectiveDownloadDirectory) return;
+    setState(() {
+      _allFilesAccessGranted = statuses[0]! as bool;
+      _safGrant = statuses[1] as ({bool read, bool write})?;
+    });
+  }
+
+  Future<void> _chooseDownloadAccess() async {
+    final selected = await showDialog<String>(context: context, builder: (context) => SimpleDialog(
+      title: const Text('下载目录访问方式'), children: [
+        SimpleDialogOption(onPressed: () => Navigator.pop(context, 'saf'),
+          child: const Text('SAF：仅授权所选目录')),
+        SimpleDialogOption(onPressed: () => Navigator.pop(context, 'direct'),
+          child: const Text('Direct：需要所有文件访问，同目录保留 SAF 回退')),
+      ]));
+    if (selected == null || !mounted) return;
+    widget.preferences.restoreDownloadAccessPreference(selected);
+    await _changeDownloadDirectory();
   }
 
   Future<void> _openFileAccessSettings() async {
@@ -377,7 +434,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     }
     _runtimeRefreshPending = false;
     setState(() {
-      _busy = true;
+      _operation = _DataSettingsOperation.inspectCache;
       _failure = null;
     });
     try {
@@ -391,32 +448,34 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _clearCache() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('清理缓存'),
-        content: const Text(
-          '清理响应缓存与可安全移除的页面 artifact。正在使用的资源会由各自 owner 保留。',
-        ),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.pop(context, false),
-            actions: <Widget>[
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('清理'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    setState(() {
-      _busy = true;
-      _failure = null;
-    });
+    if (_busy) return;
+    setState(() => _operation = _DataSettingsOperation.confirmCacheClear);
     try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('清理缓存'),
+          content: const Text(
+            '清理页面、封面与响应缓存，保留下载和正在使用的页面。',
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(context, false),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('清理'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      setState(() {
+        _operation = _DataSettingsOperation.clearCache;
+        _failure = null;
+      });
       final result = await widget.runtime.clearCache();
       if (!mounted) return;
       setState(() => _usage = result.usage);
@@ -435,11 +494,13 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _exportBackup() async {
-    setState(() {
-      _busy = true;
-    });
+    if (_busy) return;
+    setState(() => _operation = _DataSettingsOperation.chooseBackup);
     try {
-      final path = await widget.exportBackup();
+      final sections = await chooseLibraryBackupSections(context);
+      if (sections == null || !mounted) return;
+      setState(() => _operation = _DataSettingsOperation.exportBackup);
+      final path = await widget.exportBackup(sections);
       if (!mounted || path == null) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('备份已导出：$path')),
@@ -476,6 +537,12 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
+    final preferDirect = !kIsWeb && defaultTargetPlatform == TargetPlatform.android &&
+        widget.preferences.downloadAccessPreference == 'direct';
+    if (preferDirect && !await allFilesAccessGranted()) {
+      if (!mounted || !await _offerAllFilesAccess() || !await allFilesAccessGranted()) return;
+      if (!mounted) return;
+    }
     String? picked;
     try {
       picked = await pickDirectory();
@@ -487,6 +554,19 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       return;
     }
     if (!mounted || picked == null || picked.isEmpty) return;
+    final tree = chapterDownloadSafTreeUri(picked) ?? (picked.startsWith('content://') ? picked : null);
+    if (tree != null) {
+      final grant = await safTreeGrantStatus(tree);
+      if (grant != null && (!grant.read || !grant.write)) {
+        messenger.showSnackBar(const SnackBar(content: Text('所选目录缺少持久读写授权，请重新选择可读写目录')));
+        return;
+      }
+      if (preferDirect && await probeAndroidStorageRootAccessAlias(tree) == null) {
+        messenger.showSnackBar(const SnackBar(content: Text('此目录无法通过 Direct 访问，请改选 SAF')));
+        return;
+      }
+    }
+    if (!mounted) return;
     // SAF trees bypass the Venera old/new-file rules entirely: the tree IS
     // the store root, nothing needs creating, and writability comes from the
     // persisted document-tree grant rather than a POSIX probe.
@@ -519,6 +599,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       directory: picked,
       migrateFiles: migrate,
       successMessage: '下载目录已更新',
+      access: preferDirect ? 'direct' : null,
     );
   }
 
@@ -551,6 +632,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     required String? directory,
     required bool migrateFiles,
     required String successMessage,
+    String? access,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _changingDownloadDirectory = true);
@@ -579,6 +661,8 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       SnackBar(content: Text(failure ?? successMessage)),
     );
     if (failure == null && mounted) {
+      widget.preferences.confirmDownloadDirectorySetup(access: access);
+      await _refreshFileAccessStatus();
       await _refreshUsage();
     }
   }
@@ -673,48 +757,50 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _editCacheLimit() async {
+    if (_busy) return;
+    setState(() => _operation = _DataSettingsOperation.editCacheLimit);
     var draft = '${widget.preferences.cacheLimitMb}';
-    final confirmed = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('设置缓存上限'),
-        content: TextFormField(
-          initialValue: draft,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: <TextInputFormatter>[
-            FilteringTextInputFormatter.digitsOnly,
-          ],
-          decoration: const InputDecoration(
-            labelText: '大小（MB）',
-            helperText:
-                '范围 $minCacheLimitMb–$maxCacheLimitMb MB；超过后自动清理最久未用的页面缓存。',
-            border: OutlineInputBorder(),
-          ),
-          onChanged: (value) => draft = value,
-        ),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.pop(dialogContext, null),
-            actions: <Widget>[
-              FilledButton(
-                onPressed: () {
-                  final value = int.tryParse(draft);
-                  Navigator.pop(
-                    dialogContext,
-                    value?.clamp(0, 1 << 30).toInt(),
-                  );
-                },
-                child: const Text('设置'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (!mounted || confirmed == null) return;
-    setState(() => _busy = true);
     try {
+      final confirmed = await showDialog<int>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('设置缓存上限'),
+          content: TextFormField(
+            initialValue: draft,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.digitsOnly,
+            ],
+            decoration: const InputDecoration(
+              labelText: '大小（MB）',
+              helperText:
+                  '范围 $minCacheLimitMb–$maxCacheLimitMb MB；超过后自动清理最久未用的页面缓存。',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (value) => draft = value,
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(dialogContext, null),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () {
+                    final value = int.tryParse(draft);
+                    Navigator.pop(
+                      dialogContext,
+                      value?.clamp(0, 1 << 30).toInt(),
+                    );
+                  },
+                  child: const Text('设置'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirmed == null) return;
+      setState(() => _operation = _DataSettingsOperation.trimCache);
       widget.preferences.setCacheLimitMb(confirmed);
       final result = await widget.runtime.updateCachePolicyAndTrim(
         ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
@@ -753,6 +839,22 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
           padding: const EdgeInsets.only(bottom: 24),
           children: <Widget>[
             const _SettingsSectionTitle('目录'),
+            if (widget.preferences.downloadDirectorySetupRequired)
+              ListTile(leading: const Icon(Icons.folder_off_outlined),
+                title: const Text('下载目录需要在本机配置'),
+                subtitle: Text(widget.preferences.downloadAccessPreference == 'saf'
+                    ? '已恢复 SAF 选择；请重新选择原下载目录以授予访问权。'
+                    : widget.preferences.downloadAccessPreference == 'direct'
+                        ? '已恢复 Direct 选择；Android 需授予所有文件访问，再选择原下载目录。'
+                        : '已恢复应用默认目录选择；确认后切换本机目录。'),
+                trailing: TextButton(onPressed: _changingDownloadDirectory ? null :
+                  widget.preferences.downloadAccessPreference == 'app' ? _resetDownloadDirectory : _changeDownloadDirectory,
+                  child: const Text('配置'))),
+            if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+              ListTile(title: const Text('下载目录访问方式'),
+              subtitle: Text(switch (widget.preferences.downloadAccessPreference) {
+                'saf' => 'SAF · 系统目录授权', 'direct' => 'Direct 优先 · 同目录 SAF 回退', _ => '应用默认目录'}),
+              enabled: !_changingDownloadDirectory, onTap: _chooseDownloadAccess),
             _DirectoryTile(
               title: '应用数据目录',
               path: root,
@@ -790,11 +892,12 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
               leading: const Icon(Icons.folder_open_outlined),
               title: const Text('文件读写设置'),
               subtitle: Text(
-                _allFilesAccessGranted == null
-                    ? '正在读取系统文件访问状态…'
-                    : _allFilesAccessGranted!
-                        ? '所有文件访问：已授权 · Direct 共享存储/SD 卡可读写；SAF 不依赖此权限'
-                        : '所有文件访问：未授权 · Direct 共享存储/SD 卡需要授权；SAF 可直接使用',
+                (downloadDirectory != null && chapterDownloadSafTreeUri(downloadDirectory) != null
+                    ? _safGrant == null ? 'SAF 授权状态未知' :
+                      _safGrant!.read && _safGrant!.write ? 'SAF 持久读写授权：有效' : 'SAF 持久读写授权缺失，请重新选择下载目录'
+                    : '当前下载目录使用 Direct') + '\n' +
+                  (_allFilesAccessGranted == null ? '正在读取所有文件访问状态…' :
+                    _allFilesAccessGranted! ? '所有文件访问：已授权' : '所有文件访问：未授权（SAF 不依赖此权限）'),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -808,7 +911,9 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
                           ? Icons.verified_user_outlined
                           : Icons.chevron_right,
                     ),
-              onTap: _openingFileAccessSettings ? null : _openFileAccessSettings,
+              onTap: _openingFileAccessSettings ? null :
+                  _safGrant != null && (!_safGrant!.read || !_safGrant!.write)
+                    ? _changeDownloadDirectory : _openFileAccessSettings,
             ),
             _DirectoryTile(
               title: '响应缓存目录',
@@ -827,38 +932,76 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
             ),
             const Divider(),
             const _SettingsSectionTitle('备份'),
+            if (widget.webDavBuilder != null)
+              ListTile(
+                key: dataWebDavSyncKey,
+                leading: const Icon(Icons.cloud_sync_outlined),
+                title: const Text('WebDAV 同步'),
+                subtitle: const Text('同步书架、历史、分类、阅读/翻译设置和插件选项'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: widget.webDavBuilder!),
+                ),
+              ),
             ListTile(
               key: dataBackupExportKey,
               enabled: !_busy,
               leading: const Icon(Icons.backup_outlined),
               title: const Text('导出数据备份'),
-              subtitle: const Text('导出漫画、章节、进度、书架分类与来源偏好；不复制缓存字节。'),
-              trailing: const Icon(Icons.chevron_right),
+              subtitle: const Text('选择书架、阅读记录或设置，导出压缩备份'),
+              trailing: _operation == _DataSettingsOperation.exportBackup
+                  ? _progressIndicator
+                  : const Icon(Icons.chevron_right),
               onTap: _busy ? null : _exportBackup,
             ),
+            if (widget.backupImportBuilder != null)
+              ListTile(
+                key: dataBackupImportKey,
+                enabled: !_busy,
+                leading: const Icon(Icons.restore_page_outlined),
+                title: const Text('导入数据备份'),
+                subtitle: const Text('选择备份文件，预览后合并到本机'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _busy ? null : () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: widget.backupImportBuilder!),
+                ),
+              ),
             const Divider(),
             const _SettingsSectionTitle('缓存'),
             ListTile(
-              title: const Text('当前缓存'),
+              title: const Text('自动页面缓存'),
               subtitle: Text(
                 _failure != null
                     ? '读取失败：$_failure'
                     : _usage == null
                         ? '正在读取…'
-                        : '${_formatBytes(_usage!.totalBytes)} · ${_usage!.totalEntries} 项',
+                        : '${_formatBytes(_usage!.automaticPageBytes)}',
               ),
               trailing: IconButton(
                 key: dataCacheRefreshKey,
                 tooltip: '刷新缓存统计',
                 onPressed: _busy ? null : _refreshUsage,
-                icon: _busy
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                icon: _operation == _DataSettingsOperation.inspectCache
+                    ? _progressIndicator
                     : const Icon(Icons.refresh),
               ),
             ),
+            if (_usage != null)
+              ListTile(
+                title: const Text('下载保留'),
+                subtitle: Text('${_formatBytes(_usage!.retainedDownloadBytes)} · 不计入缓存上限'),
+              ),
+            if (_usage != null)
+              ListTile(
+                title: const Text('封面与响应缓存'),
+                subtitle: Text(_formatBytes((_usage!.persistentResponses?.bytes ?? 0) +
+                    _usage!.responses.weight)),
+              ),
+            if ((_usage?.pendingCleanupBytes ?? 0) > 0)
+              ListTile(
+                title: const Text('待删除占用'),
+                subtitle: Text('${_formatBytes(_usage!.pendingCleanupBytes)} · 已计入上述占用'),
+              ),
             ListTile(
               key: dataCacheLimitKey,
               enabled: !_busy && root != null,
@@ -868,7 +1011,9 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
                 '${widget.preferences.cacheLimitMb} MB · '
                 '超出后自动清理最久未使用的页面缓存',
               ),
-              trailing: const Icon(Icons.edit_outlined),
+              trailing: _operation == _DataSettingsOperation.trimCache
+                  ? _progressIndicator
+                  : const Icon(Icons.edit_outlined),
               onTap: _busy ? null : _editCacheLimit,
             ),
             ListTile(
@@ -876,7 +1021,9 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
               enabled: !_busy,
               leading: const Icon(Icons.cleaning_services_outlined),
               title: const Text('清理缓存'),
-              subtitle: const Text('通过统一缓存协调器清理，不直接遍历或删除 Reader 文件。'),
+              subtitle: const Text('清理页面、封面与响应缓存；保留下载和正在使用的页面。'),
+              trailing: _operation == _DataSettingsOperation.clearCache
+                  ? _progressIndicator : null,
               onTap: _busy ? null : _clearCache,
             ),
           ],
@@ -1245,6 +1392,12 @@ final class ReadingSettingsScreen extends StatelessWidget {
 
   final AppPreferencesController preferences;
 
+  void _openModeSettings(BuildContext context, ReaderMode mode) {
+    unawaited(Navigator.of(context).push<void>(MaterialPageRoute(
+      builder: (_) => _ReadingModeSettingsScreen(preferences: preferences, mode: mode),
+    )));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1254,6 +1407,23 @@ final class ReadingSettingsScreen extends StatelessWidget {
         animation: preferences,
         builder: (context, _) => ListView(
           children: <Widget>[
+            const _SettingsSectionTitle('阅读模式设置'),
+            ListTile(
+              key: readingPagedSettingsEntryKey,
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('分页模式设置'),
+              subtitle: const Text('方向、点击区域、缩放与连续阅读'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _openModeSettings(context, ReaderMode.paged),
+            ),
+            ListTile(
+              key: readingContinuousSettingsEntryKey,
+              leading: const Icon(Icons.view_day_outlined),
+              title: const Text('连续模式设置'),
+              subtitle: const Text('拼接、点击区域、缩放与连续阅读'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _openModeSettings(context, ReaderMode.continuous),
+            ),
             const _SettingsSectionTitle('布局'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1279,40 +1449,6 @@ final class ReadingSettingsScreen extends StatelessWidget {
                     selected: <ReaderMode>{preferences.defaultReaderMode},
                     onSelectionChanged: (values) =>
                         preferences.setDefaultReaderMode(values.single),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('分页方向'),
-                  const SizedBox(height: 6),
-                  SegmentedButton<ReaderPagedDirectionPreference>(
-                    key: readingPagedDirectionKey,
-                    showSelectedIcon: false,
-                    segments:
-                        const <ButtonSegment<ReaderPagedDirectionPreference>>[
-                      ButtonSegment(
-                        value: ReaderPagedDirectionPreference.ltr,
-                        label: Text('LTR'),
-                      ),
-                      ButtonSegment(
-                        value: ReaderPagedDirectionPreference.rtl,
-                        label: Text('RTL'),
-                      ),
-                      ButtonSegment(
-                        value: ReaderPagedDirectionPreference.source,
-                        label: Text('跟随来源'),
-                      ),
-                    ],
-                    selected: <ReaderPagedDirectionPreference>{
-                      preferences.readerPagedDirectionPreference,
-                    },
-                    onSelectionChanged: (values) =>
-                        preferences.setReaderPagedDirectionPreference(
-                      values.single,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '默认 LTR；本漫画方向和高置信自适应结果仍可覆盖。',
-                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
               ),
@@ -1373,21 +1509,77 @@ final class ReadingSettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            ..._readerModeSettingsTiles(
-              context,
-              preferences,
-              ReaderMode.paged,
-            ),
-            ..._readerModeSettingsTiles(
-              context,
-              preferences,
-              ReaderMode.continuous,
-            ),
           ],
         ),
       ),
     );
   }
+}
+
+final class _ReadingModeSettingsScreen extends StatelessWidget {
+  const _ReadingModeSettingsScreen({
+    required this.preferences,
+    required this.mode,
+  });
+
+  final AppPreferencesController preferences;
+  final ReaderMode mode;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        key: ValueKey<String>('reading-mode-settings-${mode.name}'),
+        appBar: AppBar(
+          title: Text(mode == ReaderMode.continuous ? '连续模式设置' : '分页模式设置'),
+        ),
+        body: AnimatedBuilder(
+          animation: preferences,
+          builder: (context, _) => ListView(children: <Widget>[
+            if (mode == ReaderMode.paged)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    const Text('分页方向'),
+                    const SizedBox(height: 6),
+                    SegmentedButton<ReaderPagedDirectionPreference>(
+                      key: readingPagedDirectionKey,
+                      showSelectedIcon: false,
+                      segments:
+                          const <ButtonSegment<ReaderPagedDirectionPreference>>[
+                        ButtonSegment(
+                          value: ReaderPagedDirectionPreference.ltr,
+                          label: Text('LTR'),
+                        ),
+                        ButtonSegment(
+                          value: ReaderPagedDirectionPreference.rtl,
+                          label: Text('RTL'),
+                        ),
+                        ButtonSegment(
+                          value: ReaderPagedDirectionPreference.source,
+                          label: Text('跟随来源'),
+                        ),
+                      ],
+                      selected: <ReaderPagedDirectionPreference>{
+                        preferences.readerPagedDirectionPreference,
+                      },
+                      onSelectionChanged: (values) =>
+                          preferences.setReaderPagedDirectionPreference(
+                        values.single,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '默认 LTR；本漫画方向和高置信自适应结果仍可覆盖。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ..._readerModeSettingsTiles(context, preferences, mode),
+          ]),
+        ),
+      );
 }
 
 List<Widget> _readerModeSettingsTiles(
@@ -1697,10 +1889,19 @@ Future<void> _editReaderTapSettings(
   ReaderMode mode,
   ReaderModeSettings settings,
 ) async {
-  final saved = await showReaderGestureSettingsSheet(
-    context,
-    mode: mode,
-    initialSettings: settings,
+  final saved = await Navigator.of(context).push<ReaderModeSettings>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (editorContext) => Scaffold(
+        backgroundColor: const Color(0xff202124),
+        body: ReaderTapRegionOverlay(
+          mode: mode,
+          initialSettings: settings,
+          onCancel: () => Navigator.pop(editorContext),
+          onSave: (value) => Navigator.pop(editorContext, value),
+        ),
+      ),
+    ),
   );
   if (saved == null) return;
   preferences.setReaderModeSettings(mode, saved);

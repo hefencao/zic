@@ -5,6 +5,59 @@ import 'package:comic_translation/comic_translation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('legacy service profiles export only supported non-secret fields', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-translation-legacy-profile-');
+    try {
+      await File('${directory.path}/comic_translation_settings.json').writeAsString(jsonEncode({
+        'settings': {'comicTranslationRemoteProfiles': [
+          {'id': 'old', 'name': 'Old', 'endpoint': 'https://example.test/api',
+            'model': 'old-model', 'apiKey': 'must-stay-local'},
+        ]},
+      }));
+      final settings = ComicTranslationSettings();
+      await settings.init(directory.path);
+      final data = settings.readPortableSettings()['global']!;
+      ComicTranslationSettings.validatePortableSettings('global', data);
+      expect(jsonEncode(data), isNot(contains('must-stay-local')));
+      expect((data['comicTranslationRemoteProfiles'] as List).single, {
+        'id': 'old', 'name': 'Old', 'endpoint': 'https://example.test/api', 'model': 'old-model',
+        'backend': 'openaiCompatible', 'additionalPrompt': '',
+      });
+      settings.dispose();
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('portable service configuration cannot rebind existing device credentials', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-translation-credential-binding-');
+    try {
+      final settings = ComicTranslationSettings();
+      await settings.init(directory.path);
+      const original = 'https://api.openai.com/v1/chat/completions';
+      const restored = 'https://other.example.test/v1/chat/completions';
+      expect(settings.permitsCredentialService('default', 'openaiCompatible', original), isTrue);
+      final portable = settings.readPortableSettings()['global']!;
+      await settings.applyPortableSettings('global', {
+        ...portable, 'comicTranslationRemoteEndpoint': restored,
+      });
+      expect(settings.permitsCredentialService('default', 'openaiCompatible', restored), isFalse);
+      await settings.setComic('source', 'comic', {'enabled': true});
+      final reopened = ComicTranslationSettings();
+      await reopened.init(directory.path);
+      expect(reopened.permitsCredentialService('default', 'openaiCompatible', restored), isFalse);
+      expect(reopened.permitsCredentialService('default', 'openaiCompatible', original), isTrue);
+      expect(jsonEncode(reopened.readPortableSettings()), isNot(contains('credentialServices')));
+      reopened.approveCredentialService('default', 'openaiCompatible', restored);
+      await reopened.save();
+      expect(reopened.permitsCredentialService('default', 'openaiCompatible', restored), isTrue);
+      settings.dispose();
+      reopened.dispose();
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('comic policy is source-scoped, merges toggles and persists separately from keys', () async {
     final directory = await Directory.systemTemp.createTemp('zic_translation_settings_');
     try {

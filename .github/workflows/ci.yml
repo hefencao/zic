@@ -3,6 +3,15 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      beta_release:
+        description: Build signed beta APKs and prepare a draft Release after CI passes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   flutter:
@@ -13,11 +22,14 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.44.9'
           cache: true
       - run: ./tool/bootstrap_platforms.sh
       - run: flutter pub get
       - name: Check Dart structure
         run: python3 tool/check_dart_structure.py
+      - name: Check beta package validation gates
+        run: python3 tool/test_beta_release.py
       - run: ./tool/analyze.sh
       - name: Test pure Dart packages
         run: ./tool/test_dart.sh
@@ -110,3 +122,78 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  beta-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.beta_release && github.ref == 'refs/heads/main'
+    needs: [flutter, rust]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: beta-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.9'
+          cache: true
+      - run: ./tool/bootstrap_platforms.sh
+      - run: flutter pub get
+      - name: Read beta version and release notes
+        run: python3 tool/prepare_beta_release.py metadata --github-output "$GITHUB_OUTPUT" --notes "$RUNNER_TEMP/beta-notes.md"
+        id: beta
+      - name: Verify product repository defaults
+        run: python3 tool/test_release_repository_defaults.py
+      - name: Download source-built Android native libraries and notices
+        uses: actions/download-artifact@v4
+        with:
+          name: android-native
+          path: apps/app/android/app/src/main
+      - name: Download pinned Android translation runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: android-translation-runtime
+          path: .deps/comic_translation_native
+      - run: ./tool/check_android_native.sh
+      - name: Restore existing beta signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_BETA_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          value = os.environ['KEYSTORE_BASE64']
+          if not value:
+              raise SystemExit('ANDROID_BETA_KEYSTORE_BASE64 is required; refusing a new signing identity')
+          key = Path.home() / '.android/debug.keystore'
+          key.parent.mkdir(parents=True, exist_ok=True)
+          key.write_bytes(base64.b64decode(value, validate=True))
+          key.chmod(0o600)
+          PY
+      - name: Build signed split Android release APKs
+        run: ZIC_ANDROID_NATIVE=0 ./tool/build_android.sh release
+      - name: Verify Android translation APK closure
+        run: python3 tool/check_android_translation.py --apk apps/app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+      - name: Verify package identity and signing, then prepare release assets
+        run: python3 tool/prepare_beta_release.py package --output "$RUNNER_TEMP/beta-release"
+      - name: Upload signed beta build for independent acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-apks
+          path: ${{ runner.temp }}/beta-release/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Prepare beta Release with downloadable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_TAG: ${{ steps.beta.outputs.tag }}
+          BETA_VERSION: ${{ steps.beta.outputs.version }}
+        run: |
+          gh release create "$BETA_TAG" "$RUNNER_TEMP/beta-release/"* \
+            --draft --target "$GITHUB_SHA" --title "zic $BETA_VERSION" \
+            --notes-file "$RUNNER_TEMP/beta-notes.md"
+      - name: Remove runner signing key
+        if: always()
+        run: rm -f -- "$HOME/.android/debug.keystore"

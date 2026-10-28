@@ -29,5 +29,4 @@ export 'src/reader_presentation_extension.dart';
 export 'src/reader_runtime_screen.dart';
 export 'src/reader_session_settings.dart';
 export 'src/reader_tap_region_overlay.dart';
-export 'src/reader_tap_settings_sheet.dart';
 export 'src/reader_zoom_decode.dart';

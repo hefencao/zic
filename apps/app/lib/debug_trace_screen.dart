@@ -8,6 +8,7 @@ import 'diagnostic_error_ui.dart';
 
 import 'debug_trace.dart';
 import 'debug_trace_export.dart';
+import 'dialog_actions.dart';
 
 const debugTraceScreenKey = ValueKey<String>('debug-trace-screen');
 const debugTraceClearKey = ValueKey<String>('debug-trace-clear');
@@ -171,13 +172,14 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
               Navigator.of(dialogContext).pop(value),
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(draft),
-            child: const Text('保存'),
+          AppDialogActions(
+            onClose: () => Navigator.of(dialogContext).pop(),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(draft),
+                child: const Text('保存'),
+              ),
+            ],
           ),
         ],
       ),

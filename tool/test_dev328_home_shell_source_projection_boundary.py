@@ -23,6 +23,7 @@ home_files = [
     "apps/app/lib/home_shell_catalog_identity.dart",
     "apps/app/lib/home_shell_source_compat.dart",
     "apps/app/lib/home_shell_source_migration.dart",
+    "apps/app/lib/home_shell_sync.dart",
     "apps/app/lib/home_shell_reader_route.dart",
     "apps/app/lib/home_shell_views.dart",
 ]
@@ -66,9 +67,11 @@ require(adoption, "externalSources: activeExternalSources,", "durable external i
 require(home, "_sourceProjection.sourceForId(sourceId)", "source lookup delegation")
 require(
     home,
-    "_sourceProjection.refreshExternalSources(controller.activeSources)",
+    "_sourceProjection.refreshExternalSources(sources)",
     "external lifecycle to projection handoff",
 )
+require(home, "await _restoreExternalSourceSettings(sources);", "pending settings before source publication")
+require(adoption, "await prepareExternalSources?.call(activeExternalSources);", "settings before service handoff")
 require(
     home,
     "final initialExternalSourceIds = _sourceProjection.externalSourceIds;",

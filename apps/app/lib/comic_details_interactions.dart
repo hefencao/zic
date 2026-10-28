@@ -145,6 +145,40 @@ final class _ComicDetailsScaffold extends StatefulWidget {
 }
 
 final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
+  Future<void> _editCategories(Rect anchor) async {
+    if (widget.categories.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无书架分类，请先在书架中新建分类')),
+      );
+      return;
+    }
+    final overlay = Navigator.of(context, rootNavigator: true)
+        .overlay?.context.findRenderObject();
+    if (overlay is! RenderBox || !overlay.hasSize) return;
+    final localAnchor = Rect.fromPoints(
+      overlay.globalToLocal(anchor.topLeft), overlay.globalToLocal(anchor.bottomRight),
+    );
+    final result = await showGeneralDialog<Set<String>>(
+      context: context,
+      barrierColor: Colors.transparent,
+      barrierDismissible: true,
+      barrierLabel: '关闭书架分类',
+      transitionDuration: const Duration(milliseconds: 180),
+      transitionBuilder: (context, animation, secondary, child) => child,
+      pageBuilder: (context, animation, secondary) => _ComicCategoryRing(
+        anchor: localAnchor,
+        categories: widget.categories,
+        initialSelected: widget.preference.categoryIds,
+        animation: animation,
+      ),
+    );
+    if (!mounted || result == null) return;
+    final current = widget.preference;
+    if (current.inShelf && result.length == current.categoryIds.length &&
+        result.containsAll(current.categoryIds)) return;
+    await widget.onPreferenceChanged(current.copyWith(inShelf: true, categoryIds: result));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,7 +238,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                       description: widget.description,
                       cover: widget.cover,
                       preference: widget.preference,
-                      categories: widget.categories,
+                      onEditCategories: (anchor) => unawaited(_editCategories(anchor)),
                       onPreferenceChanged: widget.onPreferenceChanged,
                       onSearchMetadata: widget.onSearchMetadata,
                       onSearchTitle: widget.onSearchTitle,
@@ -538,46 +572,226 @@ final class _ComicDetailsVersionDialogState
             ),
           ),
           actions: <Widget>[
-            SizedBox(
-              width: double.infinity,
-              child: Row(
-                children: <Widget>[
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    key: comicDetailsVersionMigrateCurrentKey,
-                    tooltip: '迁移到当前版本',
-                    onPressed: migrateToCurrent == null
-                        ? null
-                        : () => Navigator.pop(
-                              context,
-                              _command(migrateToCurrent, migrate: true),
-                            ),
-                    icon: const Icon(Icons.compare_arrows),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip:
-                        showPredecessors ? '显示新版本' : '显示旧版本',
-                    onPressed: canFlip
-                        ? () => setState(
-                              () => _showPredecessors = !showPredecessors,
-                            )
-                        : null,
-                    icon: const Icon(Icons.flip),
-                  ),
-                ],
-              ),
+            AppDialogActions(
+              onClose: () => Navigator.pop(context),
+              actions: <Widget>[
+                IconButton(
+                  key: comicDetailsVersionMigrateCurrentKey,
+                  tooltip: '迁移到当前版本',
+                  onPressed: migrateToCurrent == null
+                      ? null
+                      : () => Navigator.pop(
+                            context,
+                            _command(migrateToCurrent, migrate: true),
+                          ),
+                  icon: const Icon(Icons.compare_arrows),
+                ),
+                IconButton(
+                  tooltip: showPredecessors ? '显示新版本' : '显示旧版本',
+                  onPressed: canFlip
+                      ? () => setState(() => _showPredecessors = !showPredecessors)
+                      : null,
+                  icon: const Icon(Icons.flip),
+                ),
+              ],
             ),
           ],
         );
       },
     );
   }
+}
+
+final class _ComicCategoryRing extends StatefulWidget {
+  const _ComicCategoryRing({required this.anchor, required this.categories,
+    required this.initialSelected, required this.animation});
+
+  final Rect anchor;
+  final List<LibraryCategory> categories;
+  final Set<String> initialSelected;
+  final Animation<double> animation;
+
+  @override
+  State<_ComicCategoryRing> createState() => _ComicCategoryRingState();
+}
+
+final class _ComicCategoryRingState extends State<_ComicCategoryRing> {
+  late final Set<String> _selected = widget.initialSelected.toSet();
+  int _page = 0;
+  static const _pageSize = 6;
+
+  Widget _discBackground(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final highlight = Color.alphaBlend(
+      colors.primary.withValues(alpha: dark ? 0.10 : 0.035),
+      colors.surfaceContainerHigh,
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: <BoxShadow>[
+          BoxShadow(color: colors.shadow.withValues(alpha: dark ? 0.32 : 0.16),
+            blurRadius: 32, offset: const Offset(0, 12)),
+          BoxShadow(color: colors.shadow.withValues(alpha: 0.10),
+            blurRadius: 6, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft, end: Alignment.bottomRight,
+                colors: <Color>[
+                  Colors.white.withValues(alpha: dark ? 0.32 : 0.95),
+                  colors.outlineVariant.withValues(alpha: 0.28),
+                  colors.onSurface.withValues(alpha: 0.10),
+                ],
+                stops: const <double>[0, 0.45, 1],
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(1),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
+                    colors: <Color>[
+                      highlight.withValues(alpha: 0.90),
+                      colors.surfaceContainerHigh.withValues(alpha: 0.82),
+                      colors.surfaceContainer.withValues(alpha: 0.94),
+                    ],
+                  ),
+                ),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  excludeFromSemantics: true,
+                  onTap: () {},
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Material(
+    type: MaterialType.transparency,
+    child: LayoutBuilder(builder: (context, constraints) {
+      final padding = MediaQuery.paddingOf(context);
+      final safe = Rect.fromLTRB(padding.left + 12, padding.top + 12,
+        constraints.maxWidth - padding.right - 12,
+        constraints.maxHeight - padding.bottom - 12);
+      final pillWidth = math.min(104.0, safe.width / 3);
+      final preferredRadius = widget.categories.length <= 2 ? 72.0 : 104.0;
+      final maxDiscRadius = math.min(safe.width, safe.height) / 2;
+      final radius = math.max(0.0,
+        math.min(preferredRadius, maxDiscRadius - pillWidth / 2 - 8));
+      final discRadius = math.min(maxDiscRadius, radius + pillWidth / 2 + 8);
+      final center = Offset(
+        widget.anchor.center.dx.clamp(safe.left + discRadius,
+          safe.right - discRadius).toDouble(),
+        widget.anchor.center.dy.clamp(safe.top + discRadius,
+          safe.bottom - discRadius).toDouble(),
+      );
+      final pageCount = (widget.categories.length + _pageSize - 1) ~/ _pageSize;
+      final categories = widget.categories.skip(_page * _pageSize).take(_pageSize).toList();
+      final centerHeight = pageCount > 1 ? 80.0 : 48.0;
+      return AnimatedBuilder(animation: widget.animation,
+        child: _discBackground(context), builder: (context, disc) {
+        final t = Curves.easeOutCubic.transform(widget.animation.value);
+        final movingCenter = Offset.lerp(widget.anchor.center, center, t)!;
+        return Stack(children: <Widget>[
+          Positioned.fill(child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => Navigator.pop(context),
+          )),
+          Positioned(
+            left: movingCenter.dx - discRadius,
+            top: movingCenter.dy - discRadius,
+            width: discRadius * 2,
+            height: discRadius * 2,
+            child: Opacity(opacity: t, child: Transform.scale(scale: t,
+              child: disc,
+            )),
+          ),
+          for (var index = 0; index < categories.length; index++)
+            Positioned(
+              left: movingCenter.dx + math.cos(-math.pi / 2 + index * math.pi * 2 / categories.length) * radius * t - pillWidth / 2,
+              top: movingCenter.dy + math.sin(-math.pi / 2 + index * math.pi * 2 / categories.length) * radius * t - 20,
+              width: pillWidth,
+              height: 40,
+              child: Opacity(opacity: t, child: Transform.scale(scale: t,
+                child: Center(child: Tooltip(message: categories[index].name,
+                  child: FilterChip(
+                    key: ValueKey<String>('comic-category:${categories[index].categoryId}'),
+                    label: Text(categories[index].name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    shape: const StadiumBorder(),
+                    elevation: 5,
+                    pressElevation: 7,
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    showCheckmark: false,
+                    selected: _selected.contains(categories[index].categoryId),
+                    onSelected: (value) => setState(() {
+                      if (value) {
+                        _selected.add(categories[index].categoryId);
+                      } else {
+                        _selected.remove(categories[index].categoryId);
+                      }
+                    }),
+                  ),
+                )),
+              )),
+            ),
+          Positioned(
+            left: movingCenter.dx - 40,
+            top: movingCenter.dy - 24,
+            width: 80,
+            height: centerHeight,
+            child: Opacity(opacity: t, child: Transform.scale(scale: t,
+              child: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton.filledTonal(
+                    tooltip: '保存分类',
+                    style: IconButton.styleFrom(shape: const CircleBorder()),
+                    onPressed: () => Navigator.pop(context, _selected),
+                    icon: const Icon(Icons.save_outlined),
+                  ),
+                ),
+                if (pageCount > 1) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Row(children: <Widget>[
+                    SizedBox.square(dimension: 28, child: IconButton(
+                      tooltip: '上一组分类', padding: EdgeInsets.zero, iconSize: 16,
+                      onPressed: () => setState(() => _page = (_page - 1 + pageCount) % pageCount),
+                      icon: const Icon(Icons.chevron_left),
+                    )),
+                    Expanded(child: Text('${_page + 1}/$pageCount', textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelSmall, maxLines: 1)),
+                    SizedBox.square(dimension: 28, child: IconButton(
+                      tooltip: '下一组分类', padding: EdgeInsets.zero, iconSize: 16,
+                      onPressed: () => setState(() => _page = (_page + 1) % pageCount),
+                      icon: const Icon(Icons.chevron_right),
+                    )),
+                  ]),
+                ],
+              ]),
+            )),
+          ),
+        ]);
+      });
+    }),
+  );
 }
 
 final class _ComicDetailsReadingActions extends StatelessWidget {
@@ -702,6 +916,38 @@ final class _SourceSettingsAction extends StatelessWidget {
   }
 }
 
+// Visibility only: keep the source metadata and meaningful description intact.
+final _descriptionMarkup = RegExp(
+  r'<!--[\s\S]*?-->|</?[a-z][^>]*>|&(?:nbsp|ensp|emsp|thinsp|zwnj|zwj|hellip|mdash|ndash|amp|lt|gt|quot|apos);',
+  caseSensitive: false,
+);
+final _descriptionNumericEntity = RegExp(r'&#(x[0-9a-f]+|[0-9]+);', caseSensitive: false);
+final _descriptionNonText = RegExp(r'[^\p{L}\p{N}]', unicode: true);
+
+String? _meaningfulComicDescription(String? description) {
+  final value = description?.trim();
+  if (value == null || value.isEmpty) return null;
+  final content = value.replaceAll(_descriptionMarkup, '').replaceAllMapped(
+    _descriptionNumericEntity,
+    (match) {
+      final raw = match.group(1)!;
+      final hex = raw.toLowerCase().startsWith('x');
+      final code = int.tryParse(hex ? raw.substring(1) : raw, radix: hex ? 16 : 10);
+      return code == null || code > 0x10ffff || code >= 0xd800 && code <= 0xdfff
+          ? match.group(0)!
+          : String.fromCharCode(code);
+    },
+  );
+  final key = content.replaceAll(_descriptionNonText, '').toLowerCase();
+  const placeholders = <String>{
+    '', '无', '暂无', '无简介', '暂无简介', '暂无介绍', '暂无描述', '没有简介',
+    '未提供简介', '暫無簡介', '無簡介', '暫無介紹', '暫無描述',
+    'na', 'none', 'null', 'undefined', 'nodescription',
+    'nodescriptionavailable', 'nodescriptionyet', 'descriptionunavailable',
+  };
+  return placeholders.contains(key) ? null : value;
+}
+
 final class _SourceMetadataGroups {
   const _SourceMetadataGroups({
     required this.categories,
@@ -779,12 +1025,14 @@ _SourceMetadataGroups _groupSourceMetadata(List<String> rawTags) {
 
 final class _ExpandableTagRow extends StatefulWidget {
   const _ExpandableTagRow({
-    this.label,
+    required this.label,
+    this.showHeading = true,
     required this.tags,
     this.onSearch,
   });
 
-  final String? label;
+  final String label;
+  final bool showHeading;
   final List<String> tags;
   final ComicDetailsMetadataSearch? onSearch;
 
@@ -851,73 +1099,105 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
           ),
         ),
     ];
-    if (widget.label == null && !selectionMode) {
-      return Wrap(spacing: 6, runSpacing: 6, children: chips);
-    }
-    final showAll = widget.label == null || _expanded;
-    final selectionLabel = widget.label == null
-        ? '已选 ${_selected.length}'
-        : '${widget.label} · 已选 ${_selected.length}';
+    final selectionLabel = widget.showHeading
+        ? '${widget.label} · 已选 ${_selected.length}'
+        : '已选 ${_selected.length}';
+    final toggle = IconButton(
+      tooltip: _expanded ? '收起${widget.label}' : '展开${widget.label}',
+      onPressed: () => setState(() => _expanded = !_expanded),
+      icon: Icon(
+        _expanded ? Icons.expand_less : Icons.expand_more,
+        size: 20,
+      ),
+    );
+    final content = AnimatedSize(
+      duration: const Duration(milliseconds: 160),
+      alignment: Alignment.topLeft,
+      child: _expanded
+          ? Wrap(spacing: 6, runSpacing: 6, children: chips)
+          : SizedBox(
+              height: 36,
+              child: ClipRect(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: Row(
+                    children: <Widget>[
+                      for (var index = 0;
+                          index < chips.length;
+                          index++) ...<Widget>[
+                        if (index > 0) const SizedBox(width: 6),
+                        chips[index],
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Text(
-              selectionMode
-                  ? selectionLabel
-                  : widget.label!,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const Spacer(),
-            if (selectionMode) ...<Widget>[
-              IconButton(
-                tooltip: '复制已选内容',
-                onPressed: () => unawaited(_copySelected()),
-                icon: const Icon(Icons.copy_outlined, size: 20),
+        if (widget.showHeading || selectionMode) ...<Widget>[
+          Row(
+            children: <Widget>[
+              Text(
+                selectionMode ? selectionLabel : widget.label,
+                style: Theme.of(context).textTheme.titleSmall,
               ),
-              IconButton(
-                tooltip: '取消多选',
-                onPressed: () => setState(_selected.clear),
-                icon: const Icon(Icons.close, size: 20),
-              ),
-            ],
-            if (widget.label != null)
-              IconButton(
-                tooltip: _expanded ? '收起' : '展开',
-                onPressed: () => setState(() => _expanded = !_expanded),
-                icon: Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 20,
+              const Spacer(),
+              if (selectionMode) ...<Widget>[
+                IconButton(
+                  tooltip: '复制已选内容',
+                  onPressed: () => unawaited(_copySelected()),
+                  icon: const Icon(Icons.copy_outlined, size: 20),
                 ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 160),
-          alignment: Alignment.topLeft,
-          child: showAll
-              ? Wrap(spacing: 6, runSpacing: 6, children: chips)
-              : SizedBox(
-                  height: 36,
-                  child: ClipRect(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      physics: const NeverScrollableScrollPhysics(),
-                      child: Row(
-                        children: <Widget>[
-                          for (var index = 0;
-                              index < chips.length;
-                              index++) ...<Widget>[
-                            if (index > 0) const SizedBox(width: 6),
-                            chips[index],
-                          ],
-                        ],
+                IconButton(
+                  tooltip: '取消多选',
+                  onPressed: () => setState(_selected.clear),
+                  icon: const Icon(Icons.close, size: 20),
+                ),
+              ],
+              if (widget.showHeading) toggle,
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+        if (widget.showHeading) content else SizedBox(
+          width: double.infinity,
+          child: Stack(
+          children: <Widget>[
+            Padding(padding: const EdgeInsets.only(bottom: 10), child: content),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Center(
+                child: Tooltip(
+                  message: _expanded ? '收起${widget.label}' : '展开${widget.label}',
+                  child: Semantics(
+                    button: true,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => setState(() => _expanded = !_expanded),
+                        child: SizedBox(
+                          width: 40,
+                          height: 16,
+                          child: Icon(
+                            _expanded ? Icons.expand_less : Icons.expand_more,
+                            size: 16,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
+              ),
+            ),
+          ],
+          ),
         ),
       ],
     );

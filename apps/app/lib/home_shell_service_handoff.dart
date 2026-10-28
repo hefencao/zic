@@ -24,6 +24,24 @@ extension _HomeShellServiceHandoff on _HomeShellState {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !identical(_downloadComposition, target)) return;
       final startedAtMicros = _traceClock.nowMicros();
+      final tree = target.artifactStore.safTreeUri;
+      if (tree != null) {
+        unawaited(safTreeGrantStatus(tree).then<void>((grant) {
+          if (!mounted || !identical(_downloadComposition, target) || grant == null) return;
+          if (!grant.read || !grant.write) {
+            widget.preferences.requireDownloadDirectorySetup();
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+              content: const Text('下载目录缺少访问授权，已下载文件暂不可读'),
+              action: SnackBarAction(label: '设置', onPressed: _openSettings),
+            ));
+          }
+          widget.debugTrace.record(TraceEvent(
+            monotonicMicros: _traceClock.nowMicros(), sessionId: 'home-storage-prewarm',
+            kind: TraceEventKind.artifactSource, payload: <String, Object?>{
+              'stage': 'download-directory-grant', 'read': grant.read, 'write': grant.write,
+            }));
+        }));
+      }
       unawaited(
         target.prewarmLocalReadBackend().then<void>((warmed) {
           if (!mounted) return;

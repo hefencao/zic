@@ -423,6 +423,7 @@ final class PartialDownloadHandoff {
       }
       final startedAtMicros = clock?.nowMicros();
       PartialDownloadBoundRangeReader? boundReader;
+      final boundOpenStartedAtMicros = clock?.nowMicros();
       if (entry.openBoundRangeReader != null) {
         try {
           boundReader = (await _openReadyBoundReader(
@@ -437,11 +438,26 @@ final class PartialDownloadHandoff {
           boundReader = null;
         }
       }
+      _recordRestoreStage(
+        session,
+        stage: 'exact-ready-bound-reader-open',
+        startedAtMicros: boundOpenStartedAtMicros,
+        restoreStartedAtMicros: startedAtMicros,
+        extra: <String, Object?>{'bound': boundReader != null},
+      );
+      final prefixStartedAtMicros = clock?.nowMicros();
       final prefix = await _readEntryPrefix(
         entry,
         boundReader: boundReader,
         priority: () => session.effectivePriority,
         control: control,
+      );
+      _recordRestoreStage(
+        session,
+        stage: 'exact-ready-metadata-prefix-read',
+        startedAtMicros: prefixStartedAtMicros,
+        restoreStartedAtMicros: startedAtMicros,
+        extra: <String, Object?>{'bytes': prefix.length},
       );
       control?.throwIfCancelled();
       final proof = _ExactDurableRestoreProof(

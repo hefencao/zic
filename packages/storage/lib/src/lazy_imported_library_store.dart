@@ -18,6 +18,7 @@ final class LazyImportedLibraryStore
         ImportedLibraryBatchLookup,
         ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
+        ImportedLibrarySyncDeletionStore,
         ReaderProgressCheckpointStore,
         ComicVersionRelationStore,
         ImportedLibraryRevisionStore,
@@ -82,6 +83,19 @@ final class LazyImportedLibraryStore
     final durable = await _ensureDurable();
     return (durable as ImportedLibraryBackupSnapshotStore)
         .readLibraryBackupSnapshot();
+  }
+
+  @override
+  Future<void> removeSyncedMetadata(
+    LibrarySyncMetadataKind kind,
+    String sourceId,
+    String entityId, {
+    required DateTime notAfter,
+  }) async {
+    final durable = await _ensureDurable();
+    await (durable as ImportedLibrarySyncDeletionStore).removeSyncedMetadata(
+      kind, sourceId, entityId, notAfter: notAfter,
+    );
   }
 
   @override

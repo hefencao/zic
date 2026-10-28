@@ -12,6 +12,7 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
 fi
 
 python3 "$ROOT/tool/test_dart_structure_conditional.py"
+python3 "$ROOT/tool/test_beta_release.py"
 python3 "$ROOT/tool/check_repo.py"
 python3 "$ROOT/tool/check_documentation.py"
 python3 "$ROOT/tool/check_dart_structure.py"

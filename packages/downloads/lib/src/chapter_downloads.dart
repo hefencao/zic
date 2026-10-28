@@ -24,8 +24,11 @@ import 'partial_download_store.dart';
 import 'reader_page_identity.dart';
 
 part 'artifact_promotion_recovery.dart';
+part 'persistent_cache_maintenance.dart';
+part 'persistent_download_cache_adoption.dart';
 part 'persistent_download_artifact_store.dart';
 part 'persistent_download_companion.dart';
+part 'persistent_download_manifest_recovery.dart';
 part 'persistent_chapter_download_service.dart';
 part 'persistent_download_partial_resume.dart';
 part 'persistent_download_structured_placement.dart';
@@ -125,9 +128,10 @@ final class ChapterDownloadSnapshot {
   bool get isComplete => phase == ChapterDownloadPhase.complete;
   bool get hasDurableBytes => receivedBytes > 0 || isComplete;
 
-  /// Number of auto-cached pages available for this chapter (unpinned / equivalent).
+  /// Manual chapter intent owns its available pages while local adoption is
+  /// finishing. A READY page awaiting export/pin is not automatic cache.
   int get autoCachedPages =>
-      (completedPages - pinnedPages).clamp(0, totalPages);
+      isManualDownload ? 0 : (completedPages - pinnedPages).clamp(0, totalPages);
 
   /// True if this chapter has an active, completed, failed, or cancelled manual
   /// download task, or has pinned pages from a previous download.
@@ -304,6 +308,7 @@ final class CanonicalChapterCacheSnapshot {
     required this.receivedBytes,
     required this.manualReferencedPages,
     required Iterable<String> memberChapterIdentities,
+    this.deleteTarget,
   }) : memberChapterIdentities =
            List<String>.unmodifiable(memberChapterIdentities);
 
@@ -314,6 +319,7 @@ final class CanonicalChapterCacheSnapshot {
   final int receivedBytes;
   final int manualReferencedPages;
   final List<String> memberChapterIdentities;
+  final ChapterCacheDeleteTarget? deleteTarget;
 
   int get cachedPages => readyPages + partialPages;
   int get memberVersionCount => memberChapterIdentities.length;
@@ -335,6 +341,7 @@ final class ExactChapterCacheSnapshot {
     required this.partialPages,
     required this.receivedBytes,
     this.historicalRevision = false,
+    this.deleteTarget,
   });
 
   final String sourceId;
@@ -352,6 +359,7 @@ final class ExactChapterCacheSnapshot {
   /// Exact identity remains revision-bound; this flag only qualifies how the
   /// cache may be presented and whether it may become a manual download.
   final bool historicalRevision;
+  final ChapterCacheDeleteTarget? deleteTarget;
 
   int get cachedPages => readyPages + partialPages;
   String get identity =>
@@ -367,6 +375,14 @@ final class ChapterCacheManagementProjection {
 
   final List<CanonicalChapterCacheSnapshot> canonical;
   final List<ExactChapterCacheSnapshot> exact;
+}
+
+/// Opaque selection produced by the cache owner. It never grants deletion
+/// authority: execution rechecks retention, active readers and body generation.
+abstract interface class ChapterCacheDeleteTarget {}
+
+abstract interface class ChapterCacheManagementCommands {
+  Future<ArtifactCacheReport> clearChapterCache(ChapterCacheDeleteTarget target);
 }
 
 final class ChapterDownloadManagementProjection {
@@ -386,10 +402,13 @@ final class ChapterDownloadManagementProjection {
 
 /// Optional bulk capability for owners that can discover orphaned chapters
 /// and inspect all visible downloads from the same artifact-index snapshot.
+/// Manual progress uses `includeCache: false`; the manager preloads the separate
+/// cache inventory after its first frame without rebuilding progress again.
 abstract interface class ChapterDownloadManagementProjectionReader {
   Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
-    Iterable<ImportedLibraryEntry> knownEntries,
-  );
+    Iterable<ImportedLibraryEntry> knownEntries, {
+    bool includeCache = true,
+  });
 }
 
 /// Narrow read capability for the cache-management surface.
@@ -1487,6 +1506,12 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
     speculativeEncodedReadBudget: speculativeEncodedReadBudget,
     readStallTimeout: stallTimeout,
   );
+  store._externalCacheActivity = () {
+    final busy = runtime.registry.sessions.where((session) => !session.canEvict);
+    return (exact: busy.map((session) => session.id.key).toSet(),
+        physical: busy.map((session) => session.physicalId.key).toSet());
+  };
+  runtime.onCacheMaintenanceActivityReleased = store._cacheMaintenanceActivityReleased;
   return (
     artifactStore: store,
     artifactCacheManager: cache,
@@ -1528,6 +1553,7 @@ final class _CanonicalChapterCacheSnapshotBuilder {
   final Set<String> _members = <String>{};
   final Map<PhysicalMediaId, _CanonicalCachePageState> _pages =
       <PhysicalMediaId, _CanonicalCachePageState>{};
+  final _CacheDeleteSelection deleteSelection = _CacheDeleteSelection();
 
   void addMember(String identity) => _members.add(identity);
 
@@ -1553,7 +1579,7 @@ final class _CanonicalChapterCacheSnapshotBuilder {
 
   int get cachedPages => _pages.length;
 
-  CanonicalChapterCacheSnapshot build() {
+  CanonicalChapterCacheSnapshot build(PersistentDownloadArtifactStore owner) {
     var readyPages = 0;
     var partialPages = 0;
     var receivedBytes = 0;
@@ -1576,6 +1602,7 @@ final class _CanonicalChapterCacheSnapshotBuilder {
       receivedBytes: receivedBytes,
       manualReferencedPages: manualReferencedPages,
       memberChapterIdentities: members,
+      deleteTarget: deleteSelection.target(owner),
     );
   }
 }
@@ -1609,6 +1636,7 @@ final class _ExactChapterCacheSnapshotBuilder {
   int readyPages = 0;
   int partialPages = 0;
   int receivedBytes = 0;
+  final _CacheDeleteSelection deleteSelection = _CacheDeleteSelection();
 
   String get identity =>
       chapterDownloadIdentity(sourceId, comicId, chapterId, sourceRevision);
@@ -1623,7 +1651,7 @@ final class _ExactChapterCacheSnapshotBuilder {
     receivedBytes += bytes;
   }
 
-  ExactChapterCacheSnapshot build() => ExactChapterCacheSnapshot(
+  ExactChapterCacheSnapshot build(PersistentDownloadArtifactStore owner) => ExactChapterCacheSnapshot(
         sourceId: sourceId,
         comicId: comicId,
         comicTitle: comicTitle,
@@ -1634,6 +1662,7 @@ final class _ExactChapterCacheSnapshotBuilder {
         partialPages: partialPages,
         receivedBytes: receivedBytes,
         historicalRevision: historicalRevision,
+        deleteTarget: deleteSelection.target(owner),
       );
 }
 
@@ -1762,6 +1791,7 @@ final class _DownloadManagementPhysicalState {
       PhysicalMediaId id, {
       required bool ready,
       required int bytes,
+      String? artifactId,
     }) {
       if (id.kind != PhysicalMediaIdKind.canonical) return;
       final coordinate = CanonicalMediaCoordinate.tryParseStableKey(id.value);
@@ -1770,6 +1800,10 @@ final class _DownloadManagementPhysicalState {
         _canonicalCacheGroupKey(coordinate.familyId, coordinate.chapterId)
       ];
       if (builder == null) return;
+      if (artifactId != null) {
+        builder.deleteSelection.artifactIds.add(artifactId);
+      }
+      builder.deleteSelection.physicalPartialKeys.add(id.key);
       builder.addPage(
         physicalId: id,
         ready: ready,
@@ -1779,7 +1813,7 @@ final class _DownloadManagementPhysicalState {
     }
 
     for (final record in artifacts.values) {
-      addPhysical(record.id, ready: true, bytes: record.bytes);
+      addPhysical(record.id, ready: true, bytes: record.bytes, artifactId: record.artifactId);
     }
     for (final record in partials.values) {
       if (artifacts.containsKey(record.id)) continue;

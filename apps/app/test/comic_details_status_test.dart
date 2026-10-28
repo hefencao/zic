@@ -27,6 +27,75 @@ Future<void> _pumpUntilFound(
 }
 
 void main() {
+  testWidgets('description visibility rejects placeholders without losing real Unicode content', (tester) async {
+    final cases = <String?, bool>{
+      null: false,
+      ' \n\t\u200b ': false,
+      '… --- 。！': false,
+      '<p>&nbsp;<br />&#160;&#xA0;</p>': false,
+      '<!-- no content --><p> </p>': false,
+      '&#32;&#x200b;&#x2026;': false,
+      '暂无简介。': false,
+      '暫無簡介': false,
+      '<p>暂无简介</p>': false,
+      'No description available.': false,
+      'N/A': false,
+      'null': false,
+      '短篇': true,
+      '作品介绍：冒险从这里开始。': true,
+      'No description of the forest could prepare her.': true,
+      '日本語のあらすじ': true,
+      '한글 소개': true,
+      '<p>A real synopsis &amp; more.</p>': true,
+      '&#20320;&#22909;': true,
+      '&#x110000;': true,
+      '第一话 01': true,
+    };
+    var index = 0;
+    for (final sample in cases.entries) {
+      final preference = ComicPreference.defaults(sourceId: 'local', comicId: 'synopsis');
+      final snapshot = details.ComicDetailsLibrarySnapshot(
+        chapters: const <ImportedLibraryEntry>[],
+        readStates: const <String, ChapterReadState>{},
+        preference: preference,
+      );
+      await tester.pumpWidget(MaterialApp(home: details.LocalComicDetailsScreen(
+        key: ValueKey<int>(index++),
+        comic: LibraryComic(
+          sourceId: 'local', comicId: 'synopsis', title: 'Description fixture',
+          authors: const <String>[], tags: const <String>[], description: sample.key,
+          coverSourceId: null, readingDirection: ReadingDirection.ltr,
+          chapters: const <ImportedLibraryEntry>[], sourceChapters: const <Chapter>[],
+          savedAt: DateTime(2026, 10, 27), metadataUpdatedAt: DateTime(2026, 10, 27),
+        ),
+        initialLibrary: snapshot,
+        categories: const <LibraryCategory>[],
+        loadCover: ({required String sourceId, required String comicId,
+          required Uri? coverUri, required ImportedLibraryEntry? fallbackChapter,
+          required String resourceRole}) async => MemoryEncodedResourceSource(_tinyPng()),
+        reloadLibrary: ({required bool refreshContent}) async => snapshot,
+        onPreferenceChanged: (_) async => fail('visibility must not mutate preferences'),
+        onReadChanged: (_, __) async {},
+        onOpenChapter: (_, {required bool refreshRemote, required String title,
+          int? initialPageIndex}) async => null,
+        onDownloadChapter: (_) async {},
+        inspectChapterDownload: (entry) async => ChapterDownloadSnapshot.idle(entry),
+        downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+        onDownloadComic: (_) async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('简介'), sample.value ? findsOneWidget : findsNothing,
+          reason: 'description: ${sample.key}');
+      if (sample.value) expect(find.text(sample.key!.trim()), findsOneWidget);
+      if (sample.key == null) {
+        await tester.longPress(find.byKey(details.comicDetailsShelfKey));
+        await tester.pumpAndSettle();
+        expect(find.text('暂无书架分类，请先在书架中新建分类'), findsOneWidget);
+        expect(find.byType(AlertDialog), findsNothing);
+      }
+    }
+  });
+
   testWidgets(
     'long chapter catalogs keep offscreen rows unmounted across Reader return',
     (tester) async {

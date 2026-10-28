@@ -138,7 +138,7 @@ for token in (
     '_DownloadManagerQueueCommand',
 ):
     require(manager, token, 'route-first download manager')
-task_action_start = manager.index('Future<void> _performTaskAction(')
+task_action_start = manager.index('Future<bool> _performTaskAction(')
 task_action_end = manager.index(
     'Future<void> _convertCacheToDownload(',
     task_action_start,
@@ -246,9 +246,10 @@ management_end = downloads.index(
     management_start,
 )
 management = downloads[management_start:management_end]
-if management.count('artifactStore.indexedRecords()') != 1:
+if (management.count('artifactStore.indexedRecords()') != 2 or
+        'if (includeCache && await _adoptDownloadCache(known,' not in management):
     raise SystemExit(
-        'persistent download-management projection must read the artifact index exactly once'
+        'manual projection must read once; only a changed cache adoption may refresh inventory'
     )
 
 manager_test = read('apps/app/test/chapter_downloads_test.dart')

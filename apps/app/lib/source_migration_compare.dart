@@ -110,9 +110,9 @@ Future<({SourceComicVersion version, bool viewOnly})?>
                 ),
               ),
               actions: <Widget>[
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('关闭'),
+                AppDialogActions(
+                  onClose: () => Navigator.pop(context),
+                  actions: const <Widget>[],
                 ),
               ],
             ),

@@ -35,6 +35,7 @@ final class HomeServiceAdoptionCoordinator {
     required this.refreshStaleChapter,
     required this.onAdopted,
     required this.reportError,
+    this.prepareExternalSources,
   }) : _cacheBinding = initialCacheBinding;
 
   final HomeLibrarySession session;
@@ -54,6 +55,7 @@ final class HomeServiceAdoptionCoordinator {
       refreshStaleChapter;
   final void Function() onAdopted;
   final void Function(String stage, Object error) reportError;
+  final Future<void> Function(List<BrowsableComicSource> sources)? prepareExternalSources;
 
   HomeServiceCacheBinding _cacheBinding;
   Future<void>? _adoption;
@@ -147,6 +149,12 @@ final class HomeServiceAdoptionCoordinator {
 
     final previousChapterDownloads = session.chapterDownloads;
     final previousCacheBinding = _cacheBinding;
+    final externalPlugins =
+        externalPluginsProvider() ?? externalSources.activeController;
+    final activeExternalSources =
+        externalPlugins?.activeSources ?? const <BrowsableComicSource>[];
+    await prepareExternalSources?.call(activeExternalSources);
+    if (_closing) return;
     final downloadComposition = HomeLibrarySession.resolveDownloadComposition(
       chapterDownloads,
       downloadCompositionProvider(),
@@ -157,10 +165,6 @@ final class HomeServiceAdoptionCoordinator {
       suppliedCoordinator: cacheCoordinatorProvider(),
     );
     final nextCacheCoordinator = candidateCacheBinding.coordinator;
-    final externalPlugins =
-        externalPluginsProvider() ?? externalSources.activeController;
-    final activeExternalSources =
-        externalPlugins?.activeSources ?? const <BrowsableComicSource>[];
     final sources = sourceProjection.composeForServices(
       nextCacheCoordinator,
       externalSources: activeExternalSources,

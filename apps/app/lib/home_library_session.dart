@@ -12,6 +12,9 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'library_sync.dart';
+import 'library_sync_store.dart' as sync_store;
+
 String _downloadEntryIdentity(ImportedLibraryEntry entry) =>
     chapterDownloadIdentity(
       entry.chapter.sourceId,
@@ -368,6 +371,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
     );
+    _listenToCacheManagementChanges();
     _wholeComicSubscription = wholeComicDownloads.changes.listen((snapshot) {
       _acceptWholeComicQueueSnapshot(snapshot);
     });
@@ -405,6 +409,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   final HomeStartupTelemetry? startupTelemetry;
 
   late StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
+  StreamSubscription<void>? _cacheManagementSubscription;
   late StreamSubscription<WholeComicQueueSnapshot> _wholeComicSubscription;
   late Future<void> _ready;
   Future<void> get ready => _ready;
@@ -415,6 +420,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void>? _downloadCacheProjectionRefresh;
   ChapterDownloadService? _downloadCacheProjectionRefreshService;
   var _downloadManagementProjectionEpoch = 0;
+  var _downloadCacheProjectionEpoch = 0;
   final Map<Future<void>, ChapterDownloadService> _downloadProjectionReads =
       <Future<void>, ChapterDownloadService>{};
 
@@ -1200,6 +1206,26 @@ final class HomeLibrarySession extends ChangeNotifier {
         ),
       );
 
+  Future<ImportedLibraryBackupSnapshot> readLibrarySyncSnapshot() =>
+      _runAdmittedOperation(() async {
+        await _ready;
+        final result = await _persistStableLibraryMutationResult(
+          sync_store.readLibrarySyncSnapshot,
+        );
+        return result.value;
+      });
+
+  Future<void> applyLibrarySync(
+    List<LibrarySyncRecord> records,
+    Map<String, LibrarySyncValue> expected,
+  ) => _runAdmittedOperation(() async {
+    await _ready;
+    await _persistStableLibraryMutation(
+      (store) => sync_store.applyLibrarySyncRecords(store, records, expected),
+    );
+    await _runLibraryReload(waitForReady: true, openLibrary: false);
+  });
+
   Future<void> _runLibraryReload({
     required bool waitForReady,
     required bool openLibrary,
@@ -1344,6 +1370,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     final previousOwnsChapterDownloads = ownsChapterDownloads;
     final previousOwnsWholeComicDownloads = ownsWholeComicDownloads;
     await _downloadSubscription.cancel();
+    await _cacheManagementSubscription?.cancel();
     await _wholeComicSubscription.cancel();
 
     this.library = library;
@@ -1369,6 +1396,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
     );
+    _listenToCacheManagementChanges();
     _wholeComicSubscription = wholeComicDownloads.changes.listen((snapshot) {
       _acceptWholeComicQueueSnapshot(snapshot);
     });
@@ -3030,11 +3058,6 @@ final class HomeLibrarySession extends ChangeNotifier {
   ) {
     if (_closed || _closing != null) return Future<void>.value();
     final service = chapterDownloads;
-    final fullRefresh = _downloadProjectionRefresh;
-    if (fullRefresh != null &&
-        identical(service, _downloadProjectionRefreshService)) {
-      return fullRefresh;
-    }
     final reader = service is ChapterCacheManagementProjectionReader
         ? service as ChapterCacheManagementProjectionReader
         : null;
@@ -3047,17 +3070,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       return existing;
     }
     final requested = entries.toList(growable: false);
-    final projectionEpoch = _downloadManagementProjectionEpoch;
     late final Future<void> refresh;
-    refresh = reader.inspectCacheManagement(requested).then<void>((projection) {
-      if (_closed ||
-          !identical(service, chapterDownloads) ||
-          projectionEpoch != _downloadManagementProjectionEpoch) {
-        return;
-      }
-      _downloadCacheProjection = projection;
-      _downloadProjectionChanges.notifyListeners();
-    }).whenComplete(() {
+    refresh = _refreshDownloadCacheProjectionOnce(service, reader, requested)
+        .whenComplete(() {
       if (identical(_downloadCacheProjectionRefresh, refresh)) {
         _downloadCacheProjectionRefresh = null;
         _downloadCacheProjectionRefreshService = null;
@@ -3066,6 +3081,54 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadCacheProjectionRefreshService = service;
     _downloadCacheProjectionRefresh = refresh;
     return _trackDownloadProjectionRead(service, refresh);
+  }
+
+  void _listenToCacheManagementChanges() {
+    final service = chapterDownloads;
+    if (service is! ChapterDownloadManagementChangeSource) {
+      _cacheManagementSubscription = null;
+      return;
+    }
+    _cacheManagementSubscription =
+        (service as ChapterDownloadManagementChangeSource)
+            .managementProjectionChanges.listen((_) {
+      if (_closed || !identical(service, chapterDownloads)) return;
+      // Invalidate without scanning storage or waking Home on every page write.
+      _downloadCacheProjectionEpoch++;
+      _downloadCacheProjection = null;
+    });
+  }
+
+  Future<void> _refreshDownloadCacheProjectionOnce(
+    ChapterDownloadService service,
+    ChapterCacheManagementProjectionReader reader,
+    List<ImportedLibraryEntry> requested,
+  ) async {
+    while (!_closed && _closing == null && identical(service, chapterDownloads)) {
+      final fullRefresh = _downloadProjectionRefresh;
+      if (fullRefresh != null &&
+          identical(service, _downloadProjectionRefreshService)) {
+        await fullRefresh;
+        if (_closed || _closing != null ||
+            !identical(service, chapterDownloads)) {
+          return;
+        }
+      }
+      final managementEpoch = _downloadManagementProjectionEpoch;
+      final cacheEpoch = _downloadCacheProjectionEpoch;
+      final projection = await reader.inspectCacheManagement(requested);
+      if (_closed || _closing != null ||
+          !identical(service, chapterDownloads)) {
+        return;
+      }
+      if (managementEpoch != _downloadManagementProjectionEpoch ||
+          cacheEpoch != _downloadCacheProjectionEpoch) {
+        continue;
+      }
+      _downloadCacheProjection = projection;
+      _downloadProjectionChanges.notifyListeners();
+      return;
+    }
   }
 
   Future<void> refreshDownloadSnapshots(
@@ -3131,6 +3194,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       if (projectionReader != null) {
         final projection = await projectionReader.inspectDownloadManagement(
           requested,
+          includeCache: service is! ChapterCacheManagementProjectionReader,
         );
         orphaned = projection.orphanedEntries;
         cacheProjection = projection.cache;
@@ -3376,6 +3440,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _canonicalMediaAuthorities =
         const <String, CanonicalMediaChapterAuthority>{};
     await _downloadSubscription.cancel();
+    await _cacheManagementSubscription?.cancel();
     await _wholeComicSubscription.cancel();
     if (ownsWholeComicDownloads) {
       await wholeComicDownloads.close();
@@ -3394,6 +3459,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _canonicalMediaAuthorities =
         const <String, CanonicalMediaChapterAuthority>{};
     _downloadSubscription.cancel();
+    _cacheManagementSubscription?.cancel();
     _wholeComicSubscription.cancel();
     _downloadProjectionChanges.dispose();
     _libraryGenerationChanges.dispose();

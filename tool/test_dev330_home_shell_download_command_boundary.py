@@ -13,7 +13,7 @@ def require(body: str, marker: str, label: str) -> None:
         raise SystemExit(f'HomeShell download-command boundary missing {label}: {marker}')
 
 
-home = text('apps/app/lib/home_shell.dart')
+home = text('apps/app/lib/home_shell.dart') + text('apps/app/lib/home_shell_sync.dart')
 compat = text('apps/app/lib/home_shell_source_compat.dart')
 ui = '\n'.join(
     path.read_text(encoding='utf-8')

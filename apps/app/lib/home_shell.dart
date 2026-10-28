@@ -32,7 +32,13 @@ import 'local_comic_import_screen.dart';
 import 'local_comic_import_source.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'library_backup.dart';
+import 'library_backup_import_screen.dart';
+import 'portable_settings.dart';
+import 'translation_runtime.dart';
 import 'library_diagnostics.dart';
+import 'local_media_composition.dart';
+import 'webdav_sync.dart';
+import 'webdav_sync_screen.dart';
 import 'source_browser.dart';
 import 'misc_page.dart';
 import 'reader_preferences.dart';
@@ -66,6 +72,7 @@ part 'home_shell_source_migration.dart';
 part 'home_shell_reader_route.dart';
 part 'home_shell_service_handoff.dart';
 part 'home_shell_local_cover.dart';
+part 'home_shell_sync.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -387,9 +394,8 @@ final class _HomeShellState extends State<HomeShell> {
         ),
       ],
       cache: initialServiceCache.coordinator,
-      externalSources:
-          _incomingExternalPlugins?.activeSources ??
-          const <BrowsableComicSource>[],
+      // Active payloads are published by the lifecycle after pending portable
+      // settings have been restored, including a directly supplied controller.
       publishSources: _publishSourceProjection,
       ensureLibraryReady: _ensureLibraryReady,
       savedComics: () => _savedComics,
@@ -401,8 +407,7 @@ final class _HomeShellState extends State<HomeShell> {
       loaderProvider: () => _externalPluginLoader,
       sourceAvailable: (sourceId) => _sourceForId(sourceId) != null,
       isDeferredSource: _isDeferredExternalSourceId,
-      refreshProjection: (controller) =>
-          _sourceProjection.refreshExternalSources(controller.activeSources),
+      refreshProjection: _refreshExternalSourcesWithSettings,
       reportError: (stage, error) => debugPrint('$stage failed: $error'),
     );
     _sourceResources = ComicSourceResourceGateway(
@@ -445,6 +450,7 @@ final class _HomeShellState extends State<HomeShell> {
       wholeComicDownloadsProvider: () => _incomingWholeComicDownloads,
       cacheCoordinatorProvider: () => _incomingCacheCoordinator,
       externalPluginsProvider: () => _incomingExternalPlugins,
+      prepareExternalSources: _restoreExternalSourceSettings,
       externalPluginLoaderAvailable: () => _externalPluginLoader != null,
       persistSnapshotProvider: () => _persistHomeProjectionSnapshot,
       refreshStaleChapter: _refreshStaleQueueChapter,
@@ -755,6 +761,11 @@ final class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _closeHomeComposition() async {
+    final sync = _webDavSync;
+    if (sync != null) {
+      await sync.close();
+      sync.dispose();
+    }
     await _drainHomeCompositionTail(
       _serviceAdoption.activeAdoption,
       'durable service adoption',
@@ -850,6 +861,7 @@ final class _HomeShellState extends State<HomeShell> {
           externalSourceChanges: _externalSources.sourceProjectionChanges,
           networkBridge: widget.networkBridge,
           onExternalSourcesChanged: _externalSources.refreshCurrentProjection,
+          onOpenSourceSettings: _openComicSourceSettings,
           appPreferences: widget.preferences,
         ),
       ),
@@ -897,35 +909,8 @@ final class _HomeShellState extends State<HomeShell> {
     return relay(directory: directory, migrateFiles: migrateFiles);
   }
 
-  void _openSettings() {
-    unawaited(
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => SettingsScreen(
-            preferences: widget.preferences,
-            downloadPolicy: WholeComicPolicySettingsBinding(
-              changes: _librarySession.downloadProjectionChanges,
-              readSnapshot: () => _librarySession.wholeComicQueueSnapshot,
-              updatePolicy: _downloadCommands.updateWholeComicPolicy,
-            ),
-            dataRuntime: DataSettingsRuntimeBinding(
-              changes:
-                  _serviceHandoff ?? _librarySession.downloadProjectionChanges,
-              readStorageRoot: () => _storageRoot,
-              canChangeChapterDownloadDirectory: () =>
-                  _serviceHandoff?.chapterDownloadRelay != null,
-              changeChapterDownloadDirectory:
-                  _changeSettingsChapterDownloadDirectory,
-              inspectCache: _inspectSettingsCache,
-              clearCache: _clearSettingsCache,
-              updateCachePolicyAndTrim: _updateSettingsCachePolicyAndTrim,
-            ),
-            exportBackup: () => exportImportedLibraryBackup(_library),
-          ),
-        ),
-      ),
-    );
-  }
+  WebDavSyncController? _webDavSync;
+  PortableSettingsOwner? _portableSettings;
 
   void _openLibraryDiagnostics() {
     unawaited(

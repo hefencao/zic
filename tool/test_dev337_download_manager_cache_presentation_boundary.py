@@ -39,7 +39,7 @@ for marker, label in (
     ("label: '自动缓存'", 'user-facing cache tab label'),
     ("title: '版本共享缓存'", 'version-sharing cache section'),
     ("title: '章节页面缓存'", 'exact cache section'),
-    ("'旧版本页面缓存'", 'historical exact cache label'),
+    (" · 旧版本", 'historical exact cache label'),
     ('!cache.historicalRevision', 'historical revision conversion guard'),
     ('_isLibraryEntry(snapshot)', 'current library target conversion guard'),
 ):

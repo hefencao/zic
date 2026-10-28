@@ -201,6 +201,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     Future<T> Function() operation,
   );
   void _requireOpen();
+  _DownloadedChapterRecovery get _downloadedChapterRecovery;
 
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
@@ -528,8 +529,17 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     String comicDirectoryName,
     Future<T> Function() operation,
   ) async {
+    Future<T> run() async {
+      final chapter = entry.chapter;
+      _downloadedChapterRecovery.invalidate(chapter.sourceId, chapter.comicId);
+      try {
+        return await operation();
+      } finally {
+        _downloadedChapterRecovery.invalidate(chapter.sourceId, chapter.comicId);
+      }
+    }
     final safIo = safTreeIo;
-    if (safIo != null && safTreeUri != null) return operation();
+    if (safIo != null && safTreeUri != null) return run();
     final root = entry.chapter.pages.isEmpty
         ? layout.root
         : _layoutForEntryPage(entry, 0).root;
@@ -540,7 +550,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     try {
       await handle.lock(FileLock.exclusive);
       try {
-        return await operation();
+        return await run();
       } finally {
         await handle.unlock();
       }
@@ -1501,6 +1511,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     required String sourceId,
     required String comicId,
   }) async {
+    _downloadedChapterRecovery.invalidate(sourceId, comicId);
     final owner = '$sourceId\u0000$comicId';
     await _index.removePlacement(sourceId: sourceId, comicId: comicId);
     final placement = _claimedPlacementsByOwner.remove(owner);
@@ -1733,10 +1744,31 @@ mixin _PersistentDownloadStructuredPlacementMixin {
       final baseGeneration = previousGeneration > placement.generation
           ? previousGeneration
           : placement.generation;
+      final indexedFiles = await _chapterFileList(entry, placement,
+        directories[entry.chapter.chapterId]);
+      final previousFiles = isSameComic ? previous.chapterFiles[entry.chapter.chapterId] : null;
+      final pages = <int, ComicPageFile>{
+        for (final page in indexedFiles.pages) page.logicalIndex: page,
+      };
+      final names = indexedFiles.pages.map((page) => page.fileName).toSet();
+      if (previousFiles != null && previousFiles.sourceRevision == indexedFiles.sourceRevision &&
+          previousFiles.pageCount == indexedFiles.pageCount) {
+        // Losing a DB binding does not revoke portable descriptive metadata.
+        // Preserve matching inventory until demanded recovery verifies bytes;
+        // a background cache-adoption checkpoint must not erase the other files.
+        for (final page in previousFiles.pages) {
+          if (!pages.containsKey(page.logicalIndex) && !names.contains(page.fileName) &&
+              entry.chapter.pages[page.logicalIndex].stablePageId == page.pageId) {
+            pages[page.logicalIndex] = page;
+            names.add(page.fileName);
+          }
+        }
+      }
+      final orderedFiles = pages.values.toList()..sort((a, b) => a.logicalIndex.compareTo(b.logicalIndex));
       final chapterFiles = <String, ComicChapterFileList>{
         if (isSameComic) ...previous.chapterFiles,
-        entry.chapter.chapterId: await _chapterFileList(entry, placement,
-          directories[entry.chapter.chapterId]),
+        entry.chapter.chapterId: ComicChapterFileList(sourceRevision: indexedFiles.sourceRevision,
+          pageCount: indexedFiles.pageCount, pages: orderedFiles),
       };
       final draft = ComicFolderManifest(
         format: comicManifestFormatV3,
@@ -2764,6 +2796,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   }
 
   Future<void> _persistPlacementExact(DownloadPlacement placement) {
+    _downloadedChapterRecovery.invalidate(placement.sourceId, placement.comicId);
     final owner = placement.ownerKey;
     _sessionPlacementClaims.add(owner);
     final previous = _placementWrites[owner] ?? Future<void>.value();
@@ -2775,6 +2808,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
     _placementWrites[owner] = tail;
     return current.whenComplete(() {
+      _downloadedChapterRecovery.invalidate(placement.sourceId, placement.comicId);
       if (identical(_placementWrites[owner], tail)) {
         _placementWrites.remove(owner);
       }
@@ -2782,6 +2816,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
   }
 
   Future<void> _persistPlacement(DownloadPlacement placement) {
+    _downloadedChapterRecovery.invalidate(placement.sourceId, placement.comicId);
     final owner = placement.ownerKey;
     _sessionPlacementClaims.add(owner);
     final previous = _placementWrites[owner] ?? Future<void>.value();
@@ -2813,6 +2848,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
     _placementWrites[owner] = tail;
     return current.whenComplete(() {
+      _downloadedChapterRecovery.invalidate(placement.sourceId, placement.comicId);
       if (identical(_placementWrites[owner], tail)) {
         _placementWrites.remove(owner);
       }
@@ -3040,6 +3076,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
     CacheLayout? rootLayout,
   }) async {
     _requireOpen();
+    _downloadedChapterRecovery.invalidate(sourceId, comicId);
     final comicDir = _requireSafeComicDirectoryName(
       comicDirectoryName ??
           buildComicDirectoryName(
@@ -3065,7 +3102,7 @@ mixin _PersistentDownloadStructuredPlacementMixin {
           rootLayout: rootLayout,
         ),
       ),
-    );
+    ).whenComplete(() => _downloadedChapterRecovery.invalidate(sourceId, comicId));
   }
 
   Future<void> _migrateSingleChapterToSubdirectory({
@@ -3573,13 +3610,25 @@ mixin _PersistentDownloadStructuredPlacementMixin {
         message: 'artifact changed before adoption: $path',
       );
     }
+    return _adoptProvenPageRecord(id: id, path: path, bytes: bytes,
+      checksum: normalizedChecksum, artifactId: artifactId, storageRootId: storageRootId);
+  }
+
+  Future<CacheRec> _adoptProvenPageRecord({
+    required DownloadId id,
+    required String path,
+    required int bytes,
+    required String checksum,
+    String? artifactId,
+    String? storageRootId,
+  }) async {
     final nowUs = DateTime.now().microsecondsSinceEpoch;
     final rec = CacheRec(
       id: id,
       state: CacheState.ready,
       path: path,
       bytes: bytes,
-      checksum: normalizedChecksum,
+      checksum: checksum,
       createdUs: nowUs,
       touchedUs: nowUs,
       pinned: true,

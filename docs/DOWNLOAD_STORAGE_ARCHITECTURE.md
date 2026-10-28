@@ -269,6 +269,12 @@ It must not create speculative full-version mappings merely to preserve reuse.
 
 ## 4. Cache, export and retention
 
+`PersistentDownloadArtifactStore` remembers only opened, hydrated chapter metadata for lost-index recovery. An exact miss probes its persisted placement or two deterministic title/owner candidates, reads a valid portable v2/v3 inventory and matches owner, revision, page count, page ID and logical index. Only the demanded file is independently length/CRC verified before restoring a pinned READY binding. Explicit downloads restore their scoped missing records before the first manifest checkpoint. Background cache adoption does not verify an entire inventory; checkpoints preserve still-matching unindexed descriptions without granting byte authority. A missing sibling binding cannot flatten an existing multi-chapter manifest layout. Metadata mutations invalidate these bounded snapshots; cancellation, exact-artifact serialization and deletion remain with the existing owner. No startup tree scan, sibling-version hydration or filename-derived identity is introduced. Lost custom placement, invalid inventory and lost SAF grants remain explicit recovery cases.
+
+Automatic-cache management applies the same durable body retention policy as reclamation: retained downloads and their aliases are excluded. A shared row counts registered chapter-version projections as associated versions, not per-body references or universal page coverage. Unretained coordinates outside the manual head remain visible as automatic cache. Conversion targets prefer an existing downloadHead, then shelfHead/latestKnown; an existing exact manual task does not offer conversion again. Home owns single-flight cache-only prewarming after the manager first frame and coalesces route-lifetime invalidations, retrying superseded reads. Manual progress omits cache construction; row builders include one viewport ahead/behind. Cache-row deletion carries an opaque owner-bound selection into the same maintenance transaction, independently of chapter download deletion; fresh retention/generation/live checks decide retirement.
+
+`PersistentChapterDownloadService` adopts valid cached pages of an existing explicit download through its normal placement, per-page pin and manifest transaction. Indexed pins/intents select exact chapter candidates, filtered by the existing resolved direct predecessor-to-downloadHead chapter mappings (including legacy same-chapter fallback); unmapped chapters remain exact. Historical pins/intents retain data without authorizing superseded chapters to execute. Lookup/admission rechecks the head; a head change cancels obsolete local adoption without swallowing an explicit retry. Only the current full manifest authorizes adoption. Missing pages publish no transport demand. Manager prewarm also intersects resident canonical/partial inventory with actual manual owners and validates live page-mapping authority, without hydrating unopened versions. Incomplete adoption keeps chapter/actual physical intent. Inventory waits only for admission; byte export runs one local chapter at a time in the background. Retained physical READY bodies remain eligible for export after another chapter drains or a partial completes. Failure/pause requires an explicit retry; redundant physical partials cannot restart an already-complete exact page. The same run/token/delete/close boundaries serialize adoption and explicit commands; a pending lookup rechecks ownership before starting. Manual progress classifies committed pages as download-owned while export/pin finishes, so it never flashes automatic cache.
+
 `cache` and `manual download` are retention intents, not necessarily distinct byte objects.
 Production schema 11 keeps the compatibility `CacheRec.pinned` bit strictly binding-local:
 only an exact logical page that enters explicit manual/offline materialization may set it;
@@ -316,6 +322,7 @@ A storage-mode change does not trigger eager movement of all cache data.
 ## 5. Android SAF and direct access coexistence
 
 A picker-returned `content://` tree is initially a SAF access locator.
+The picker persists only returned read/write flags and verifies the resulting durable read grant before success. Download configuration additionally requires write access; read-only local import remains supported. Home checks grant metadata after first frame; settings report actual SAF grants separately from All-files access. Renewing the same root clears failed inventory probes without moving bytes. Portable access choices restore a device-local setup prompt, never a path or permission.
 If All-files access is available, ZIC may derive a candidate Direct path for the system ExternalStorageProvider:
 `primary:` uses Android's primary external-storage root,
 while a removable/non-primary volume id must uniquely match the current `StorageVolume.uuid` and use that volume's current `directory`.
@@ -410,6 +417,8 @@ a `copying` temporary is resumable progress and MUST NOT be treated as garbage.
 When final invalidation or structural retirement is about to remove that schema-9 owner,
 the generated migration temporary is first transferred to schema16 `temporary` cleanup debt;
 `cleanupPending` keeps destination authority while old source/temp are cleanup-only.
+Schema 23 adds indexed physical-body maintenance and `cache_download_retention`: explicit chapter intent plus only in-flight/paused physical keys. Completed pages are pinned individually; completion removes chapter intent and transient physical keys, leaving only actual page pins, while pause/failure preserves intent until explicit delete/overwrite. Placement and unopened version mappings never imply retention.
+The durable store coalesces automatic growth checks, orders immutable bodies and partials by physical LRU, and retires all unprotected exact/canonical references with cleanup debt atomically. Read leases, live transfers, writers and replica migrations block retirement. Maintenance yields in bounded batches and closes before SQLite. Only automatic page bytes count toward the limit; retained downloads and responses are separate, and failed unlinks remain pending usage.
 Schema 16 adds `storage_cleanup_debt`, a cleanup-only table with three bounded kinds.
 `temporary` covers App-created random `.zic-tmp-<timestamp>` / `.tmp-<timestamp>` objects before creation and generated `.zic-migrate-<token>.part` objects only after schema-9 progress authority is being retired.
 `obsoleteSealedSource` is allowed only around an already-verified immutable authority switch/retirement:
@@ -418,13 +427,15 @@ it records the compatibility locator plus sealed length/checksum proof before me
 it freezes only the exact old prefix generation at a cross-locator replacement or cold retirement boundary.
 The store computes that old prefix's actual length + CRC32 immediately before authority can stop naming its locator,
 never on ordinary append/pause/checkpoint.
-Ordinary `PhysicalPartialRecord` invalidation/trim instead keeps the row until body plus sidecar absence is confirmed,
+Ordinary physical and legacy exact cache-partial trim instead keeps the original row until body plus sidecar absence is confirmed without reading body CRC,
 so a failed delete leaves the existing partial row as retry authority and needs no debt.
 `temporary` and `obsoleteSealedSource` may re-resolve the same relative locator through a re-proven `StorageRoot` alias after remount;
 generated-temp identity is checked before deletion,
-while sealed cleanup rechecks length+CRC32 and durable authority on the resolved locator.
+while sealed cleanup rechecks durable authority on the resolved locator.
+Automatic-cache Direct final locators use the existing cache-directory boundary and never read body bytes for cleanup preparation or deletion.
+Other sealed locators retain the length+CRC32 check.
 `obsoletePartialSource` remains deliberately exact-locator/conservative because hot mutable-session authority is not fully represented in SQLite.
-A path that has been reused or whose bytes changed loses stale sealed/partial cleanup intent and is never deleted.
+An unreferenced automatic-cache replacement is evictable; other changed/reused sealed or partial paths lose stale cleanup intent and are preserved.
 `PersistentDownloadArtifactStore.open()` schedules—not awaits—a bounded cleanup drainer after composition construction;
 a newly proven access alias explicitly requests another drain,
 and `close()` waits through any requested rerun.

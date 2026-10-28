@@ -163,9 +163,23 @@ for path in ROOT.rglob('*.dart'):
 # instead of appearing in presentation or an arbitrary package.
 allowed_direct_http_dart = {
     'packages/transport/lib/src/io_transport.dart',
+    'packages/transport/lib/src/metadata_http_transport.dart',
     'packages/downloads/lib/src/source_resource_transport.dart',
     'packages/plugin_host_bridge/lib/src/external_plugin_controller.dart',
 }
+require(
+    'packages/transport/lib/src/metadata_http_transport.dart',
+    'required TaskControl control,',
+    'request.followRedirects = false;',
+    'client.close(force: true);',
+    'await for (final chunk in response)',
+)
+require(
+    'packages/network_bridge/lib/src/webdav_client.dart',
+    'lane.submit(key: key, priority: 300,',
+    'await lane.idleKeys(keys);',
+    'MetadataHttpTransport().request(',
+)
 for path in ROOT.rglob('*.dart'):
     rel = path.relative_to(ROOT).as_posix()
     if '/test/' in f'/{rel}':

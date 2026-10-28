@@ -225,7 +225,9 @@ final class ComicTranslationRuntime {
         '${profile.backend}, not $backend',
       );
     }
-    final apiKey = ComicTranslationSecrets.instance.apiKeyFor(profile.id);
+    final apiKey = ComicTranslationSettings.instance.permitsCredentialService(
+        profile.id, profile.backend, profile.endpoint)
+      ? ComicTranslationSecrets.instance.apiKeyFor(profile.id) : '';
     final translationConfiguration = backend == 'local'
         ? jsonEncode([
             backend,

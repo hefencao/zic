@@ -1,3 +1,14 @@
+## 0.31.0-beta.2
+
+- 新增 WebDAV 同步及手动压缩备份导入，可分别选择书架、分类、阅读历史、阅读设置、翻译和扩展配置；支持多设备合并、压缩分片、日期备份及有界重试。
+- 扩展支持多个仓库、独立开关、可选名称和地址编辑；仓库及非敏感插件设置可备份、同步，并在插件安装后恢复。
+- 统一“导入本地漫画”，预览普通目录、EHViewer、Mihon/CBZ 和 Venera 下载；普通目录默认复制，可显式选择直接读取。
+- 优化数据库、文件清单和同源多版本缓存复用；改进自动缓存回收、下载接管、缓存列表和已下载文件的按需恢复。
+- 分开分页和连续阅读设置，复用可拖动点击区域编辑器；详情页精简简介与标签，长按加入书架可用浮动药丸分类。
+- 统一弹窗操作样式，修复设置、备份及扩展页互不相关控件误显示加载状态的问题。
+- GitHub Actions 完成 CI 后构建三个架构的 Release APK，校验版本、架构和既有签名，提供 SHA-256 校验文件；发行版继续不附带源仓库地址。
+- 部分纵向退出性能、自定义或损坏下载清单恢复、WebDAV 服务网络场景仍待进一步验收，具体范围保留在当前实现状态中。
+
 ## 0.31.0-beta.1
 
 - Publish Android beta APKs for arm64-v8a, armeabi-v7a and x86_64 with SHA-256 checksums and direct download links in README.
@@ -8,6 +19,26 @@
 
 ## Unreleased — state governance and device acceptance
 
+- Show backup export and cache inspection, clear or limit-trim progress on their own controls. Keep chooser/confirmation phases idle and coalesce runtime refreshes until the operation ends. Separate repository catalog loading from device extension scanning.
+
+- Select bookshelf/categories, reading history, reading settings, app settings, translation or extensions for backup export, preview import and WebDAV. Preserve excluded records and clocks; include logical chapter metadata with history. Use stable remote directory/file names for new repositories and reuse the existing coordination/head pair for older repositories, with bounded backups and collection across both layouts.
+
+- Unify modal actions with compact rounded buttons, a tonal close control and the full remaining width for wrapped actions. Reuse the shared action row in repository editing, backup import, Trace filtering and version dialogs.
+
+- Move repository management into the repository tab's top-right action. Add optional names, compact host/owner/repository labels and editable exact HTTPS indexes. Preserve names through toggles, backup and sync; publish URL replacements with old-index tombstones, reject duplicates before mutation and retain installed-plugin provenance.
+
+- Hide empty or placeholder descriptions and collapse comic tags without a heading. Center a transparent compact toggle across the full row without a separate button row. Long-press the add/remove shelf button to animate floating category pills over a local frosted disc with clipped blur, a tonal gradient, rim highlight and soft shadows; retain multi-selection across groups and use the circular save icon to save categories and add the comic to the shelf, even without category changes. Discard outside/back and preserve like and favorite states.
+
+- Separate paged and continuous reading settings into dedicated pages. Reuse Reader's draggable tap-region editor in global settings, with explicit mode-local save and discard on cancel/back; remove the legacy grid dialog.
+
+- Preserve download access choices independently of device paths/grants in backup and sync. Verify persisted SAF grants before accepting a picker result, show actual SAF/Direct access requirements, and retry failed inventory probes after same-root reauthorization. Keep grant checks after Home first frame and out of Reader.
+
+- Persist multiple extension indexes with independent enablement and per-record backup/sync deletion markers. Query only enabled repositories, retain catalog provenance across duplicate plugin IDs, and restore deferred non-sensitive plugin settings before source publication after installation/activation.
+- Recover missing download bindings from a matching portable inventory and independently verified demanded files before network fallback; restore a requested chapter before overwriting its initial checkpoint. Keep matching unindexed inventory descriptions during background checkpoints, preserve multi-chapter placement when sibling bindings are absent, and drain recovery I/O on cancellation/close. Cover Direct/SAF database loss and partial loss, identity/order/content rejection and deletion without a startup tree scan. Lost custom placement, damaged inventories and revoked storage grants remain explicit recovery work.
+- Add manual JSON/gzip backup import with a validated preview and explicit merge, and export self-contained gzip backups. Read Android staged files independently of stale provider sizes, and capture plugin edits from both source settings entries. Share portable application, shelf, source, download-policy, global/per-comic reading and translation settings plus declared non-sensitive plugin options with WebDAV. Retain settings for unavailable plugins and progress for missing local files; preserve concurrent edits and keep secrets, device paths and local resource budgets private.
+- Bound WebDAV history with v3 repository-wide daily snapshots and 7 daily/4 weekly/12 monthly retention. Preserve v1/v2 files during migration. Register shared sessions with conditional writes and server time; fence maintenance with a new object generation before collecting unreferenced old shards. Protect live sessions, retained snapshots and recent generations; stop on incomplete listings or validator conflicts, and report maintenance separately from completed synchronization.
+- Add manual WebDAV synchronization under Settings → Data for shelf, history/progress, categories, read states and reading settings. Merge per-record versions and deletion markers with conditional ETag writes; preserve concurrent local edits, keep credentials private and leave image files/cache/download jobs on each device.
+- Compact synchronized remote pages to numbered labels and idempotent logical-ID fingerprints, preserving local page identities and transport authority. Fix the real library exceeding the 32 MiB sync bound; read legacy JSON/gzip envelopes without modifying them. Publish v2 as raw gzip content-addressed shards, immutable UTC date archives and a conditional latest index; reuse unchanged catalog shards and perform no writes when synchronized data is unchanged. Preserve all previous cloud files, select only the committed latest snapshot and never merge archived deletions back into current data. Bound file migration/transfer to two minutes. Distinguish data, TLS, response and connection failures with redacted diagnostics. Reuse bounded idle HTTP connections with exclusive request leases to reduce repeated TLS handshakes; retire failed/cancelled clients without affecting other requests. Retry transient connection/read and HTTP failures with bounded backoff and Retry-After under the original NetLane control/deadline. Recover uncertain uploads by rereading and remerging with fresh ETags; confirm committed records without duplicate writes, and cancel retry waits immediately.
 - Validate the storage branch against main with isolated copies of the same Android library, index and bodies, including Reader input during startup statistics. Preserve all authoritative rows; verify five corrected duplicate summary totals against full chapters and retain unverified legacy bytes without granting READY proof.
 - Move the mainline cache schema20 candidate-index backfill into the existing short-lived migration worker, alongside schema21 reference conversion. Preserve the original atomic transaction, authoritative records and failure rollback; opening and closing still wait for the migration to exit.
 - Index canonical physical inventory by parsed coordinates within each download-statistics read. Avoid rebuilding long physical keys per version/page while retaining literal key identity, READY-over-partial priority and stable-identity fallback; each refresh rebuilds the derived lookup from its own inventory.

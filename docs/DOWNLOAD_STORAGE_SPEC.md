@@ -123,6 +123,8 @@ This document is normative for the detailed download/storage behavior.
 
 ## 4. Cache and export placement
 
+Lost-index recovery MUST be scoped to an opened, hydrated exact chapter. Existing READY hits MUST remain on the indexed path. A missing binding MAY be restored only from an owner/revision/page-count/page-ID/logical-index matching v2/v3 inventory and independently verified file length/CRC; only demanded Reader files may be read. Explicit download MUST recover its missing proven pages before rewriting that inventory. Background cache adoption MUST NOT verify an entire chapter inventory; checkpoints MUST preserve still-matching unindexed descriptions without promoting byte authority. Missing sibling bindings MUST NOT flatten an existing multi-chapter manifest layout. Snapshot invalidation, cancellation, deletion and close MUST preserve existing mutation/drain boundaries. Recovery MUST NOT enumerate the download tree at startup, derive identity from filename order or reference unopened versions. Missing custom placement, corrupt metadata and missing SAF grants require explicit recovery.
+
 1. On a reliable direct POSIX root, automatic-cache objects MAY be colocated under a hidden ZIC-owned area so cache-to-export promotion on the same filesystem can use rename/reflink semantics.
 2. Hard-link promotion MUST NOT be the default because user edits to exported files would mutate the hidden cache authority.
 3. On pure SAF roots, automatic cache and mutable partials SHOULD remain in App-private storage unless a provider-specific cheap-move capability is proven. Hot recoverable transfer staging MAY therefore hold the active required-completion prefix outside the SAF tree. When an idle hot partial/promoted body has been durably handed off and its physical session is retired under retention pressure, the session-owned App-private body and sidecars MUST be deleted immediately; borrowed durable spools and resident bodies MUST NOT be deleted by that retirement. A provider-side partial writer that rewrites the full prefix transactionally MUST NOT be used as a per-stride hot spill mechanism.
@@ -132,7 +134,8 @@ This document is normative for the detailed download/storage behavior.
 6. `DownloadPlacement` MUST describe export location/conflict/order only and MUST NOT by itself create retention.
    The compatibility `pinned` state may protect only an exact logical binding completed by explicit manual/offline materialization;
    chapter-level pinning MUST NOT include other source revisions or pages outside the current exact manifest.
-   Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent.
+   Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent. Shared-row membership MUST describe registered chapter-version projections, not per-body reference counts or universal coverage. Unretained bodies/partials outside the manual head MUST remain visible as automatic cache. Conversion MUST prefer an existing downloadHead, then shelfHead/latestKnown, and MUST NOT recreate its existing exact manual task.
+   Existing manual chapters MUST automatically adopt cached current-manifest pages through the download owner. Admission MUST follow resolved direct download-head chapter mappings, including legacy same-chapter fallback; unmapped chapters MUST remain exact. Superseded pins/intents MUST retain data without restarting old chapters. Lookup/admission MUST recheck the head; head changes MUST cancel obsolete local adoption without swallowing explicit retries. Adoption includes resident canonical bodies/partials authorized by live page mappings. Adoption MUST NOT fetch missing pages, hydrate unopened versions or treat placement/stale carriers as retention proof. Incomplete adoption MUST keep chapter/actual physical intent; completed adoption leaves exact pins. Inventory MUST await only ownership admission, not byte export; one local chapter exports at a time, including retained physical READY bodies left by another run or completed partials. Failure/pause MUST stop automatic retries. A redundant partial MUST NOT restart an already-complete exact page. Manual progress MUST classify available pages as downloads before export/pin finishes. Pending lookup, explicit commands, cancellation, deletion and close MUST retain the existing owner/run/drain boundaries and recheck ownership after lookup.
 7. One App-private download metadata database MUST have exactly one live process owner. The owner MUST be acquired before SQLite open/recovery and MUST exclude both another process and another in-process store using the same absolute index path.
 8. On SAF, `.zic.json` and its `DownloadPlacement` token form one recoverable metadata commit. An existing manifest MUST be retained as deterministic `.zic.json.zic-old` until the new valid manifest's exact generation+fingerprint is committed to placement.
 9. SAF manifest recovery MUST be driven by a flushed App-private transaction intent plus the exact placement token and MUST probe exact paths only. A valid target with a generation ahead of placement and no intent MUST NOT advance placement. First-write rollback removes the uncommitted target; final-delete rollback/commit is decided by whether the old placement token still exists.
@@ -199,12 +202,16 @@ This document is normative for the detailed download/storage behavior.
     The cleanup row MUST be removed only after absence is confirmed and retained on access/I/O failure.
     `PersistentDownloadArtifactStore.open()` MUST schedule this work asynchronously in bounded `StorageWriteScheduler` quanta,
     and a newly proven access alias MUST make previously unreachable debt eligible for another targeted drain.
-24. Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known,
+24. Schema-23 maintenance MUST use one candidate per physical body, ordered by the newest object/exact/canonical touch, and atomically retire all unprotected references with cleanup debt. Explicit download intent and paused physical keys MUST persist independently of placement; each completed page MUST be pinned before releasing required transfer demand. Reader file leases, live transfer/writer/borrow state and replica migrations MUST block retirement. Only automatic page bytes MUST count toward the limit; retained downloads and response caches MUST be shown separately, and failed file deletion MUST remain pending usage. Configuration/growth checks MUST be asynchronous and coalesced; batches MUST yield and close MUST drain admitted maintenance before SQLite disposal.
+    Automatic-cache rows MUST use the same body retention policy, excluding every retained exact/canonical/stable alias. Cache-only reads MUST prewarm after the manager first frame, coalesce during the route lifetime, and retry after concurrent invalidation; manual progress MUST omit cache construction. Per-row cache deletion MUST revalidate owner-bound selection through the maintenance authority without deleting a chapter or loading its manifest. Download-retained usage belongs in data settings.
+    Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known,
     and MUST be durably recorded before an authority mutation can stop naming that old locator.
     After commit, cleanup MUST first prove that the resolved locator is no longer durable replica/partial/migration authority.
     After remount it MAY derive the same relative locator through a proven `StorageRoot` alias,
-    but MUST revalidate length+checksum and authority again before deletion;
-    changed/reused path content MUST be preserved and stale cleanup intent discarded.
+    and MUST recheck authority before deletion.
+    Automatic-cache Direct final locators MUST use the cache-directory boundary without reading body bytes for length/checksum during cleanup preparation or deletion;
+    unreferenced replacement or damaged cache bytes MAY be deleted.
+    Other sealed locators MUST revalidate length+checksum; changed/reused content MUST be preserved and stale cleanup intent discarded.
 25. Mutable partial/spool cleanup MUST NOT use `obsoleteSealedSource` or enter `artifact_replica`.
     A cross-locator partial replacement or cold exact-partial retirement MAY instead create `obsoletePartialSource`,
     but only after reading the exact old prefix and freezing its actual length + CRC32 immediately before the old locator can lose authority.
@@ -212,7 +219,7 @@ This document is normative for the detailed download/storage behavior.
     ordinary network append/pause MUST NOT compute it.
     A delayed retry MUST re-check that the locator is no longer durable partial/replica/migration authority and that current bytes still match the frozen prefix before deletion;
     changed/reused content MUST be preserved.
-    Ordinary `PhysicalPartialRecord` invalidation/trim MUST keep its row until body and sidecar absence is confirmed rather than manufacturing cleanup debt.
+    Ordinary physical and legacy exact cache-partial trim MUST keep the original row until body and sidecar absence is confirmed, without reading body CRC or manufacturing cleanup debt; cross-locator replacement retains its existing proof.
     A shorter failed cross-locator staging prefix MUST NOT replace a longer old authoritative prefix,
     an unavailable old exact root MUST fail closed before replacement,
     and a hot session that takes over the old path MUST cancel provisional cleanup intent.
@@ -220,7 +227,7 @@ This document is normative for the detailed download/storage behavior.
 26. `artifact_replica_migration` remains the sole relocation-progress ledger while relocation is live.
     A `copying` destination/temporary MAY be rebound only when a re-proven `StorageRoot` proves the same canonical root and the same relative path;
     the source replica authority MUST remain unchanged.
-    `cleanupPending` source cleanup MAY resolve a current proven alias only after rechecking immutable proof.
+    `cleanupPending` source cleanup MAY resolve a current proven alias using the cache/non-cache cleanup rules above.
     Schema16 MUST NOT duplicate a resumable `copying` owner;
     it may take cleanup-only ownership of a generated migration temp only when final invalidation or structural retirement is removing schema-9 progress authority.
 

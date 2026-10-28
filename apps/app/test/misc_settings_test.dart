@@ -188,6 +188,10 @@ void main() {
       ReaderSystemStatusBarMode.followControls,
     );
 
+    await tester.scrollUntilVisible(find.byKey(readingPagedSettingsEntryKey), -320);
+    await tester.tap(find.byKey(readingPagedSettingsEntryKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(readingContinuousZoomStageFirstKey), findsNothing);
     await tester.scrollUntilVisible(
       find.byKey(readingZoomStageFirstKey),
       320,
@@ -238,6 +242,10 @@ void main() {
         home: ReadingSettingsScreen(preferences: preferences),
       ),
     );
+    expect(find.byKey(readingPagedContinuousReadingKey), findsNothing);
+    expect(find.byKey(readingContinuousContinuousReadingKey), findsNothing);
+    await tester.tap(find.byKey(readingPagedSettingsEntryKey));
+    await tester.pumpAndSettle();
     final scrollable = find.byType(Scrollable).first;
 
     await tester.scrollUntilVisible(
@@ -254,6 +262,11 @@ void main() {
     expect(preferences.pagedReaderSettings.crossChapterReading, isTrue);
     expect(preferences.continuousReaderSettings.crossChapterReading, isFalse);
 
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(readingContinuousSettingsEntryKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(readingPagedDirectionKey), findsNothing);
     await tester.scrollUntilVisible(
       find.byKey(readingContinuousContinuousReadingKey),
       320,
@@ -268,6 +281,55 @@ void main() {
     expect(preferences.pagedReaderSettings.crossChapterReading, isTrue);
     expect(preferences.continuousReaderSettings.crossChapterReading, isTrue);
   });
+
+  for (final mode in ReaderMode.values) {
+    testWidgets('global $mode tap editor shares Reader geometry and keeps save/cancel mode-local', (tester) async {
+      final preferences = AppPreferencesController();
+      addTearDown(preferences.dispose);
+      final other = mode == ReaderMode.paged ? ReaderMode.continuous : ReaderMode.paged;
+      final otherBefore = preferences.readerModeSettings(other);
+      final before = preferences.readerModeSettings(mode);
+      final defaultMode = preferences.defaultReaderMode;
+      await tester.pumpWidget(MaterialApp(home: ReadingSettingsScreen(preferences: preferences)));
+      await tester.tap(find.byKey(mode == ReaderMode.paged
+        ? readingPagedSettingsEntryKey : readingContinuousSettingsEntryKey));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('点击区域设置'), 160);
+      await tester.tap(find.text('点击区域设置'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderTapRegionOverlay), findsOneWidget);
+      await tester.drag(find.byKey(const ValueKey<String>('reader-tap-region-column-0')), const Offset(60, 0));
+      await tester.drag(find.byKey(const ValueKey<String>('reader-tap-region-row-0')), const Offset(0, 30));
+      await tester.tap(find.byKey(const ValueKey<String>('reader-tap-region-cell-4')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('上一章').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(readerTapRegionAnimationKey));
+      await tester.pump();
+      expect(preferences.readerModeSettings(mode), before, reason: 'editing stays a draft until save');
+      await tester.tap(find.byKey(readerTapRegionSaveKey));
+      await tester.pumpAndSettle();
+      final saved = preferences.readerModeSettings(mode);
+      expect(saved.singleTapGridLayout.firstColumnEnd, greaterThan(before.singleTapGridLayout.firstColumnEnd));
+      expect(saved.singleTapGridLayout.firstRowEnd, greaterThan(before.singleTapGridLayout.firstRowEnd));
+      expect(saved.singleTapActionAt(4), ReaderGestureAction.previousChapter);
+      expect(saved.singleTapPageAnimation, !before.singleTapPageAnimation);
+      expect(preferences.readerModeSettings(other), otherBefore);
+      expect(preferences.defaultReaderMode, defaultMode, reason: 'opening a mode page does not select the reading default');
+      await tester.tap(find.text('点击区域设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(readerTapRegionAnimationKey));
+      await tester.pump();
+      if (mode == ReaderMode.paged) {
+        await tester.tap(find.byKey(readerTapRegionCancelKey));
+      } else {
+        await tester.binding.handlePopRoute();
+      }
+      await tester.pumpAndSettle();
+      expect(preferences.readerModeSettings(mode), saved);
+      expect(preferences.readerModeSettings(other), otherBefore);
+    });
+  }
 
   testWidgets('network prefetch budget updates without leaving the settings page', (
     tester,
@@ -411,7 +473,7 @@ void main() {
         home: DataSettingsScreen(
           preferences: preferences,
           runtime: binding,
-          exportBackup: () async => null,
+          exportBackup: (_) async => null,
         ),
       ),
     );
@@ -432,6 +494,128 @@ void main() {
       ResourceCacheMaintenancePolicy.forArtifactLimitBytes(256 * 1024 * 1024),
     );
     expect(trimGeneration, 2);
+  });
+
+  testWidgets('data settings keep operation progress local and coalesce refresh', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final preferences = AppPreferencesController();
+    final changes = ChangeNotifier();
+    addTearDown(preferences.dispose);
+    addTearDown(changes.dispose);
+    final stats = ResourceCacheStats(entries: 0, inFlight: 0, weight: 0,
+      hits: 0, misses: 0, evictions: 0, expirations: 0,
+      persistentHits: 0, persistentMisses: 0,
+      byKind: <ResourceCacheKind, ResourceCacheKindStats>{});
+    final usage = ResourceCacheUsage(responses: stats);
+    final mutation = DataSettingsCacheMutationResult(usage: usage,
+      report: ResourceCacheMaintenanceReport(responseReleasedBytes: 0,
+        persistentResponseReleasedBytes: 0, responses: stats));
+    var inspectCalls = 0;
+    var exportCalls = 0;
+    Completer<ResourceCacheUsage>? inspection;
+    var exported = Completer<String?>();
+    final cleared = Completer<DataSettingsCacheMutationResult>();
+    final trimmed = Completer<DataSettingsCacheMutationResult>();
+    await tester.pumpWidget(MaterialApp(home: DataSettingsScreen(
+      preferences: preferences,
+      runtime: DataSettingsRuntimeBinding(changes: changes,
+        readStorageRoot: () => '/root',
+        canChangeChapterDownloadDirectory: () => true,
+        changeChapterDownloadDirectory: ({directory, required migrateFiles}) async => null,
+        inspectCache: () {
+          inspectCalls++;
+          return inspection?.future ?? Future.value(usage);
+        },
+        clearCache: () => cleared.future,
+        updateCachePolicyAndTrim: (_) => trimmed.future),
+      exportBackup: (_) {
+        exportCalls++;
+        return exported.future;
+      })));
+    await tester.pumpAndSettle();
+    expect(inspectCalls, 1);
+
+    void expectProgressAt(Key key) {
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.descendant(of: find.byKey(key),
+        matching: find.byType(CircularProgressIndicator)), findsOneWidget);
+    }
+
+    await tester.tap(find.byKey(dataBackupExportKey));
+    await tester.pumpAndSettle();
+    changes.notifyListeners();
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(inspectCalls, 1, reason: 'runtime refresh waits until the data chooser completes');
+    await tester.tap(find.text('导出'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(exportCalls, 1);
+    expectProgressAt(dataBackupExportKey);
+    expect(tester.widget<IconButton>(find.byKey(dataCacheRefreshKey)).onPressed, isNull);
+    changes.notifyListeners();
+    changes.notifyListeners();
+    await tester.pump();
+    expect(inspectCalls, 1, reason: 'export does not inspect cache while it owns the action');
+
+    inspection = Completer<ResourceCacheUsage>();
+    exported.complete(null);
+    await tester.pump();
+    expect(inspectCalls, 2);
+    expectProgressAt(dataCacheRefreshKey);
+    inspection.complete(usage);
+    inspection = null;
+    await tester.pumpAndSettle();
+    expect(inspectCalls, 2, reason: 'pending runtime notifications are coalesced');
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    await tester.tap(find.byKey(dataCacheClearKey));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.tap(find.text('清理'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expectProgressAt(dataCacheClearKey);
+    cleared.complete(mutation);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(dataCacheLimitKey));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.enterText(find.byType(TextFormField), '512');
+    await tester.tap(find.text('设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expectProgressAt(dataCacheLimitKey);
+    trimmed.complete(mutation);
+    await tester.pumpAndSettle();
+    expect(preferences.cacheLimitMb, 512);
+    expect(inspectCalls, 2, reason: 'cache mutations already return the updated usage');
+    tester.state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger)).clearSnackBars();
+    await tester.pumpAndSettle();
+
+    exported = Completer<String?>();
+    await tester.tap(find.byKey(dataBackupExportKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    expect(exportCalls, 1, reason: 'closing the chooser does not export');
+    await tester.tap(find.byKey(dataBackupExportKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导出'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expectProgressAt(dataBackupExportKey);
+    exported.completeError(StateError('export fixture failure'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('备份导出失败'), findsOneWidget);
+    expect(find.textContaining('读取失败'), findsNothing);
+    expect(tester.widget<IconButton>(find.byKey(dataCacheRefreshKey)).onPressed, isNotNull);
+    expect(inspectCalls, 2, reason: 'failed export does not trigger cache work');
   });
 
   testWidgets('appearance settings exposes AMOLED dark mode', (tester) async {

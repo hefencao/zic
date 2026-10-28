@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:resource_cache/resource_cache.dart';
 
@@ -76,6 +77,7 @@ final class DownloadManagerCommandActions {
     required this.retryChapter,
     required this.stopChapter,
     required this.deleteChapterFiles,
+    this.clearChapterCache,
     this.inspectDeleteImpact,
     required this.auditChapterFiles,
     required this.cancelChapterFileAudit,
@@ -95,6 +97,8 @@ final class DownloadManagerCommandActions {
       stopChapter;
   final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
       deleteChapterFiles;
+  final Future<ArtifactCacheReport> Function(ChapterCacheDeleteTarget target)?
+      clearChapterCache;
   final Future<ChapterDeleteImpactProjection> Function(
     ImportedLibraryEntry entry,
   )? inspectDeleteImpact;
@@ -195,9 +199,9 @@ final class _DownloadVersionBaselineIndex {
 
   String? preferredCanonicalComicId(String sourceId, String comicId) {
     final family = _projection.familyFor(sourceId, comicId);
-    return family?.shelfHeadComicId ??
-        family?.latestKnownComicId ??
-        family?.downloadHeadComicId;
+    return family?.downloadHeadComicId ??
+        family?.shelfHeadComicId ??
+        family?.latestKnownComicId;
   }
 }
 
@@ -259,6 +263,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   StreamSubscription<WholeComicQueueSnapshot>? _wholeComicSubscription;
   Timer? _managementProjectionRefreshTimer;
   Future<void>? _managementProjectionRefresh;
+  Future<void>? _cacheProjectionRefresh;
+  int _cacheProjectionEpoch = 0;
+  bool _cacheProjectionDirty = true;
   bool _managementProjectionRefreshPending = false;
   late ChapterDownloadService _downloads;
   late WholeComicDownloadQueue _wholeComicDownloads;
@@ -398,6 +405,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   void _invalidateServices() {
     _serviceGeneration++;
+    _cacheProjectionEpoch++;
+    _cacheProjectionDirty = true;
   }
 
   void _handleServiceChanged() {
@@ -412,9 +421,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       _handleProjectionChanged();
       _refreshWholeComicSnapshotWhenReady();
       await _refreshManagementProjection();
-      if (_selectedTab == DownloadManagerTab.autoCache) {
-        await _refreshCacheUsageForCurrentCoordinator();
-      }
+      if (_canReadCacheOnly) await _ensureAutoCacheProjection();
     } on Object catch (error) {
       if (mounted) _showError(error);
     }
@@ -509,13 +516,13 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (wholeComicChanged) {
         _wholeComicSnapshot = _wholeComicDownloads.snapshot;
       }
+      if (downloadsChanged) {
+        _cacheProjection = null;
+      }
       if (cacheChanged) {
         _cacheUsage = null;
       }
     });
-    if (cacheChanged && _selectedTab == DownloadManagerTab.autoCache) {
-      unawaited(_refreshCacheUsage());
-    }
   }
 
   StreamSubscription<ChapterDownloadSnapshot> _listenToDownloads(
@@ -543,18 +550,20 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   void _scheduleManagementProjectionRefresh() {
     if (!mounted) return;
-    if (_managementProjectionRefresh != null) {
-      _managementProjectionRefreshPending = true;
+    _cacheProjectionEpoch++;
+    _cacheProjectionDirty = true;
+    // Keep both tabs warm while this route is alive; progress uses its own
+    // stream and cache writes coalesce from the first event.
+    if ((!_canReadCacheOnly && _selectedTab != DownloadManagerTab.autoCache) ||
+        _cacheProjectionRefresh != null ||
+        _managementProjectionRefreshTimer != null) {
       return;
     }
-    // Coalesce from the first event, not the last: continuous page writes
-    // must not starve the management view until all downloads have stopped.
-    if (_managementProjectionRefreshTimer != null) return;
     _managementProjectionRefreshTimer = Timer(
       const Duration(milliseconds: 120),
       () {
         _managementProjectionRefreshTimer = null;
-        unawaited(_refreshManagementProjection());
+        unawaited(_ensureAutoCacheProjection());
       },
     );
   }
@@ -567,6 +576,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
     _managementProjectionRefreshTimer?.cancel();
     _managementProjectionRefreshTimer = null;
+    _cacheProjectionEpoch++;
+    _cacheProjectionDirty = true;
     late final Future<void> run;
     run = _refreshManagementProjectionOnce().whenComplete(() {
       if (identical(_managementProjectionRefresh, run)) {
@@ -574,7 +585,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       }
       if (_managementProjectionRefreshPending && mounted) {
         _managementProjectionRefreshPending = false;
-        _scheduleManagementProjectionRefresh();
+        unawaited(_refreshManagementProjection());
       }
     });
     _managementProjectionRefresh = run;
@@ -602,7 +613,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             : null;
         if (reader == null) return;
         final projection =
-            await reader.inspectDownloadManagement(_entries.values);
+            await reader.inspectDownloadManagement(
+              _entries.values,
+              includeCache: downloads is! ChapterCacheManagementProjectionReader,
+            );
         if (!mounted) return;
         if (generation != _serviceGeneration ||
             !identical(downloads, _downloads)) {
@@ -620,11 +634,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                 (snapshot) => MapEntry(snapshot.identity, snapshot),
               ),
             );
-          _cacheProjection = projection.cache;
+          if (projection.cache != null) _cacheProjection = projection.cache;
         });
-      }
-      if (_selectedTab == DownloadManagerTab.autoCache) {
-        await _refreshCacheUsage();
       }
       _recordTrace(
         'durable-projection-auto-refresh',
@@ -640,28 +651,77 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
+  bool get _canReadCacheOnly =>
+      widget.refreshCacheProjection != null ||
+      _downloads is ChapterCacheManagementProjectionReader;
+
   bool get _expectsPhysicalCacheProjection =>
       widget.refreshCacheProjection != null ||
       widget.refreshProjection != null ||
       _downloads is ChapterCacheManagementProjectionReader;
 
-  Future<void> _ensureAutoCacheProjection() async {
-    if (_cacheProjection != null || !_expectsPhysicalCacheProjection) return;
+  Future<void> _ensureAutoCacheProjection() {
+    if (!_cacheProjectionDirty && _cacheProjection != null) {
+      return _cacheUsage == null ? _refreshCacheUsage() : Future<void>.value();
+    }
+    if (!_expectsPhysicalCacheProjection) {
+      return _downloads is ChapterDownloadManagementProjectionReader
+          ? _refreshManagementProjection().then((_) => _refreshCacheUsage())
+          : _refreshCacheUsage();
+    }
+    final active = _cacheProjectionRefresh;
+    if (active != null) return active;
+    final epoch = _cacheProjectionEpoch;
+    late final Future<void> run;
+    run = _refreshAutoCacheProjection().whenComplete(() {
+      if (identical(_cacheProjectionRefresh, run)) {
+        _cacheProjectionRefresh = null;
+      }
+      if (mounted && _cacheProjectionDirty && epoch != _cacheProjectionEpoch) {
+        _scheduleManagementProjectionRefresh();
+      }
+    });
+    _cacheProjectionRefresh = run;
+    return run;
+  }
+
+  Future<void> _refreshAutoCacheProjection() async {
     try {
       await _resolveServices();
-      if (!mounted ||
-          _selectedTab != DownloadManagerTab.autoCache ||
-          _cacheProjection != null ||
-          !_expectsPhysicalCacheProjection) {
-        return;
-      }
-
-      final refreshCacheProjection = widget.refreshCacheProjection;
-      if (refreshCacheProjection != null) {
+      while (mounted) {
+        final generation = _serviceGeneration;
+        final epoch = _cacheProjectionEpoch;
+        final downloads = _downloads;
         final startedAt = _traceClock.nowMicros();
-        await refreshCacheProjection();
+        ChapterCacheManagementProjection? projection;
+        final refreshCacheProjection = widget.refreshCacheProjection;
+        if (refreshCacheProjection != null) {
+          await refreshCacheProjection();
+        } else if (downloads is ChapterCacheManagementProjectionReader) {
+          projection = await (downloads as ChapterCacheManagementProjectionReader)
+              .inspectCacheManagement(_entries.values);
+        } else {
+          // Compatibility for services without a cache-only capability.
+          await _refreshManagementProjection();
+        }
         if (!mounted) return;
-        _handleProjectionChanged();
+        if (generation != _serviceGeneration ||
+            !identical(downloads, _downloads)) {
+          continue;
+        }
+        // Home fences its own cache-only reads. Standalone readers need the
+        // same fence here; do not re-read a fresh Home result a second time.
+        if (epoch != _cacheProjectionEpoch &&
+            (refreshCacheProjection != null
+                ? widget.readProjection?.call().cacheProjection == null
+                : downloads is ChapterCacheManagementProjectionReader)) {
+          continue;
+        }
+        if (refreshCacheProjection != null) _handleProjectionChanged();
+        if (projection != null) {
+          setState(() => _cacheProjection = projection);
+        }
+        _cacheProjectionDirty = false;
         await _refreshCacheUsageForCurrentCoordinator();
         _recordTrace(
           'canonical-cache-projection-hydrated',
@@ -669,31 +729,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             'durationUs': _traceClock.nowMicros() - startedAt,
           },
         );
-        return;
+        if (!_cacheProjectionDirty) return;
       }
-
-      final cacheReader = _downloads is ChapterCacheManagementProjectionReader
-          ? _downloads as ChapterCacheManagementProjectionReader
-          : null;
-      if (cacheReader != null) {
-        final startedAt = _traceClock.nowMicros();
-        final projection =
-            await cacheReader.inspectCacheManagement(_entries.values);
-        if (!mounted) return;
-        setState(() => _cacheProjection = projection);
-        await _refreshCacheUsageForCurrentCoordinator();
-        _recordTrace(
-          'canonical-cache-projection-hydrated',
-          payload: <String, Object?>{
-            'durationUs': _traceClock.nowMicros() - startedAt,
-          },
-        );
-        return;
-      }
-
-      // Compatibility for management readers without the narrow cache-only
-      // capability. The full refresh also owns the cache-usage refresh.
-      await _refreshManagementProjection();
     } on Object catch (error) {
       _recordTrace(
         'canonical-cache-projection-hydrate-failed',
@@ -761,7 +798,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             (snapshot) => MapEntry(snapshot.identity, snapshot),
           ),
         );
-      _cacheProjection = projection.cacheProjection;
+      if (projection.cacheProjection != null) {
+        _cacheProjection = projection.cacheProjection;
+      }
       _wholeComicSnapshot = projection.wholeComicSnapshot;
     });
   }
@@ -783,6 +822,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       // The Home baseline cannot include cache invalidations emitted while
       // this route had no subscription. Reconcile only after first paint.
       await _refreshManagementProjection();
+      if (_canReadCacheOnly) await _ensureAutoCacheProjection();
       _recordTrace('post-frame-refresh-complete');
     } on Object catch (error) {
       if (mounted) {
@@ -818,11 +858,16 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (!mounted) {
         return;
       }
+      _cacheProjectionEpoch++;
+      _cacheProjectionDirty = true;
+      if (_selectedTab == DownloadManagerTab.autoCache &&
+          (widget.refreshCacheProjection != null ||
+              _downloads is ChapterCacheManagementProjectionReader)) {
+        await _ensureAutoCacheProjection();
+        return;
+      }
       final queue = _wholeComicDownloads;
-      final inspectCache = _selectedTab == DownloadManagerTab.autoCache;
-      final cacheRefresh = inspectCache
-          ? _refreshCacheUsage()
-          : Future<void>.value();
+      ChapterCacheManagementProjection? cacheProjection;
       List<ChapterDownloadSnapshot>? snapshots;
       final refreshProjection = widget.refreshProjection;
       if (refreshProjection != null) {
@@ -844,7 +889,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                 : null;
         if (projectionReader != null) {
           final projection =
-              await projectionReader.inspectDownloadManagement(_entries.values);
+              await projectionReader.inspectDownloadManagement(
+                _entries.values,
+                includeCache: _downloads is! ChapterCacheManagementProjectionReader,
+              );
+          cacheProjection = projection.cache;
           for (final entry in projection.orphanedEntries) {
             _rememberEntry(entry);
           }
@@ -858,7 +907,6 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           snapshots = await _downloads.inspectMany(_entries.values);
         }
       }
-      await cacheRefresh;
       await queue.ready;
       if (!mounted || !identical(queue, _wholeComicDownloads)) {
         return;
@@ -875,8 +923,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
               ),
             );
         }
+        if (cacheProjection != null) _cacheProjection = cacheProjection;
         _wholeComicSnapshot = queue.snapshot;
       });
+      if (_canReadCacheOnly || _selectedTab == DownloadManagerTab.autoCache) {
+        await _ensureAutoCacheProjection();
+      }
     } on Object catch (error) {
       if (mounted) {
         _showError(error);
@@ -920,9 +972,15 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     ResourceCacheCoordinator coordinator,
   ) async {
     try {
-      final usage = await coordinator.inspect();
-      if (mounted && identical(coordinator, _cacheCoordinator)) {
+      while (mounted && identical(coordinator, _cacheCoordinator)) {
+        final epoch = _cacheProjectionEpoch;
+        final usage = await coordinator.inspect();
+        if (!mounted || !identical(coordinator, _cacheCoordinator)) return;
+        if (epoch != _cacheProjectionEpoch) {
+          continue;
+        }
         setState(() => _cacheUsage = usage);
+        return;
       }
     } on Object catch (error) {
       if (mounted) {
@@ -1072,63 +1130,46 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     return _preferRowSnapshot(current, candidate);
   }
 
-  ChapterDownloadSnapshot? _preferredCanonicalDownloadSnapshot(
+  ImportedLibraryEntry? _preferredCanonicalDownloadEntry(
     CanonicalChapterCacheSnapshot cache,
   ) {
-    final candidates = <ChapterDownloadSnapshot>[
+    final candidates = <ImportedLibraryEntry>[
       for (final identity in cache.memberChapterIdentities)
-        if (_snapshots[identity] case final snapshot? when _entryFor(snapshot) != null)
-          snapshot,
+        if (_entries[identity] case final entry?
+            when !entry.chapter.directoryId.startsWith('orphaned:') &&
+                _entryIdentityByChapter[_chapterIdentity(entry.chapter.sourceId,
+                    entry.chapter.comicId, entry.chapter.chapterId)] == identity)
+          entry,
     ];
     if (candidates.isEmpty) return null;
-
-    final first = candidates.first;
+    final first = candidates.first.chapter;
     final preferredComicId = _versionBaselines.preferredCanonicalComicId(
-      first.sourceId,
-      first.comicId,
+      first.sourceId, first.comicId,
     );
-    if (preferredComicId != null) {
-      ChapterDownloadSnapshot? selected;
-      for (final candidate in candidates) {
-        if (candidate.comicId != preferredComicId) continue;
-        selected = selected == null
-            ? candidate
-            : _preferRowSnapshot(selected, candidate);
-      }
-      // The family has an authoritative target, but its exact chapter is not
-      // currently materialized in this management projection. Do not guess an
-      // older version merely because it happens to own resident bytes.
-      return selected;
-    }
-
-    final comicIds = <String>{for (final candidate in candidates) candidate.comicId};
-    if (comicIds.length != 1) return null;
-    var selected = candidates.first;
-    for (final candidate in candidates.skip(1)) {
-      selected = _preferRowSnapshot(selected, candidate);
-    }
-    return selected;
+    final preferred = preferredComicId == null
+        ? candidates
+        : candidates.where((entry) => entry.chapter.comicId == preferredComicId).toList();
+    // A missing or ambiguous current target cannot become an older version's
+    // download merely because that version owns the resident cache.
+    return preferred.length == 1 ? preferred.single : null;
   }
+
+  bool _canConvertCacheEntry(ImportedLibraryEntry? entry) =>
+      entry != null && !entry.chapter.directoryId.startsWith('orphaned:') &&
+      !(_snapshots[_identity(entry)]?.isManualDownload ?? false);
 
   Future<void> _convertCanonicalCacheToDownload(
     CanonicalChapterCacheSnapshot cache,
   ) async {
-    final target = _preferredCanonicalDownloadSnapshot(cache);
+    final target = _preferredCanonicalDownloadEntry(cache);
     if (target == null) {
       _showError(StateError('版本共享缓存没有可用的当前版本章节'));
       return;
     }
-    await _act(
-      target,
-      _DownloadManagerChapterCommand.download,
-      actionKey: 'convert',
-    );
-    if (mounted) {
-      setState(() => _selectedTab = DownloadManagerTab.manual);
-    }
+    await _convertCacheEntryToDownload(target);
   }
 
-  Future<void> _act(
+  Future<bool> _act(
     ChapterDownloadSnapshot snapshot,
     _DownloadManagerChapterCommand command, {
     required String actionKey,
@@ -1155,13 +1196,13 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       // Diagnostics must never change action behavior.
     }
     if (blocked) {
-      return;
+      return false;
     }
     setState(() {
       _busyActionKeys.add(lockKey);
     });
     try {
-      await _performTaskAction(snapshot, command);
+      return await _performTaskAction(snapshot, command);
     } finally {
       if (mounted) {
         setState(() {
@@ -1173,16 +1214,16 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  Future<void> _performTaskAction(
+  Future<bool> _performTaskAction(
     ChapterDownloadSnapshot snapshot,
     _DownloadManagerChapterCommand command,
   ) async {
     await _resolveServices();
-    if (!mounted) return;
-    final initialEntry = _entryFor(snapshot);
+    if (!mounted) return false;
+    final initialEntry = _entries[snapshot.identity];
     if (initialEntry == null) {
       _showError(StateError('下载任务对应的章节记录已不存在'));
-      return;
+      return false;
     }
     var entry = initialEntry;
     if (widget.hydrateEntry != null) {
@@ -1213,7 +1254,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         // start. Standalone fallback owns the concrete service, so re-resolve
         // after hydration before capturing the mutation target.
         await _resolveServices();
-        if (!mounted) return;
+        if (!mounted) return false;
         final downloads = _downloads;
         switch (command) {
           case _DownloadManagerChapterCommand.download:
@@ -1228,23 +1269,83 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         next = await downloads.inspect(entry);
       }
       _acceptSnapshot(next);
+      return true;
     } on Object catch (error) {
       if (mounted) {
         _showError(error);
       }
+      return false;
     }
   }
 
   Future<void> _convertCacheToDownload(ChapterDownloadSnapshot snapshot) async {
-    await _act(
+    final succeeded = await _act(
       snapshot,
       _DownloadManagerChapterCommand.download,
       actionKey: 'convert',
     );
-    if (mounted) {
-      setState(() {
-        _selectedTab = DownloadManagerTab.manual;
-      });
+    if (mounted && succeeded) {
+      setState(() => _selectedTab = DownloadManagerTab.manual);
+    }
+  }
+
+  Future<void> _convertCacheEntryToDownload(ImportedLibraryEntry entry) async {
+    await _convertCacheToDownload(
+      _snapshots[_identity(entry)] ?? ChapterDownloadSnapshot.idle(entry),
+    );
+  }
+
+  bool get _canClearChapterCache => widget.commandActions == null
+      ? _downloads is ChapterCacheManagementCommands
+      : widget.commandActions!.clearChapterCache != null;
+
+  Future<void> _clearChapterCache(
+    String identity, ChapterCacheDeleteTarget target,
+  ) async {
+    final lockKey = '$identity:delete';
+    if (_busyActionKeys.contains(lockKey)) return;
+    setState(() => _busyActionKeys.add(lockKey));
+    var attempted = false;
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('清除此项缓存？'),
+          content: const Text('共享该正文的其他版本可能需要重新加载。'
+              '保留下载、正在使用的页面及阅读进度。'),
+          actions: [AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: [FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('清除'),
+            )],
+          )],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await _resolveServices();
+      if (!mounted) return;
+      attempted = true;
+      final action = widget.commandActions?.clearChapterCache;
+      final report = action != null
+          ? await action(target)
+          : await (_downloads as ChapterCacheManagementCommands).clearChapterCache(target);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已释放 ${_formatBytes(report.releasedBytes)}'
+            '${report.skippedBusy > 0 ? '，正在使用的页面已保留' : ''}'),
+      ));
+    } on Object catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) {
+        setState(() => _busyActionKeys.remove(lockKey));
+        if (attempted) {
+          _cacheProjectionEpoch++;
+          _cacheProjectionDirty = true;
+          await _ensureAutoCacheProjection();
+        }
+      }
     }
   }
 
@@ -1457,11 +1558,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (!mounted) {
         return;
       }
-      final artifactReport = report.artifacts;
-      final message = artifactReport == null
-          ? '临时响应缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}'
-          : '缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}，'
-              'artifact 剩余 ${_formatBytes(artifactReport.remainingBytes)}';
+      final message =
+          '缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -1484,9 +1582,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清除离线缓存？'),
+        title: const Text('清除缓存？'),
         content: const Text(
-          '将删除当前未被下载任务占用的离线页面。漫画、章节、阅读进度和已读状态不会删除。',
+          '清除页面、封面与响应缓存；保留下载、正在使用的页面及阅读进度。',
         ),
         actions: <Widget>[
           AppDialogActions(
@@ -1515,11 +1613,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (!mounted) {
         return;
       }
-      final artifactReport = report.artifacts;
-      final message = artifactReport == null
-          ? '网络响应缓存已清空，释放 ${_formatBytes(report.totalReleasedBytes)}'
-          : '已释放 ${_formatBytes(report.totalReleasedBytes)}，'
-              '${artifactReport.skippedBusy} 个活动 artifact 被保留';
+      final message = '已释放 ${_formatBytes(report.totalReleasedBytes)}';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -1732,11 +1826,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           final selected = DownloadManagerTab.values[index];
           setState(() => _selectedTab = selected);
           if (selected == DownloadManagerTab.autoCache) {
-            if (_cacheProjection == null && _expectsPhysicalCacheProjection) {
-              unawaited(_ensureAutoCacheProjection());
-            } else {
-              unawaited(_refreshCacheUsage());
-            }
+            unawaited(_ensureAutoCacheProjection());
           }
         },
         destinations: const <NavigationDestination>[
@@ -1774,6 +1864,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     final itemCount = (wholeJobs.isNotEmpty ? 2 + wholeJobs.length : 0) +
         (manualSnapshots.isNotEmpty ? 1 + manualSnapshots.length * 2 - 1 : 0);
     return ListView.builder(
+      scrollCacheExtent: const ScrollCacheExtent.viewport(1),
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: itemCount,
@@ -1890,6 +1981,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     final itemCount = (hasSummary ? 2 : 0) +
         (hasItems ? autoCacheSnapshots.length * 2 : 5);
     return ListView.builder(
+      scrollCacheExtent: const ScrollCacheExtent.viewport(1),
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: itemCount,
@@ -1971,16 +2063,21 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             (context, index) {
               if (index.isOdd) return const Divider(height: 1);
               final cache = canonical[index ~/ 2];
-              final target = _preferredCanonicalDownloadSnapshot(cache);
-              final canConvert = target != null && !target.isManualDownload;
+              final target = _preferredCanonicalDownloadEntry(cache);
+              final deleting = _isActionBusy(cache.identity, 'delete');
+              final converting = target != null && _isActionBusy(_identity(target), 'convert');
+              final canConvert = _canConvertCacheEntry(target) && !deleting;
               return _CanonicalCacheTaskTile(
                 key: downloadManagerCanonicalCacheTaskKey(cache.identity),
                 cache: cache,
                 target: target,
-                isConverting: target != null &&
-                    _isActionBusy(target.identity, 'convert'),
+                isConverting: converting,
+                isDeleting: deleting,
                 onConvert: canConvert
                     ? () => _convertCanonicalCacheToDownload(cache)
+                    : null,
+                onDelete: _canClearChapterCache && cache.deleteTarget != null && !converting
+                    ? () => _clearChapterCache(cache.identity, cache.deleteTarget!)
                     : null,
               );
             },
@@ -2005,21 +2102,20 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             (context, index) {
               if (index.isOdd) return const Divider(height: 1);
               final cache = exact[index ~/ 2];
-              final snapshot = _snapshots[cache.identity];
-              final canDelete = snapshot != null && !snapshot.isManualDownload;
-              final canConvert = canDelete &&
-                  !cache.historicalRevision &&
-                  _isLibraryEntry(snapshot);
+              final entry = _entries[cache.identity];
+              final deleting = _isActionBusy(cache.identity, 'delete');
+              final converting = _isActionBusy(cache.identity, 'convert');
+              final canDelete = _canClearChapterCache && cache.deleteTarget != null && !converting;
+              final canConvert = !deleting && !cache.historicalRevision && _canConvertCacheEntry(entry);
               return _ExactCacheTaskTile(
                 key: downloadManagerAutoCacheTaskKey(cache.identity),
                 cache: cache,
-                isDeleting: canDelete &&
-                    _isActionBusy(cache.identity, 'delete'),
-                isConverting: canConvert &&
-                    _isActionBusy(cache.identity, 'convert'),
-                onDelete: canDelete ? () => _delete(snapshot) : null,
+                isDeleting: deleting,
+                isConverting: converting,
+                onDelete: canDelete
+                    ? () => _clearChapterCache(cache.identity, cache.deleteTarget!) : null,
                 onConvert: canConvert
-                    ? () => _convertCacheToDownload(snapshot)
+                    ? () => _convertCacheEntryToDownload(entry!)
                     : null,
               );
             },
@@ -2047,6 +2143,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 8)));
 
     return CustomScrollView(
+      scrollCacheExtent: const ScrollCacheExtent.viewport(1),
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: slivers,
     );
@@ -2078,27 +2175,16 @@ final class _DownloadCacheSummary extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('资源缓存', style: Theme.of(context).textTheme.titleMedium),
+                Text('自动缓存', style: Theme.of(context).textTheme.titleMedium),
                 Text(
                   current == null
                       ? '正在统计缓存…'
-                      : '${_formatBytes(current.totalBytes)} · ${current.totalEntries} 个缓存记录',
+                      : _formatBytes(current.automaticPageBytes),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                Text(
-                  current == null
-                      ? '统一统计资源响应内存、持久响应与页面 artifact。'
-                      : '内存 ${_formatBytes(current.responses.weight)} · '
-                          '持久响应 ${_formatBytes(current.persistentResponses?.bytes ?? 0)} '
-                          '（保留 ${_formatBytes(current.persistentResponses?.retainedBytes ?? 0)} / '
-                          '临时 ${_formatBytes(current.persistentResponses?.transientBytes ?? 0)}） · '
-                          'artifact ${_formatBytes(current.artifacts?.bytes ?? 0)}；'
-                          '活动需求与写入不会被清理。',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                if (current != null)
+                if (current != null && current.automaticPendingCleanupBytes > 0)
                   Text(
-                    _memoryKindSummary(current.responses),
+                    '待删除 ${_formatBytes(current.automaticPendingCleanupBytes)}（已计入占用）',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
               ],
@@ -2430,13 +2516,9 @@ final class _DownloadTaskTile extends StatelessWidget {
           ] else
             const SizedBox(height: 4),
           Text(
-            snapshot.pinnedPages > 0 && snapshot.autoCachedPages > 0
-                ? '${snapshot.pinnedPages} 页已固定下载 · ${snapshot.autoCachedPages} 页自动缓存（共 ${snapshot.completedPages}/${snapshot.totalPages} 页）'
-                    ' · ${_formatBytes(snapshot.receivedBytes)}'
-                    '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}'
-                : '${snapshot.completedPages}/${snapshot.totalPages} 页'
-                    ' · ${_formatBytes(snapshot.receivedBytes)}'
-                    '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}',
+            '${snapshot.completedPages}/${snapshot.totalPages} 页'
+                ' · ${_formatBytes(snapshot.receivedBytes)}'
+                '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           if (failure != null && failure.trim().isNotEmpty) ...<Widget>[
@@ -2475,26 +2557,28 @@ final class _CanonicalCacheTaskTile extends StatelessWidget {
     required this.cache,
     required this.target,
     required this.isConverting,
+    required this.isDeleting,
     this.onConvert,
+    this.onDelete,
     super.key,
   });
 
   final CanonicalChapterCacheSnapshot cache;
-  final ChapterDownloadSnapshot? target;
+  final ImportedLibraryEntry? target;
   final bool isConverting;
+  final bool isDeleting;
   final VoidCallback? onConvert;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final target = this.target;
-    final title = target?.title ?? '版本共享章节缓存';
-    final comicTitle = target?.comicTitle ?? '未关联漫画';
+    final title = target?.chapter.displayName ?? '未关联章节';
+    final comicTitle = target?.chapter.comicTitle ?? '未关联漫画';
     final states = <String>[
       if (cache.readyPages > 0) '${cache.readyPages} 页完整',
       if (cache.partialPages > 0) '${cache.partialPages} 页未完整',
-      '${cache.memberVersionCount} 个版本共享',
-      if (cache.manualReferencedPages > 0)
-        '${cache.manualReferencedPages} 页被下载引用',
+      '关联 ${cache.memberVersionCount} 个版本',
       _formatBytes(cache.receivedBytes),
     ];
     return Padding(
@@ -2512,7 +2596,7 @@ final class _CanonicalCacheTaskTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  '$comicTitle · 版本共享缓存',
+                  comicTitle,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
@@ -2538,6 +2622,20 @@ final class _CanonicalCacheTaskTile extends StatelessWidget {
               color: Theme.of(context).colorScheme.primary,
               onPressed: onConvert,
               icon: const Icon(Icons.download_outlined),
+            ),
+          if (isDeleting)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox.square(dimension: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (onDelete != null)
+            IconButton(
+              key: downloadManagerClearCacheKey(cache.identity),
+              tooltip: '清除共享缓存',
+              color: Theme.of(context).colorScheme.error,
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
             ),
         ],
       ),
@@ -2583,7 +2681,7 @@ final class _ExactCacheTaskTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  '${cache.comicTitle} · ${cache.historicalRevision ? '旧版本页面缓存' : '页面缓存'}',
+                  '${cache.comicTitle}${cache.historicalRevision ? ' · 旧版本' : ''}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
@@ -2672,7 +2770,7 @@ final class _AutoCacheTaskTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '$comicTitle · 页面自动缓存',
+                      comicTitle,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -2714,11 +2812,8 @@ final class _AutoCacheTaskTile extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            snapshot.pinnedPages > 0
-                ? '${snapshot.pinnedPages} 页已固定下载 · ${snapshot.autoCachedPages} 页自动缓存（共 ${snapshot.completedPages}/${snapshot.totalPages} 页）'
-                    ' · ${_formatBytes(snapshot.receivedBytes)}'
-                : '${snapshot.autoCachedPages > 0 ? snapshot.autoCachedPages : snapshot.completedPages}/${snapshot.totalPages} 页已缓存'
-                    ' · ${_formatBytes(snapshot.receivedBytes)}',
+            '${snapshot.autoCachedPages > 0 ? snapshot.autoCachedPages : snapshot.completedPages}/${snapshot.totalPages} 页已缓存'
+                ' · ${_formatBytes(snapshot.receivedBytes)}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -2763,20 +2858,6 @@ String _wholeQueuePhaseLabel(WholeComicQueuePhase phase) => switch (phase) {
       WholeComicQueuePhase.failed => '失败',
       WholeComicQueuePhase.cancelled => '已取消',
     };
-
-String _memoryKindSummary(ResourceCacheStats stats) {
-  String item(ResourceCacheKind kind, String label) {
-    final value = stats.forKind(kind);
-    return '$label ${value.entries}/${_formatBytes(value.weight)}';
-  }
-
-  return <String>[
-    item(ResourceCacheKind.imageBytes, '图片'),
-    item(ResourceCacheKind.comicDetails, '详情'),
-    item(ResourceCacheKind.chapterMetadata, '章节元数据'),
-    item(ResourceCacheKind.searchResults, '搜索'),
-  ].join(' · ');
-}
 
 String _formatBytes(int bytes) {
   if (bytes < 1024) {

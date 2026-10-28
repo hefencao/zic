@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.31.0-beta.1+332
+version: 0.31.0-beta.2+350
 resolution: workspace
 
 environment:
@@ -11,6 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  crypto: ^3.0.7
+  xml: ^6.6.1
   comic_translation:
     path: ../../packages/comic_translation
   domain:

@@ -61,7 +61,8 @@ forbid(reader, '.map(String.trim)', 'invalid Dart instance-method tear-off')
 forbid(controller, 'case final packageName?', 'fragile package-name pattern')
 
 for token in (
-    'scheduleMicrotask(_loadRepository);',
+    'scheduleMicrotask(_initializeRepositories);',
+    'final repositories = _repositories.where((repository) => repository.enabled).toList();',
     'knownPackageNames: _knownMihonPackageNames',
     '仅检测系统共享 APK；Mihon 私有扩展请从 ZIC 仓库安装',
     '系统枚举 ${scan.enumeratedPackageCount} 个包',

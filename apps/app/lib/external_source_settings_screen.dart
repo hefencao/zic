@@ -18,6 +18,8 @@ final class ExternalSourceSettingsScreen extends StatefulWidget {
     required this.onApply,
     this.onLogin,
     this.onReadLogin,
+    this.beforeLoad,
+    this.onSettingChanged,
     super.key,
   });
 
@@ -25,6 +27,8 @@ final class ExternalSourceSettingsScreen extends StatefulWidget {
   final Future<void> Function() onApply;
   final Future<void> Function(Uri url)? onLogin;
   final Future<ExternalSourceLoginSnapshot?> Function(Uri url)? onReadLogin;
+  final Future<void> Function()? beforeLoad;
+  final Future<void> Function(ComicSourceSetting setting, Object value)? onSettingChanged;
 
   @override
   State<ExternalSourceSettingsScreen> createState() =>
@@ -54,6 +58,7 @@ final class _ExternalSourceSettingsScreenState
     ComicSourceAccount? account;
     Object? firstError;
     try {
+      await widget.beforeLoad?.call();
       settings = await _source.loadSettings();
     } on Object catch (error) {
       firstError = error;
@@ -83,6 +88,7 @@ final class _ExternalSourceSettingsScreenState
     });
     try {
       await _source.updateSetting(setting.key, value);
+      await widget.onSettingChanged?.call(setting, value);
       final index = _settings.indexWhere((item) => item.key == setting.key);
       if (!mounted) return;
       setState(() {

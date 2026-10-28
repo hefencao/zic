@@ -1,5 +1,6 @@
 import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
+import 'package:resource_cache/resource_cache.dart';
 
 import 'home_library_session.dart';
 import 'download_command_lifetimes.dart';
@@ -456,6 +457,15 @@ final class HomeDownloadCommands {
     final snapshot = await session.chapterDownloads.inspect(hydrated);
     session.acceptDownloadSnapshot(snapshot);
     return snapshot;
+  }
+
+  Future<ArtifactCacheReport> clearChapterCache(ChapterCacheDeleteTarget target) async {
+    await ensureDurableServices();
+    final downloads = session.chapterDownloads;
+    if (downloads is! ChapterCacheManagementCommands) {
+      throw StateError('缓存存储尚未就绪，请刷新后重试');
+    }
+    return (downloads as ChapterCacheManagementCommands).clearChapterCache(target);
   }
 
   Future<ImportedLibraryEntry> _deleteChapterFiles(

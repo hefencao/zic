@@ -5313,6 +5313,7 @@ void main() {
       await (cacheOnly
           ? downloads.cacheStarted.future
           : downloads.managementStarted!.future);
+      if (cacheOnly) downloads.notifyCacheChanged();
       var closed = false;
       final closing = session.close().then((_) => closed = true);
       await Future<void>.delayed(Duration.zero);
@@ -5326,6 +5327,10 @@ void main() {
       await read;
       await closing;
       expect(downloads.closed, isTrue);
+      if (cacheOnly) {
+        expect(downloads.cacheCalls, 1,
+            reason: 'close drains the stale read without admitting a retry');
+      }
       session.dispose();
     });
   }
@@ -5394,7 +5399,7 @@ void main() {
   }
 
   test(
-    'full download management refresh fences an older cache-only publication',
+    'manual download refresh fences and retries an older cache-only publication',
     () async {
       final downloads = _ProjectionRaceChapterDownloads();
       final queue = WholeComicDownloadQueue(downloads: downloads);
@@ -5424,10 +5429,8 @@ void main() {
       await session.refreshDownloadSnapshots(
         const <ImportedLibraryEntry>[],
       );
-      expect(
-        session.downloadCacheProjection?.exact.single.title,
-        'authoritative-full',
-      );
+      expect(session.downloadCacheProjection, isNull,
+          reason: 'manual management must not eagerly build cache inventory');
 
       downloads.cacheRelease.complete();
       await staleRefresh;
@@ -5438,6 +5441,38 @@ void main() {
       );
     },
   );
+
+  test('cache invalidation rejects an in-flight pre-clear projection', () async {
+    final downloads = _ProjectionRaceChapterDownloads();
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: MemoryImportedLibraryStore(), chapterDownloads: downloads,
+      wholeComicDownloads: queue, sources: const <BrowsableComicSource>[],
+      ownsLibrary: true, ownsChapterDownloads: true, ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!downloads.cacheRelease.isCompleted) downloads.cacheRelease.complete();
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final read = session.refreshDownloadCacheProjection(const []);
+    final joined = session.refreshDownloadCacheProjection(const []);
+    await downloads.cacheStarted.future;
+    expect(downloads.cacheCalls, 1);
+    downloads.notifyCacheChanged();
+    downloads.cacheRelease.complete();
+    await Future.wait([read, joined]);
+    expect(downloads.cacheCalls, 2);
+    expect(session.downloadCacheProjection?.exact.single.title, 'authoritative-full');
+    final fullCalls = downloads.managementCalls;
+    downloads.notifyCacheChanged();
+    expect(session.downloadCacheProjection, isNull);
+    await session.refreshDownloadCacheProjection(const []);
+    expect(downloads.cacheCalls, 3);
+    expect(downloads.managementCalls, fullCalls);
+  });
+
 }
 
 
@@ -5483,7 +5518,10 @@ final class _ProjectionRaceChapterDownloads
     implements
         ChapterDownloadService,
         ChapterDownloadManagementProjectionReader,
-        ChapterCacheManagementProjectionReader {
+        ChapterCacheManagementProjectionReader,
+        ChapterDownloadManagementChangeSource {
+  final StreamController<void> _cacheChanges =
+      StreamController<void>.broadcast(sync: true);
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast();
   final Completer<void> cacheStarted = Completer<void>();
@@ -5495,6 +5533,12 @@ final class _ProjectionRaceChapterDownloads
 
   bool closed = false;
   int managementCalls = 0;
+  int cacheCalls = 0;
+
+  @override
+  Stream<void> get managementProjectionChanges => _cacheChanges.stream;
+
+  void notifyCacheChanged() => _cacheChanges.add(null);
 
   void publish(ChapterDownloadSnapshot snapshot) => _changes.add(snapshot);
 
@@ -5541,17 +5585,19 @@ final class _ProjectionRaceChapterDownloads
   Future<ChapterCacheManagementProjection> inspectCacheManagement(
     Iterable<ImportedLibraryEntry> knownEntries,
   ) async {
+    final captured = cacheCalls++ == 0 ? _staleCache : _authoritativeCache;
     if (!cacheStarted.isCompleted) {
       cacheStarted.complete();
     }
     await cacheRelease.future;
-    return _staleCache;
+    return captured;
   }
 
   @override
   Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
-    Iterable<ImportedLibraryEntry> knownEntries,
-  ) async {
+    Iterable<ImportedLibraryEntry> knownEntries, {
+    bool includeCache = true,
+  }) async {
     managementCalls++;
     final snapshots = managementSnapshots;
     managementStarted?.complete();
@@ -5559,7 +5605,7 @@ final class _ProjectionRaceChapterDownloads
     return ChapterDownloadManagementProjection(
       orphanedEntries: const <ImportedLibraryEntry>[],
       snapshots: snapshots,
-      cache: _authoritativeCache,
+      cache: includeCache ? _authoritativeCache : null,
     );
   }
 
@@ -5572,6 +5618,7 @@ final class _ProjectionRaceChapterDownloads
   @override
   Future<void> close() {
     closed = true;
+    unawaited(_cacheChanges.close());
     return _changes.close();
   }
 
