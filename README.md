@@ -12,15 +12,15 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 
 ## 下载 beta
 
-当前测试版：**0.31.0-beta.1**。选择与设备匹配的 APK 下载后安装：
+当前测试版：**0.31.0-beta.2**（build 350，可覆盖安装上一版）。选择与设备匹配的 APK 下载后安装：
 
 | 设备 | 下载 |
 | --- | --- |
-| 常见 Android 手机 | [arm64-v8a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-arm64-v8a.apk) |
-| 较旧的 32 位 Android 设备 | [armeabi-v7a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-armeabi-v7a.apk) |
-| x86_64 设备或模拟器 | [x86_64 APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/zic-0.31.0-beta.1-x86_64.apk) |
+| 常见 Android 手机 | [arm64-v8a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.2/zic-0.31.0-beta.2-arm64-v8a.apk) |
+| 较旧的 32 位 Android 设备 | [armeabi-v7a APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.2/zic-0.31.0-beta.2-armeabi-v7a.apk) |
+| x86_64 设备或模拟器 | [x86_64 APK](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.2/zic-0.31.0-beta.2-x86_64.apk) |
 
-[版本说明](https://github.com/hefencao/zic/releases/tag/v0.31.0-beta.1) · [SHA-256 校验文件](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.1/SHA256SUMS)
+[版本说明](https://github.com/hefencao/zic/releases/tag/v0.31.0-beta.2) · [SHA-256 校验文件](https://github.com/hefencao/zic/releases/download/v0.31.0-beta.2/SHA256SUMS)
 
 发行版不预置 Mihon / Venera 仓库地址，请在插件管理中自行填写 HTTPS 仓库索引或导入设备上的扩展。
 
@@ -65,7 +65,7 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 
 ## 导入本地漫画
 
-此功能位于 `feat/external-download-import` 分支，尚未包含在上方的 beta APK 中。在书架、首页顶栏或杂项点击“导入本地漫画”，选择目录后自动识别格式，展开核对漫画、章节和页数，再导入所选漫画。
+在书架、首页顶栏或杂项点击“导入本地漫画”，选择目录后自动识别格式，展开核对漫画、章节和页数，再导入所选漫画。
 
 普通图片目录默认“复制到 ZIC”，也可逐本选择“直接读取”。复制完成后可移走原目录；直接读取省去正文副本，但需要保留原目录与访问权限。没有 App 清单的图片目录按各自目录独立成书。App 下载和 CBZ 使用复制导入，保留原文件。
 
@@ -75,7 +75,13 @@ zic 是一款面向 Android 的漫画阅读器，支持本地漫画、网络漫�
 | Mihon / Tachiyomi | 图片章节及 CBZ；保留章节分组、拆分页和 ComicInfo 标题，跳过临时下载目录 |
 | Venera | 图片目录；将已有的 `local.db` 导出文件及其 WAL（如有）一起放入所选目录，可保留章节标题、顺序和完成标记；缺少数据库时会提示按目录推断 |
 
-扫描前请先停止原 App 的下载。导入需要额外空间，原文件和数据库保持不变；完成后可移走原目录并离线阅读。同名漫画使用独立目录，重复选择同一目录可继续导入；中途停止时保留已完成的副本。
+扫描前请先停止原 App 的下载。复制导入需要额外空间，原文件和数据库保持不变；复制完成后可移走原目录并离线阅读。直接读取需要保留原目录和访问权限。同名漫画使用独立目录，重复选择同一目录可继续导入；中途停止时保留已完成的副本。
+
+## 备份与 WebDAV 同步
+
+支持导出压缩数据备份、手动导入，以及通过 WebDAV 在设备间合并数据。可分别选择书架与分类、阅读记录、阅读设置、应用设置、翻译设置、扩展与插件；未选择的数据保留原状。每漫画的阅读、翻译设置及扩展仓库也可保存。
+
+漫画文件和缓存保留在本机，账号、密钥、目录授权等敏感或设备专属信息需在各设备配置。云端按日期保留备份并定期回收旧对象；网络中断时采用有界重试。
 
 ## 开始使用
 

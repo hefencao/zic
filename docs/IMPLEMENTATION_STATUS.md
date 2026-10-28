@@ -1,5 +1,5 @@
 # Implementation Status
-源码版本：0.31.0-beta.2，App build：0.31.0-beta.2+350
+源码版本：0.31.0-beta.2，App build：0.31.0-beta.2+350；GitHub Release 已发布，验证见状态JSON。
 本文件只描述当前源码快照和验证等级。有效需求状态见 docs/IMPLEMENTATION_STATE.json；历史见 CHANGELOG.md，既有证据归档于 docs/archive/。
 验证等级：Implemented、Verified-static、Verified-toolchain、Verified-device、Unverified。
 ## 1. 当前所有权与实现快照
