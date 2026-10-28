@@ -43,14 +43,20 @@ def release_notes(changelog, version):
 def validate_badging(text, version, build):
     identity = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", text, re.M)
     if not identity or identity.groups() != ('dev.zic.zic', build, version):
-        raise ValueError('APK package/version does not match this release')
+        actual = identity.groups() if identity else None
+        raise ValueError(f'APK identity {actual!r} does not match {("dev.zic.zic", build, version)!r}')
     if re.search(r'^application-debuggable(?:\s|$)', text, re.M):
         raise ValueError('A debuggable APK cannot be published as the beta release')
 
 
 def validate_certificate(text):
-    certificates = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', text, re.M)
-    if [s.lower() for s in certificates] != [BETA_CERTIFICATE]:
+    certificates = re.findall(
+        r'^(Signer #\d+|V[1-4](?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest: ([0-9a-fA-F]+)$',
+        text, re.M)
+    schemes = [label.split(' Signer', 1)[0] if label.startswith('V') else 'legacy'
+               for label, _ in certificates]
+    if (not certificates or len(set(schemes)) != len(schemes) or
+            any(digest.lower() != BETA_CERTIFICATE for _, digest in certificates)):
         raise ValueError('APK signing identity differs from the existing public beta')
 
 

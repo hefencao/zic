@@ -1,12 +1,12 @@
 # Next Chat Handoff
 ## 1. 唯一继续基线
-- `main`存储优化已合并。回收只读worker/close排空，分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本仅映射。缓存按下载头/manifest接管，旧pin只保留；清单后台导出、首帧后预热、前后各一屏。canonical/当前章及导入/SAF/v1-v3保持。源码0.31.0-beta.2+350；GitHub发布准备中；见JSON。
+- `main`已合入。回收只读worker/close排空，分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本仅映射。缓存按下载头/manifest接管，旧pin只保留；清单后台导出、首帧后预热、前后各一屏。canonical/当前章及导入/SAF/v1-v3保持。Gradle统一版本码；源码0.31.0-beta.2+350；CI重建中；见JSON。
 - zic后Trace；历史网格2–6列/横向1–3行/列表，三列默认/持久化/sliver。书架/漫画源共用全透明面板，行高40/行距6，无阴影/提示杠；所有/本地优先，长按复选；上/下划展开/收起并保存，过滤默认不保存、可开启。遮罩确认持久化。翻译第三项面板、可见缓存不等推理；静态/覆层/NetLane保留；dev.196、dev.197、dev.198、dev.199、dev.203 bounded不变。
 - 翻译：面板管漫画语言/OCR/内容/指示器；首次独立三步引导，已有配置跳过、退出不保存；全局模型/服务/高级/测试/默认/档位排列，可重开引导；指示器缺省自动，已存偏好保留；右上唯一保存，高级参数/导入/多API管理折叠。静态WebP优先Pipeline同代判定，未知查完整文件，提示不裁决动图；整章/归档同理。当前输入先于邻页，完成通知退出后重放保留等待页；worker缓存/LRU8页128块/1.5ms排版。整章/companion/重试归原owner；验收见状态JSON。
 - 后台任务：显式下载/整章预翻译由App只读聚合，Android dataSync通知与有界CPU锁；通知停止/超时转发原owner，Reader后台策略不变。整章仅在服务确认后允许后台推理；设置→下载可管理通知/电池。验证与剩余验收只见状态JSON，不扩大NetLane/Reader职责。
 - 当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久response元数据与056/069强制WNACG host直连/无类型重放前提退休；实际plan/runtime媒体保持已验。warm及设置后完整动作UI/GC分量有界，纵向退出raster仍失败；原进退/分配、097/016/013/089、原加载及物理显示开放。
 - 跨章3.53–3.80s已由Home日志归因每次两次494–495章authority重建；RMR-036保留完整payload比较与真实locator更新，消除无变化/重复重建，86项owner、2148项全门禁及四次跨章首尾通过（ADR0357 Accepted）；after12–20ms但hydrate规模较小，不作同规模加速结论。功耗基准仍为static-vertical-active-probe审计，platform/scene probe仅显式诊断启用。
-- WebDAV/备份：六类选择，未选不删/不改时钟/不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日7日/4周/12月备份、每周GC。仓库逐项同步；缺失插件/进度待恢复，目录授权留本机。+334 N97/A318本地首帧116/149ms、零失败，一邻页续传；丢库按需恢复、多章布局保持，启动不扫描/同步。数据页按操作转圈，结束后合并刷新；仓库/设备进度分开。未推送，见JSON。
+- WebDAV/备份：六类选择，未选不删/不改时钟/不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日7日/4周/12月备份、每周GC。仓库逐项同步；缺失插件/进度待恢复，目录授权留本机。+334 N97/A318本地首帧116/149ms、零失败，一邻页续传；丢库按需恢复、多章布局保持，启动不扫描/同步。数据页按操作转圈，结束后合并刷新；仓库/设备进度分开。见JSON。
 ## 2. 必读顺序
 1. `docs/DOCUMENTATION_POLICY.md`与`AGENTS.md`：文档证据、架构边界及修改规则；工程入口`docs/DEVELOPMENT.md`，README面向用户。图标源图`assets/branding/zic.png`为用户透明插画，宿主资源同步；首页恢复zic文字，Debug操作保留；
 2. 依次阅读`docs/ARCHITECTURE.md`（当前所有权与生命周期）和`docs/SPEC.md`（产品与工程长期规范）；

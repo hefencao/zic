@@ -2462,6 +2462,7 @@ Android来源正文阶段系统采集 MUST仅观测原client、stream与claim，
 ## 12. 测试与发布
 
 - GitHub beta 构建 MUST 从 main 显式触发，并等待同次 Flutter、Rust、Android 原生构建门禁成功；发布资产 MUST 来自该次源码构建，不得以本地 APK 冒充。签名 MUST 保持既有安装升级身份，私钥 MUST 仅通过仓库 secret 提供并在 runner 结束清理。资产 MUST 核对 package/version、非调试模式、单 ABI 和证书，附 SHA-256；草稿资产独立验收后才公开。
+- Android 所有 ABI 与 debug/profile/release MUST 使用项目声明的同一 versionCode；分架构输出的覆盖 MUST 由项目 Gradle 持有，不得依赖机器预改 Flutter SDK。普通 CI 验证 Debug APK；beta CI MUST 验证实际签名 Release APK。
 - owner test MUST 位于实现所属 package；App 测试不得导入低层 `src/` 或重复低层算法。
 - 异步测试 MUST 使用可控 Future、状态对象或稳定 key，不得固定 pump 猜测完成。
 - quarantine MUST 有稳定 ID、原因、仍运行的 owner 覆盖和解除条件。

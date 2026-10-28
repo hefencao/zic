@@ -2638,6 +2638,7 @@ overlapping total 不得与子阶段重复参与 dominant 归因。production rh
 静态门禁阻止明显的依赖反转、API 泄漏、重复权威和文档漂移，但不能替代 `flutter analyze`、
 Dart/Flutter/Rust tests、Android debug/release build 和真机生命周期/性能验证。
 GitHub Actions 的 beta 发布任务只由 main 上的显式 workflow dispatch 接纳，并等待同次 CI 的 Flutter、Rust 与 Android 原生构建完成。Release APK 复用同次源码构建产物；签名私钥仅从仓库 secret 恢复到临时 runner，任务结束清理。`tool/prepare_beta_release.py` 在资产发布前核对 App/Android 版本、非调试包、单 ABI 布局及既有 beta 证书，生成校验文件；Release 先作为草稿供独立验收，再公开发布。
+App Gradle 在 Flutter 配置 split 输出后统一写入项目版本码；所有 ABI 和运行模式共用 `zic-version.properties`，不依赖机器修改 Flutter SDK。普通 CI 验证 Debug APK，beta 流程在签名 Release 打包后执行 APK 完整性与发布校验。
 Android build/run 入口在 `flutter pub get` 后，通过 `tool/prepare_rhttp_android.py` 按锁定版本和输入/输出 SHA-256 准备 rhttp 的 Cargokit SDK 解析补丁，兼容整数与 major.minor SDK 表示；不依赖机器预先修改 pub cache。
 Android App host 的 Gradle `packaging.jniLibs.useLegacyPackaging` 压缩 APK 内原生库，系统安装时解压到原生库目录；执行仍加载原始 ELF，不在推理或阅读路径解压。这缩小分发文件，但增加安装解压成本与安装后的总占用，不改变模型、算子或运行时资源预算。
 Detailed download/storage ownership for multi-version materialization,

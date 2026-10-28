@@ -24,6 +24,7 @@ class BetaReleaseTest(unittest.TestCase):
         good = "package: name='dev.zic.zic' versionCode='350' versionName='1.2.3-beta.4'\n"
         validate_badging(good, '1.2.3-beta.4', '350')
         for bad in [good.replace('dev.zic.zic', 'example.other'), good.replace('350', '349'),
+                    good.replace('350', '2350'),
                     good.replace('beta.4', 'beta.3'), good + 'application-debuggable\n']:
             with self.assertRaises(ValueError):
                 validate_badging(bad, '1.2.3-beta.4', '350')
@@ -42,6 +43,15 @@ class BetaReleaseTest(unittest.TestCase):
             for bad in [[], good[:-1], good + ['lib/other/libflutter.so']]:
                 with self.assertRaises(ValueError):
                     validate_native_layout(bad, abi)
+
+    def test_accepts_build_tools_37_scheme_labels_without_accepting_extra_signers(self):
+        v2 = f'V2 Signer: certificate SHA-256 digest: {BETA_CERTIFICATE}\n'
+        validate_certificate(v2)
+        validate_certificate(v2 + v2.replace('V2', 'V3'))
+        for bad in [v2 + v2, v2 + v2.replace('Signer:', 'Signer #2:'),
+                    v2 + v2.replace('V2', 'V3').replace(BETA_CERTIFICATE, '0' * 64)]:
+            with self.assertRaises(ValueError):
+                validate_certificate(bad)
 
 
 if __name__ == '__main__':

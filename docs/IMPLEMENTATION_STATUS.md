@@ -11,7 +11,7 @@
 - dev.269 区分 demanded=true 与闲置流；TaskControl 支持有界 paced drain 与单 invocation 串行保障。
 - 外部源传输：VeneraHttpCacheStore 保持 6h 有效期与 targeted force-miss 规约。rhttp前缀/正文异常统一typed network/cancelled failure，正文错误不附资源URL；已接纳的注入正文断流由provider retry保留原plan/Range/validators，不额外消耗source恢复次数。semantic admission失败在generation退休前记录既有恢复计数与丢弃字节。
 ### 存储与恢复 (Storage & Ingress)
-- Implemented／Partial：回收SQL用只读worker，close排空；分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本只映射。接管按下载头/manifest，旧pin只保留，换头排空，不补缺页。清单后台导出、首帧后预热、前后各一屏；清理重验。canonical/当前章、短引用及导入/SAF/v1-v3保持。见JSON，未推送。
+- Implemented／Partial：回收SQL用只读worker，close排空；分类4ms/64项让步，未超限复用快照，owner事务重验。SAF存在性先查exact文件，失效hint按父目录恢复。schema23物理LRU保护下载/lease，无CRC缓存删除，未打开版本只映射。接管按下载头/manifest，旧pin只保留，换头排空，不补缺页。清单后台导出、首帧后预热、前后各一屏；清理重验。canonical/当前章、短引用及导入/SAF/v1-v3保持。见JSON。
 - Verified-device：统一“导入本地漫画”，自动识别普通目录、EHViewer、Mihon/CBZ、Venera DB/WAL，预览漫画/章节。普通散图默认复制，可逐本显式直接读取；App/CBZ只复制。新链接持久化直属扫描，旧记录递归保持；SAF用实际子目录URI。多章迁移后定点刷新复用locator。验证见状态JSON。
 - 本地准备：设立 physical-local-prepare；普通 local-prepare operation 上限为 max2。ADR 0334 仅允许同一Reader/revision内三个真实viewport-visible、localOnly work使用一个bounded handoff，使operation lifetime暂时达到3；hidden/后台/跨consumer/revision与第四个work仍严格受max2普通槽约束。
 - 零拷贝cold partial由SQLite/文件裁决，不随意materialize durable-store。borrowed staging强刷修正空记录幂等失效及canonical READY仅删索引；复用原store副本清理。三回归/170测试通过；普通Release273实际借用1,112,520B后单次强刷，同physical epoch0→1、静置新帧及17,528,576B完整缓存提交通过，taskFailed0。
@@ -35,7 +35,7 @@
 - 书架 selection 归 `HomeShelfManagement`，mutation 留原 owner。详情隐藏无意义简介；标签默认折叠无标题，透明小箭头整行居中、不独占行。长按书架展开环状药丸与局部磨砂圆盘，盘内模糊/渐变/细边/阴影，无全屏遮罩；每组六项，保存分类同时入架，未改/未选分类也入架，盘外/返回取消不写；短按切换入架，收藏/喜欢独立。
 - 版本查看context归HomeVersionReuseLifecycle；099冷/推广/跨provider及实际EH收口。compact focus经library hydrate，取消/仍占位停止proof，真实carrier/epoch保持。371→424/Reader80静置、13,394,740B/无网络准入/0失败保持；023肉漫屋真实搜索卡片左上书架/变暗与独立右上更新已验，唯一head动作仍独立。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
-- Implemented：备份/导入/WebDAV共用六类选择，未选不删、不改时钟、不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日备份、每周GC，7日/4周/12月保留。仓库逐项合并、缺失插件/文件进度待恢复、目录/授权/秘密留本机；快照/NetLane/取消/重试保持，默认全选且启动不读。数据页进度按操作显示，弹窗/执行结束合并刷新；仓库/设备扫描分开。验收见JSON，未推送。
+- Implemented：备份/导入/WebDAV共用六类选择，未选不删、不改时钟、不应用；历史含章节。新云端固定objects/backups/latest/repository，旧协调/head复用；跨布局每日备份、每周GC，7日/4周/12月保留。仓库逐项合并、缺失插件/文件进度待恢复、目录/授权/秘密留本机；快照/NetLane/取消/重试保持，默认全选且启动不读。数据页进度按操作显示，弹窗/执行结束合并刷新；仓库/设备扫描分开。验收见JSON。
 - Verified-device／Partial：下载访问方式独立备份，路径/授权留本机并提示配置；SAF picker确认持久授权，首帧后查询，同根重授权清除失败探测。+334实机恢复原目录授权后Namaniku97/Ani318首帧116/149ms，确认本地读取、Reader零失败；仅一邻页缺完整清单记录而续传。2847/5跳过；丢库按需校验/多章布局保持，自定义定位/损坏清单、Direct指引实机及插件重装开放。
 ### 外部插件运行时 (Mihon & Venera)
 - Release 不携带 Mihon/Venera 默认仓库索引，输入框初始为空且不自动加载；手动 HTTPS 索引和已有精确索引更新保留。开发构建保留快捷地址。当前 beta 验证与发布状态见 `docs/IMPLEMENTATION_STATE.json`。
@@ -214,7 +214,7 @@
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-device | model v8 一次性 3 页以内几何判定、异常切片中性区、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；肉漫屋《要成為男子漢》真机复核为 vertical / 70.83% / samples=3 / modelVersion=8，继续停留后 samples 仍为3 |
 | Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
-| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Android入口按SHA-256准备rhttp0.18.0补丁；原生库压缩/安装时解压保留。宿主使用用户透明漫画书插画，含adaptive/单色/旧密度及iOS不透明PNG；首页zic文字保留Debug操作。README面向用户，工程入口DEVELOPMENT.md。当前验证、native/quarantine与未验见状态JSON。 |
+| 跨平台桥接与平台编译 | Verified-toolchain / Unverified | Gradle统一ABI/模式版本码；Android入口按SHA-256准备rhttp0.18.0补丁；原生库压缩/安装时解压保留。宿主使用用户透明漫画书插画，含adaptive/单色/旧密度及iOS不透明PNG；首页zic文字保留Debug操作。README面向用户，工程入口DEVELOPMENT.md。当前验证、native/quarantine与未验见状态JSON。 |
 | 设备性能与真机回归 | Verified-device / Unverified | 几何/TTL/LRU/native重入与19/20静置/历史、21话slider保持。当前完整动作UI/自然GC分量已验，退出raster仍超预算；原19/20偶发加载及物理输入/视觉/最终显示开放。SDK3.12.2分配接口统计当前堆，不能证明总分配 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |
   当前112项：device75/toolchain11/superseded5/partial15/pending6，21条未验。055持久metadata及056/069强制WNACG host直连/无类型重放前提退休，实际runtime媒体已验。缺输入/账号/独立时钟只暂停对应分支；完整GC窗口已采，不等同进退性能通过。已验cache/NetLane/几何保持。

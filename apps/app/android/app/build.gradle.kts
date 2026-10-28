@@ -65,6 +65,16 @@ android {
     }
 }
 
+// Flutter adds ABI offsets to split APK version codes. Keep every run mode
+// and ABI on the project-owned version so switching packages remains an upgrade.
+android.applicationVariants.configureEach {
+    outputs.forEach { output ->
+        @Suppress("DEPRECATION")
+        val apk = output as com.android.build.gradle.api.ApkVariantOutput
+        apk.versionCodeOverride = zicVersionCode
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

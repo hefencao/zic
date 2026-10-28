@@ -48,8 +48,10 @@ jobs:
       - name: Validate staged Android native layout
         run: ./tool/check_android_native.sh
       - name: Build split Android debug APKs without native dependency rebuild
+        if: github.event_name != 'workflow_dispatch' || !inputs.beta_release
         run: ZIC_ANDROID_NATIVE=0 ./tool/build_android.sh debug
       - name: Verify Android translation APK closure
+        if: github.event_name != 'workflow_dispatch' || !inputs.beta_release
         run: python3 tool/check_android_translation.py --apk apps/app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
       - run: python3 tool/check_repo.py
       - name: Check native C header

@@ -120,6 +120,8 @@ GitHub Actions 的 `android-native` 任务构建并上传翻译 `runtime/` 和 O
 
 发布 beta 时，在 main 上手动运行 `ci`，开启 `beta_release`。同次 Flutter/Rust/Android 门禁成功后，`beta-release` 任务复用原生 artifact、构建三个 ABI 的 Release APK，并生成带校验文件的 GitHub Release 草稿和 `beta-apks` artifact。版本来自 App pubspec 和 `zic-version.properties`，两者须一致，发布说明来自 CHANGELOG 的同版本章节。
 
+项目 Gradle 在 Flutter 的 split 输出配置后统一版本码，所有 ABI 和运行模式使用 `zic-version.properties` 的值，构建机无需预改 Flutter SDK。beta 流程在 `beta-release` 验证签名 Release APK；普通 push/PR 保留 Debug APK 门禁。
+
 仓库 secret `ANDROID_BETA_KEYSTORE_BASE64` 保存既有 beta 签名 keystore 的 Base64，沿用当前 Android debug signing config 的别名与密码；不得在新 runner 生成新 key。资产准备脚本核对既有公开 beta 证书、App identity、版本、非调试模式及 ABI。独立验证草稿下载与覆盖安装后公开 Release，并更新 README 下载链接；普通 push/PR 不接触该 secret，也不发布资产。
 
 ## 应用图标
